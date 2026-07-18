@@ -1,0 +1,26 @@
+schema = 1
+
+[[scenario]]
+id = "a11y.button.final-tree-actions"
+contracts = ["Button"]
+test = "button_final_tree_and_actions_follow_resolved_projection"
+
+[[scenario]]
+id = "a11y.listbox.final-tree-actions"
+contracts = ["Listbox"]
+test = "collection_semantics::listbox_final_tree_and_click_action_follow_resolved_state"
+
+[[scenario]]
+id = "a11y.tree.final-tree-actions"
+contracts = ["Tree"]
+test = "collection_semantics::tree_final_tree_focus_click_and_expansion_follow_resolved_state"
+
+[[scenario]]
+id = "a11y.virtualized-list.final-tree-recycle"
+contracts = ["VirtualizedList"]
+test = "collection_semantics::virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_recycles_by_key"
+
+[[scenario]]
+id = "a11y.splitter.final-tree-actions"
+contracts = ["Splitter"]
+test = "collection_semantics::splitter_final_tree_actions_resize_and_disabled_state_remove_capability"

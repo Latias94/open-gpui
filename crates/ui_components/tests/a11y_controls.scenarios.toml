@@ -1,0 +1,16 @@
+schema = 1
+
+[[scenario]]
+id = "a11y.checkbox.final-tree-actions"
+contracts = ["Checkbox"]
+test = "action_controls::checkbox_final_tree_tracks_form_state_actions_and_stable_identity"
+
+[[scenario]]
+id = "a11y.numeric-controls.final-tree-actions"
+contracts = ["Slider", "NumberInput", "Progress"]
+test = "action_controls::numeric_controls_project_real_set_value_and_same_node_updates"
+
+[[scenario]]
+id = "a11y.field.final-tree-relations"
+contracts = ["Field"]
+test = "field_relations::field_relations_follow_help_error_transitions_and_unmount"

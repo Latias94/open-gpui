@@ -84,7 +84,6 @@ pub(super) fn render_components_section(
             )
             .child(render_component_ecosystem_adapters_section(snapshot.tokens))
             .into_any_element(),
-        "gates" => render_component_gates_section(focus_mode),
         "sidebar" => component_page_section("sidebar")
             .when(!show_component_section(focus_mode, "sidebar"), |this| {
                 this.hidden()

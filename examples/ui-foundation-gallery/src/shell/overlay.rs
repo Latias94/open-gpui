@@ -94,7 +94,6 @@ pub(super) fn overlay_catalog_card(
 ) -> impl IntoElement {
     let (status_bg, status_border, status_text) = entry.status.badge_colors();
     let catalog_selector = entry.catalog_selector();
-    let gates = entry.behavior_gates.join(" / ");
 
     div()
         .id(catalog_selector)
@@ -135,12 +134,10 @@ pub(super) fn overlay_catalog_card(
                         .child(entry.status.as_str()),
                 ),
         )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x5a6472))
-                .child(format!("family: {}", entry.family)),
-        )
+        .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+            "family: {} / gallery group: {}",
+            entry.family, entry.gallery_group
+        )))
         .child(
             div()
                 .text_xs()
@@ -152,13 +149,6 @@ pub(super) fn overlay_catalog_card(
                 .text_xs()
                 .text_color(rgb(0x5a6472))
                 .child(entry.coverage),
-        )
-        .child(
-            div()
-                .text_xs()
-                .line_height(px(18.0))
-                .text_color(rgb(0x5a6472))
-                .child(format!("gates: {gates}")),
         )
         .child(
             div()

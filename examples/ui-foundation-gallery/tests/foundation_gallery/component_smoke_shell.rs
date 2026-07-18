@@ -124,8 +124,8 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
     let tabs_story = component_story_contract("Tabs");
     let table_samples = pages::components::table_samples(ThemeTokens::default());
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&table_story, StoryProbeOperation::Scroll);
-    probe.assert_story_can(&table_story, StoryProbeOperation::Edit);
+    probe.assert_story_declares(&table_story, StoryProbeOperation::Scroll);
+    probe.assert_story_declares(&table_story, StoryProbeOperation::Edit);
     for sample in table_samples {
         probe.assert_rendered(
             &sample.debug_selector(),
@@ -546,18 +546,10 @@ fn components_gallery_smoke_focused_choice_search_state_readouts_render(
             .unwrap_or_else(|| panic!("expected catalog entry `{name}`"));
         let story = component_story_contract(name);
 
-        for operation in [
-            StoryProbeOperation::Open,
-            StoryProbeOperation::Select,
-            StoryProbeOperation::Focus,
-            StoryProbeOperation::ReadPublicPayload,
-        ] {
-            assert!(
-                story.has_operation(operation),
-                "expected focused choice/search story `{name}` to declare `{}`",
-                operation.as_str()
-            );
-        }
+        assert!(story.has_operation(StoryProbeOperation::ReadPublicPayload));
+        assert!(!story.has_operation(StoryProbeOperation::Select));
+        assert!(!story.has_operation(StoryProbeOperation::Focus));
+        assert!(!story.has_operation(StoryProbeOperation::Open));
 
         assert_eq!(
             story.selectors().state_readout_selector(),

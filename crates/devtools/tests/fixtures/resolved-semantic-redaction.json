@@ -4,6 +4,7 @@
     {
       "semantic_id": "semantic-node-000000000000000b",
       "contract_id": "Field",
+      "contract_revision": 1,
       "family": "form",
       "role": "label",
       "text": {
@@ -16,6 +17,7 @@
     {
       "semantic_id": "semantic-node-000000000000000c",
       "contract_id": "Field",
+      "contract_revision": 1,
       "family": "form",
       "role": "label",
       "text": {
@@ -28,6 +30,7 @@
     {
       "semantic_id": "semantic-node-0000000000000014",
       "contract_id": "TextInput",
+      "contract_revision": 1,
       "family": "form",
       "role": "password-input",
       "text": {
@@ -40,6 +43,7 @@
     {
       "semantic_id": "semantic-node-0000000000000015",
       "contract_id": "TextInput",
+      "contract_revision": 1,
       "family": "form",
       "role": "text-input",
       "text": {
@@ -52,6 +56,7 @@
     {
       "semantic_id": "semantic-node-000000000000001e",
       "contract_id": "Textarea",
+      "contract_revision": 1,
       "family": "form",
       "role": "multiline-text-input",
       "text": {
@@ -64,6 +69,7 @@
     {
       "semantic_id": "semantic-node-0000000000000028",
       "contract_id": "Slider",
+      "contract_revision": 1,
       "family": "form",
       "role": "slider",
       "text": {
@@ -76,6 +82,7 @@
     {
       "semantic_id": "semantic-node-0000000000000032",
       "contract_id": "TextInput",
+      "contract_revision": 1,
       "family": "form",
       "role": "text-run",
       "text": {

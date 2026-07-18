@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use open_gpui_ui_components::{
-    ThemeContext, component_contract::component_contract_entry, gpui_adapter::WindowOverlaySnapshot,
+    ThemeContext,
+    component_contract::{ComponentContractMetadata, component_contract_metadata},
+    gpui_adapter::WindowOverlaySnapshot,
 };
 use open_gpui_ui_core::{Role, SemanticDescriptor};
 use serde::Serialize;
@@ -110,33 +112,39 @@ pub fn window_overlay_probe_snapshot(snapshot: &WindowOverlaySnapshot) -> Snapsh
 }
 
 /// Contract-owned identity attached to one resolved component semantic node.
-///
-/// Callers should source both fields from the canonical component contract row. They are product
-/// metadata, not accessible text, and are the only component strings accepted by this adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComponentSemanticIdentity {
-    contract_id: &'static str,
-    family: &'static str,
+    metadata: ComponentContractMetadata,
 }
 
 impl ComponentSemanticIdentity {
     /// Resolves an identity from the canonical component contract row.
     pub fn for_component(component: &str) -> Option<Self> {
-        let row = component_contract_entry(component)?;
-        Some(Self {
-            contract_id: row.name,
-            family: row.family?,
-        })
+        component_contract_metadata(component).map(Self::new)
+    }
+
+    const fn new(metadata: ComponentContractMetadata) -> Self {
+        Self { metadata }
+    }
+
+    /// Returns the canonical component product metadata.
+    pub const fn metadata(self) -> ComponentContractMetadata {
+        self.metadata
     }
 
     /// Returns the canonical component contract id.
     pub const fn contract_id(self) -> &'static str {
-        self.contract_id
+        self.metadata.id().as_str()
+    }
+
+    /// Returns the canonical component contract revision.
+    pub const fn contract_revision(self) -> u16 {
+        self.metadata.revision().value()
     }
 
     /// Returns the canonical component family.
     pub const fn family(self) -> &'static str {
-        self.family
+        self.metadata.family().as_str()
     }
 }
 
@@ -243,6 +251,7 @@ fn resolved_semantic_node<NodeId>(
         format!("{} semantic node", component.contract_id()),
         serde_json::json!({
             "contract_id": component.contract_id(),
+            "contract_revision": component.contract_revision(),
             "family": component.family(),
             "semantic_id": opaque_id,
             "role": debug_variant_label(semantics.role()),

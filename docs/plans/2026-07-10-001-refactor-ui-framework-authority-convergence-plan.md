@@ -933,7 +933,9 @@ The product surfaces already updated by U1-U10 are audited together, architectur
 - Audit runtime inspection against an allowlist contract: structured status/count/role/action/relation and opaque IDs only. Free-form form errors, accessible names/descriptions/value text, clipboard, input, and labels must already be typed redacted/summary markers before `DevtoolsCapture` construction.
 - Treat Table business/instance IDs, text group values, caller-owned table/column IDs, cell values, encoded identities, diagnostic labels, and debug selectors as sensitive source data. The DevTools adapter assigns non-reversible session-scoped opaque IDs and never persists their raw or merely formatted/hashed representation.
 - Cross-link the ADRs created with U3/U4, U5, U6, U7/U8, and U10; reaffirm ADR 0014's federated ownership rather than introducing a central manifest.
-- Reconcile ADR 0009 with the implemented grouped, expanded, and pinned Table stages, record the TanStack reference boundary, and explicitly retain its Table/Virtualizer ownership shape and existing motion ownership.
+- Audit the ADR 0009 reconciliation completed in U10 against the final Gallery/DevTools/release
+  surface; keep the recorded TanStack reference boundary, implemented grouped/expanded/pinned
+  stages, Table/Virtualizer ownership shape, and existing motion ownership accurate.
 - Consolidate and release-audit the callback, theme, overlay, accessibility, and conformance migration guidance already committed with their owning units.
 - Extend `xtask verify` so GPUI accessibility/focus tests and required DevTools features cannot be skipped by the main gate.
 

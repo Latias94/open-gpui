@@ -27,6 +27,7 @@ mod virtualization;
 
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::gpui_px_from_ui;
+use crate::public_api::declare_public_exports;
 use crate::scroll_surface::{
     handle_vertical_wheel_scroll, scroll_surface_handle, vertical_scroll_offset,
     vertical_viewport_extent,
@@ -46,11 +47,14 @@ pub use open_gpui_ui_core::{
 };
 use std::rc::Rc;
 
-pub use behavior::{
-    TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableColumnBehaviorSnapshot,
-    TableColumnRegionSnapshot, TableHeaderSummarySnapshot, TableRowBehaviorSnapshot,
-    TableRowCountSnapshot, TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
-};
+declare_public_exports! {
+    diagnostic TABLE_DIAGNOSTIC_EXPORTS;
+    behavior => {
+        TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableColumnBehaviorSnapshot,
+        TableColumnRegionSnapshot, TableHeaderSummarySnapshot, TableRowBehaviorSnapshot,
+        TableRowCountSnapshot, TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
+    },
+}
 use body::{TableBodyRenderInput, TableKeyboardDispatchContext, render_table_body};
 pub use column_visibility::{
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,

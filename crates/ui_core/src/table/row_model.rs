@@ -275,35 +275,7 @@ impl TableRowModelStage {
             Self::Final => "final",
         }
     }
-
-    /// Returns whether this stage belonged to the original v0 resolver subset.
-    pub const fn implemented_in_v0(self) -> bool {
-        matches!(
-            self,
-            Self::Core | Self::Filtered | Self::Sorted | Self::Paginated | Self::Final
-        )
-    }
 }
-
-/// Full row-model vocabulary order.
-pub const TABLE_ROW_MODEL_PIPELINE: [TableRowModelStage; 7] = [
-    TableRowModelStage::Core,
-    TableRowModelStage::Filtered,
-    TableRowModelStage::Grouped,
-    TableRowModelStage::Sorted,
-    TableRowModelStage::Expanded,
-    TableRowModelStage::Paginated,
-    TableRowModelStage::Final,
-];
-
-/// Original v0 row-model subset.
-pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
-    TableRowModelStage::Core,
-    TableRowModelStage::Filtered,
-    TableRowModelStage::Sorted,
-    TableRowModelStage::Paginated,
-    TableRowModelStage::Final,
-];
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct TableRowNode {

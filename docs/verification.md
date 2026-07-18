@@ -362,8 +362,8 @@ cargo test -p open-gpui-motion --doc --locked
 
 These gates cover key-based virtualized state, typed and custom-rendered rows, measured-row
 snapshots, typeahead, replacement-style range selection, sticky-section snapshot metadata,
-active-indicator motion demand/reduced-motion/offscreen behavior, public API inventory, and gallery
-scroll/keyboard containment.
+active-indicator motion demand/reduced-motion/offscreen behavior, typed public export ownership,
+and gallery scroll/keyboard containment.
 
 For current crate discovery, the normal-checkout user entry points are:
 
@@ -419,7 +419,8 @@ the gates aligned to the shared primitive boundary:
 cargo fmt --all -- --check
 cargo nextest run -p open-gpui-motion --no-fail-fast
 cargo check -p open-gpui-ui-core --tests
-cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
+cargo nextest run -p open-gpui-ui-components splitter --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
 cargo check -p open-gpui-docking-native
 git diff --check
@@ -663,11 +664,10 @@ The Table modules are now verified by ownership layer. `open-gpui-ui-core` owns 
 row-model, column, header, filtering, faceting, aggregation, sizing, selection, and virtualizer
 contracts. `open-gpui-ui-components` owns the `Table` facade, behavior snapshots, crate-private
 render-plan resolution, keyed runtime, header/body/cell/editor/resize element assembly, callback
-payloads, and public export inventory.
+payloads, and typed public export declarations.
 `open-gpui-ui-foundation-gallery` owns the end-to-end samples and scroll containment proofs. For a
 Table-only change, prefer the focused commands below before the full `xtask` gate; keep the public
-surface and gallery-conformance commands when moving code between modules so source-owner drift is
-detected early.
+surface and Gallery metadata commands when moving public paths so owner drift is detected early.
 
 ```powershell
 cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
@@ -678,20 +678,19 @@ cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
 cargo test -p open-gpui-ui-core -p open-gpui-ui-components --doc --locked
 cargo nextest run -p open-gpui-ui-foundation-gallery table
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata gallery_contract_metadata_matches_component_rows components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows components_gallery_smoke_predicate_filter_updates_table_rows components_gallery_smoke_column_visibility_updates_release_matrix components_gallery_smoke_resizable_table_resize_updates_sample components_gallery_smoke_grouped_table_column_reorder_updates_sample
 cargo nextest run -p open-gpui-ui-core numeric_range_filters_match_finite_number_cells_inclusively numeric_range_filters_normalize_open_and_reversed_bounds categorical_filters_match_exact_tokens_and_multiple_values
 cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test text_input --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows components_gallery_smoke_checkbox_table_cell_updates_sample_rows components_gallery_smoke_select_table_cell_updates_sample_rows components_gallery_smoke_multiline_table_cell_updates_sample_rows
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata gallery_contract_metadata_matches_component_rows components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows components_gallery_smoke_checkbox_table_cell_updates_sample_rows components_gallery_smoke_select_table_cell_updates_sample_rows components_gallery_smoke_multiline_table_cell_updates_sample_rows
 ```
 
 Key sentinels inside those binaries include
-`public_reexports_stay_explicit_without_wildcards`,
-`crate_root_and_prelude_exports_remain_explicit`,
-`table_public_exports_include_core_table_and_virtualizer_contracts`,
-`component_api_inventory_uses_stable_ownership_vocabulary`,
-`table_component_source_mapping_tracks_split_render_owners`,
+`row_model_pipeline_executes_each_stage_before_final_pinning_partition`,
+`official_components_match_typed_public_exports`,
+`common_extended_diagnostic_and_adapter_paths_compile`,
+`gallery_contract_metadata_matches_component_rows`,
 `table_range_filter_state_resolves_bounds_and_popover_contract`,
 `table_range_filter_change_updates_filters_and_resets_pagination`,
 `table_behavior_snapshot_exposes_faceting_metadata`,
@@ -810,40 +809,36 @@ separator items, and activates the focused item with Enter.
 
 The components package also includes low-state primitive coverage for Separator, Kbd, Progress,
 Skeleton, Avatar, AvatarGroup, and AvatarGroupCount. Those tests verify resolved state branches,
-explicit root/prelude exports, theme color intents, stable rendered debug selectors, decorative
+explicit root/common/prelude exports, theme color intents, stable rendered debug selectors, decorative
 separator semantics, progress clamping, indeterminate progress, Avatar fallback initials,
 explicit accessible labels, size metrics, `Role::Image`, group visible/hidden counts, overflow
 label state, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
-The public API inventory gate lives in `crates/ui_components/tests/public_surface.rs`. Its focused
-contract modules live under `crates/ui_components/tests/public_surface/`, while shared manifest
-projectors live in `crates/ui_components/tests/support/public_surface/mod.rs`. The product source
-of truth lives under `crates/ui_components/src/component_contract/`: `rows.rs` owns canonical
-contract rows, `projections.rs` owns row lookup and gallery-scope query APIs, `api_inventory.rs`
-owns public API inventory and method baselines, `surfaces.rs` owns adjacent public-surface rows,
-and `source_mapping.rs` owns source-owner projections. Tests and gallery consume those typed contract rows instead of reading gallery
-source strings for shipped status. The component crate root and prelude both re-export the curated default surface from
-`crates/ui_components/src/public_api/default.rs`; GPUI runtime adapter helpers remain explicitly
-namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
-`component_api_inventory_covers_official_gallery_catalog`,
-`component_api_inventory_uses_stable_ownership_vocabulary`, and
-`component_contract_entry_returns_canonical_rows`,
-`component_contract_queries_derive_overlay_and_recipe_rows`,
-`component_contract_rows_are_split_by_responsibility`, and
-`root_and_prelude_exports_match_contract_default_surface_intent`. Run the focused proof with:
+The public component gate is federated. `component_contract/rows/catalog.rs` owns only the 48
+official ids, revisions, families, and required scenario ids. `public_api/common.rs`,
+`public_api/default.rs`, and `table/mod.rs` generate typed export facts from their own `pub use`
+declarations. Components/Overlay Gallery catalogs own selectors and Story probes, DevTools owns its
+immutable metadata projection, and each native target owns a sibling `*.scenarios.toml` artifact.
+No shared test manifest or method/source inventory mirrors those owners.
+
+The focused compile/runtime proof is:
 
 ```sh
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+cargo test --locked -p open-gpui-ui-components --doc
 ```
 
-That gate checks that every contract-official component has a matching API inventory row, that
-overlay families are explicitly listed, that public method baselines catch top-level builder
-drift, that render/controlled/default/policy vocabulary stays consistent, that root/prelude
-default exports match contract intent, and that renderer-neutral resolved state remains free of
-GPUI runtime types. The same public-surface tests keep prelude-only conveniences limited to the
-documented allowlist and require command/core infrastructure examples to import from
-`open_gpui_command` or `open_gpui_ui_core` directly.
+`official_components_match_typed_public_exports` checks every product id against common/default
+exports, keeps typed diagnostic facts disjoint from those surfaces, and anchors
+`TableBehaviorSnapshot` to the explicit Table diagnostic owner while preserving
+`TableVirtualizerSnapshot` as a default restoration input. The compile witness checks root, common,
+prelude, explicit Table diagnostic, and GPUI adapter paths. Same-declaration compile-fail doctests
+check every diagnostic export against the actual root, common, and prelude facades; a hand-written
+leak makes the corresponding doctest compile unexpectedly and fail. `scan-ui-contract` validates
+typed export owner/tier/duplicate facts, docs projection drift, invalid/duplicate scenario bindings,
+filter-expression injection, and removed central-authority residue, then runs every registered exact
+nextest coordinate.
 
 The v0.3 public API freeze also has a workspace-level tier gate:
 
@@ -924,12 +919,12 @@ Command runtime tests remain the negative gate for editor-owned query input.
 The foundation component family gate covers the shipped disclosure, numeric, navigation, display,
 action, and feedback additions: Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link,
 Breadcrumb, Tag, and ToastStack. These tests keep one canonical API per family, explicit
-root/prelude exports, ownership vocabulary, resolved-state purity, official catalog metadata, and
+root/common/prelude exports, ownership vocabulary, resolved-state purity, official catalog metadata, and
 focused Components-page rendering aligned:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components --test public_surface --test form --test navigation --test primitives --test theme --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_focuses_every_focusable_catalog_entry components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
+cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery -E 'test(gallery_contract_metadata_matches_component_rows) | test(gallery_story_contracts_derive_selectors_and_runtime_probes_from_gallery_owners) | test(components_gallery_smoke_focuses_every_focusable_catalog_entry) | test(components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation)'
 ```
 
 The choice and runtime seams are guarded separately: `choice.rs` owns stable-value matching for
@@ -938,26 +933,28 @@ choice models; `collection_typeahead.rs` privately owns collection input timing 
 instance-local menu typeahead alongside submenu hover timing and local scroll state. Editable
 Command and Combobox queries remain owned by their text-input controllers.
 Feedback coverage now promotes `StatusCue` and `EmptyState` as official rendered Components
-catalog entries. The focused component tests verify root/prelude exports, feedback intent labels,
+catalog entries. The focused component tests verify root/common/prelude exports, feedback intent labels,
 resolved roles, metrics, and theme color intents. The gallery metadata tests require their
 component/state `SIGNALS` entries and stable `gallery:component-status-cue-sample:{id}` /
 `gallery:component-empty-state-sample:{id}` selectors, while the short-viewport smoke verifies the
 real `status-cue:*:root` and `empty-state:*:root` debug selectors render.
-`official_component_catalog_entries_have_signals_and_sample_selectors` is the gallery contract
-gate for catalog drift: every official `COMPONENT_CATALOG` entry must have matching component and
-resolved-state `SIGNALS` entries plus one rendered `gallery:component-*-sample:{id}` selector in
-the Components page.
-`gallery_story_contracts_cover_components_state_readouts_and_overlays` is the story-probe contract
-gate. It requires official component samples, renderer-neutral state readouts, and overlay samples
-to expose a reusable `StoryContract` with public selectors and user-observable probe operations:
+`official_components_match_typed_public_exports` is the public-owner gate for canonical component
+rows and their root/common/prelude exports. `gallery_contract_metadata_matches_component_rows` is
+the Gallery metadata gate: official Components and Overlay rows must project the exact canonical
+id, revision, and family, while Gallery-local adapter/anatomy/state rows carry no product metadata.
+`gallery_story_contracts_derive_selectors_and_runtime_probes_from_gallery_owners` is the
+story-probe contract gate. It requires official component samples, renderer-neutral state readouts,
+and overlay samples to expose a reusable `StoryContract` with truthful public selectors and
+user-observable probe operations:
 open, dismiss, select, edit, scroll, focus, activate, and read-public-payload. Gallery smokes should
 prefer `component_story_contract_for(name)` and `component_story_contracts_for_focus(mode)` before
 falling back to raw debug selectors for adapter-internal details. The official sample selector
 pairs and state readout selector pairs are derived from those story contracts so focused catalog
 traversal and selector metadata stay aligned.
-`state_contract_catalog_entries_have_signals_and_readout_selectors` is the companion pre-renderer
-contract gate. Entries marked `state-contract` must declare `state_contract_selector`, must not
-declare official `sample_selector`, and must stay disjoint from `official_sample_selector_pairs`.
+`gallery_story_contracts_derive_selectors_and_runtime_probes_from_gallery_owners` also guards the
+pre-renderer state-contract boundary. Gallery-local `state-contract` entries declare a
+`state_contract_selector`, do not declare an official `sample_selector`, and stay disjoint from
+`official_sample_selector_pairs`.
 The current state contracts are `TreeState` and `VirtualizedListState`; their signals cover state,
 descriptor, action/result, helper, and payload types. `TreeState` remains a reusable hierarchy
 contract even though `Tree` is now an official rendered component, matching the
@@ -1187,8 +1184,8 @@ until live placement measurement is wired into that placement path.
 For GPUI runtime focus assertions, `VisualTestContext::debug_selector_is_focused` and
 `VisualTestContext::focused_debug_selector` are the preferred test hooks. They use test-only
 debug-selector-to-focus-handle data and keep focus checks independent from component internals.
-The public surface manifest keeps adapter-only, renderer-neutral state, primitive, gallery, and
-docs ownership explicit while the UI component architecture is being deepened. Table, Tree,
+The federated component contract keeps adapter-only, renderer-neutral state, primitive, Gallery,
+and docs ownership explicit without copying those facts into one row. Table, Tree,
 VirtualizedList, and Command expose behavior snapshots or state readouts; renderer assembly plans
 stay crate-private unless a future component deliberately promotes a narrower state contract.
 For the UI architecture deepening refactor, keep the focused gates below close to the code that
@@ -1258,42 +1255,36 @@ rg -n "ThemeRuntime|ThemeResolver::current\(cx\)" crates/ui_components/src examp
 git diff --check
 ```
 
-For the contract-backed family-boundary refactor, run the focused ownership gates whenever
-`component_contract` source mappings or the Menu, ContextMenu, Tree, or Table behavior owners move:
+For public export, Gallery metadata, native scenario, or Table diagnostic owner changes, run:
 
 ```powershell
-cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
-cargo check -p open-gpui-ui-components --tests
-cargo check -p open-gpui-ui-foundation-gallery --tests
-cargo nextest run -p open-gpui-ui-components public_surface --no-fail-fast
-cargo nextest run -p open-gpui-ui-components menu --no-fail-fast
-cargo nextest run -p open-gpui-ui-components context_menu --no-fail-fast
-cargo nextest run -p open-gpui-ui-components tree --no-fail-fast
-cargo nextest run -p open-gpui-ui-components table --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery overlay --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery tree --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery table --no-fail-fast
+cargo fmt --all -- --check
+cargo check --locked -p open-gpui-ui-components -p xtask --tests
+cargo nextest run --locked -p xtask --lib
+cargo nextest run --locked -p open-gpui-ui-components --test public_surface --test table --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery component_catalog_contracts::gallery_contract_metadata_matches_component_rows --no-fail-fast
+cargo run --locked -p xtask -- scan-ui-contract
 ```
 
 For component contract, a11y, gallery conformance, and theme productization work, start from the
 reusable UI contract audit before dropping to focused behavior tests:
 
 ```powershell
-cargo run -p xtask -- scan-ui-contract
+cargo run --locked -p xtask -- scan-ui-contract
 cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
 cargo check -p open-gpui-ui-components --tests
 cargo check -p open-gpui-ui-foundation-gallery --tests
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
 cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery component_catalog_contracts::gallery_contract_metadata_matches_component_rows --no-fail-fast
 ```
 
-`scan-ui-contract` checks the component contract tables, default root/prelude exports, source
-homes, docs tokens, removed primitive targets, Gallery conformance metadata, and the committed
-theme schema artifact. Semantic behavior is verified at the final `TreeUpdate` and real AccessKit
-action boundary rather than inferred from static claim rows.
+`scan-ui-contract` checks narrow component rows, same-declaration public export facts, the exact docs
+projection, Gallery canonical metadata, test-owned scenario artifacts, and removed
+central-authority residue. It executes every registered exact test coordinate, including the
+final-tree and real AccessKit action scenarios that verify semantic assembly instead of inferring it
+from static claim rows.
 Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.
@@ -1307,12 +1298,12 @@ cargo nextest run -p open-gpui-ui-foundation-gallery --no-fail-fast
 ```
 
 The Components gallery root keeps `runtime`, `samples`, and render ownership private. Stable
-gallery API names are re-exported explicitly from `components.rs`; sample families live under
+Gallery API names are re-exported explicitly from `components.rs`; sample families live under
 `examples/ui-foundation-gallery/src/pages/components/samples/`, runtime probes under
 `examples/ui-foundation-gallery/src/pages/components/runtime/`, and render orchestration/readouts
-under `examples/ui-foundation-gallery/src/pages/components/render/`. Source-contract tests should
-reject `pub mod runtime`, `pub mod samples`, `pub use runtime::*`, and `pub use samples::*` in the
-Components facade.
+under `examples/ui-foundation-gallery/src/pages/components/render/`. Runtime catalog/Story tests
+verify canonical metadata, selectors, probes, and focused-section behavior without parsing Rust
+source text.
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
@@ -1328,28 +1319,22 @@ cargo nextest run -p open-gpui-ui-foundation-gallery --no-fail-fast
 ```
 
 The binary-level gates above include these focused sentinels:
-`primitive_deletion_target_inventory_blocks_removed_shallow_reexports`,
-`primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases`,
-`surface_manifest_classifies_public_surface_once`,
-`surface_manifest_aligns_adjacent_gallery_statuses`,
-`surface_manifest_tracks_exports_gallery_and_docs_contracts`,
-`adapter_only_public_surfaces_match_allowlist`,
-`gpui_adapter_exports_group_runtime_specific_surfaces`,
+`official_components_match_typed_public_exports`,
+`common_extended_diagnostic_and_adapter_paths_compile`,
+`scenario_declarations_reject_duplicate_contracts_and_filter_expressions`,
+`scenario_validator_reports_missing_duplicate_unknown_and_owner_drift`,
+`scenario_validator_rejects_reused_executable_coordinates`,
 `overlay_open_change_helpers_match_core_policies`,
 `dialog_runtime_respects_escape_policy_and_restores_trigger_focus`,
 `choice_surfaces_share_stable_value_resolution_and_query_normalization`,
-`table_component_source_mapping_tracks_split_render_owners`, `row_window`,
-`command_component_source_mapping_tracks_split_owners`,
+`row_model_pipeline_executes_each_stage_before_final_pinning_partition`, `row_window`,
 `virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_contracts`,
 `virtualized_list_behavior_snapshot_applies_builder_metrics`,
 `table_behavior_snapshot_exposes_center_column_summary_without_window_internals`,
 `table_behavior_snapshot_exposes_pinned_column_regions`, `theme_registry`, `theme_resolver`,
-`theme_snapshots`, `components_catalog_metadata_is_separate_from_rendering`,
-`components_catalog_consumes_component_contract_rows`,
-`official_component_catalog_entries_have_signals_and_sample_selectors`,
-`state_contract_catalog_entries_have_signals_and_readout_selectors`,
-`gallery_story_contracts_cover_components_state_readouts_and_overlays`,
-`choice_search_story_contracts_expose_state_readouts_and_contract_rows`,
+`theme_snapshots`, `gallery_contract_metadata_matches_component_rows`,
+`gallery_story_contracts_derive_selectors_and_runtime_probes_from_gallery_owners`,
+`choice_search_story_contracts_expose_state_readouts_and_product_metadata`,
 `components_gallery_smoke_focused_choice_search_state_readouts_render`,
 `components_gallery_smoke_focuses_catalog_family_and_restores_all_mode`, and
 `components_gallery_smoke_focuses_every_focusable_catalog_entry`.
@@ -1376,14 +1361,16 @@ no UI-core source references to `open_gpui`, and no `UiPx` conversion impls for 
 Adaptive policies accept neutral `UiPx` thresholds and inputs instead of GPUI `Pixels`; GPUI
 callers should convert their concrete window or viewport width at the adapter boundary before
 invoking UI-core adaptive helpers. The companion strict-boundary inventory must stay empty.
-`adapter_only_public_surfaces_match_allowlist` and
-`gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
-surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`,
-`GpuiOverlayState`, the adapter accessibility/geometry conversions, and related adapter scheduling
-helpers must stay classified under
-`open_gpui_ui_components::gpui_adapter` instead of drifting into the crate root, prelude default
-interface, or resolved state. `FocusRing` itself uses neutral `UiPx`; only the GPUI focus-ring
-shadow helper returns `BoxShadow`, and production render paths should use the explicit-theme helper.
+The public-surface compile witness keeps the intentionally public GPUI helper paths usable:
+`TextInputController`, `FieldControl`, `UiA11yElementExt`, `VirtualizedListGpuiExt`, externally
+supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, `GpuiOverlayState`,
+accessibility/geometry conversions, and adapter scheduling helpers remain supported under
+`open_gpui_ui_components::gpui_adapter`. The typed common-tier gate rejects registering its named
+adapter-only surfaces as common exports; it does not infer helper ownership from Rust source text.
+Any deliberate root or prelude projection is therefore an explicit public-API change that must move
+into the same-declaration tier authority and its compile gates.
+`FocusRing` itself uses neutral `UiPx`; only the GPUI focus-ring shadow helper returns `BoxShadow`,
+and production render paths should use the explicit-theme helper.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

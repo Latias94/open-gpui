@@ -1,0 +1,6 @@
+schema = 1
+
+[[scenario]]
+id = "public-api.component-contract.exports"
+contracts = ["*"]
+test = "public_surface::contract::official_components_match_typed_public_exports"

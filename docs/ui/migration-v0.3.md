@@ -319,6 +319,37 @@ disabled Sidebars bind handles as blocked rather than dispatching or selecting a
 Duplicate section and item selectors likewise carry an opaque current-snapshot suffix so a stale
 selector, AccessKit node id, or activation state key cannot silently retarget after reorder.
 
+## Federated Component Contract Authority
+
+The component product table now owns only official id, revision, family, and required scenario ids.
+The former API inventory, source mapping, public-surface owner map, Gallery/docs status rows,
+accessibility evidence rows, and central conformance gates are deleted without compatibility
+aliases. Use `ComponentContractEntry` / `ComponentContractMetadata` for product identity and use the
+natural owner for every downstream fact:
+
+- public exports are declared together with typed `PublicApiExport` facts;
+- Components and Overlay Gallery rows own presentation status, selectors, and Story probes;
+- native integration targets own exact coordinates in sibling `*.scenarios.toml` artifacts;
+- DevTools semantic payloads carry `contract_id`, `contract_revision`, and `family` from canonical
+  metadata;
+- `scan-ui-contract` joins and executes these owners but is not another registry.
+
+`ComponentContractEntry` is now immutable canonical metadata rather than a public struct-literal
+inventory row. Replace `entry.name` with `entry.id().as_str()`, `entry.family: Option<_>` with
+`entry.family().as_str()`, and read the new `entry.revision()` and
+`entry.required_scenarios()` projections. Owner, Gallery/docs status, export, and source fields have
+no replacement on this row; query their natural owners instead.
+
+Delete imports of `CallbackApi`, `DefaultSeedApi`, `ComponentApiInventoryEntry`,
+`ComponentA11yEvidence`, `ComponentConformanceGate`, `PublicSurfaceOwnerClass`,
+`PublicSurfaceOwnerEntry`, `SurfaceGalleryStatus`, and `SurfaceDocsStatus`. Also delete uses of
+`COMPONENT_API_INVENTORY`, `COMPONENT_A11Y_EVIDENCE`, `COMPONENT_CONFORMANCE_GATES`,
+`PUBLIC_SURFACE_OWNER_MAP`, `component_public_methods`, `component_render_inputs`,
+`public_owner_for_component_inventory`, `component_recipe_component_rows`,
+`default_surface_rows`, `gallery_surface_rows`, `official_component_rows`,
+`official_overlay_component_rows`, and `component_source_inputs`. These APIs have no aliases or
+method/source manifest replacement; inspect the owning Rust API and use executable tests.
+
 ## Accessibility Semantic Projection
 
 Official semantic producers now derive an ephemeral `SemanticDescriptor` from their resolved
@@ -367,6 +398,28 @@ the actual GPUI element path. Standalone `Label` remains a visible-text semantic
 `FieldState::control_id()` is removed; the composed control continues to own its own element id.
 Custom field controls implement `open_gpui_ui_components::gpui_adapter::FieldControl` rather than
 depending on the renderer-neutral prelude.
+
+### Table Public Paths
+
+Table restoration inputs remain common application APIs, while diagnostic readouts now require
+their owner modules:
+
+| Removed v0.2 import | v0.3 import |
+| --- | --- |
+| `open_gpui_ui_components::TableBehaviorSnapshot` and companion behavior snapshot types | `open_gpui_ui_components::table::TableBehaviorSnapshot` and the named companion types in `open_gpui_ui_components::table` |
+| `open_gpui_ui_components::common::TableBehaviorSnapshot` and companions | Import the explicit `open_gpui_ui_components::table` types; they are not common-facade APIs |
+| `open_gpui_ui_components::prelude::TableBehaviorSnapshot` and companions | Import the explicit `open_gpui_ui_components::table` types; they are not prelude APIs |
+| `open_gpui_ui_core::TableStateCacheKey` or `open_gpui_ui_core::table::prelude::TableStateCacheKey` | `open_gpui_ui_core::table::TableStateCacheKey` |
+
+`Table` and `TableVirtualizerSnapshot` remain available from the component root/common prelude.
+`TableState`, row-model inputs, and the Table engine remain under `open_gpui_ui_core`; no behavior
+contract was deleted merely to narrow an import path.
+
+`TABLE_ROW_MODEL_PIPELINE`, `TABLE_ROW_MODEL_V0_PIPELINE`, and
+`TableRowModelStage::implemented_in_v0` were deleted without aliases because they only restated a
+version label. Use `TableResolvedState::{core_model, filtered_model, grouped_model, sorted_model,
+expanded_model, paginated_model, final_model}` when code needs executable stage output, and use
+`TableRowModelStage::as_str()` only for a stable label.
 
 ### Table Logical Identity
 

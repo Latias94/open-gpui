@@ -46,7 +46,6 @@ const COMPONENT_PAGE_RENDER_SECTION_IDS: &[&str] = &[
     "foundation-components",
     "state-contracts",
     "ecosystem-adapters",
-    "gates",
     "sidebar",
     "tree",
     "toolbar",

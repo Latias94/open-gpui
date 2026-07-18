@@ -264,11 +264,3 @@ fn opaque_stable_id_is_deterministic_without_retaining_source_text() {
     assert!(!first.contains("violet"));
     assert!(!first.contains("meadow"));
 }
-
-#[test]
-fn adapter_payload_module_stays_private_implementation_detail() {
-    let source = include_str!("../src/adapters/mod.rs");
-
-    assert!(source.contains("mod payload;"));
-    assert!(!source.contains("pub mod payload;"));
-}

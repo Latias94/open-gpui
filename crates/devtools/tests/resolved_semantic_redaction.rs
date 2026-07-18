@@ -13,7 +13,9 @@ use open_gpui_devtools::{
         resolved_semantics_probe_snapshot,
     },
 };
-use open_gpui_ui_components::{FieldState, TextInputState, TextareaState};
+use open_gpui_ui_components::{
+    FieldState, TextInputState, TextareaState, component_contract::component_contract_metadata,
+};
 use open_gpui_ui_core::{
     AccessibleAction, AccessibleTextPosition, AccessibleTextSelection, Role, SemanticDescriptor,
     Size, ThemeTokens,
@@ -46,6 +48,23 @@ fn resolved_semantic_canaries_never_cross_any_devtools_artifact_boundary() {
     let actual_fixture_value = resolved_semantic_fixture_value(&fixture_snapshot);
     assert_eq!(actual_fixture_value, fixture_value);
     assert_eq!(fixture_snapshot.redaction().redacted_values, 11);
+    assert!(ComponentSemanticIdentity::for_component("NotAComponent").is_none());
+    for node in &fixture_snapshot.tree().nodes[0].children {
+        let payload = node.payload.as_ref().expect("resolved semantic payload");
+        let contract_id = payload["contract_id"]
+            .as_str()
+            .expect("resolved semantic contract id");
+        let metadata = component_contract_metadata(contract_id)
+            .expect("resolved semantic identity must come from a canonical contract row");
+        assert_eq!(
+            payload["contract_revision"],
+            serde_json::json!(metadata.revision().value())
+        );
+        assert_eq!(
+            payload["family"],
+            serde_json::json!(metadata.family().as_str())
+        );
+    }
 
     let password_payload = fixture_snapshot.tree().nodes[0].children[2]
         .payload
@@ -204,6 +223,7 @@ fn resolved_semantic_canaries_never_cross_any_devtools_artifact_boundary() {
     assert!(capture_json.contains("\"contract_id\":\"TextInput\""));
     assert!(capture_json.contains("\"contract_id\":\"Textarea\""));
     assert!(capture_json.contains("\"contract_id\":\"Field\""));
+    assert!(capture_json.contains("\"contract_revision\":1"));
     assert!(capture_json.contains("\"family\":\"form\""));
     assert!(capture_json.contains("\"kind\":\"redacted\""));
     assert!(capture_json.contains("\"kind\":\"password-redacted\""));
@@ -222,6 +242,7 @@ fn resolved_semantic_fixture_value(
             serde_json::json!({
                 "semantic_id": payload["semantic_id"],
                 "contract_id": payload["contract_id"],
+                "contract_revision": payload["contract_revision"],
                 "family": payload["family"],
                 "role": payload["role"],
                 "text": payload["text"],

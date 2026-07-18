@@ -8436,6 +8436,7 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "open-gpui-devtools",
+ "open-gpui-ui-components",
  "serde",
  "serde_json",
  "syn",

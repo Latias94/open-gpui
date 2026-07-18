@@ -6,8 +6,7 @@ use open_gpui_command::{
     CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome, CommandProviderState,
 };
 use open_gpui_ui_components::component_contract::{
-    SurfaceDocsStatus, SurfaceGalleryStatus, component_contract_entry, gallery_surface_rows,
-    official_component_rows,
+    COMPONENT_CONTRACT_ROWS, component_contract_entry,
 };
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
@@ -366,7 +365,7 @@ impl<'a> StoryRuntimeProbe<'a> {
         press_escape(self.cx);
     }
 
-    fn assert_story_can(&self, story: &StoryContract, operation: StoryProbeOperation) {
+    fn assert_story_declares(&self, story: &StoryContract, operation: StoryProbeOperation) {
         assert!(
             story.has_operation(operation),
             "story `{}` should declare `{}` probe support",

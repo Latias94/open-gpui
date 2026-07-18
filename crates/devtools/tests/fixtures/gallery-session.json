@@ -261,6 +261,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000001001",
                               "role": "text-input",
@@ -358,6 +359,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002001",
                               "role": "label",
@@ -436,6 +438,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002003",
                               "role": "label",
@@ -514,6 +517,7 @@
                             "label": "Textarea semantic node",
                             "payload": {
                               "contract_id": "Textarea",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002004",
                               "role": "multiline-text-input",
@@ -610,6 +614,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000003001",
                               "role": "password-input",
@@ -2065,6 +2070,7 @@
                           "label": "TextInput semantic node",
                           "payload": {
                             "contract_id": "TextInput",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000001001",
                             "role": "text-input",
@@ -2162,6 +2168,7 @@
                           "label": "Field semantic node",
                           "payload": {
                             "contract_id": "Field",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000002001",
                             "role": "label",
@@ -2240,6 +2247,7 @@
                           "label": "Field semantic node",
                           "payload": {
                             "contract_id": "Field",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000002003",
                             "role": "label",
@@ -2318,6 +2326,7 @@
                           "label": "Textarea semantic node",
                           "payload": {
                             "contract_id": "Textarea",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000002004",
                             "role": "multiline-text-input",
@@ -2414,6 +2423,7 @@
                           "label": "TextInput semantic node",
                           "payload": {
                             "contract_id": "TextInput",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000003001",
                             "role": "password-input",
@@ -3866,6 +3876,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000001001",
                               "role": "text-input",
@@ -3963,6 +3974,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002001",
                               "role": "label",
@@ -4041,6 +4053,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002002",
                               "role": "label",
@@ -4119,6 +4132,7 @@
                             "label": "Textarea semantic node",
                             "payload": {
                               "contract_id": "Textarea",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002004",
                               "role": "multiline-text-input",
@@ -4215,6 +4229,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000003001",
                               "role": "password-input",
@@ -5670,6 +5685,7 @@
                           "label": "TextInput semantic node",
                           "payload": {
                             "contract_id": "TextInput",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000001001",
                             "role": "text-input",
@@ -5767,6 +5783,7 @@
                           "label": "Field semantic node",
                           "payload": {
                             "contract_id": "Field",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000002001",
                             "role": "label",
@@ -5845,6 +5862,7 @@
                           "label": "Field semantic node",
                           "payload": {
                             "contract_id": "Field",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000002002",
                             "role": "label",
@@ -5923,6 +5941,7 @@
                           "label": "Textarea semantic node",
                           "payload": {
                             "contract_id": "Textarea",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000002004",
                             "role": "multiline-text-input",
@@ -6019,6 +6038,7 @@
                           "label": "TextInput semantic node",
                           "payload": {
                             "contract_id": "TextInput",
+                            "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000003001",
                             "role": "password-input",
@@ -7770,6 +7790,7 @@
                               "label": "TextInput semantic node",
                               "payload": {
                                 "contract_id": "TextInput",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000001001",
                                 "role": "text-input",
@@ -7867,6 +7888,7 @@
                               "label": "Field semantic node",
                               "payload": {
                                 "contract_id": "Field",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000002001",
                                 "role": "label",
@@ -7945,6 +7967,7 @@
                               "label": "Field semantic node",
                               "payload": {
                                 "contract_id": "Field",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000002003",
                                 "role": "label",
@@ -8023,6 +8046,7 @@
                               "label": "Textarea semantic node",
                               "payload": {
                                 "contract_id": "Textarea",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000002004",
                                 "role": "multiline-text-input",
@@ -8119,6 +8143,7 @@
                               "label": "TextInput semantic node",
                               "payload": {
                                 "contract_id": "TextInput",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000003001",
                                 "role": "password-input",
@@ -8264,6 +8289,7 @@
                               "label": "TextInput semantic node",
                               "payload": {
                                 "contract_id": "TextInput",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000001001",
                                 "role": "text-input",
@@ -8361,6 +8387,7 @@
                               "label": "Field semantic node",
                               "payload": {
                                 "contract_id": "Field",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000002001",
                                 "role": "label",
@@ -8439,6 +8466,7 @@
                               "label": "Field semantic node",
                               "payload": {
                                 "contract_id": "Field",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000002002",
                                 "role": "label",
@@ -8517,6 +8545,7 @@
                               "label": "Textarea semantic node",
                               "payload": {
                                 "contract_id": "Textarea",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000002004",
                                 "role": "multiline-text-input",
@@ -8613,6 +8642,7 @@
                               "label": "TextInput semantic node",
                               "payload": {
                                 "contract_id": "TextInput",
+                                "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000003001",
                                 "role": "password-input",
@@ -11493,6 +11523,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000001001",
                               "role": "text-input",
@@ -11590,6 +11621,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002001",
                               "role": "label",
@@ -11668,6 +11700,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002003",
                               "role": "label",
@@ -11746,6 +11779,7 @@
                             "label": "Textarea semantic node",
                             "payload": {
                               "contract_id": "Textarea",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002004",
                               "role": "multiline-text-input",
@@ -11842,6 +11876,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000003001",
                               "role": "password-input",
@@ -11974,6 +12009,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000001001",
                               "role": "text-input",
@@ -12071,6 +12107,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002001",
                               "role": "label",
@@ -12149,6 +12186,7 @@
                             "label": "Field semantic node",
                             "payload": {
                               "contract_id": "Field",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002002",
                               "role": "label",
@@ -12227,6 +12265,7 @@
                             "label": "Textarea semantic node",
                             "payload": {
                               "contract_id": "Textarea",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002004",
                               "role": "multiline-text-input",
@@ -12323,6 +12362,7 @@
                             "label": "TextInput semantic node",
                             "payload": {
                               "contract_id": "TextInput",
+                              "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000003001",
                               "role": "password-input",

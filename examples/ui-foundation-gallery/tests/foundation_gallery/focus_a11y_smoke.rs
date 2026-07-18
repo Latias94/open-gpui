@@ -234,8 +234,8 @@ fn focus_a11y_text_input_dispatches_set_value_and_selection_on_the_same_final_no
     let story = focus_a11y_story("text-input-value-selection");
     {
         let mut probe = StoryRuntimeProbe::new(cx);
-        probe.assert_story_can(&story, StoryProbeOperation::Edit);
-        probe.assert_story_can(&story, StoryProbeOperation::Focus);
+        probe.assert_story_declares(&story, StoryProbeOperation::Edit);
+        probe.assert_story_declares(&story, StoryProbeOperation::Focus);
         let selector = story
             .selectors()
             .sample_selector()
@@ -307,7 +307,7 @@ fn focus_a11y_textarea_field_switches_help_and_error_relations_on_the_same_final
         .expect("Textarea Field story should own its transition control");
     {
         let mut probe = StoryRuntimeProbe::new(cx);
-        probe.assert_story_can(&story, StoryProbeOperation::Activate);
+        probe.assert_story_declares(&story, StoryProbeOperation::Activate);
         probe.scroll_page_to(control_selector);
         probe.assert_rendered(control_selector, "Textarea Field relation toggle");
     }
@@ -377,7 +377,7 @@ fn focus_a11y_password_set_value_never_exposes_accessible_free_text(
     let story = focus_a11y_story("password-free-text-redaction");
     {
         let mut probe = StoryRuntimeProbe::new(cx);
-        probe.assert_story_can(&story, StoryProbeOperation::Edit);
+        probe.assert_story_declares(&story, StoryProbeOperation::Edit);
         let selector = story
             .selectors()
             .sample_selector()

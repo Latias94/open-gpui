@@ -38,9 +38,9 @@ fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui
         .expect("Popover story should declare a surface selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
-    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Focus);
     probe.scroll_page_to(trigger);
     probe.click(trigger);
     probe.settle();
@@ -78,9 +78,9 @@ fn overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled(
         .expect("Tooltip story should declare a surface selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
-    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Focus);
     probe.scroll_page_to(hover_trigger);
     probe.move_mouse_to(hover_trigger);
     probe.assert_rendered(hover_content, "hover-opened Tooltip content");
@@ -139,8 +139,8 @@ fn overlay_gallery_smoke_keeps_hover_card_open_on_outside_press_and_dismisses_on
         .expect("HoverCard story should declare a surface selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
     probe.scroll_page_to(trigger);
     probe.click(trigger);
     probe.settle();
@@ -176,8 +176,8 @@ fn overlay_gallery_smoke_toggles_hover_card_from_control_surface(
         .expect("HoverCard story should declare a surface selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
     probe.scroll_page_to(control);
     probe.click(control);
     probe.settle();
@@ -204,9 +204,9 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
     let layer = "dialog:overlay-dialog-demo:controlled-modal:layer";
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
-    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Focus);
     probe.scroll_page_to(trigger);
     probe.click(trigger);
     probe.settle();
@@ -296,10 +296,10 @@ fn overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape(
     let action = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:action";
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
-    probe.assert_story_can(&story, StoryProbeOperation::Activate);
-    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Activate);
+    probe.assert_story_declares(&story, StoryProbeOperation::Focus);
     probe.scroll_page_to(trigger);
     probe.click(trigger);
     probe.settle();
@@ -335,8 +335,8 @@ fn overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press(
         .expect("Sheet story should declare a surface selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
     probe.scroll_page_to(trigger);
     probe.click(trigger);
     probe.assert_rendered(surface, "opened Sheet surface");
@@ -363,8 +363,8 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
         .expect("Menu story should declare a surface selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
     probe.scroll_page_to(trigger);
     probe.click(trigger);
     probe.settle();
@@ -567,8 +567,8 @@ fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
         .expect("ContextMenu story should declare a surface selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
-    probe.assert_story_can(&story, StoryProbeOperation::Open);
-    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_declares(&story, StoryProbeOperation::Open);
+    probe.assert_story_declares(&story, StoryProbeOperation::Dismiss);
     probe.scroll_page_to(hotspot);
     probe.right_click(hotspot);
     probe.assert_rendered(surface, "right-click opened ContextMenu surface");

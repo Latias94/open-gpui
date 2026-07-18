@@ -1,0 +1,6 @@
+schema = 1
+
+[[scenario]]
+id = "a11y.table.final-tree-identity"
+contracts = ["Table"]
+test = "accessibility::table_runtime_final_accessibility_tree"

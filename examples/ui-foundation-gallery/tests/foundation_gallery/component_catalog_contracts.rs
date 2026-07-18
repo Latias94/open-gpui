@@ -4,7 +4,6 @@ use super::*;
 fn components_page_samples_expose_component_metadata() {
     let tokens = ThemeTokens::default();
     let catalog = pages::components::COMPONENT_CATALOG;
-    let gates = pages::components::COMPONENT_CONFORMANCE_GATES;
     let buttons = pages::components::button_samples(tokens);
     let badges = pages::components::badge_samples(tokens);
     let accordions = pages::components::accordion_samples(tokens);
@@ -50,8 +49,10 @@ fn components_page_samples_expose_component_metadata() {
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
         .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
-    let expected_official_names = official_component_rows()
-        .map(|entry| entry.name)
+    let expected_official_names = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.family().as_str() != "overlay")
+        .map(|entry| entry.id().as_str())
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         official_names, expected_official_names,
@@ -111,99 +112,6 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::StateContract)
             .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
-    );
-
-    assert_eq!(gates.len(), 12);
-    assert_eq!(gates[0].id, "public-api-exports");
-    assert!(
-        gates[0]
-            .evidence
-            .contains(&"crates/ui_components/src/component_contract/rows.rs")
-    );
-    assert!(
-        gates[0]
-            .evidence
-            .contains(&"crates/ui_components/src/component_contract/projections.rs")
-    );
-    assert!(
-        gates[0]
-            .evidence
-            .contains(&"crates/ui_components/src/component_contract/api_inventory.rs")
-    );
-    assert!(
-        gates[0]
-            .evidence
-            .contains(&"crates/ui_components/src/lib.rs")
-    );
-    assert!(
-        gates.iter().any(|gate| {
-            gate.id == "choice-surfaces"
-                && gate.evidence.contains(&"choice.rs")
-                && gate.evidence.contains(&"roving_focus.rs")
-        }),
-        "expected Components conformance gates to expose the shared choice/navigation seam"
-    );
-    assert_eq!(gates[1].id, "gallery-metadata");
-    assert_eq!(gates[2].id, "scroll-redraw");
-    assert!(
-        gates[2]
-            .evidence
-            .contains(&"scroll_area_default_handle_survives_reconstructed_component_values")
-    );
-    assert_eq!(gates[3].id, "splitter-runtime");
-    assert_eq!(gates[4].id, "tabs-overflow");
-    assert_eq!(gates[5].id, "table-virtualization");
-    assert!(gates[5].evidence.contains(&"TableFacetedFilter"));
-    assert!(gates[5].evidence.contains(&"TableGlobalFilter"));
-    assert!(
-        gates[5]
-            .evidence
-            .contains(&"components_gallery_smoke_global_filter_updates_table_rows")
-    );
-    assert!(gates[5].evidence.contains(&"TablePredicateFilter"));
-    assert!(
-        gates[5]
-            .evidence
-            .contains(&"components_gallery_smoke_predicate_filter_updates_table_rows")
-    );
-    assert!(
-        gates[5]
-            .evidence
-            .contains(&"components_gallery_smoke_faceted_filter_updates_table_rows")
-    );
-    assert_eq!(gates[6].id, "tree-renderer");
-    assert_eq!(gates[7].id, "virtualized-list-renderer");
-    assert_eq!(gates[8].id, "state-contract-readouts");
-    assert_eq!(gates[9].id, "choice-surfaces");
-    assert_eq!(gates[10].id, "a11y-labels");
-    assert!(gates[10].evidence.contains(&"ComponentA11yContract"));
-    assert!(gates[10].evidence.contains(&"SemanticDescriptor"));
-    assert!(gates[10].evidence.contains(&"TreeUpdate"));
-    assert!(
-        gates[10]
-            .evidence
-            .contains(&"crates/ui_components/tests/a11y/collection_semantics.rs")
-    );
-    assert!(
-        gates[10]
-            .evidence
-            .contains(&"representative_component_a11y_contracts_are_valid")
-    );
-    assert_eq!(gates[11].id, "theme-schema");
-    assert!(
-        gates[11]
-            .evidence
-            .contains(&"crates/ui_components/src/theme/schema.rs")
-    );
-    assert!(
-        gates[11]
-            .evidence
-            .contains(&"crates/ui_components/tests/theme.rs")
-    );
-    assert!(
-        gates[11]
-            .evidence
-            .contains(&"cargo run -p xtask -- scan-theme-drift")
     );
 
     assert_eq!(buttons.len(), 6);
@@ -1594,525 +1502,101 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
 }
 
 #[test]
-fn components_catalog_metadata_is_separate_from_rendering() {
-    let components_source = include_str!("../../src/pages/components.rs");
-    let catalog_source = include_str!("../../src/pages/components/catalog.rs");
-    let conformance_source = include_str!("../../src/pages/components/conformance.rs");
-    let component_evidence_source =
-        include_str!("../../../../crates/ui_components/src/component_contract/evidence.rs");
-    let render_source = include_str!("../../src/pages/components/render/mod.rs");
-    let render_choice_source = include_str!("../../src/pages/components/render/choice.rs");
-    let render_families_source = include_str!("../../src/pages/components/render/families.rs");
-    let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
-    let render_forms_source = include_str!("../../src/pages/components/render/forms.rs");
-    let render_layout_source = include_str!("../../src/pages/components/render/layout.rs");
-    let render_metadata_source = include_str!("../../src/pages/components/render/metadata.rs");
-    let render_readouts_source = include_str!("../../src/pages/components/render/readouts.rs");
-    let render_sections_source = include_str!("../../src/pages/components/render/sections.rs");
-    let render_support_source = include_str!("../../src/pages/components/render/support.rs");
-    let runtime_source = include_str!("../../src/pages/components/runtime.rs");
-    let runtime_sidebar_source = include_str!("../../src/pages/components/runtime/sidebar.rs");
-    let runtime_table_source = include_str!("../../src/pages/components/runtime/table.rs");
-    let runtime_tree_source = include_str!("../../src/pages/components/runtime/tree.rs");
-    let runtime_virtualized_list_source =
-        include_str!("../../src/pages/components/runtime/virtualized_list.rs");
-    let samples_source = include_str!("../../src/pages/components/samples.rs");
-    let foundation_samples_source =
-        include_str!("../../src/pages/components/samples/foundation.rs");
-    let feedback_samples_source = include_str!("../../src/pages/components/samples/feedback.rs");
-    let tree_samples_source = include_str!("../../src/pages/components/samples/tree.rs");
-    let virtualized_list_samples_source =
-        include_str!("../../src/pages/components/samples/virtualized_list.rs");
-    let choice_samples_source = include_str!("../../src/pages/components/samples/choice.rs");
-    let text_samples_source = include_str!("../../src/pages/components/samples/text.rs");
-    let navigation_samples_source =
-        include_str!("../../src/pages/components/samples/navigation.rs");
-    let table_samples_source = include_str!("../../src/pages/components/samples/table.rs");
-    let layout_samples_source = include_str!("../../src/pages/components/samples/layout.rs");
+fn gallery_contract_metadata_matches_component_rows() {
+    use std::collections::{BTreeMap, BTreeSet};
 
-    assert!(components_source.contains("pub mod catalog;"));
-    assert!(components_source.contains("pub use catalog::{"));
-    assert!(components_source.contains("pub mod conformance;"));
-    assert!(components_source.contains("mod render;"));
-    assert!(components_source.contains("mod runtime;"));
-    assert!(components_source.contains("mod samples;"));
-    assert!(!components_source.contains("#[path = \"components/render.rs\"]"));
-    assert!(components_source.contains("pub use runtime::{"));
-    assert!(components_source.contains("pub use samples::{"));
-    assert!(!components_source.contains("pub mod runtime;"));
-    assert!(!components_source.contains("pub mod samples;"));
-    assert!(!components_source.contains("pub use runtime::*;"));
-    assert!(!components_source.contains("pub use samples::*;"));
-    assert!(components_source.contains("TableSampleRuntimeLog"));
-    assert!(components_source.contains("table_samples"));
-    assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
-    assert!(catalog_source.contains("ComponentCatalogEntry::contract_sample("));
-    assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
-    assert!(conformance_source.contains("COMPONENT_CONFORMANCE_GATES, ComponentConformanceGate"));
-    assert!(!conformance_source.contains("ComponentA11yClaim"));
-    assert!(!conformance_source.contains("COMPONENT_A11Y_CLAIMS"));
-    assert!(component_evidence_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
-    assert!(!component_evidence_source.contains("ComponentA11yEvidence {"));
-    for module_path in [
-        "#[path = \"runtime/sidebar.rs\"]",
-        "#[path = \"runtime/table.rs\"]",
-        "#[path = \"runtime/tree.rs\"]",
-        "#[path = \"runtime/virtualized_list.rs\"]",
-    ] {
-        assert!(
-            runtime_source.contains(module_path),
-            "runtime facade should declare owner module `{module_path}`"
-        );
-    }
-    assert!(runtime_sidebar_source.contains("pub struct SidebarSampleRuntimeLog"));
-    assert!(runtime_table_source.contains("pub struct TableSampleRuntimeLog"));
-    assert!(runtime_tree_source.contains("pub struct TreeSampleRuntimeLog"));
-    assert!(runtime_virtualized_list_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
-    assert!(!runtime_source.contains("pub struct SidebarSampleRuntimeLog"));
-    assert!(!runtime_source.contains("pub struct TableSampleRuntimeLog"));
-    assert!(!runtime_source.contains("pub struct TreeSampleRuntimeLog"));
-    assert!(!runtime_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
-    for module_path in [
-        "#[path = \"samples/foundation.rs\"]",
-        "#[path = \"samples/feedback.rs\"]",
-        "#[path = \"samples/tree.rs\"]",
-        "#[path = \"samples/virtualized_list.rs\"]",
-        "#[path = \"samples/choice.rs\"]",
-        "#[path = \"samples/text.rs\"]",
-        "#[path = \"samples/navigation.rs\"]",
-        "#[path = \"samples/table.rs\"]",
-        "#[path = \"samples/layout.rs\"]",
-    ] {
-        assert!(
-            samples_source.contains(module_path),
-            "samples facade should declare family module `{module_path}`"
-        );
-    }
-    assert!(samples_source.contains("pub use foundation::{"));
-    assert!(samples_source.contains("pub use table::{"));
-    assert!(foundation_samples_source.contains("pub struct ButtonSample"));
-    assert!(feedback_samples_source.contains("pub struct StatusCueSample"));
-    assert!(tree_samples_source.contains("pub struct TreeSample"));
-    assert!(virtualized_list_samples_source.contains("pub struct VirtualizedListSample"));
-    assert!(choice_samples_source.contains("pub struct CheckboxSample"));
-    assert!(text_samples_source.contains("pub struct TextInputSample"));
-    assert!(navigation_samples_source.contains("pub struct TabsSample"));
-    assert!(table_samples_source.contains("pub struct TableSample"));
-    assert!(layout_samples_source.contains("pub struct ScrollAreaSample"));
-    assert!(!samples_source.contains("pub struct ButtonSample"));
-    assert!(!samples_source.contains("static TABLE_SAMPLES"));
-    for module_path in [
-        "mod choice;",
-        "mod families;",
-        "mod focus;",
-        "mod forms;",
-        "mod layout;",
-        "mod metadata;",
-        "mod readouts;",
-        "mod sections;",
-        "mod support;",
-    ] {
-        assert!(
-            render_source.contains(module_path),
-            "render facade should declare standard owner module `{module_path}`"
-        );
-    }
-    assert!(!render_source.contains("#[path = \"render/"));
-    assert!(render_choice_source.contains("fn render_component_choice_sections"));
-    assert!(render_choice_source.contains("fn render_switch_section"));
-    assert!(render_choice_source.contains("fn render_checkbox_section"));
-    assert!(render_choice_source.contains("fn render_radio_group_section"));
-    assert!(render_choice_source.contains("fn render_toggle_section"));
-    assert!(render_families_source.contains("fn component_tree_samples_section"));
-    assert!(render_focus_source.contains("fn render_component_focus_mode"));
-    assert!(render_forms_source.contains("fn render_component_text_input_section"));
-    assert!(render_forms_source.contains("fn render_component_textarea_section"));
-    assert!(render_forms_source.contains("fn render_component_field_section"));
-    assert!(render_layout_source.contains("fn render_component_scroll_area_section"));
-    assert!(render_layout_source.contains("fn render_scroll_area_sample"));
-    assert!(render_metadata_source.contains("fn render_component_catalog_section"));
-    assert!(render_metadata_source.contains("fn render_component_gates_section"));
-    assert!(render_readouts_source.contains("fn component_table_state_row"));
-    assert!(render_sections_source.contains("fn render_components_section"));
-    assert!(render_support_source.contains("fn component_gallery_card_shell"));
-    assert!(!render_source.contains("fn component_tree_samples_section"));
-    assert!(!render_sections_source.contains("fn render_switch_section"));
-    assert!(!render_sections_source.contains("pages::components::switch_samples"));
-    assert!(!render_sections_source.contains("pages::components::scroll_area_samples"));
-    assert!(!render_sections_source.contains("pages::components::text_input_samples"));
-    assert!(!render_sections_source.contains("pages::components::textarea_samples"));
-    assert!(!render_sections_source.contains("pages::components::field_samples"));
-    assert!(!render_source.contains("fn component_table_state_row"));
-    assert!(!render_source.contains("fn render_components_section"));
-    assert!(!render_source.contains("fn component_gallery_card_shell"));
-    assert!(!components_source.contains("pub struct ButtonSample"));
-    assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
-    assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
-    assert!(!render_sections_source.contains("pub const COMPONENT_CATALOG"));
-    assert!(!render_metadata_source.contains("pub const COMPONENT_CATALOG"));
-    assert!(!render_sections_source.contains("pages::components::COMPONENT_CATALOG"));
-    assert!(
-        render_metadata_source.contains("pages::components::COMPONENT_CATALOG")
-            && render_metadata_source.contains("pages::components::COMPONENT_CONFORMANCE_GATES"),
-        "rendering should consume catalog metadata instead of owning it"
-    );
-}
-
-#[test]
-fn components_catalog_consumes_component_contract_rows() {
-    use std::collections::BTreeSet;
-
-    for entry in pages::components::COMPONENT_CATALOG {
-        let contract_row = component_contract_entry(entry.name)
-            .unwrap_or_else(|| panic!("missing component contract row for `{}`", entry.name));
-        let expected_status =
-            pages::components::ComponentCatalogStatus::from_contract(contract_row.gallery_status);
-        assert_eq!(
-            entry.status, expected_status,
-            "catalog entry `{}` should derive status from the component contract rows",
-            entry.name
-        );
-
-        if let Some(expected_family) = contract_row.family {
-            assert_eq!(
-                entry.family, expected_family,
-                "catalog entry `{}` should derive family from the component contract rows",
-                entry.name
-            );
-        }
-    }
-
-    let catalog_names = pages::components::COMPONENT_CATALOG
+    let canonical = COMPONENT_CONTRACT_ROWS
         .iter()
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-    let contract_official_names = official_component_rows()
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-    let catalog_official_names = pages::components::COMPONENT_CATALOG
+        .map(|entry| (entry.id().as_str(), entry.metadata()))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(COMPONENT_CONTRACT_ROWS.len(), canonical.len());
+    assert_eq!(canonical.len(), 48);
+
+    let official_components = pages::components::COMPONENT_CATALOG
         .iter()
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        catalog_official_names, contract_official_names,
-        "Components catalog official rows should be contract-owned"
-    );
-
-    let missing_adjacent_surfaces = gallery_surface_rows()
-        .filter(|entry| {
-            matches!(
-                entry.gallery_status,
-                SurfaceGalleryStatus::AdapterOnly
-                    | SurfaceGalleryStatus::InternalAnatomy
-                    | SurfaceGalleryStatus::StateContract
-            )
-        })
-        .filter(|entry| !catalog_names.contains(entry.name))
-        .map(|entry| entry.name)
         .collect::<Vec<_>>();
-    assert!(
-        missing_adjacent_surfaces.is_empty(),
-        "Components catalog should include contract gallery-adjacent surfaces: {missing_adjacent_surfaces:?}"
-    );
-}
-
-#[test]
-fn verification_docs_list_current_ui_architecture_focused_gates() {
-    let verification = include_str!("../../../../docs/verification.md");
-
-    for required in [
-        "primitive_deletion_target_inventory_blocks_removed_shallow_reexports",
-        "primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases",
-        "surface_manifest_classifies_public_surface_once",
-        "surface_manifest_aligns_adjacent_gallery_statuses",
-        "surface_manifest_tracks_exports_gallery_and_docs_contracts",
-        "overlay_open_change_helpers_match_core_policies",
-        "dialog_runtime_respects_escape_policy_and_restores_trigger_focus",
-        "choice_surfaces_share_stable_value_resolution_and_query_normalization",
-        "table_behavior_snapshot_exposes_faceting_metadata",
-        "table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only",
-        "table_component_source_mapping_tracks_split_render_owners",
-        "row_window",
-        "virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_contracts",
-        "theme_registry",
-        "theme_resolver",
-        "theme_snapshots",
-        "components_catalog_metadata_is_separate_from_rendering",
-        "official_component_catalog_entries_have_signals_and_sample_selectors",
-        "state_contract_catalog_entries_have_signals_and_readout_selectors",
-        "gallery_story_contracts_cover_components_state_readouts_and_overlays",
-    ] {
-        assert!(
-            verification.contains(required),
-            "verification docs should list focused UI architecture gate `{required}`"
-        );
-    }
-
-    assert!(
-        !verification.contains("table_render_plan_exposes_"),
-        "verification docs should use Table diagnostics gates, not removed render-plan test names"
-    );
-    assert!(
-        verification.contains("cargo run -p xtask -- verify"),
-        "verification docs should keep the final integration gate visible"
-    );
-}
-
-#[test]
-fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
-    let samples_source = include_str!("../../src/pages/components/samples.rs");
-    let layout_samples_source = include_str!("../../src/pages/components/samples/layout.rs");
-    let render_sections_source = include_str!("../../src/pages/components/render/sections.rs");
-    let splitter_motion_source =
-        include_str!("../../src/pages/components/render/splitter_motion.rs");
-    let splitter_struct_start = layout_samples_source
-        .find("pub struct SplitterSample {")
-        .expect("expected SplitterSample struct to exist");
-    let splitter_struct_end = layout_samples_source[splitter_struct_start..]
-        .find("/// Returns scroll area samples backed by real component state.")
-        .map(|offset| splitter_struct_start + offset)
-        .expect("expected SplitterSample sample builder to follow struct declarations");
-    let splitter_struct = &layout_samples_source[splitter_struct_start..splitter_struct_end];
-    let splitter_section = render_sections_source
-        .split("component_page_section(\"splitter\")")
-        .nth(1)
-        .and_then(|section| section.split("render_component_scroll_area_section").next())
-        .expect("expected Splitter section in components render source");
-
-    assert!(samples_source.contains(
-        "impl_component_sample_selectors!(SplitterSample, \"component-splitter-sample\");"
-    ));
-    assert!(!splitter_struct.contains("pub orientation: Orientation,"));
-    assert!(!splitter_struct.contains("pub size: Size,"));
-    assert!(splitter_section.contains(".orientation(state.orientation())"));
-    assert!(splitter_section.contains(".with_size(state.size())"));
-    assert!(!splitter_section.contains(".orientation(sample.orientation)"));
-    assert!(!splitter_section.contains(".with_size(sample.size)"));
-    assert!(render_sections_source.contains("SplitterMotionDemo::new"));
-    assert!(splitter_motion_source.contains("pub(super) struct SplitterMotionDemo"));
-    assert!(splitter_motion_source.contains("SplitterPanel::view("));
-    assert!(splitter_motion_source.contains(".motion_preference(MotionPreference::Animated)"));
-}
-
-#[test]
-fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
-    let shell_components_source = include_str!("../../src/shell/components.rs");
-    let select_section = shell_components_source
-        .split("fn component_select_samples_section(")
-        .nth(1)
-        .and_then(|section| {
-            section
-                .split("fn component_combobox_samples_section")
-                .next()
-        })
-        .expect("expected Select sample section in shell components source");
-    let combobox_section = shell_components_source
-        .split("fn component_combobox_samples_section(")
-        .nth(1)
-        .and_then(|section| section.split("fn component_command_samples_section").next())
-        .expect("expected Combobox sample section in shell components source");
-    let command_section = shell_components_source
-        .split("fn component_command_samples_section(")
-        .nth(1)
-        .and_then(|section| section.split("fn resolved_listbox_option").next())
-        .expect("expected Command sample section in shell components source");
-    let listbox_readout = shell_components_source
-        .split("fn component_listbox_state_row(")
-        .nth(1)
-        .and_then(|section| section.split("fn component_select_state_row").next())
-        .expect("expected Listbox state row in shell components source");
-    let select_readout = shell_components_source
-        .split("fn component_select_state_row(")
-        .nth(1)
-        .and_then(|section| section.split("fn component_combobox_state_row").next())
-        .expect("expected Select state row in shell components source");
-    let combobox_readout = shell_components_source
-        .split("fn component_combobox_state_row(")
-        .nth(1)
-        .and_then(|section| section.split("fn component_command_state_row").next())
-        .expect("expected Combobox state row in shell components source");
-    let command_readout = shell_components_source
-        .split("fn component_command_state_row(")
-        .nth(1)
-        .and_then(|section| {
-            section
-                .split("pub(crate) fn component_radio_state_row")
-                .next()
-        })
-        .expect("expected Command state row in shell components source");
-
-    assert!(select_section.contains("if let Some(active) = state.active_value()"));
-    assert!(select_section.contains("select = select.default_active(active);"));
-    assert!(combobox_section.contains("if let Some(active) = state.active_value()"));
-    assert!(combobox_section.contains("combobox = combobox.default_active(active);"));
-    assert!(command_section.contains("if let Some(active) = state.active_value()"));
-    assert!(command_section.contains("command = command.default_active(active);"));
-    assert!(command_section.contains("command.status_items(state.status_items().iter().cloned())"));
-    assert!(command_section.contains("component_command_keymap_resolution_rows"));
-    assert!(listbox_readout.contains("selected {} / active {}"));
-    assert!(listbox_readout.contains("{} groups / {} options / {} disabled"));
-    assert!(select_readout.contains("listbox selected"));
-    assert!(combobox_readout.contains("query '{}' / selected {} / active {}"));
-    assert!(combobox_readout.contains("visible {} of {} / {:?}"));
-    assert!(command_readout.contains("selected_values {:?}"));
-    assert!(command_readout.contains("{} status / {} warnings / {} errors"));
-    assert!(command_readout.contains("navigation loop {} / group jump {}"));
-    assert!(command_readout.contains("command_resolution_summary"));
-}
-
-#[test]
-fn official_component_catalog_entries_have_signals_and_sample_selectors() {
-    use std::collections::BTreeSet;
-
-    let official_names = pages::components::COMPONENT_CATALOG
-        .iter()
-        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-    let sample_names = pages::components::official_sample_selector_pairs()
-        .map(|(name, _)| name)
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(sample_names, official_names);
-
-    let selector_values = pages::components::official_sample_selector_pairs()
-        .map(|(_, selector)| selector)
-        .collect::<Vec<_>>();
-    let unique_selectors = selector_values.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(unique_selectors.len(), selector_values.len());
-
-    let stray_selectors = pages::components::COMPONENT_CATALOG
+    let local_components = pages::components::COMPONENT_CATALOG
         .iter()
         .filter(|entry| entry.status != pages::components::ComponentCatalogStatus::Official)
-        .filter(|entry| entry.sample_selector.is_some())
-        .map(|entry| entry.name)
         .collect::<Vec<_>>();
-    assert!(
-        stray_selectors.is_empty(),
-        "non-official catalog entries must not declare sample selectors: {stray_selectors:?}"
-    );
-    let official_state_contract_selectors = pages::components::COMPONENT_CATALOG
-        .iter()
-        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
-        .filter(|entry| entry.state_contract_selector.is_some())
-        .map(|entry| entry.name)
-        .collect::<Vec<_>>();
-    assert!(
-        official_state_contract_selectors.is_empty(),
-        "official catalog entries must not declare state-contract readout selectors: {official_state_contract_selectors:?}"
-    );
-
-    let signals = pages::components::SIGNALS;
-    let mut missing = Vec::new();
-    for entry in pages::components::COMPONENT_CATALOG
-        .iter()
-        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
-    {
-        let component_signal = format!("open_gpui_ui_components::{}", entry.name);
-        if !signals.contains(&component_signal.as_str()) {
-            missing.push(format!(
-                "{} component signal `{component_signal}`",
-                entry.name
-            ));
-        }
-        let Some(state) = entry.state else {
-            missing.push(format!("{} official entry has no state type", entry.name));
-            continue;
-        };
-        let state_owner = match state {
-            "TableState" => "open_gpui_ui_core",
-            _ => "open_gpui_ui_components",
-        };
-        let state_signal = format!("{state_owner}::{state}");
-        if !signals.contains(&state_signal.as_str()) {
-            missing.push(format!("{} state signal `{state_signal}`", entry.name));
-        }
+    assert_eq!(official_components.len(), 40);
+    for entry in &official_components {
+        let metadata = entry
+            .component_contract()
+            .expect("official component entry should carry canonical metadata");
+        assert_eq!(entry.name, metadata.id().as_str());
+        assert_eq!(entry.family, metadata.family().as_str());
     }
-
     assert!(
-        missing.is_empty(),
-        "official component catalog entries must have matching signals: {missing:?}"
+        local_components
+            .iter()
+            .all(|entry| entry.component_contract().is_none())
     );
-}
 
-#[test]
-fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
-    use std::collections::BTreeSet;
-
-    let state_contract_names = pages::components::COMPONENT_CATALOG
+    let projected = official_components
         .iter()
-        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::StateContract)
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-    let readout_names = pages::components::state_contract_readout_pairs()
-        .map(|(name, _)| name)
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(readout_names, state_contract_names);
-
-    let official_names = pages::components::official_sample_selector_pairs()
-        .map(|(name, _)| name)
-        .collect::<BTreeSet<_>>();
-    assert!(
-        state_contract_names.is_disjoint(&official_names),
-        "state contracts must not satisfy the official rendered component selector gate"
-    );
-
-    let readout_selectors = pages::components::state_contract_readout_pairs()
-        .map(|(_, selector)| selector)
+        .filter_map(|entry| entry.component_contract())
+        .chain(
+            pages::overlay::OVERLAY_CATALOG
+                .iter()
+                .map(|entry| entry.component_contract()),
+        )
         .collect::<Vec<_>>();
-    let unique_readout_selectors = readout_selectors.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(unique_readout_selectors.len(), readout_selectors.len());
-
-    let stray_readout_selectors = pages::components::COMPONENT_CATALOG
+    let projected_ids = projected
         .iter()
-        .filter(|entry| entry.status != pages::components::ComponentCatalogStatus::StateContract)
-        .filter(|entry| entry.state_contract_selector.is_some())
-        .map(|entry| entry.name)
-        .collect::<Vec<_>>();
-    assert!(
-        stray_readout_selectors.is_empty(),
-        "non-state-contract catalog entries must not declare state-contract selectors: {stray_readout_selectors:?}"
-    );
+        .map(|metadata| metadata.id().as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(projected.len(), 48);
+    assert_eq!(projected_ids.len(), projected.len());
+    assert_eq!(projected_ids, canonical.keys().copied().collect());
 
-    let required_signals = [
-        "open_gpui_ui_components::TreeState",
-        "open_gpui_ui_components::TreeItemDescriptor",
-        "open_gpui_ui_components::TreeItemState",
-        "open_gpui_ui_components::TreeSelection",
-        "open_gpui_ui_components::TreeToggle",
-        "open_gpui_ui_components::TreeFocusTarget",
-        "open_gpui_ui_components::TreeKeyboardAction",
-        "open_gpui_ui_components::tree_navigation_target",
-        "open_gpui_ui_components::VirtualizedListState",
-        "open_gpui_ui_components::VirtualizedListActivation",
-        "open_gpui_ui_components::VirtualizedListMetrics",
-        "open_gpui_ui_components::VirtualizedListScrollStrategy",
-        "open_gpui_ui_components::VirtualizedListState::navigation_target",
-        "open_gpui_ui_components::VirtualizedListState::scroll_target_for_key",
-        "open_gpui_ui_components::VirtualizedListState::scroll_target_for_key_with_snapshot",
-    ];
-    for signal in required_signals {
-        assert!(
-            pages::components::SIGNALS.contains(&signal),
-            "expected state-contract signal `{signal}`"
+    for metadata in projected {
+        assert_eq!(
+            Some(&metadata),
+            canonical.get(metadata.id().as_str()),
+            "Gallery metadata drifted for `{}`",
+            metadata.id().as_str()
         );
     }
+
+    for entry in official_components {
+        let story = pages::components::component_story_contract_for(entry.name)
+            .unwrap_or_else(|| panic!("missing official component story `{}`", entry.name));
+        assert_eq!(story.component_contract(), entry.component_contract());
+    }
+    for story in pages::components::component_story_contracts()
+        .into_iter()
+        .filter(|story| {
+            story.kind() == open_gpui_ui_foundation_gallery::StoryContractKind::StateContract
+        })
+    {
+        assert_eq!(story.component_contract(), None);
+    }
+
+    let overlay_stories = pages::overlay::overlay_story_contracts();
+    for entry in pages::overlay::OVERLAY_CATALOG {
+        let metadata = entry.component_contract();
+        assert_eq!(entry.name, metadata.id().as_str());
+        assert_eq!(entry.family, metadata.family().as_str());
+        assert_eq!(entry.family, "overlay");
+        assert!(!entry.gallery_group.trim().is_empty());
+        let story = overlay_stories
+            .iter()
+            .find(|story| story.owner_name() == entry.name)
+            .unwrap_or_else(|| panic!("missing official overlay story `{}`", entry.name));
+        assert_eq!(story.component_contract(), Some(entry.component_contract()));
+    }
 }
 
 #[test]
-fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
+fn gallery_story_contracts_derive_selectors_and_runtime_probes_from_gallery_owners() {
     use std::collections::{BTreeMap, BTreeSet};
 
     let component_stories = pages::components::component_story_contracts();
     let overlay_stories = pages::overlay::overlay_story_contracts();
 
-    let component_story_names = component_stories
-        .iter()
-        .map(|story| story.owner_name())
-        .collect::<BTreeSet<_>>();
-    let expected_component_story_names = pages::components::COMPONENT_CATALOG
+    let expected_component_names = pages::components::COMPONENT_CATALOG
         .iter()
         .filter(|entry| {
             matches!(
@@ -2123,100 +1607,49 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
         })
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
-    assert_eq!(component_story_names, expected_component_story_names);
-    assert_eq!(
-        pages::components::component_story_contracts_for_focus(
-            pages::components::ComponentFocusMode::All,
-        ),
-        component_stories,
-        "all-mode story contract helper should expose the same component contract records"
-    );
-
-    let story_sample_pairs = component_stories
-        .iter()
-        .filter_map(|story| {
-            (story.kind() == open_gpui_ui_foundation_gallery::StoryContractKind::Component)
-                .then(|| {
-                    story
-                        .selectors()
-                        .sample_selector()
-                        .map(|selector| (story.owner_name(), selector))
-                })
-                .flatten()
-        })
-        .collect::<Vec<_>>();
-    let official_sample_pairs =
-        pages::components::official_sample_selector_pairs().collect::<Vec<_>>();
-    assert_eq!(
-        official_sample_pairs, story_sample_pairs,
-        "official sample selectors should be derived from story contracts"
-    );
-
-    let story_readout_pairs = component_stories
-        .iter()
-        .filter_map(|story| {
-            (story.kind() == open_gpui_ui_foundation_gallery::StoryContractKind::StateContract)
-                .then(|| {
-                    story
-                        .selectors()
-                        .state_readout_selector()
-                        .map(|selector| (story.owner_name(), selector))
-                })
-                .flatten()
-        })
-        .collect::<Vec<_>>();
-    let state_contract_pairs =
-        pages::components::state_contract_readout_pairs().collect::<Vec<_>>();
-    assert_eq!(
-        state_contract_pairs, story_readout_pairs,
-        "state-contract readout selectors should be derived from story contracts"
-    );
-
-    for story in &component_stories {
-        if let Some(section_id) = story.section_id() {
-            let focused = pages::components::component_story_contracts_for_focus(
-                pages::components::ComponentFocusMode::Section(section_id),
-            );
-            assert!(
-                focused
-                    .iter()
-                    .any(|focused_story| focused_story.owner_name() == story.owner_name()),
-                "focused story contracts for `{section_id}` should include `{}`",
-                story.owner_name()
-            );
-        }
-    }
-
-    let overlay_story_names = overlay_stories
+    let component_names = component_stories
         .iter()
         .map(|story| story.owner_name())
         .collect::<BTreeSet<_>>();
-    let expected_overlay_story_names = pages::overlay::OVERLAY_CATALOG
+    assert_eq!(component_stories.len(), expected_component_names.len());
+    assert_eq!(component_names, expected_component_names);
+    assert_eq!(overlay_stories.len(), pages::overlay::OVERLAY_CATALOG.len());
+
+    let official_pairs = pages::components::official_sample_selector_pairs().collect::<Vec<_>>();
+    let unique_official_selectors = official_pairs
         .iter()
-        .map(|entry| entry.name)
+        .map(|(_, selector)| *selector)
         .collect::<BTreeSet<_>>();
-    assert_eq!(overlay_story_names, expected_overlay_story_names);
+    assert_eq!(official_pairs.len(), 40);
+    assert_eq!(unique_official_selectors.len(), official_pairs.len());
+
+    let state_pairs = pages::components::state_contract_readout_pairs().collect::<Vec<_>>();
+    assert_eq!(
+        state_pairs,
+        vec![
+            (
+                "TreeState",
+                "gallery:component-tree-state-contract:document-outline"
+            ),
+            (
+                "VirtualizedListState",
+                "gallery:component-virtualized-list-state-contract:release-navigation"
+            ),
+        ]
+    );
 
     for story in component_stories.iter().chain(overlay_stories.iter()) {
+        assert!(story.selectors().catalog_selector().is_some());
+        assert!(story.selectors().primary_selector().is_some());
+        assert!(!story.probes().is_empty());
+        assert!(story.has_operation(StoryProbeOperation::ReadPublicPayload));
+    }
+    for story in &component_stories {
+        assert_eq!(story.selectors().control_selector(), None);
         assert!(
-            story.selectors().catalog_selector().is_some(),
-            "story `{}` should expose a catalog selector",
-            story.owner_name()
-        );
-        assert!(
-            story.selectors().primary_selector().is_some(),
-            "story `{}` should expose a primary user-observable selector",
-            story.owner_name()
-        );
-        assert!(
-            !story.probes().is_empty(),
-            "story `{}` should declare runtime probe operations",
-            story.owner_name()
-        );
-        assert!(
-            story.has_operation(StoryProbeOperation::ReadPublicPayload),
-            "story `{}` should expose a public payload/readout probe",
-            story.owner_name()
+            !story.has_operation(StoryProbeOperation::Focus),
+            "component story `{}` cannot claim focus without a public control selector",
+            story.owner_name(),
         );
     }
 
@@ -2231,7 +1664,7 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
     for operation in open_gpui_ui_foundation_gallery::STORY_PROBE_OPERATIONS {
         assert!(
             operation_counts.contains_key(operation),
-            "gallery stories should cover runtime probe operation `{}`",
+            "Gallery stories do not exercise `{}`",
             operation.as_str()
         );
     }
@@ -2244,57 +1677,114 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
     assert!(table_story.has_operation(StoryProbeOperation::Edit));
     assert!(table_story.has_operation(StoryProbeOperation::Open));
 
-    let sidebar_story = component_stories
-        .iter()
-        .find(|story| story.owner_name() == "Sidebar")
-        .expect("Sidebar story contract should exist");
-    for operation in [
-        StoryProbeOperation::Activate,
-        StoryProbeOperation::Focus,
-        StoryProbeOperation::Scroll,
-        StoryProbeOperation::ReadPublicPayload,
+    for name in [
+        "Badge",
+        "Label",
+        "StatusCue",
+        "EmptyState",
+        "Separator",
+        "Kbd",
+        "Progress",
+        "Skeleton",
+        "Avatar",
+        "AvatarGroup",
     ] {
-        assert!(sidebar_story.has_operation(operation));
+        let story = component_stories
+            .iter()
+            .find(|story| story.owner_name() == name)
+            .unwrap_or_else(|| panic!("missing display story `{name}`"));
+        assert_eq!(
+            story
+                .probes()
+                .iter()
+                .map(|probe| probe.operation())
+                .collect::<Vec<_>>(),
+            vec![StoryProbeOperation::ReadPublicPayload]
+        );
     }
-    assert!(!sidebar_story.has_operation(StoryProbeOperation::Open));
-    assert_eq!(
-        sidebar_story.selectors().state_readout_selector(),
-        Some("gallery:component-sidebar-sample:workspace-sidebar:runtime")
-    );
 
-    let tree_state_story = component_stories
-        .iter()
-        .find(|story| story.owner_name() == "TreeState")
-        .expect("TreeState story contract should exist");
-    assert_eq!(
-        tree_state_story.kind(),
-        open_gpui_ui_foundation_gallery::StoryContractKind::StateContract
-    );
-    assert_eq!(
-        tree_state_story.selectors().state_readout_selector(),
-        Some("gallery:component-tree-state-contract:document-outline")
-    );
+    for name in ["TextInput", "Textarea", "Field", "NumberInput", "Slider"] {
+        let story = component_stories
+            .iter()
+            .find(|story| story.owner_name() == name)
+            .unwrap_or_else(|| panic!("missing form control story `{name}`"));
+        assert!(!story.has_operation(StoryProbeOperation::Focus));
+        assert!(!story.has_operation(StoryProbeOperation::Edit));
+    }
 
-    let dialog_story = overlay_stories
+    for name in ["Accordion", "Collapsible"] {
+        let story = component_stories
+            .iter()
+            .find(|story| story.owner_name() == name)
+            .unwrap_or_else(|| panic!("missing static disclosure story `{name}`"));
+        assert!(!story.has_operation(StoryProbeOperation::Open));
+    }
+
+    for name in [
+        "Button",
+        "IconButton",
+        "Switch",
+        "Checkbox",
+        "Toggle",
+        "Link",
+        "Breadcrumb",
+        "Tag",
+        "ToastStack",
+    ] {
+        let story = component_stories
+            .iter()
+            .find(|story| story.owner_name() == name)
+            .unwrap_or_else(|| panic!("missing static control story `{name}`"));
+        assert!(!story.has_operation(StoryProbeOperation::Focus));
+        assert!(!story.has_operation(StoryProbeOperation::Activate));
+    }
+
+    for name in [
+        "Listbox",
+        "RadioGroup",
+        "ToggleGroup",
+        "Tabs",
+        "Select",
+        "Combobox",
+        "Command",
+    ] {
+        let story = component_stories
+            .iter()
+            .find(|story| story.owner_name() == name)
+            .unwrap_or_else(|| panic!("missing controlled choice story `{name}`"));
+        assert_eq!(
+            story
+                .probes()
+                .iter()
+                .map(|probe| probe.operation())
+                .collect::<Vec<_>>(),
+            vec![StoryProbeOperation::ReadPublicPayload]
+        );
+        assert!(!story.has_operation(StoryProbeOperation::Select));
+        assert!(!story.has_operation(StoryProbeOperation::Focus));
+        assert!(!story.has_operation(StoryProbeOperation::Open));
+    }
+    let toolbar = component_stories
         .iter()
-        .find(|story| story.owner_name() == "Dialog")
-        .expect("Dialog story contract should exist");
+        .find(|story| story.owner_name() == "Toolbar")
+        .expect("missing Toolbar story");
     assert_eq!(
-        dialog_story.selectors().trigger_selector(),
-        Some("dialog:overlay-dialog-demo:controlled-modal:trigger")
+        toolbar
+            .probes()
+            .iter()
+            .map(|probe| probe.operation())
+            .collect::<Vec<_>>(),
+        vec![StoryProbeOperation::ReadPublicPayload]
     );
-    assert_eq!(
-        dialog_story.selectors().surface_selector(),
-        Some("dialog:overlay-dialog-demo:controlled-modal:surface")
-    );
+    assert!(!toolbar.has_operation(StoryProbeOperation::Activate));
+    assert!(!toolbar.has_operation(StoryProbeOperation::Open));
 }
 
 #[test]
-fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
+fn choice_search_story_contracts_expose_state_readouts_and_product_metadata() {
     let expected = [
         (
             "Listbox",
-            "choice",
             "ListboxState",
             "listbox",
             "gallery:component-listbox-sample:assignee-listbox",
@@ -2302,7 +1792,6 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
         ),
         (
             "Select",
-            "choice",
             "SelectState",
             "select",
             "gallery:component-select-sample:priority-select",
@@ -2310,7 +1799,6 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
         ),
         (
             "Combobox",
-            "choice-search",
             "ComboboxState",
             "combobox",
             "gallery:component-combobox-sample:framework-combobox",
@@ -2318,7 +1806,6 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
         ),
         (
             "Command",
-            "choice-search",
             "CommandState",
             "command",
             "gallery:component-command-sample:ranked-search",
@@ -2326,13 +1813,11 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
         ),
     ];
 
-    for (name, family, state, section, sample_selector, state_readout_selector) in expected {
+    for (name, state, section, sample_selector, state_readout_selector) in expected {
         let story = component_story_contract(name);
-        assert_eq!(
-            story.kind(),
-            open_gpui_ui_foundation_gallery::StoryContractKind::Component
-        );
-        assert_eq!(story.family(), family);
+        let metadata = story
+            .component_contract()
+            .expect("official component story should carry canonical metadata");
         assert_eq!(story.state(), Some(state));
         assert_eq!(story.section_id(), Some(section));
         assert_eq!(story.selectors().sample_selector(), Some(sample_selector));
@@ -2340,28 +1825,15 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
             story.selectors().state_readout_selector(),
             Some(state_readout_selector)
         );
-        assert_eq!(story.selectors().primary_selector(), Some(sample_selector));
 
-        for operation in [
-            StoryProbeOperation::Open,
-            StoryProbeOperation::Select,
-            StoryProbeOperation::Focus,
-            StoryProbeOperation::ReadPublicPayload,
-        ] {
-            assert!(
-                story.has_operation(operation),
-                "choice/search story `{name}` should declare `{}` probe support",
-                operation.as_str()
-            );
-        }
+        assert!(story.has_operation(StoryProbeOperation::ReadPublicPayload));
+        assert!(!story.has_operation(StoryProbeOperation::Select));
+        assert!(!story.has_operation(StoryProbeOperation::Focus));
+        assert!(!story.has_operation(StoryProbeOperation::Open));
 
         let entry = component_contract_entry(name)
             .unwrap_or_else(|| panic!("expected component contract row `{name}`"));
-        assert_eq!(entry.family, Some(family));
-        assert_eq!(
-            entry.gallery_status,
-            SurfaceGalleryStatus::OfficialComponent
-        );
+        assert_eq!(entry.metadata(), metadata);
 
         let focused = pages::components::component_story_contracts_for_focus(
             pages::components::ComponentFocusMode::Section(section),
@@ -2371,205 +1843,7 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
                 .iter()
                 .map(|focused_story| focused_story.owner_name())
                 .collect::<Vec<_>>(),
-            vec![name],
-            "focused `{section}` mode should enumerate only `{name}`"
+            vec![name]
         );
     }
-}
-
-#[test]
-fn gallery_catalog_manifest_tracks_components_and_overlay_catalogs() {
-    use std::collections::BTreeSet;
-
-    let component_names = pages::components::COMPONENT_CATALOG
-        .iter()
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-    let component_official = pages::components::COMPONENT_CATALOG
-        .iter()
-        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
-        .count();
-    let component_adjacent = pages::components::COMPONENT_CATALOG
-        .iter()
-        .filter(|entry| {
-            matches!(
-                entry.status,
-                pages::components::ComponentCatalogStatus::AdapterOnly
-                    | pages::components::ComponentCatalogStatus::InternalAnatomy
-                    | pages::components::ComponentCatalogStatus::StateContract
-            )
-        })
-        .count();
-
-    assert!(
-        component_official >= 40,
-        "Components catalog should keep broad official component coverage"
-    );
-    assert!(
-        component_adjacent >= 6,
-        "Components catalog should keep adjacent adapter/anatomy/state-contract rows"
-    );
-    for required in [
-        "Button",
-        "Table",
-        "VirtualizedList",
-        "TextInputController",
-        "ToolbarItem",
-        "ListboxOption",
-        "TreeState",
-        "VirtualizedListState",
-    ]
-    .into_iter()
-    .chain(gallery_surface_rows().filter_map(|entry| {
-        (entry.gallery_status == SurfaceGalleryStatus::AdapterOnly
-            && entry.docs_status == SurfaceDocsStatus::ComponentCatalog)
-            .then_some(entry.name)
-    })) {
-        assert!(
-            component_names.contains(required),
-            "Components catalog manifest should include `{required}`"
-        );
-    }
-
-    let overlay_names = pages::overlay::OVERLAY_CATALOG
-        .iter()
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        overlay_names,
-        BTreeSet::from([
-            "AlertDialog",
-            "ContextMenu",
-            "Dialog",
-            "HoverCard",
-            "Menu",
-            "Popover",
-            "Sheet",
-            "Tooltip",
-        ])
-    );
-    assert!(pages::overlay::OVERLAY_CATALOG.iter().all(|entry| {
-        let component_signal = format!("open_gpui_ui_components::{}", entry.name);
-        let state_signal = format!("open_gpui_ui_components::{}", entry.state);
-        pages::overlay::SIGNALS.contains(&component_signal.as_str())
-            && pages::overlay::SIGNALS.contains(&state_signal.as_str())
-            && !entry.sample_selector.trim().is_empty()
-            && !entry.catalog_selector().trim().is_empty()
-    }));
-}
-
-#[test]
-fn gallery_catalog_entries_satisfy_component_contract_evidence() {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    let component_catalog = pages::components::COMPONENT_CATALOG
-        .iter()
-        .map(|entry| (entry.name, entry))
-        .collect::<BTreeMap<_, _>>();
-    let overlay_names = pages::overlay::OVERLAY_CATALOG
-        .iter()
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-
-    for entry in gallery_surface_rows() {
-        match entry.gallery_status {
-            SurfaceGalleryStatus::OfficialOverlay => {
-                assert!(
-                    overlay_names.contains(entry.name),
-                    "component contract row `{}` claims overlay gallery evidence but no overlay catalog row exists",
-                    entry.name
-                );
-            }
-            SurfaceGalleryStatus::NotInGallery => unreachable!(),
-            status => {
-                assert!(
-                    matches!(
-                        status,
-                        SurfaceGalleryStatus::OfficialComponent
-                            | SurfaceGalleryStatus::AdapterOnly
-                            | SurfaceGalleryStatus::InternalAnatomy
-                            | SurfaceGalleryStatus::StateContract
-                    ),
-                    "component contract row `{}` has unhandled gallery status {:?}",
-                    entry.name,
-                    status
-                );
-                let catalog_entry = component_catalog
-                    .get(entry.name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "component contract row `{}` claims Components gallery evidence but no catalog row exists",
-                            entry.name
-                        )
-                    });
-                let expected_status =
-                    pages::components::ComponentCatalogStatus::from_contract(entry.gallery_status);
-                assert_eq!(
-                    catalog_entry.status, expected_status,
-                    "component contract row `{}` should agree with Components catalog status",
-                    entry.name
-                );
-                if entry.gallery_status == SurfaceGalleryStatus::OfficialComponent {
-                    assert!(
-                        catalog_entry.sample_selector.is_some(),
-                        "official component contract row `{}` needs a rendered sample selector",
-                        entry.name
-                    );
-                }
-                if entry.gallery_status == SurfaceGalleryStatus::StateContract {
-                    assert!(
-                        catalog_entry.state_contract_selector.is_some(),
-                        "state-contract component contract row `{}` needs a readout selector",
-                        entry.name
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn gallery_story_contracts_reference_component_contract_rows() {
-    for story in pages::components::component_story_contracts() {
-        let entry = component_contract_entry(story.owner_name()).unwrap_or_else(|| {
-            panic!(
-                "component story `{}` should reference a component contract row",
-                story.owner_name()
-            )
-        });
-        assert!(
-            matches!(
-                entry.gallery_status,
-                SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::StateContract
-            ),
-            "component story `{}` should be official component or state-contract evidence, got {:?}",
-            story.owner_name(),
-            entry.gallery_status
-        );
-    }
-
-    for story in pages::overlay::overlay_story_contracts() {
-        let entry = component_contract_entry(story.owner_name()).unwrap_or_else(|| {
-            panic!(
-                "overlay story `{}` should reference a component contract row",
-                story.owner_name()
-            )
-        });
-        assert_eq!(
-            entry.gallery_status,
-            SurfaceGalleryStatus::OfficialOverlay,
-            "overlay story `{}` should be official overlay evidence",
-            story.owner_name()
-        );
-    }
-}
-
-#[test]
-fn native_gallery_enables_platform_font_backend() {
-    let manifest = include_str!("../../Cargo.toml");
-
-    assert!(
-        manifest.contains(r#"open_gpui_platform = { workspace = true, features = ["font-kit"] }"#),
-        "native gallery must enable open_gpui_platform/font-kit; without it macOS uses NoopTextSystem and text lays out but does not render"
-    );
 }

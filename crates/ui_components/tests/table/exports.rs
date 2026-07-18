@@ -26,25 +26,24 @@ fn table_public_exports_keep_component_surface_and_core_owner_paths_explicit() {
     let resolved_state: ui_core::TableResolvedState = state_readout.resolve();
     assert_eq!(resolved_state.final_model().rows().len(), 2);
 
-    let snapshot: root::TableBehaviorSnapshot = table.behavior_snapshot(UiPx::ZERO, ui_px(96.0));
-    let _prelude_snapshot: prelude::TableBehaviorSnapshot = snapshot.clone();
-    let _region_snapshot: root::TableColumnRegionSnapshot = snapshot.column_regions();
-    let _prelude_region_snapshot: prelude::TableColumnRegionSnapshot = snapshot.column_regions();
-    let _header_summary: root::TableHeaderSummarySnapshot = snapshot.header_summary();
-    let _row_counts: root::TableRowCountSnapshot = snapshot.row_counts();
+    let snapshot: root::table::TableBehaviorSnapshot =
+        table.behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let _region_snapshot: root::table::TableColumnRegionSnapshot = snapshot.column_regions();
+    let _header_summary: root::table::TableHeaderSummarySnapshot = snapshot.header_summary();
+    let _row_counts: root::table::TableRowCountSnapshot = snapshot.row_counts();
     assert_eq!(snapshot.role(), ui_core::Role::Table);
     assert_eq!(snapshot.row_role(), ui_core::Role::Row);
     assert_eq!(snapshot.column_header_role(), ui_core::Role::ColumnHeader);
     assert_eq!(snapshot.cell_role(), ui_core::Role::Cell);
-    let row_snapshot: &root::TableRowBehaviorSnapshot = &snapshot.rows()[0];
+    let row_snapshot: &root::table::TableRowBehaviorSnapshot = &snapshot.rows()[0];
     assert_eq!(row_snapshot.role(), ui_core::Role::Row);
-    let cell_snapshot: &root::TableCellBehaviorSnapshot = &row_snapshot.cells()[0];
+    let cell_snapshot: &root::table::TableCellBehaviorSnapshot = &row_snapshot.cells()[0];
     assert_eq!(cell_snapshot.role(), ui_core::Role::Cell);
     let _header_action: root::TableHeaderAction = snapshot.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
         .clone();
-    let _state_cache_key: ui_core::TableStateCacheKey = state_readout.cache_key();
+    let _state_cache_key: ui_core::table::TableStateCacheKey = state_readout.cache_key();
 
     let group = ui_core::TableColumnGroup::new(
         ui_core::TableColumnGroupId::new("identity"),

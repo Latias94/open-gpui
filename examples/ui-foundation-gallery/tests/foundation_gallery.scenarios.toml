@@ -1,0 +1,11 @@
+schema = 1
+
+[[scenario]]
+id = "gallery.component-contract.metadata"
+contracts = ["*"]
+test = "component_catalog_contracts::gallery_contract_metadata_matches_component_rows"
+
+[[scenario]]
+id = "gallery.focus-a11y.devtools-projection"
+contracts = ["TextInput", "Textarea", "Field"]
+test = "focus_a11y_smoke::focus_a11y_devtools_allowlist_matches_final_tree_structure"

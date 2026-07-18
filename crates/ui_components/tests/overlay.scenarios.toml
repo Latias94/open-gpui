@@ -1,0 +1,6 @@
+schema = 1
+
+[[scenario]]
+id = "a11y.dialog.final-tree-actions"
+contracts = ["Dialog"]
+test = "dialog_final_tree_projects_modal_disabled_and_exact_actions"

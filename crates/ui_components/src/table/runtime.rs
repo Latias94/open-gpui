@@ -5,7 +5,7 @@ use open_gpui::{Context, FocusHandle, Window};
 use open_gpui_ui_core::virtualizer::VirtualizerGeometryCache;
 use open_gpui_ui_core::{
     TableColumnResizeState, TableResolvedRow, TableResolvedState, TableRowIdentity, TableRowModel,
-    TableStateCacheKey, UiPx, VirtualizerResolvedState,
+    UiPx, VirtualizerResolvedState, table::TableStateCacheKey,
 };
 
 use crate::scroll_surface::ScrollSurfaceRuntime;

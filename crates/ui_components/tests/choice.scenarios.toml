@@ -1,0 +1,6 @@
+schema = 1
+
+[[scenario]]
+id = "a11y.select.final-tree-actions"
+contracts = ["Select"]
+test = "select_final_tree_preserves_trigger_identity_disabled_state_and_exact_actions"

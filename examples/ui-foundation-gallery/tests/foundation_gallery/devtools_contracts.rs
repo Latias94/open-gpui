@@ -719,33 +719,6 @@ fn devtools_gallery_reports_unmounted_framework_diagnostics() {
     );
 }
 
-#[test]
-fn devtools_gallery_does_not_keep_static_demo_snapshot_builders() {
-    let source = include_str!("../../src/pages/devtools.rs");
-
-    assert!(!source.contains("fn theme_snapshot"));
-    assert!(!source.contains("fn form_snapshot"));
-    assert!(!source.contains("fn resource_snapshot"));
-    assert!(!source.contains("fn docking_snapshot"));
-    assert!(source.contains("DevtoolsCapture::from_snapshot_collection"));
-    assert!(source.contains("DevtoolsSession::new"));
-    assert!(source.contains("DevtoolsRegistry::default()"));
-    assert!(source.contains("register_capture_provider_fn"));
-    assert!(!source.contains("COMPONENT_A11Y_EVIDENCE"));
-    assert!(!source.contains("a11y_evidence_probe_snapshot"));
-    assert!(source.contains("resolved_semantics_probe_snapshot"));
-}
-
-#[test]
-fn devtools_gallery_text_control_projections_own_placeholders() {
-    let source = include_str!("../../src/pages/devtools.rs");
-
-    assert!(
-        !source.contains(".with_placeholder("),
-        "text-control semantic projections must be the Gallery placeholder authority"
-    );
-}
-
 #[open_gpui::test]
 fn devtools_gallery_smoke_clicks_inspector_rows_and_actions(cx: &mut open_gpui::TestAppContext) {
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Devtools);

@@ -19,10 +19,10 @@ Open GPUI should treat its native UI ecosystem as a Rust-first framework with a 
 distribution model:
 
 - Core primitives and official components ship as normal Cargo crates.
-- Crate source and typed component contract rows are the inspection surface for humans and AI
-  agents.
-- Focused local checks prove component contracts, theme tokens, accessibility claims, gallery
-  samples, and verification commands.
+- Crate source and narrow typed component contract rows are the inspection surface for humans and
+  AI agents.
+- Focused local checks prove component contracts, theme tokens, final accessibility semantics,
+  Gallery samples, and exact scenario coordinates.
 - Generated registry manifests and source-copy scaffold recipes should not become a product surface
   unless real application work proves direct source inspection is insufficient.
 
@@ -44,9 +44,9 @@ accessibility semantics, gallery examples, and automated verification. Rust alre
 package distribution base through Cargo and crates.io, and AI agents can inspect crate source
 directly, so a generated metadata registry did not earn its maintenance cost.
 
-The local codebase already points in this direction through `component_contract`, `xtask`
-verification, committed theme schema artifacts, gallery metadata, and focused component contract
-tests.
+The local codebase implements this through narrow `component_contract` rows, same-declaration
+public export facts, Gallery-owned Story metadata, test-owned `*.scenarios.toml` artifacts,
+DevTools projections, `xtask` joins, and committed theme schema artifacts.
 
 # Alternatives
 
@@ -69,6 +69,9 @@ Cargo crates plus direct source inspection are the current preferred direction.
   component breadth.
 - Official components should continue to prove behavior through tests, gallery metadata, contract
   scanners, and `xtask` checks.
+- `component_contract` must not absorb source mappings, method inventories, export lists, Gallery
+  selectors, or native test coordinates; each downstream owner publishes its own typed or
+  structured facts.
 - ADR 0014 is now the formal decision removing registry schema names, export commands, and scaffold
   recipe metadata.
 - A later implementation plan should map this strategy onto existing files such as

@@ -2,8 +2,6 @@
 
 #[path = "components/catalog.rs"]
 pub mod catalog;
-#[path = "components/conformance.rs"]
-pub mod conformance;
 mod render;
 #[path = "components/runtime.rs"]
 mod runtime;
@@ -16,7 +14,6 @@ pub use catalog::{
     component_story_contracts_for_focus, focused_section_for_catalog_entry, focused_section_for_id,
     official_sample_selector_pairs, state_contract_readout_pairs,
 };
-pub use conformance::{COMPONENT_CONFORMANCE_GATES, ComponentConformanceGate};
 pub(crate) use render::{
     component_page_section_count, component_page_section_index, render_components_directory,
     render_components_page,
@@ -76,8 +73,6 @@ pub const TITLE: &str = "Components";
 pub const SUMMARY: &str = "First concrete component consumers built on the foundation crate.";
 /// Foundation signals exercised by this page.
 pub const SIGNALS: &[&str] = &[
-    "open_gpui_ui_foundation_gallery::pages::components::COMPONENT_CONFORMANCE_GATES",
-    "open_gpui_ui_foundation_gallery::pages::components::ComponentConformanceGate",
     "open_gpui_ui_foundation_gallery::pages::components::COMPONENT_CATALOG",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogEntry",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogStatus",

@@ -318,25 +318,6 @@ fn framework_adapters_convert_gpui_runtime_metadata() {
     assert_eq!(provider_capture.events.len(), 2);
 }
 
-#[cfg(feature = "gpui")]
-#[test]
-fn gpui_inspector_surface_exposes_category_debug_selectors() {
-    let source = include_str!("../src/gpui/render.rs");
-
-    assert!(source.contains("devtools-inspector:category-summaries"));
-    assert!(source.contains("devtools-inspector:category:{category_label}"));
-    assert!(source.contains("devtools-inspector:target-list"));
-    assert!(source.contains("devtools-inspector:target:{target_id}"));
-    assert!(source.contains("devtools-inspector:domain-list"));
-    assert!(source.contains("devtools-inspector:domain:{domain_id}"));
-    assert!(source.contains("devtools-inspector:event-list"));
-    assert!(source.contains("event_identity.as_key()"));
-    assert!(source.contains("devtools-inspector:event:{event_identity_key}"));
-    assert!(source.contains("devtools-inspector:selected-detail"));
-    assert!(source.contains("devtools-inspector:diagnostics"));
-    assert!(source.contains("devtools-inspector:row:{probe_id}"));
-}
-
 #[cfg(feature = "docking")]
 #[test]
 fn framework_adapters_convert_docking_runtime_status() {

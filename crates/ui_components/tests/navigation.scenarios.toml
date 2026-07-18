@@ -1,0 +1,6 @@
+schema = 1
+
+[[scenario]]
+id = "a11y.tabs.final-tree-actions"
+contracts = ["Tabs"]
+test = "tabs_final_tree_relations_actions_and_node_ids_follow_runtime_selection"

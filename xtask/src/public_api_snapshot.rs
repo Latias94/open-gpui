@@ -1,8 +1,6 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::Path,
-};
+use std::{collections::BTreeSet, fs, path::Path};
+
+use open_gpui_ui_components::component_contract::common_public_exports;
 
 pub(crate) fn scan_public_api(root: &Path, args: &[String]) -> Result<(), ()> {
     for arg in args {
@@ -337,69 +335,11 @@ fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
     );
 }
 
-fn scan_ui_components_public_api(root: &Path, failures: &mut Vec<String>) {
-    let source_dir = root.join("crates/ui_components/src");
-    let root_exports = default_reexport_tokens(&source_dir, "lib.rs", failures);
-    let prelude_exports = default_reexport_tokens(&source_dir, "prelude.rs", failures);
-    let default_exports = default_reexport_tokens(&source_dir, "public_api/default.rs", failures);
-    let common_exports = default_reexport_tokens(&source_dir, "public_api/common.rs", failures);
-    let contract_rows = component_contract_rows(&source_dir, failures);
-    let contract_names = contract_rows
-        .keys()
-        .map(String::as_str)
+fn scan_ui_components_public_api(_root: &Path, failures: &mut Vec<String>) {
+    failures.extend(crate::ui_contract::ui_component_public_export_failures());
+    let common_exports = common_public_exports()
+        .map(|export| export.name().to_owned())
         .collect::<BTreeSet<_>>();
-    let default_contract_names = contract_rows
-        .iter()
-        .filter_map(|(name, row)| row.default_export.then_some(name.as_str()))
-        .collect::<BTreeSet<_>>();
-
-    let leaked_non_default = root_exports
-        .iter()
-        .filter(|token| contract_names.contains(token.as_str()))
-        .filter(|token| !default_contract_names.contains(token.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !leaked_non_default.is_empty() {
-        failures.push(format!(
-            "crates/ui_components/src/lib.rs: root exports leaked non-default contract rows: {}",
-            leaked_non_default.join(", ")
-        ));
-    }
-
-    let missing_root_defaults = default_contract_names
-        .iter()
-        .filter(|token| !root_exports.contains(**token))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing_root_defaults.is_empty() {
-        failures.push(format!(
-            "crates/ui_components/src/lib.rs: root exports are missing default contract rows: {}",
-            missing_root_defaults.join(", ")
-        ));
-    }
-
-    let prelude_only = prelude_exports
-        .difference(&root_exports)
-        .filter(|token| !ui_components_prelude_helper_allowlist().contains(token.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !prelude_only.is_empty() {
-        failures.push(format!(
-            "crates/ui_components/src/prelude.rs: prelude-only exports need an explicit helper allowlist entry: {}",
-            prelude_only.join(", ")
-        ));
-    }
-
-    let common_extra = common_exports
-        .difference(&default_exports)
-        .cloned()
-        .collect::<Vec<_>>();
-    if !common_extra.is_empty() {
-        failures.push(format!(
-            "crates/ui_components/src/public_api/common.rs: common exports must stay a subset of default exports: {}",
-            common_extra.join(", ")
-        ));
-    }
 
     let forbidden_prelude = [
         "GpuiOverlayAdapterConfig",
@@ -419,27 +359,11 @@ fn scan_ui_components_public_api(root: &Path, failures: &mut Vec<String>) {
     reject_tokens(
         "crates/ui_components",
         "prelude.rs",
-        &prelude_exports,
+        &common_exports,
         &forbidden_prelude,
         "component prelude must not export adapter-only, recipe, or internal anatomy surfaces",
         failures,
     );
-
-    let lib_source = read_to_string(&source_dir.join("lib.rs"), failures).unwrap_or_default();
-    let gpui_adapter_source = public_module_source(&lib_source, "gpui_adapter").unwrap_or("");
-    for required in [
-        "FieldControl",
-        "FieldControlSemantics",
-        "TextInputController",
-        "VirtualizedListGpuiExt",
-        "UiA11yElementExt",
-    ] {
-        if !source_contains_identifier(gpui_adapter_source, required) {
-            failures.push(format!(
-                "crates/ui_components/src/lib.rs: gpui_adapter should export adapter helper `{required}`"
-            ));
-        }
-    }
 }
 
 fn scan_ui_core_public_api(root: &Path, failures: &mut Vec<String>) {
@@ -602,91 +526,6 @@ fn is_public_module_declaration(line: &str, module: &str) -> bool {
         return false;
     };
     matches!(rest.trim_start().chars().next(), Some(';') | Some('{'))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ContractRow {
-    default_export: bool,
-}
-
-fn component_contract_rows(
-    source_dir: &Path,
-    failures: &mut Vec<String>,
-) -> BTreeMap<String, ContractRow> {
-    let mut rows = BTreeMap::new();
-    for (source_path, source) in contract_row_sources(source_dir, failures) {
-        let (blocks, block_failures) = struct_literal_blocks(&source, "ComponentContractEntry");
-        failures.extend(
-            block_failures
-                .into_iter()
-                .map(|failure| format!("{source_path}: {failure}")),
-        );
-
-        for block in blocks {
-            let Some(name) = string_field(block, "name") else {
-                failures.push(format!("{source_path}: contract row missing `name`"));
-                continue;
-            };
-            let Some(default_export) = bool_field(block, "default_export") else {
-                failures.push(format!(
-                    "{source_path}: contract row `{name}` missing `default_export`"
-                ));
-                continue;
-            };
-            if rows
-                .insert(name.clone(), ContractRow { default_export })
-                .is_some()
-            {
-                failures.push(format!("{source_path}: duplicate contract row `{name}`"));
-            }
-        }
-    }
-    rows
-}
-
-fn contract_row_sources(source_dir: &Path, failures: &mut Vec<String>) -> Vec<(String, String)> {
-    let mut sources = Vec::new();
-    let rows_path = source_dir.join("component_contract/rows.rs");
-    if let Some(source) = read_to_string(&rows_path, failures) {
-        sources.push((
-            "crates/ui_components/src/component_contract/rows.rs".to_owned(),
-            source,
-        ));
-    }
-
-    let rows_dir = source_dir.join("component_contract/rows");
-    if !rows_dir.is_dir() {
-        return sources;
-    }
-
-    let mut row_files = match fs::read_dir(&rows_dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-            .collect::<Vec<_>>(),
-        Err(error) => {
-            failures.push(format!(
-                "crates/ui_components/src/component_contract/rows: failed to read directory: {error}"
-            ));
-            return sources;
-        }
-    };
-    row_files.sort();
-
-    for path in row_files {
-        let label = path
-            .strip_prefix(source_dir)
-            .ok()
-            .and_then(|relative| relative.to_str())
-            .map(|relative| format!("crates/ui_components/src/{}", relative.replace('\\', "/")))
-            .unwrap_or_else(|| path.display().to_string());
-        if let Some(source) = read_to_string(&path, failures) {
-            sources.push((label, source));
-        }
-    }
-
-    sources
 }
 
 fn default_reexport_tokens(
@@ -1171,12 +1010,6 @@ fn identifier_tokens(source: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn source_contains_identifier(source: &str, token: &str) -> bool {
-    source
-        .split(|character: char| character != '_' && !character.is_ascii_alphanumeric())
-        .any(|part| part == token)
-}
-
 fn read_to_string(path: &Path, failures: &mut Vec<String>) -> Option<String> {
     fs::read_to_string(path).map_or_else(
         |error| {
@@ -1185,66 +1018,6 @@ fn read_to_string(path: &Path, failures: &mut Vec<String>) -> Option<String> {
         },
         Some,
     )
-}
-
-fn struct_literal_blocks<'a>(source: &'a str, type_name: &str) -> (Vec<&'a str>, Vec<String>) {
-    let mut blocks = Vec::new();
-    let mut failures = Vec::new();
-    let mut search_from = 0usize;
-
-    while let Some(relative_start) = source[search_from..].find(type_name) {
-        let start = search_from + relative_start;
-        let prefix = source[..start]
-            .rsplit_once('\n')
-            .map(|(_, line)| line)
-            .unwrap_or("");
-        let trimmed_prefix = prefix.trim_start();
-        if trimmed_prefix.starts_with("//") || trimmed_prefix.starts_with("//!") {
-            search_from = start + type_name.len();
-            continue;
-        }
-
-        let Some(open_brace) = source[start..].find('{').map(|offset| start + offset) else {
-            failures.push(format!("{type_name} literal is missing `{{`"));
-            break;
-        };
-        let Some(close_brace) = matching_brace(source, open_brace) else {
-            failures.push(format!("{type_name} literal is missing matching `}}`"));
-            break;
-        };
-        blocks.push(&source[open_brace + 1..close_brace]);
-        search_from = close_brace + 1;
-    }
-
-    (blocks, failures)
-}
-
-fn string_field(block: &str, field: &str) -> Option<String> {
-    let rest = field_tail(block, field)?;
-    quoted_value(rest.lines().next().unwrap_or_default())
-}
-
-fn bool_field(block: &str, field: &str) -> Option<bool> {
-    let rest = field_tail(block, field)?.trim_start();
-    if rest.starts_with("true") {
-        Some(true)
-    } else if rest.starts_with("false") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-fn field_tail<'a>(block: &'a str, field: &str) -> Option<&'a str> {
-    let marker = format!("{field}:");
-    let start = block.find(&marker)? + marker.len();
-    Some(&block[start..])
-}
-
-fn quoted_value(source: &str) -> Option<String> {
-    let start = source.find('"')? + 1;
-    let end = source[start..].find('"').map(|offset| start + offset)?;
-    Some(source[start..end].to_string())
 }
 
 fn source_without_public_module(source: &str, module_name: &str) -> String {
@@ -1256,11 +1029,6 @@ fn source_without_public_module(source: &str, module_name: &str) -> String {
     stripped.push_str(&source[..module_start]);
     stripped.push_str(&source[close_brace + 1..]);
     stripped
-}
-
-fn public_module_source<'a>(source: &'a str, module_name: &str) -> Option<&'a str> {
-    let (module_start, close_brace) = public_module_bounds(source, module_name)?;
-    Some(&source[module_start..=close_brace])
 }
 
 fn public_module_bounds(source: &str, module_name: &str) -> Option<(usize, usize)> {
@@ -1290,20 +1058,6 @@ fn matching_brace(source: &str, open_brace: usize) -> Option<usize> {
     }
 
     None
-}
-
-fn ui_components_prelude_helper_allowlist() -> BTreeSet<&'static str> {
-    [
-        "ActiveDescendant",
-        "CollectionPosition",
-        "ControllableState",
-        "Sizable",
-        "Size",
-        "ThemeTokens",
-        "UiA11yElementExt",
-    ]
-    .into_iter()
-    .collect()
 }
 
 fn devtools_root_export_allowlist() -> BTreeSet<String> {
@@ -1547,38 +1301,6 @@ mod tests {
                 .collect()
         );
         let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn struct_literal_parser_reads_component_contract_entries() {
-        let source = r#"
-            ComponentContractEntry {
-                name: "Button",
-                default_export: true,
-            },
-            ComponentContractEntry {
-                name: "TextInputController",
-                default_export: false,
-            },
-        "#;
-        let (blocks, failures) = struct_literal_blocks(source, "ComponentContractEntry");
-        assert!(failures.is_empty(), "{failures:?}");
-        let values = blocks
-            .into_iter()
-            .map(|block| {
-                (
-                    string_field(block, "name").unwrap(),
-                    bool_field(block, "default_export").unwrap(),
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            values,
-            vec![
-                ("Button".to_owned(), true),
-                ("TextInputController".to_owned(), false)
-            ]
-        );
     }
 
     #[test]

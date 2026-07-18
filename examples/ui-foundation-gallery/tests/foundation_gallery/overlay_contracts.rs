@@ -601,21 +601,18 @@ fn overlay_page_catalog_entries_have_signals_and_sample_selectors() {
             .iter()
             .all(|entry| entry.status == pages::overlay::OverlayCatalogStatus::Official)
     );
-    assert!(catalog.iter().all(|entry| !entry.family.trim().is_empty()));
+    assert!(catalog.iter().all(|entry| entry.family == "overlay"));
+    assert!(
+        catalog
+            .iter()
+            .all(|entry| !entry.gallery_group.trim().is_empty())
+    );
     assert!(catalog.iter().all(|entry| !entry.state.trim().is_empty()));
     assert!(
         catalog
             .iter()
             .all(|entry| !entry.coverage.trim().is_empty())
     );
-    assert!(catalog.iter().all(|entry| {
-        !entry.behavior_gates.is_empty()
-            && entry
-                .behavior_gates
-                .iter()
-                .all(|gate| !gate.trim().is_empty())
-    }));
-
     let catalog_names = catalog
         .iter()
         .map(|entry| entry.name)

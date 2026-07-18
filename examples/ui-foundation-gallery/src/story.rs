@@ -1,6 +1,7 @@
 //! User-observable gallery story contracts.
 
 use crate::pages::GalleryPage;
+use open_gpui_ui_components::component_contract::ComponentContractMetadata;
 
 /// User-facing operations a story probe can exercise through the rendered gallery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -225,20 +226,26 @@ impl StorySelectorContract {
 pub struct StoryContract {
     page: GalleryPage,
     kind: StoryContractKind,
-    owner_name: &'static str,
-    family: &'static str,
+    owner: StoryOwner,
     state: Option<&'static str>,
     section_id: Option<&'static str>,
     selectors: StorySelectorContract,
     probes: &'static [StoryProbeContract],
 }
 
-impl StoryContract {
-    /// Creates a component or state-contract story.
-    pub fn component(
-        kind: StoryContractKind,
-        owner_name: &'static str,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoryOwner {
+    Component(ComponentContractMetadata),
+    Local {
+        name: &'static str,
         family: &'static str,
+    },
+}
+
+impl StoryContract {
+    /// Creates an official component story from canonical product metadata.
+    pub fn component(
+        contract: ComponentContractMetadata,
         state: Option<&'static str>,
         section_id: Option<&'static str>,
         catalog_selector: impl Into<String>,
@@ -248,9 +255,8 @@ impl StoryContract {
     ) -> Self {
         Self {
             page: GalleryPage::Components,
-            kind,
-            owner_name,
-            family,
+            kind: StoryContractKind::Component,
+            owner: StoryOwner::Component(contract),
             state,
             section_id,
             selectors: StorySelectorContract::component(
@@ -262,10 +268,37 @@ impl StoryContract {
         }
     }
 
-    /// Creates an overlay story.
-    pub fn overlay(
+    /// Creates a Gallery-local renderer-neutral state-contract story.
+    pub fn state_contract(
         owner_name: &'static str,
         family: &'static str,
+        state: Option<&'static str>,
+        section_id: Option<&'static str>,
+        catalog_selector: impl Into<String>,
+        state_readout_selector: &'static str,
+        probes: &'static [StoryProbeContract],
+    ) -> Self {
+        Self {
+            page: GalleryPage::Components,
+            kind: StoryContractKind::StateContract,
+            owner: StoryOwner::Local {
+                name: owner_name,
+                family,
+            },
+            state,
+            section_id,
+            selectors: StorySelectorContract::component(
+                catalog_selector,
+                None,
+                Some(state_readout_selector),
+            ),
+            probes,
+        }
+    }
+
+    /// Creates an overlay story.
+    pub fn overlay(
+        contract: ComponentContractMetadata,
         state: &'static str,
         catalog_selector: &'static str,
         sample_selector: &'static str,
@@ -277,8 +310,7 @@ impl StoryContract {
         Self {
             page: GalleryPage::Overlay,
             kind: StoryContractKind::Overlay,
-            owner_name,
-            family,
+            owner: StoryOwner::Component(contract),
             state: Some(state),
             section_id: None,
             selectors: StorySelectorContract::overlay(
@@ -304,8 +336,10 @@ impl StoryContract {
         Self {
             page: GalleryPage::FocusAccessibility,
             kind: StoryContractKind::FocusAccessibility,
-            owner_name,
-            family,
+            owner: StoryOwner::Local {
+                name: owner_name,
+                family,
+            },
             state: Some(state),
             section_id: None,
             selectors: StorySelectorContract::focus_accessibility(
@@ -328,12 +362,26 @@ impl StoryContract {
 
     /// Returns the public component or overlay name.
     pub const fn owner_name(&self) -> &'static str {
-        self.owner_name
+        match self.owner {
+            StoryOwner::Component(metadata) => metadata.id().as_str(),
+            StoryOwner::Local { name, .. } => name,
+        }
     }
 
     /// Returns the story family label.
     pub const fn family(&self) -> &'static str {
-        self.family
+        match self.owner {
+            StoryOwner::Component(metadata) => metadata.family().as_str(),
+            StoryOwner::Local { family, .. } => family,
+        }
+    }
+
+    /// Returns canonical component metadata for official component and overlay stories.
+    pub const fn component_contract(&self) -> Option<ComponentContractMetadata> {
+        match self.owner {
+            StoryOwner::Component(metadata) => Some(metadata),
+            StoryOwner::Local { .. } => None,
+        }
     }
 
     /// Returns the public state or contract type, if any.

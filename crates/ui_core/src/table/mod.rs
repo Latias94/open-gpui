@@ -41,8 +41,8 @@ pub use resolved::{
     TableTreeRow,
 };
 pub use row_model::{
-    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableExpansionMode, TableExpansionState,
-    TablePagination, TableRowModelStage, TableSourceRowLookup, TableStageMode,
+    TableExpansionMode, TableExpansionState, TablePagination, TableRowModelStage,
+    TableSourceRowLookup, TableStageMode,
 };
 pub use rows::{
     TableRow, TableRowChildrenLoadState, TableRowPinTarget, TableRowPinning, TableRowPinningPolicy,
@@ -62,11 +62,10 @@ pub use sizing::{
 pub mod prelude {
     pub use super::{
         TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
-        TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind,
-        TableAggregation, TableCellEditor, TableCellValue, TableColumn, TableColumnFacets,
-        TableColumnGroup, TableColumnGroupId, TableColumnId, TableColumnNode, TableColumnPinning,
-        TableColumnRegion, TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode,
-        TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
+        TableAggregateKind, TableAggregation, TableCellEditor, TableCellValue, TableColumn,
+        TableColumnFacets, TableColumnGroup, TableColumnGroupId, TableColumnId, TableColumnNode,
+        TableColumnPinning, TableColumnRegion, TableColumnRegions, TableColumnResizeDirection,
+        TableColumnResizeMode, TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
         TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
         TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableFilterKind,
         TableGlobalFacetSummary, TableGroupRow, TableGroupRowIdentity, TableGroupRowSegment,
@@ -82,8 +81,8 @@ pub mod prelude {
         TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy,
         TableSelectionSummary, TableSelectionSummaryState, TableSort, TableSortDirection,
         TableSourceInstanceIdentity, TableSourceRowIdentity, TableSourceRowLookup, TableStageMode,
-        TableState, TableStateCacheKey, TableSubRowSelectionPolicy, TableTextFilterOperator,
-        TableTreeRow, drag_table_column_resize, end_table_column_resize,
+        TableState, TableSubRowSelectionPolicy, TableTextFilterOperator, TableTreeRow,
+        drag_table_column_resize, end_table_column_resize,
     };
 }
 

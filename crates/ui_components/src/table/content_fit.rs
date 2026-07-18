@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use open_gpui::{Font, Pixels, TextRun, Window, rems};
 use open_gpui_ui_core::{
     TableCellValue, TableColumnId, TableColumnSizing, TableColumnWidthPolicy, TableResolvedRow,
-    TableSortDirection, TableStateCacheKey, UiPx, VirtualizerResolvedState, ui_px,
+    TableSortDirection, UiPx, VirtualizerResolvedState, table::TableStateCacheKey, ui_px,
 };
 
 use super::{TableColumnRenderPlan, TableMetrics, resolve_table_column_offsets};

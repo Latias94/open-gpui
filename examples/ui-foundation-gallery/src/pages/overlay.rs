@@ -4,6 +4,9 @@ use open_gpui::{point, px};
 use std::time::Duration;
 
 use crate::story::{StoryContract, StoryProbeContract, StoryProbeOperation::*};
+use open_gpui_ui_components::component_contract::{
+    ComponentContractMetadata, component_contract_entry,
+};
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogState, ContextMenu, ContextMenuState, Dialog,
     DialogState, HoverCard, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardState, Menu,
@@ -95,12 +98,15 @@ impl OverlayCatalogStatus {
 /// One overlay catalog entry shown by the Overlay page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverlayCatalogEntry {
+    contract: ComponentContractMetadata,
     /// Public overlay component name.
     pub name: &'static str,
     /// Current overlay catalog status.
     pub status: OverlayCatalogStatus,
-    /// Overlay family or behavior area.
+    /// Canonical component product family.
     pub family: &'static str,
+    /// Gallery-local behavior group used only for presentation.
+    pub gallery_group: &'static str,
     /// Resolved state contract type.
     pub state: &'static str,
     /// Gallery and verification coverage note.
@@ -109,30 +115,32 @@ pub struct OverlayCatalogEntry {
     pub sample_selector: &'static str,
     /// Stable selector used for the visible overlay catalog card.
     pub catalog_selector: &'static str,
-    /// Focused tests or gates that protect this overlay family.
-    pub behavior_gates: &'static [&'static str],
 }
 
 impl OverlayCatalogEntry {
     /// Creates an official overlay catalog entry with a stable sample selector.
     pub const fn official(
-        name: &'static str,
-        family: &'static str,
+        contract_id: &'static str,
+        gallery_group: &'static str,
         state: &'static str,
         coverage: &'static str,
         sample_selector: &'static str,
         catalog_selector: &'static str,
-        behavior_gates: &'static [&'static str],
     ) -> Self {
+        let Some(contract) = component_contract_entry(contract_id) else {
+            panic!("official Overlay Gallery entry requires a component contract row");
+        };
+        let metadata = contract.metadata();
         Self {
-            name,
+            contract: metadata,
+            name: metadata.id().as_str(),
             status: OverlayCatalogStatus::Official,
-            family,
+            family: metadata.family().as_str(),
+            gallery_group,
             state,
             coverage,
             sample_selector,
             catalog_selector,
-            behavior_gates,
         }
     }
 
@@ -140,9 +148,14 @@ impl OverlayCatalogEntry {
     pub const fn catalog_selector(self) -> &'static str {
         self.catalog_selector
     }
+
+    /// Returns canonical product metadata for this overlay component.
+    pub const fn component_contract(self) -> ComponentContractMetadata {
+        self.contract
+    }
 }
 
-/// Official overlay catalog entries and their conformance gates.
+/// Official overlay catalog entries and their Gallery-owned coverage summaries.
 pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
     OverlayCatalogEntry::official(
         "Tooltip",
@@ -151,11 +164,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / hover-focus smoke / manual-open smoke",
         "gallery:overlay-tooltip-sample:hover-focus",
         "overlay-catalog:Tooltip",
-        &[
-            "overlay_page_tooltip_samples_expose_focus_hover_and_disabled_contracts",
-            "overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled",
-            "overlay_gallery_smoke_renders_manual_tooltip_from_state",
-        ],
     ),
     OverlayCatalogEntry::official(
         "HoverCard",
@@ -164,11 +172,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / trigger smoke / controlled-toggle smoke",
         "gallery:overlay-hover-card-sample:profile-preview",
         "overlay-catalog:HoverCard",
-        &[
-            "overlay_page_hover_card_samples_expose_interactive_hover_contracts",
-            "overlay_gallery_smoke_keeps_hover_card_open_on_outside_press_and_dismisses_on_escape",
-            "overlay_gallery_smoke_toggles_hover_card_from_control_surface",
-        ],
     ),
     OverlayCatalogEntry::official(
         "Popover",
@@ -177,10 +180,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / runtime layer / outside press / focus restore",
         "gallery:overlay-popover-sample:default-open",
         "overlay-catalog:Popover",
-        &[
-            "overlay_page_popover_samples_expose_controlled_and_dismissal_contracts",
-            "overlay_gallery_smoke_dismisses_popover_from_outside_press",
-        ],
     ),
     OverlayCatalogEntry::official(
         "Dialog",
@@ -189,11 +188,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / modal runtime / controlled refusal / focus restore",
         "gallery:overlay-dialog-sample:controlled-modal",
         "overlay-catalog:Dialog",
-        &[
-            "overlay_page_dialog_samples_expose_modal_and_close_contracts",
-            "overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape",
-            "overlay_gallery_smoke_controlled_dialog_refusal_keeps_modal_authority",
-        ],
     ),
     OverlayCatalogEntry::official(
         "AlertDialog",
@@ -202,10 +196,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / action smoke / cancel focus",
         "gallery:overlay-alert-dialog-sample:destructive-confirm",
         "overlay-catalog:AlertDialog",
-        &[
-            "overlay_page_alert_dialog_samples_expose_critical_action_contracts",
-            "overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape",
-        ],
     ),
     OverlayCatalogEntry::official(
         "Sheet",
@@ -214,10 +204,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / non-modal outside-press smoke",
         "gallery:overlay-sheet-sample:left-modal",
         "overlay-catalog:Sheet",
-        &[
-            "overlay_page_sheet_samples_expose_edge_and_policy_contracts",
-            "overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press",
-        ],
     ),
     OverlayCatalogEntry::official(
         "Menu",
@@ -226,12 +212,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / runtime layer / submenu parentage / focus restore",
         "gallery:overlay-menu-sample:default-open",
         "overlay-catalog:Menu",
-        &[
-            "overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts",
-            "overlay_gallery_smoke_closes_menu_from_escape_and_outside_press",
-            "overlay_gallery_smoke_opens_menu_submenu_from_hover",
-            "overlay_gallery_smoke_nested_popover_menu_dialog_restores_focus_lifo",
-        ],
     ),
     OverlayCatalogEntry::official(
         "ContextMenu",
@@ -240,10 +220,6 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "state samples / point-anchor smoke / escape smoke",
         "gallery:overlay-context-menu-sample:point-anchor",
         "overlay-catalog:ContextMenu",
-        &[
-            "overlay_page_context_menu_samples_expose_point_anchor_contracts",
-            "overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses",
-        ],
     ),
 ];
 
@@ -300,8 +276,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
         .iter()
         .map(|entry| match entry.name {
             "Tooltip" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
@@ -311,8 +286,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 TOOLTIP_STORY_PROBES,
             ),
             "HoverCard" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
@@ -322,8 +296,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 OVERLAY_CONTROL_OPEN_DISMISS_PROBES,
             ),
             "Popover" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
@@ -333,8 +306,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 OVERLAY_TRIGGER_OPEN_DISMISS_PROBES,
             ),
             "Dialog" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
@@ -344,8 +316,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 OVERLAY_TRIGGER_OPEN_DISMISS_PROBES,
             ),
             "AlertDialog" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
@@ -355,8 +326,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 ALERT_DIALOG_STORY_PROBES,
             ),
             "Sheet" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
@@ -366,8 +336,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 OVERLAY_CONTROL_OPEN_DISMISS_PROBES,
             ),
             "Menu" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
@@ -377,8 +346,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 OVERLAY_CONTROL_OPEN_DISMISS_PROBES,
             ),
             "ContextMenu" => StoryContract::overlay(
-                entry.name,
-                entry.family,
+                entry.component_contract(),
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,

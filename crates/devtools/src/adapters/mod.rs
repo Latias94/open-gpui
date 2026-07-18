@@ -1,4 +1,11 @@
 //! Shared helpers for first-party DevTools snapshot adapters.
+//!
+//! Adapter payload assembly is an implementation detail; consumers import the typed snapshot
+//! helpers from this facade.
+//!
+//! ```compile_fail
+//! use open_gpui_devtools::adapters::payload;
+//! ```
 
 mod payload;
 

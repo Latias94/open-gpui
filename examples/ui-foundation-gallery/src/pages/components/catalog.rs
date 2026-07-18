@@ -2,7 +2,7 @@
 
 use crate::story::{StoryContract, StoryContractKind, StoryProbeContract, StoryProbeOperation::*};
 use open_gpui_ui_components::component_contract::{
-    SurfaceDocsStatus, SurfaceGalleryStatus, component_contract_entry,
+    ComponentContractMetadata, component_contract_entry,
 };
 
 /// Stable jump targets for the Components page navigator.
@@ -39,10 +39,6 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "ecosystem-adapters",
         label: "Ecosystem adapters",
-    },
-    ComponentPageJump {
-        id: "gates",
-        label: "Conformance gates",
     },
     ComponentPageJump {
         id: "sidebar",
@@ -211,12 +207,7 @@ pub fn focused_section_for_id(id: &'static str) -> Option<&'static str> {
     COMPONENT_PAGE_JUMPS
         .iter()
         .map(|jump| jump.id)
-        .find(|candidate| {
-            *candidate == id
-                && *candidate != "catalog"
-                && *candidate != "gates"
-                && *candidate != "signals"
-        })
+        .find(|candidate| *candidate == id && *candidate != "catalog" && *candidate != "signals")
 }
 
 /// Returns the focused section represented by a catalog entry.
@@ -251,19 +242,6 @@ pub enum ComponentCatalogStatus {
 }
 
 impl ComponentCatalogStatus {
-    /// Maps contract-owned gallery status into the Components page status vocabulary.
-    pub const fn from_contract(status: SurfaceGalleryStatus) -> Self {
-        match status {
-            SurfaceGalleryStatus::OfficialComponent => Self::Official,
-            SurfaceGalleryStatus::AdapterOnly => Self::AdapterOnly,
-            SurfaceGalleryStatus::InternalAnatomy => Self::InternalAnatomy,
-            SurfaceGalleryStatus::StateContract => Self::StateContract,
-            SurfaceGalleryStatus::OfficialOverlay | SurfaceGalleryStatus::NotInGallery => {
-                Self::Deferred
-            }
-        }
-    }
-
     /// Stable status label used by tests and the gallery.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -290,6 +268,7 @@ impl ComponentCatalogStatus {
 /// One component catalog entry shown by the Components page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComponentCatalogEntry {
+    contract: Option<ComponentContractMetadata>,
     /// Public component or helper name.
     pub name: &'static str,
     /// Current catalog status.
@@ -309,16 +288,20 @@ pub struct ComponentCatalogEntry {
 impl ComponentCatalogEntry {
     /// Creates a rendered catalog entry with a stable sample selector.
     pub const fn contract_sample(
-        name: &'static str,
-        family: &'static str,
+        contract_id: &'static str,
         state: &'static str,
         coverage: &'static str,
         sample_selector: &'static str,
     ) -> Self {
+        let Some(contract) = component_contract_entry(contract_id) else {
+            panic!("official Gallery entry requires a component contract row");
+        };
+        let metadata = contract.metadata();
         Self {
-            name,
-            status: contract_catalog_status(name),
-            family: contract_family_or(name, family),
+            contract: Some(metadata),
+            name: metadata.id().as_str(),
+            status: ComponentCatalogStatus::Official,
+            family: metadata.family().as_str(),
             state: Some(state),
             coverage,
             sample_selector: Some(sample_selector),
@@ -335,9 +318,10 @@ impl ComponentCatalogEntry {
         state_contract_selector: &'static str,
     ) -> Self {
         Self {
+            contract: None,
             name,
-            status: contract_catalog_status(name),
-            family: contract_family_or(name, family),
+            status: ComponentCatalogStatus::StateContract,
+            family,
             state: Some(state),
             coverage,
             sample_selector: None,
@@ -352,9 +336,10 @@ impl ComponentCatalogEntry {
         coverage: &'static str,
     ) -> Self {
         Self {
+            contract: None,
             name,
-            status: contract_catalog_status(name),
-            family: contract_family_or(name, family),
+            status: ComponentCatalogStatus::AdapterOnly,
+            family,
             state: None,
             coverage,
             sample_selector: None,
@@ -369,9 +354,10 @@ impl ComponentCatalogEntry {
         coverage: &'static str,
     ) -> Self {
         Self {
+            contract: None,
             name,
-            status: contract_catalog_status(name),
-            family: contract_family_or(name, family),
+            status: ComponentCatalogStatus::InternalAnatomy,
+            family,
             state: None,
             coverage,
             sample_selector: None,
@@ -398,6 +384,11 @@ impl ComponentCatalogEntry {
         format!("component-catalog:{}", self.name)
     }
 
+    /// Returns canonical product metadata for official component rows.
+    pub const fn component_contract(self) -> Option<ComponentContractMetadata> {
+        self.contract
+    }
+
     /// Returns the Components page section that contains this entry's rendered sample or readout.
     pub fn sample_section_id(self) -> &'static str {
         match self.name {
@@ -405,15 +396,7 @@ impl ComponentCatalogEntry {
             "Accordion" | "Collapsible" | "Slider" | "NumberInput" | "ToggleGroup" | "Link"
             | "Breadcrumb" | "Tag" | "ToastStack" => "foundation-components",
             "TreeState" | "VirtualizedListState" => "state-contracts",
-            _ if matches!(
-                component_contract_entry(self.name),
-                Some(entry)
-                    if entry.gallery_status == SurfaceGalleryStatus::AdapterOnly
-                        && entry.docs_status == SurfaceDocsStatus::ComponentCatalog
-            ) =>
-            {
-                "ecosystem-adapters"
-            }
+            _ if self.status == ComponentCatalogStatus::AdapterOnly => "ecosystem-adapters",
             "RadioGroup" => "radio-group",
             "IconButton" => "icon-button",
             "TextInput" => "text-input",
@@ -447,9 +430,8 @@ impl ComponentCatalogEntry {
     pub fn story_contract(self) -> Option<StoryContract> {
         match self.status {
             ComponentCatalogStatus::Official => Some(StoryContract::component(
-                StoryContractKind::Component,
-                self.name,
-                self.family,
+                self.contract
+                    .expect("official Gallery entry requires canonical metadata"),
                 self.state,
                 story_section_for_catalog_entry(&self),
                 self.catalog_selector(),
@@ -457,38 +439,20 @@ impl ComponentCatalogEntry {
                 official_story_state_readout_selector(self.name),
                 component_story_probes(&self),
             )),
-            ComponentCatalogStatus::StateContract => Some(StoryContract::component(
-                StoryContractKind::StateContract,
+            ComponentCatalogStatus::StateContract => Some(StoryContract::state_contract(
                 self.name,
                 self.family,
                 self.state,
                 story_section_for_catalog_entry(&self),
                 self.catalog_selector(),
-                None,
-                self.state_contract_selector,
+                self.state_contract_selector
+                    .expect("state-contract Gallery entry requires a readout selector"),
                 component_story_probes(&self),
             )),
             ComponentCatalogStatus::AdapterOnly
             | ComponentCatalogStatus::InternalAnatomy
             | ComponentCatalogStatus::Deferred => None,
         }
-    }
-}
-
-const fn contract_catalog_status(name: &'static str) -> ComponentCatalogStatus {
-    ComponentCatalogStatus::from_contract(match component_contract_entry(name) {
-        Some(entry) => entry.gallery_status,
-        None => SurfaceGalleryStatus::NotInGallery,
-    })
-}
-
-const fn contract_family_or(name: &'static str, fallback: &'static str) -> &'static str {
-    match component_contract_entry(name) {
-        Some(entry) => match entry.family {
-            Some(family) => family,
-            None => fallback,
-        },
-        None => fallback,
     }
 }
 
@@ -507,238 +471,204 @@ fn official_story_state_readout_selector(name: &'static str) -> Option<&'static 
 pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
     ComponentCatalogEntry::contract_sample(
         "Button",
-        "action",
         "ButtonState",
         "exports / gallery / state tests",
         "gallery:component-button-sample:default",
     ),
     ComponentCatalogEntry::contract_sample(
         "Badge",
-        "display",
         "BadgeState",
         "exports / gallery / state tests",
         "gallery:component-badge-sample:default",
     ),
     ComponentCatalogEntry::contract_sample(
         "Accordion",
-        "disclosure",
         "AccordionState",
         "exports / gallery / state tests",
         "gallery:component-accordion-sample:shipping",
     ),
     ComponentCatalogEntry::contract_sample(
         "Collapsible",
-        "disclosure",
         "CollapsibleState",
         "exports / gallery / state tests",
         "gallery:component-collapsible-sample:release-notes",
     ),
     ComponentCatalogEntry::contract_sample(
         "Slider",
-        "form",
         "SliderState",
         "exports / gallery / keyboard tests",
         "gallery:component-slider-sample:volume",
     ),
     ComponentCatalogEntry::contract_sample(
         "NumberInput",
-        "form",
         "NumberInputState",
         "exports / gallery / stepper tests",
         "gallery:component-number-input-sample:workers",
     ),
     ComponentCatalogEntry::contract_sample(
         "ToggleGroup",
-        "action",
         "ToggleGroupState",
         "exports / gallery / stable value tests",
         "gallery:component-toggle-group-sample:alignment",
     ),
     ComponentCatalogEntry::contract_sample(
         "Link",
-        "navigation",
         "LinkState",
         "exports / gallery / activation tests",
         "gallery:component-link-sample:docs",
     ),
     ComponentCatalogEntry::contract_sample(
         "Breadcrumb",
-        "navigation",
         "BreadcrumbState",
         "exports / gallery / activation tests",
         "gallery:component-breadcrumb-sample:project",
     ),
     ComponentCatalogEntry::contract_sample(
         "Tag",
-        "display",
         "TagState",
         "exports / gallery / remove tests",
         "gallery:component-tag-sample:ready",
     ),
     ComponentCatalogEntry::contract_sample(
         "ToastStack",
-        "feedback",
         "ToastStackState",
         "exports / gallery / stack tests",
         "gallery:component-toast-stack-sample:notifications",
     ),
     ComponentCatalogEntry::contract_sample(
         "IconButton",
-        "action",
         "IconButtonState",
         "exports / gallery / a11y metadata",
         "gallery:component-icon-button-sample:search",
     ),
     ComponentCatalogEntry::contract_sample(
         "Switch",
-        "form",
         "SwitchState",
         "exports / gallery / state tests",
         "gallery:component-switch-sample:off",
     ),
     ComponentCatalogEntry::contract_sample(
         "Checkbox",
-        "form",
         "CheckboxState",
         "exports / gallery / state tests",
         "gallery:component-checkbox-sample:unchecked",
     ),
     ComponentCatalogEntry::contract_sample(
         "RadioGroup",
-        "choice",
         "RadioGroupState",
         "exports / gallery / runtime smoke",
         "gallery:component-radio-sample:persona-radios",
     ),
     ComponentCatalogEntry::contract_sample(
         "Toggle",
-        "action",
         "ToggleState",
         "exports / gallery / state tests",
         "gallery:component-toggle-sample:ghost-off",
     ),
     ComponentCatalogEntry::contract_sample(
         "Toolbar",
-        "shell",
         "ToolbarState",
         "exports / gallery / runtime smoke",
         "gallery:component-toolbar-sample:editor-toolbar",
     ),
     ComponentCatalogEntry::contract_sample(
         "Sidebar",
-        "shell",
         "SidebarState",
         "exports / gallery / activation runtime / duplicate smoke",
         "gallery:component-sidebar-sample:workspace-sidebar",
     ),
     ComponentCatalogEntry::contract_sample(
         "Tree",
-        "hierarchy",
         "TreeState",
         "exports / gallery / tree runtime smoke",
         "gallery:component-tree-sample:document-outline",
     ),
     ComponentCatalogEntry::contract_sample(
         "Listbox",
-        "choice",
         "ListboxState",
         "exports / gallery / shared navigation smoke",
         "gallery:component-listbox-sample:assignee-listbox",
     ),
     ComponentCatalogEntry::contract_sample(
         "Select",
-        "choice",
         "SelectState",
         "exports / gallery / stable value smoke",
         "gallery:component-select-sample:priority-select",
     ),
     ComponentCatalogEntry::contract_sample(
         "Combobox",
-        "choice-search",
         "ComboboxState",
         "exports / gallery / stable value smoke",
         "gallery:component-combobox-sample:framework-combobox",
     ),
     ComponentCatalogEntry::contract_sample(
         "Command",
-        "choice-search",
         "CommandState",
         "exports / gallery / stable value and runtime smoke",
         "gallery:component-command-sample:ranked-search",
     ),
     ComponentCatalogEntry::contract_sample(
         "Label",
-        "form",
         "LabelState",
         "exports / gallery / a11y metadata",
         "gallery:component-label-sample:email",
     ),
     ComponentCatalogEntry::contract_sample(
         "TextInput",
-        "form",
         "TextInputState",
         "exports / gallery / controller tests",
         "gallery:component-text-input-sample:default",
     ),
     ComponentCatalogEntry::contract_sample(
         "Textarea",
-        "form",
         "TextareaState",
         "exports / gallery / controlled multiline tests",
         "gallery:component-textarea-sample:default",
     ),
     ComponentCatalogEntry::contract_sample(
         "Field",
-        "form",
         "FieldState",
         "exports / gallery / composition tests",
         "gallery:component-field-sample:email",
     ),
     ComponentCatalogEntry::contract_sample(
         "Tabs",
-        "navigation",
         "TabsState",
         "exports / gallery / runtime smoke",
         "gallery:component-tabs-sample:overview-tabs",
     ),
     ComponentCatalogEntry::contract_sample(
         "ScrollArea",
-        "layout",
         "ScrollAreaState",
         "exports / gallery / redraw smoke",
         "gallery:component-scroll-area-sample:activity-log",
     ),
     ComponentCatalogEntry::contract_sample(
         "Splitter",
-        "layout",
         "SplitterState",
         "exports / gallery / drag smoke",
         "gallery:component-splitter-sample:workspace-split",
     ),
     ComponentCatalogEntry::contract_sample(
         "Table",
-        "data",
         "TableState",
         "typed identity / normalized reorder / virtual focus / gallery scroll and resize",
         "gallery:component-table-sample:release-queue",
     ),
     ComponentCatalogEntry::contract_sample(
         "VirtualizedList",
-        "data",
         "VirtualizedListState",
         "exports / gallery / virtualized scroll smoke",
         "gallery:component-virtualized-list-sample:release-navigation",
     ),
     ComponentCatalogEntry::contract_sample(
         "StatusCue",
-        "feedback",
         "StatusCueState",
         "exports / gallery / token intents",
         "gallery:component-status-cue-sample:sync-warning",
     ),
     ComponentCatalogEntry::contract_sample(
         "EmptyState",
-        "feedback",
         "EmptyStateState",
         "exports / gallery / token intents",
         "gallery:component-empty-state-sample:no-results",
@@ -773,42 +703,36 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
     ComponentCatalogEntry::internal_anatomy("ListboxOption", "choice", "Listbox anatomy"),
     ComponentCatalogEntry::contract_sample(
         "Separator",
-        "layout",
         "SeparatorState",
         "exports / gallery / state tests",
         "gallery:component-separator-sample:section-rule",
     ),
     ComponentCatalogEntry::contract_sample(
         "Kbd",
-        "display",
         "KbdState",
         "exports / gallery / state tests",
         "gallery:component-kbd-sample:command-palette",
     ),
     ComponentCatalogEntry::contract_sample(
         "Progress",
-        "status",
         "ProgressState",
         "exports / gallery / state tests",
         "gallery:component-progress-sample:sync",
     ),
     ComponentCatalogEntry::contract_sample(
         "Skeleton",
-        "status",
         "SkeletonState",
         "exports / gallery / state tests",
         "gallery:component-skeleton-sample:body-line",
     ),
     ComponentCatalogEntry::contract_sample(
         "Avatar",
-        "identity",
         "AvatarState",
         "exports / gallery / state tests",
         "gallery:component-avatar-sample:ada",
     ),
     ComponentCatalogEntry::contract_sample(
         "AvatarGroup",
-        "identity",
         "AvatarGroupState",
         "exports / gallery / state tests",
         "gallery:component-avatar-group-sample:team",
@@ -857,22 +781,32 @@ pub fn state_contract_readout_pairs() -> impl Iterator<Item = (&'static str, &'s
     })
 }
 
-const ACTION_STORY_PROBES: &[StoryProbeContract] = &[
-    StoryProbeContract::new(Activate, "primary control", "activation state"),
-    StoryProbeContract::new(Focus, "sample", "focusable control"),
-    StoryProbeContract::new(ReadPublicPayload, "state", "resolved component state"),
-];
+const STATIC_CONTROL_STORY_PROBES: &[StoryProbeContract] = &[StoryProbeContract::new(
+    ReadPublicPayload,
+    "state",
+    "resolved component state",
+)];
 
-const CHOICE_STORY_PROBES: &[StoryProbeContract] = &[
-    StoryProbeContract::new(Open, "trigger", "choice popup or active option"),
-    StoryProbeContract::new(Select, "option", "selected value"),
-    StoryProbeContract::new(Focus, "active option", "roving focus"),
-    StoryProbeContract::new(ReadPublicPayload, "state", "resolved choice state"),
-];
+const DISCLOSURE_STORY_PROBES: &[StoryProbeContract] = &[StoryProbeContract::new(
+    ReadPublicPayload,
+    "state",
+    "resolved disclosure state",
+)];
+
+const CHOICE_STORY_PROBES: &[StoryProbeContract] = &[StoryProbeContract::new(
+    ReadPublicPayload,
+    "state",
+    "resolved choice state",
+)];
+
+const TOOLBAR_STORY_PROBES: &[StoryProbeContract] = &[StoryProbeContract::new(
+    ReadPublicPayload,
+    "state",
+    "resolved toolbar state",
+)];
 
 const SIDEBAR_STORY_PROBES: &[StoryProbeContract] = &[
     StoryProbeContract::new(Activate, "navigation item", "typed activation runtime log"),
-    StoryProbeContract::new(Focus, "active item", "roving focus"),
     StoryProbeContract::new(Scroll, "navigation viewport", "stable sample position"),
     StoryProbeContract::new(
         ReadPublicPayload,
@@ -881,19 +815,24 @@ const SIDEBAR_STORY_PROBES: &[StoryProbeContract] = &[
     ),
 ];
 
-const TEXT_STORY_PROBES: &[StoryProbeContract] = &[
-    StoryProbeContract::new(Edit, "input", "edited text"),
-    StoryProbeContract::new(Focus, "input", "input focus"),
-    StoryProbeContract::new(ReadPublicPayload, "state", "resolved text state"),
+const FORM_CONTROL_STORY_PROBES: &[StoryProbeContract] = &[StoryProbeContract::new(
+    ReadPublicPayload,
+    "state",
+    "resolved control state",
+)];
+
+const SCROLL_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Scroll, "inner viewport", "contained scroll position"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved scroll state"),
+];
+
+const SPLITTER_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Edit, "splitter handle", "panel fractions"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved splitter state"),
 ];
 
 const TABLE_STORY_PROBES: &[StoryProbeContract] = &[
     StoryProbeContract::new(Scroll, "Table-owned body surface", "stable sample position"),
-    StoryProbeContract::new(
-        Focus,
-        "row or Table-root proxy",
-        "exact final-model identity",
-    ),
     StoryProbeContract::new(
         Select,
         "row or cell",
@@ -912,46 +851,49 @@ const TREE_STORY_PROBES: &[StoryProbeContract] = &[
     StoryProbeContract::new(Open, "disclosure", "expanded branch"),
     StoryProbeContract::new(Select, "tree item", "selection payload"),
     StoryProbeContract::new(Scroll, "tree viewport", "stable sample position"),
-    StoryProbeContract::new(Focus, "tree item", "roving focus"),
     StoryProbeContract::new(ReadPublicPayload, "runtime log", "tree callback payload"),
 ];
 
 const VIRTUALIZED_STORY_PROBES: &[StoryProbeContract] = &[
     StoryProbeContract::new(Scroll, "virtualized viewport", "windowed rows"),
     StoryProbeContract::new(Activate, "active row", "activation payload"),
-    StoryProbeContract::new(Focus, "list root", "keyboard focus"),
     StoryProbeContract::new(ReadPublicPayload, "state", "virtualized state summary"),
 ];
 
-const STATE_CONTRACT_STORY_PROBES: &[StoryProbeContract] = &[
-    StoryProbeContract::new(Select, "state row", "selection metadata"),
-    StoryProbeContract::new(Focus, "state row", "focus metadata"),
-    StoryProbeContract::new(
-        ReadPublicPayload,
-        "readout",
-        "renderer-neutral state contract",
-    ),
-];
+const STATE_CONTRACT_STORY_PROBES: &[StoryProbeContract] = &[StoryProbeContract::new(
+    ReadPublicPayload,
+    "readout",
+    "renderer-neutral state contract",
+)];
 
-const DISPLAY_STORY_PROBES: &[StoryProbeContract] = &[
-    StoryProbeContract::new(Focus, "sample", "accessible role metadata"),
-    StoryProbeContract::new(ReadPublicPayload, "state", "resolved display state"),
-];
+const DISPLAY_STORY_PROBES: &[StoryProbeContract] = &[StoryProbeContract::new(
+    ReadPublicPayload,
+    "state",
+    "resolved display state",
+)];
 
 fn component_story_probes(entry: &ComponentCatalogEntry) -> &'static [StoryProbeContract] {
     match entry.status {
         ComponentCatalogStatus::StateContract => STATE_CONTRACT_STORY_PROBES,
         ComponentCatalogStatus::Official => match entry.name {
             "Sidebar" => SIDEBAR_STORY_PROBES,
-            "Listbox" | "Select" | "Combobox" | "Command" | "RadioGroup" | "ToggleGroup"
-            | "Tabs" | "Toolbar" => CHOICE_STORY_PROBES,
-            "TextInput" | "Textarea" | "Field" | "NumberInput" | "Slider" => TEXT_STORY_PROBES,
+            "Select" | "Combobox" | "Command" | "Listbox" | "RadioGroup" | "ToggleGroup"
+            | "Tabs" => CHOICE_STORY_PROBES,
+            "Toolbar" => TOOLBAR_STORY_PROBES,
+            "TextInput" | "Textarea" | "Field" | "NumberInput" | "Slider" => {
+                FORM_CONTROL_STORY_PROBES
+            }
+            "Accordion" | "Collapsible" => DISCLOSURE_STORY_PROBES,
+            "ScrollArea" => SCROLL_STORY_PROBES,
+            "Splitter" => SPLITTER_STORY_PROBES,
             "Table" => TABLE_STORY_PROBES,
             "Tree" => TREE_STORY_PROBES,
             "VirtualizedList" => VIRTUALIZED_STORY_PROBES,
-            "Button" | "IconButton" | "Switch" | "Checkbox" | "Toggle" | "Accordion"
-            | "Collapsible" | "Link" | "Breadcrumb" | "Tag" | "ToastStack" => ACTION_STORY_PROBES,
-            _ => DISPLAY_STORY_PROBES,
+            "Button" | "IconButton" | "Switch" | "Checkbox" | "Toggle" | "Link" | "Breadcrumb"
+            | "Tag" | "ToastStack" => STATIC_CONTROL_STORY_PROBES,
+            "Badge" | "Label" | "StatusCue" | "EmptyState" | "Separator" | "Kbd" | "Progress"
+            | "Skeleton" | "Avatar" | "AvatarGroup" => DISPLAY_STORY_PROBES,
+            name => panic!("official component `{name}` needs an explicit Story probe contract"),
         },
         ComponentCatalogStatus::AdapterOnly
         | ComponentCatalogStatus::InternalAnatomy

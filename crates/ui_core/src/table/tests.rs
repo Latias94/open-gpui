@@ -163,26 +163,67 @@ fn identity_label(identity: Option<&TableRowIdentity>) -> Option<String> {
 }
 
 #[test]
-fn row_model_pipeline_names_full_and_v0_stages() {
+fn row_model_pipeline_executes_each_stage_before_final_pinning_partition() {
+    let resolved = TableState::new(sample_rows())
+        .with_filters([TableFilter::not_contains("name", "Beta")])
+        .with_grouping(["team"])
+        .with_sorting([TableSort::descending("team")])
+        .with_expanded_rows([group_identity("team", "ops")])
+        .with_pagination(TablePagination::new(0, 2))
+        .with_row_pinning(TableRowPinning::new().pinned_top([group_identity("team", "design")]))
+        .resolve();
+
+    let stages = [
+        (
+            resolved.core_model(),
+            ["row-b", "row-a", "row-c"].as_slice(),
+        ),
+        (resolved.filtered_model(), ["row-a", "row-c"].as_slice()),
+        (
+            resolved.grouped_model(),
+            ["group:team=design", "row-a", "group:team=ops", "row-c"].as_slice(),
+        ),
+        (
+            resolved.sorted_model(),
+            ["group:team=ops", "row-c", "group:team=design", "row-a"].as_slice(),
+        ),
+        (
+            resolved.expanded_model(),
+            ["group:team=ops", "row-c", "group:team=design"].as_slice(),
+        ),
+        (
+            resolved.paginated_model(),
+            ["group:team=ops", "row-c"].as_slice(),
+        ),
+        (
+            resolved.final_model(),
+            ["group:team=design", "group:team=ops", "row-c"].as_slice(),
+        ),
+    ];
+
+    for (model, expected) in stages {
+        assert_eq!(row_ids(model.rows()), expected);
+    }
+
+    assert_eq!(resolved.core_model().stage(), TableRowModelStage::Core);
     assert_eq!(
-        TABLE_ROW_MODEL_PIPELINE.map(TableRowModelStage::as_str),
-        [
-            "core",
-            "filtered",
-            "grouped",
-            "sorted",
-            "expanded",
-            "paginated",
-            "final"
-        ]
+        resolved.filtered_model().stage(),
+        TableRowModelStage::Filtered
     );
     assert_eq!(
-        TABLE_ROW_MODEL_V0_PIPELINE.map(TableRowModelStage::as_str),
-        ["core", "filtered", "sorted", "paginated", "final"]
+        resolved.grouped_model().stage(),
+        TableRowModelStage::Grouped
     );
-    assert!(!TableRowModelStage::Grouped.implemented_in_v0());
-    assert!(!TableRowModelStage::Expanded.implemented_in_v0());
-    assert!(TableRowModelStage::Sorted.implemented_in_v0());
+    assert_eq!(resolved.sorted_model().stage(), TableRowModelStage::Sorted);
+    assert_eq!(
+        resolved.expanded_model().stage(),
+        TableRowModelStage::Expanded
+    );
+    assert_eq!(
+        resolved.paginated_model().stage(),
+        TableRowModelStage::Paginated
+    );
+    assert_eq!(resolved.final_model().stage(), TableRowModelStage::Final);
 }
 
 #[test]

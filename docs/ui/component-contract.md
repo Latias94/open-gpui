@@ -8,14 +8,75 @@ the next implied refactor.
 
 ## Contract Tables
 
-The component contract tables are the product authority for component metadata used by local tests.
-Cargo remains the distribution authority for official implementations, and crate source remains the primary inspection surface for humans and AI agents.
+`crates/ui_components/src/component_contract/` is the product authority for official component id,
+contract revision, family, and required scenario ids. It deliberately does not own Rust export
+paths, source files, Gallery selectors, DevTools projections, package names, test targets, or test
+functions. Those facts live with the modules and artifacts that execute them.
 
-Open GPUI does not ship a generated component registry manifest, scaffold recipe manifest, or registry JSON/schema artifact.
-The removed hybrid registry layer duplicated typed source facts without proving enough value over direct source inspection and focused contract scans.
+Public modules generate typed export facts and positive facade compile witnesses from the same
+declaration as each `pub use`. Diagnostic declarations also generate per-export compile-fail
+doctests for the root, common, and prelude facades. The Components and Overlay galleries own their
+selectors and runtime probes. Each native integration test target owns a sibling
+`*.scenarios.toml` artifact that binds product requirements to exact nextest coordinates. Gallery
+stories and DevTools semantic identities independently receive the same immutable
+`ComponentContractMetadata` from canonical product rows. `cargo run -p xtask -- scan-ui-contract`
+joins these owners and rejects drift without becoming a second registry.
 
-Use `crates/ui_components/src/component_contract/` to keep public component ownership, source homes, docs tokens, gallery status, and default export intent aligned.
-Use `cargo run -p xtask -- scan-ui-contract` and focused `cargo nextest` gates to catch drift.
+The following table is a human-readable projection of the narrow product rows. The scanner checks
+it exactly against the typed source rows.
+
+<!-- BEGIN COMPONENT CONTRACT PROJECTION -->
+| Contract ID | Revision | Family |
+| --- | ---: | --- |
+| `Accordion` | 1 | `disclosure` |
+| `Button` | 1 | `action` |
+| `Badge` | 1 | `display` |
+| `Collapsible` | 1 | `disclosure` |
+| `Link` | 1 | `navigation` |
+| `Breadcrumb` | 1 | `navigation` |
+| `Tag` | 1 | `display` |
+| `ToastStack` | 1 | `feedback` |
+| `IconButton` | 1 | `action` |
+| `Slider` | 1 | `form` |
+| `NumberInput` | 1 | `form` |
+| `Switch` | 1 | `form` |
+| `Checkbox` | 1 | `form` |
+| `RadioGroup` | 1 | `choice` |
+| `Toggle` | 1 | `action` |
+| `ToggleGroup` | 1 | `action` |
+| `Toolbar` | 1 | `shell` |
+| `Sidebar` | 1 | `shell` |
+| `Tree` | 1 | `hierarchy` |
+| `Listbox` | 1 | `choice` |
+| `Select` | 1 | `choice` |
+| `Combobox` | 1 | `choice-search` |
+| `Command` | 1 | `choice-search` |
+| `Label` | 1 | `form` |
+| `TextInput` | 1 | `form` |
+| `Textarea` | 1 | `form` |
+| `Field` | 1 | `form` |
+| `Tabs` | 1 | `navigation` |
+| `ScrollArea` | 1 | `layout` |
+| `Splitter` | 1 | `layout` |
+| `Table` | 1 | `data` |
+| `VirtualizedList` | 1 | `data` |
+| `StatusCue` | 1 | `feedback` |
+| `EmptyState` | 1 | `feedback` |
+| `Separator` | 1 | `layout` |
+| `Kbd` | 1 | `display` |
+| `Progress` | 1 | `status` |
+| `Skeleton` | 1 | `status` |
+| `Avatar` | 1 | `identity` |
+| `AvatarGroup` | 1 | `identity` |
+| `Tooltip` | 1 | `overlay` |
+| `HoverCard` | 1 | `overlay` |
+| `Popover` | 1 | `overlay` |
+| `Dialog` | 1 | `overlay` |
+| `AlertDialog` | 1 | `overlay` |
+| `Sheet` | 1 | `overlay` |
+| `Menu` | 1 | `overlay` |
+| `ContextMenu` | 1 | `overlay` |
+<!-- END COMPONENT CONTRACT PROJECTION -->
 
 ## Resolved State
 
@@ -217,7 +278,8 @@ follow-up work.
 The Overlay page has its own product catalog instead of being merged into the Components page.
 `open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG` lists Tooltip, HoverCard,
 Popover, Dialog, AlertDialog, Sheet, Menu, and ContextMenu with official status, family metadata,
-resolved-state type, rendered sample selector, coverage summary, and behavior-gate labels.
+resolved-state type, rendered sample selector, Gallery-local group, coverage summary, and Story
+probes.
 `overlay_sample_selector_pairs()` is the focused selector contract for rendered overlay samples.
 Default-open overlay samples may expose default-open metadata, but the gallery must keep them
 visually non-blocking at page load so modal barriers and floating layers do not prevent scrolling
@@ -386,7 +448,8 @@ Callbacks should use a small semantic vocabulary: `on_change` for scalar value c
 `on_open_change` for overlay visibility requests, `on_selection_change` for persistent selection
 state, `on_select` for committed item selection or action-like choice, `on_activate` for activation
 without persistent selection ownership, and `on_toggle` for expansion or tri-state toggle payloads.
-Seed-shaped runtime builders must stay explicit in the API inventory. Current examples include
+Seed-shaped runtime builders must stay explicit in their owning Rust APIs and executable
+state/runtime tests. Current examples include
 `Listbox::default_selected`, `Select::default_selected`, `Combobox::default_selected`,
 `Command::default_selected`, `Command::default_selected_values`, `Tabs::default_selected`,
 `RadioGroup::default_selected`, `Toolbar::default_focused`,
@@ -399,8 +462,9 @@ Seed-shaped runtime builders must stay explicit in the API inventory. Current ex
 reserved for caller-owned render-frame inputs. `Switch::on_change`, `Toggle::on_change`, and
 `TextInput::on_change` are scalar value-change callbacks. Bootstrap callback exceptions such as
 `Button::on_click`, `AlertDialog::on_action`, `AlertDialog::on_cancel`, and
-`Table::on_sort_requested` must stay explicit in the API inventory because they represent command
-activation, modal action outcomes, or table sort requests rather than scalar value changes. Sheet
+`Table::on_sort_requested` must stay explicit in their owning APIs and callback tests because they
+represent command activation, modal action outcomes, or table sort requests rather than scalar
+value changes. Sheet
 close requests are not an exception: `Sheet::on_open_change` receives the runtime-issued
 `OverlayOpenIntent` for its close affordance, Escape, outside press, and programmatic requests.
 
@@ -437,54 +501,41 @@ only when they preserve semantic vocabulary without creating a second component 
 A component is official only when it satisfies the current-crate completion contract:
 
 - it has a public resolved-state or descriptor type that avoids GPUI runtime/rendering types;
-- crate-root and prelude exports are explicit and covered by public export tests;
-- its public interaction API has a `COMPONENT_API_INVENTORY` row classifying render inputs,
-  controlled runtime inputs, `default_*` seeds, policy hints, callbacks, callback payload types,
-  and renderer-neutral resolved-state ownership;
+- crate-root, `common`, and prelude exports are declared through the typed public-export macro and
+  covered by compile tests;
 - metrics, sizes, colors, focus rings, and accessibility metadata use foundation vocabulary;
 - callbacks, focus handles, scroll handles, image loading, deferred rendering, and subscriptions
   stay in the GPUI adapter layer;
 - the Components gallery exposes real samples, stable sample ids, and resolved-state metadata;
 - every official catalog entry has matching `SIGNALS` entries for its component type and resolved
   state type, plus at least one rendered `gallery:component-*-sample:{id}` selector;
-- every official overlay family has a matching `OVERLAY_CATALOG` row with component/state
-  `SIGNALS`, at least one rendered `gallery:overlay-*-sample:{id}` selector, and named behavior
-  gates;
-- focused tests cover state contracts, and rendered runtime tests cover behavior that state tests
-  cannot prove;
+- every official overlay family has a matching `OVERLAY_CATALOG` row with canonical component
+  metadata, component/state `SIGNALS`, a Gallery-local behavior group, and at least one rendered
+  `gallery:overlay-*-sample:{id}` selector;
+- required native scenarios are declared next to their owning integration targets in
+  `*.scenarios.toml`, while focused runtime tests cover behavior that state tests cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
 
-`open_gpui_ui_components::component_contract` owns the current product contract table;
-its source home is the `crates/ui_components/src/component_contract/` module family.
-`component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
-`component_contract/rows.rs` is the row facade, `component_contract/rows/catalog.rs` owns canonical
-contract rows, `component_contract/projections.rs` owns the primary `component_contract_entry`
-lookup plus derived default-surface, gallery, official-component, overlay, and recipe row queries,
-`component_contract/source_mapping.rs` owns source-owner projections,
-`component_contract/surfaces.rs` owns adjacent public-surface rows, and
-`component_contract/api_inventory.rs` owns public API inventory and method baselines. That split
-keeps marker lists derived from the canonical rows instead of preserving a second fact source.
-That contract table classifies official components, official recipes, renderer-neutral state contracts,
-GPUI adapter helpers, public anatomy, diagnostics, and removed compatibility targets. It also
-records API inventory rows, source homes, docs tokens, gallery status, and default-export intent.
-`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` is a gallery view
-model over that table. The Components page re-exports that catalog through
-`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering keep
-their stable consumer path, but official status and family grouping are derived from the component
-crate contract rows. Entries with contract status `official` satisfy the checklist above. Entries with
-contract status `adapter-only` are public GPUI helper surfaces such as `TextInputController`, not
-standalone components. Entries with contract status `internal-anatomy` are public parts of a
-component family, such as `ToolbarItem`, `SidebarItem`, and `ListboxOption`, and should not be
-promoted to standalone components without a new resolved-state contract. Entries with contract
-status `state-contract` are public renderer-neutral contracts with gallery readouts and signal
-coverage, but they are not themselves rendered GPUI components. They may sit beside an official
-adapter, as `TreeState` does for `Tree`. They must use `state_contract_selector`, not the official
-`sample_selector`, and they must not satisfy the official rendered-component gate by accident.
-Entries with contract status `deferred` are planned components that must not be treated as shipped
-API until they satisfy the checklist and gain a contract row.
+`open_gpui_ui_components::component_contract` owns only the narrow product table and typed joins.
+`component_contract/types.rs` owns `ComponentContractMetadata`, `ComponentContractEntry`, and
+`PublicApiExport`; `component_contract/rows/catalog.rs` owns the 48 canonical id/revision/family
+rows and required scenario ids; `component_contract/projections.rs` provides lookup plus typed
+export projections. Public API modules, Gallery catalogs, DevTools snapshots, native scenario
+artifacts, and docs remain independent owners whose facts are joined by `scan-ui-contract`.
+That table contains only official rendered component contracts. It does not classify recipes,
+renderer-neutral state contracts, GPUI adapter helpers, public anatomy, diagnostics, or removed
+compatibility targets, and it does not record method names, source homes, docs tokens, Gallery
+status, or export intent.
+`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` consumes canonical
+metadata for its official rows but owns its presentation status, sample selectors, state readouts,
+coverage summaries, and Story probes locally. Gallery-only `adapter-only`, `internal-anatomy`, and
+`state-contract` rows therefore do not become product rows by appearing beside official samples. A
+future rendered component joins the product table only after it satisfies the completion checklist
+and owns native scenario coverage.
 
 Public surface ownership uses a stricter source-facing vocabulary than the visible gallery status.
-`official component` names are rendered GPUI components with inventory rows and sample selectors.
+`official component` names are rendered GPUI components with canonical product rows and Gallery
+sample selectors.
 `renderer-neutral state contract` names are public state/resolution models that can be consumed
 without GPUI runtime types. `gpui adapter helper` names are public only through
 `open_gpui_ui_components::gpui_adapter` or narrowly scoped adapter modules. `TableBehaviorSnapshot`
@@ -777,8 +828,9 @@ exact `TableRowIdentity` values, nested source rows, row lookup, row-model stage
 selection keyed by exact `TableSourceRowIdentity`, column visibility and ordering, pinned column regions, row
 pinning, sorting, filtering, grouping, built-in aggregation, expansion, column groups, nested
 headers, and pagination. The official table contract resolves the full pipeline core -> filtered
--> grouped -> sorted -> expanded -> paginated -> row-region split -> final without changing an
-exact row identity.
+-> grouped -> sorted -> expanded -> paginated -> final without changing an exact row identity. Row
+pinning derives the top, center, and bottom presentation partitions from resolved models according
+to its policy; it is not another row-model stage.
 
 `TableRowId` is not an exact source-instance identity. Source-backed exact identities use
 `TableSourceRowIdentity` with `TableSourceInstanceIdentity::Unique` when the business id is unique,
@@ -1009,11 +1061,15 @@ indexes keep the same payload shape across pinned and center rows. Combined two-
 details remain adapter-internal; public tests assert the resulting row/column behavior through
 `TableBehaviorSnapshot` and gallery runtime probes instead of inspecting the render plan.
 
-An official Table entry must satisfy the normal component completion gate: `Table` and
-`TableBehaviorSnapshot` export at the crate root and common prelude; component-owned table controls
-such as `TableGlobalFilter` and `TableToolbar` export at the crate root and owner modules, while
-`TableState`, `TableRow`, `TableColumn`, row-model, virtualizer, and resize math import from
-`open_gpui_ui_core`. The entry also needs matching `SIGNALS` entries, a `COMPONENT_CATALOG`
+An official Table entry must satisfy the normal component completion gate: `Table` and the real
+restoration inputs `TableVirtualizerSnapshot` / `TableVirtualizerSnapshotItem` export at the crate
+root, `common` module, and prelude. Behavior readouts such as `TableBehaviorSnapshot` are diagnostic APIs
+under `open_gpui_ui_components::table`; component-owned controls such as `TableGlobalFilter` and
+`TableToolbar` export at the crate root and owner module. `TableState`, `TableRow`, `TableColumn`,
+row-model, virtualizer, and resize math import from `open_gpui_ui_core`, while the production
+runtime cache invalidation key remains `open_gpui_ui_core::table::TableStateCacheKey`. The entry
+also needs matching
+`SIGNALS` entries, a `COMPONENT_CATALOG`
 official entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests
 for row identity, grouping, source-tree expansion, row interaction payloads, and virtualizer
 behavior, and gallery runtime tests for nested scroll containment, faceted-filter row updates,
@@ -1105,40 +1161,36 @@ the contract does not claim full platform screen-reader coverage.
 
 ## Gallery Conformance Surface
 
-`examples/ui-foundation-gallery` is the durable conformance surface for official UI components. It
-consumes `open_gpui_ui_components::component_contract` for shipped status, family grouping, and
-public-contract evidence, then adds gallery-owned sample selectors, focused-section ids, runtime
-probes, and rendered dogfood. It should expose stable sample ids, real resolved state, and a short
-gate list that names the regression-prone behaviors each slice must keep covered.
+`examples/ui-foundation-gallery` is the durable rendered conformance surface for official UI
+components. Official Components and Overlay entries receive canonical
+`ComponentContractMetadata`, then add Gallery-owned status, presentation grouping, sample
+selectors, focused-section ids, runtime probes, and rendered dogfood. Adapter-only helpers,
+internal anatomy, and renderer-neutral state-contract rows remain Gallery-local and carry no
+official component metadata.
 
 The Components page should keep the contract-backed component catalog visible and distinguish
 shipped components from adapter-only helpers, internal anatomy, state contracts, and deferred
 entries. Its root module is a small facade: catalog view-model metadata lives in
-`components/catalog.rs`; the visible conformance gate list lives in `components/conformance.rs`;
-`components/samples.rs`,
+`components/catalog.rs`; `components/samples.rs`,
 `components/runtime.rs`, and `components/render.rs` are private parent facades over explicit
 family-owned modules. Sample descriptors and static sample data live under
 `components/samples/`; Tree, Table, and VirtualizedList runtime probes live under
 `components/runtime/`; page orchestration, section dispatch, readouts, focus controls, and shared
 card helpers live under `components/render/`. `components.rs` must not expose `runtime` or
 `samples` as public modules, and it must not use wildcard facade exports such as
-`pub use runtime::*` or `pub use samples::*`; only stable sample accessors, conformance metadata,
+`pub use runtime::*` or `pub use samples::*`; only stable catalog/story metadata, sample accessors,
 and runtime probe names are re-exported explicitly. The page has two supported inspection modes:
 the full all-components conformance page, and a focused component-family view entered from
 official catalog cards. Focused
 mode may hide unrelated sections, but it must keep the section directory available, expose an
 explicit `All components` control, reset the page viewport when the family changes, and keep nested
 sample scrolling local to the sample viewport. Directory chips remain anchor jumps inside the
-current page mode; they must not implicitly change the focused family. The page should also keep
-these gates visible:
+current page mode; they must not implicitly change the focused family. The executable gates are:
 
-- crate-root, common, and prelude exports stay explicit;
-- contract-row default-export intent stays aligned through
-  `root_and_prelude_exports_match_contract_default_surface_intent`;
-- contract-row source ownership stays aligned through
-  `command_component_source_mapping_tracks_split_owners`;
-- gallery catalog status and family grouping stay contract-owned through
-  `components_catalog_consumes_component_contract_rows`;
+- crate-root, common, prelude, and diagnostic exports stay explicit through typed declarations;
+- `official_components_match_typed_public_exports` checks the product/export join;
+- `gallery_contract_metadata_matches_component_rows` checks 40 Components plus 8 Overlay entries,
+  their rendered `name`/`family`, Story metadata, and Gallery-local row isolation;
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
 - every official catalog entry keeps matching component/state signals and a rendered sample
   selector;
@@ -1153,6 +1205,8 @@ these gates visible:
 - official Listbox, Select, Combobox, and Command stories expose state readout selector pairs so
   search/choice payloads can be asserted without inspecting renderer internals;
 - gallery samples continue to show real resolved state for each shipped component;
+- exact native test ownership is declared by sibling `*.scenarios.toml` artifacts and executed by
+  `scan-ui-contract`;
 - all-components and focused component-family modes preserve the catalog, section directory, page
   scroll reset, and nested scroll containment contracts;
 - the gallery navigation rail and page viewport stay independently scrollable on compact windows;
@@ -1163,9 +1217,9 @@ these gates visible:
 - icon-only affordances and labels keep their accessible metadata explicit;
 - final `TreeUpdate` and real AccessKit action tests own evidence for semantic producers; static
   accessibility evidence rows, Gallery claims, and their consumers are not parallel authorities;
-- `cargo run -p xtask -- scan-ui-contract` keeps contract rows, default exports, docs tokens,
-  Gallery conformance metadata, and the theme schema artifact aligned before gallery smoke tests
-  are needed.
+- `cargo run --locked -p xtask -- scan-ui-contract` joins narrow contract rows, typed export facts,
+  the docs projection, Gallery canonical metadata, and test-owned scenario artifacts, then executes
+  every registered exact test coordinate.
 
 Large or behavior-heavy sections must use the same lazy or virtualized rendering primitives that
 the component library exposes to applications. The Components page mounts sections through a
@@ -1316,7 +1370,7 @@ group-row aggregate cells, source-tree branches with manual expansion and child-
 pinned left/center/right column regions, runtime column visibility overrides, locked column hideability,
 manual filtering/sorting/pagination modes with pagination totals, committed column sizing state,
 clamped width resolution with region totals/offsets, row pinning with top/center/bottom regions,
-sortable header action payloads, crate-root/prelude
+sortable header action payloads, crate-root/common/prelude
 exports, table/cell roles, and a vertically virtualized GPUI recipe whose body scroll stays inside
 the table viewport.
 For pinned samples, the adapter renders fixed left/right lanes plus a shared horizontal center lane
@@ -1441,12 +1495,12 @@ and virtualized behavior snapshots.
 `menu/runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.
-After these family splits, the shared UI framework contract work is enforced through
-`cargo run -p xtask -- scan-ui-contract`: `component_contract` module ownership, Gallery
-conformance metadata, and theme schema/loading all have an audit entry point. Semantic behavior is
-instead proven at the final `TreeUpdate` and real AccessKit action boundary. The remaining large
-component files should stay intact unless one of those product contracts exposes a concrete
-ownership problem.
+After these family splits, `cargo run -p xtask -- scan-ui-contract` joins component metadata,
+Gallery ownership, public export facts, docs projection, and native scenario registrations.
+`scan-theme-schema` and `scan-theme-drift` separately audit theme schema/loading and consumer
+coverage. Semantic behavior is proven at the final `TreeUpdate` and real AccessKit action boundary.
+The remaining large component files should stay intact unless one of those product contracts
+exposes a concrete ownership problem.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

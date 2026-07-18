@@ -19,19 +19,24 @@ ADR 0014 supersedes the hybrid registry experiment because it duplicated source 
 
 ## Contract Authority
 
-The canonical source of component product metadata remains `crates/ui_components/src/component_contract/`.
-Those typed rows are internal verification contracts, not an external ecosystem registry.
-They keep public-surface tests, gallery conformance, docs tokens, source mappings, default exports, a11y claims, and theme schema checks aligned.
+The canonical source of component product metadata remains
+`crates/ui_components/src/component_contract/`. Those typed rows own only official id, revision,
+family, and required scenario ids; they are not an external ecosystem registry. Public modules own
+exports, Gallery owns selectors and runtime probes, DevTools owns its projection, native test
+targets own exact executable coordinates, and docs own the human-readable projection.
 
 The reusable local checks are:
 
-1. Update component contract rows only when public component ownership, source home, docs tokens, gallery status, or export intent changes.
+1. Update component contract rows only when official identity, revision, family, or required
+   product scenarios change.
 2. Run `cargo run -p xtask -- scan-ui-contract`.
 3. Run focused component, gallery, a11y, theme, or table/tree/menu tests for behavior that changed.
 4. Update docs and ADRs only when crate boundaries, public APIs, or compatibility rules change.
 
 Gallery selectors and story probes remain owned by `examples/ui-foundation-gallery`.
-Gallery tests may consume typed component contract rows, but `open-gpui-ui-components` must not import gallery selector constants.
+Gallery tests join canonical metadata to their own rows, but `open-gpui-ui-components` must not
+import Gallery selector constants. Each integration target binds required scenarios through a
+sibling `*.scenarios.toml`; `scan-ui-contract` validates and runs those exact nextest coordinates.
 Official choice/search stories should expose both sample selectors and state-readout selectors so
 tests can prove public payloads without relying on renderer internals.
 

@@ -1,0 +1,6 @@
+schema = 1
+
+[[scenario]]
+id = "a11y.separator.final-tree-projection"
+contracts = ["Separator"]
+test = "separator_final_tree_downgrades_to_group_preserves_orientation_and_omits_decorative_semantics"
