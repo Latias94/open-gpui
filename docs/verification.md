@@ -3,28 +3,72 @@
 Run the local Open GPUI gate with:
 
 ```sh
-cargo run -p xtask -- verify
+cargo run --locked -p xtask -- verify
 ```
 
 The gate runs:
 
-- `cargo fmt --all --check`
-- `cargo check --workspace` (including workspace examples such as `open-gpui-docking-minimal`)
-- `cargo check -p open-gpui-smoke-native`
-- `cargo nextest run -p open-gpui`
-- `cargo nextest run -p open-gpui-motion`
-- `cargo test -p open-gpui-motion --doc`
-- `cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools`
-- `cargo nextest run -p open-gpui-ui-core`
-- `cargo nextest run -p open-gpui-ui-components`
-- `cargo nextest run -p open-gpui-ui-foundation-gallery`
+- `cargo fmt --all -- --check`
+- `cargo check --workspace --all-targets --locked` (including workspace examples such as `open-gpui-docking-minimal`)
+- `cargo check -p open-gpui-smoke-native --locked`
+- `cargo nextest run -p open-gpui-motion --locked`
+- `cargo test -p open-gpui-motion --doc --locked`
+- `cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --locked`
+- `cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked`
+- `cargo test -p open-gpui-devtools --all-features --doc --locked`
+- package-wide locked nextest gates for `open-gpui`, `open-gpui-ui-core`,
+  `open-gpui-ui-components`, and `open-gpui-ui-foundation-gallery`
+- locked doctests for `open-gpui-ui-core` and `open-gpui-ui-components`
 - `cargo run -p xtask -- verify-release-docs`
 - `cargo run -p xtask -- scan-doc-links`
 - `cargo run -p xtask -- dependency-health`
 - `cargo run -p xtask -- scan-theme-drift`
+- `cargo run -p xtask -- scan-theme-schema`
 - `cargo run -p xtask -- scan-import-boundary`
 - `cargo run -p xtask -- scan-public-api --check`
 - `cargo run -p xtask -- scan-ui-contract`
+
+On Windows, `xtask verify` sets `CARGO_BUILD_JOBS=1` only on the two DevTools all-features child
+processes. It does not mutate the parent shell environment.
+
+The U11 authority-convergence focused gate is:
+
+```powershell
+cargo nextest run --locked -p xtask --lib verify_plan_covers_u11_targets_features_and_process_scoped_environment --no-fail-fast
+$env:CARGO_BUILD_JOBS = '1'
+cargo nextest run --locked -p open-gpui-devtools --all-features --test framework_adapters --test resolved_semantic_redaction --test table_redaction --no-fail-fast
+cargo test --locked -p open-gpui-devtools --all-features --doc
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery u11_gallery_convergence_smoke_composes_real_authorities_in_one_window --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery devtools_gallery --no-fail-fast
+cargo run --locked -p xtask -- scan-theme-schema
+cargo run --locked -p xtask -- scan-doc-links
+```
+
+`table_canaries_never_cross_any_devtools_artifact_boundary` is the Table privacy gate. It injects
+unique Table id/label, column id/label, business row id, explicit instance id, grouped value, cell
+value, identity diagnostic, and debug-selector forms, then proves none crosses live capture,
+history, diff, Inspector detail/copy, session export, headless capture/export/report artifacts,
+JSON/Markdown report, or the checked-in fixture. `table_opaque_ids_are_stable_only_inside_their_own_session`
+proves that adapter-assigned ordinals are stable for one session without becoming reversible or
+globally stable. The resolved-semantic target separately keeps form values/errors, accessible
+text, labels, and input values out of the same downstream surfaces. The Gallery Inspector smoke
+places a unique value on the real GPUI clipboard route, proves navigation neither ingests nor
+replaces it, and then verifies the copied Inspector JSON remains redacted.
+`devtools_gallery_headless_fixtures_match_producer_output` applies the shared canary absence check
+to the generated Gallery capture, session, and report fixtures.
+
+`framework_focus_snapshot_reads_the_rendered_window_authority` proves DevTools obtains focused
+element presence and opaque claim/frame revisions from the real rendered window. Scope and handle
+counts remain `None` when no complete producer registry can prove them; unknown counts must never
+be serialized as guessed zeroes.
+
+`u11_gallery_convergence_smoke_composes_real_authorities_in_one_window` is intentionally one real
+window flow, not a catalog or hand-built snapshot assertion. It composes nested Popover -> Menu ->
+Dialog topmost dismissal and LIFO focus restoration, sibling scoped themes with a deferred
+surface, a real async-validating `FormStore`, final AccessKit value/busy/relations/action facts,
+exactly-once Sidebar semantic activation, and fake-clock Tree typeahead reset. The focused command
+is followed by the complete package gates in `xtask verify`; per-domain tests remain the owning
+diagnostics when this convergence sentinel fails.
 
 The full `open-gpui` nextest target is the unified gate for pointer-session, focus, input-dispatch,
 and window-lifecycle regressions. Focused filters documented below provide faster implementation
@@ -62,7 +106,7 @@ Before publishing a prepared release tag, generate the GitHub Release notes from
 cargo run -p xtask -- verify-release-docs --version <version> --notes-output target/release/release-notes.md
 ```
 
-`verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, and requires crate-local README metadata for public entry crates. Daily verification checks `docs/release/breaking-changes.md` against `CHANGELOG.md` `[Unreleased]`; release-note generation checks the same inventory against the selected version section because that is the text published to GitHub Releases. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
+`verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, and requires crate-local README metadata for public entry crates. Daily verification checks `docs/release/breaking-changes.md` against `CHANGELOG.md` `[Unreleased]`; release-note generation checks the same inventory against the selected version section because that is the text published to GitHub Releases. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, the ADR index, every engineering decision record, and public crate READMEs. Historical plans and progress logs remain outside the strict link gate until they are archived or indexed.
 
 For the 2026-07 DevTools live runtime workbench slice, the focused local gates are:
 

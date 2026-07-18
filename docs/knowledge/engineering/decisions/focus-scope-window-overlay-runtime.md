@@ -200,3 +200,12 @@ U3/U4 fleet completion is established by the following invariants and focused ga
   closing scope or safely cleared.
 - `WindowOverlaySnapshot` is a read-only diagnostic projection. DevTools replaces raw layer and
   parent IDs with snapshot-local opaque ordinals before serialization.
+
+# Related Decisions
+
+- [Semantic accessibility and final-tree authority](semantic-accessibility-final-tree-authority.md)
+- [Semantic activation authority](semantic-activation-authority.md)
+- [Theme scope resolution and deferred capture](theme-scope-resolution.md)
+- [ADR 0008: Open GPUI UI Component Productization Roadmap](../../../adr/0008-open-gpui-ui-component-productization-roadmap.md)
+- [ADR 0009: Open GPUI Table and Virtualizer Product Shape](../../../adr/0009-open-gpui-table-and-virtualizer-product-shape.md)
+- [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../../adr/0014-remove-native-ui-hybrid-registry.md)

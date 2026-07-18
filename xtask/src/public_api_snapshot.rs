@@ -1175,6 +1175,7 @@ fn devtools_ui_components_public_item_allowlist() -> BTreeSet<String> {
         "ComponentSemanticIdentity",
         "OpaqueSemanticNodeId",
         "ResolvedSemanticNode",
+        "TableDevtoolsSession",
         "resolved_semantics_probe_snapshot",
         "theme_probe_snapshot",
         "window_overlay_probe_snapshot",
@@ -1611,6 +1612,7 @@ mod tests {
             pub struct ComponentSemanticIdentity;
             pub struct OpaqueSemanticNodeId;
             pub struct ResolvedSemanticNode;
+            pub struct TableDevtoolsSession;
             pub fn resolved_semantics_probe_snapshot() {}
 
             impl ComponentSemanticIdentity {

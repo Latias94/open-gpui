@@ -840,3 +840,21 @@ with the window runtime. They never claim or restore focus. Outside press is tra
 allows Escape dismissal, while Tooltip retains its descriptive default Escape policy. The removed
 HoverCard `.outside_press_policy(...)`, `.initial_focus_intent(...)`, and
 `.focus_restore_intent(...)` builders must not be replaced with local event handlers.
+
+### DevTools Window Focus Projection
+
+Construct the GPUI runtime focus projection from the rendered window instead of assembling focus
+facts beside the runtime:
+
+```rust
+use open_gpui_devtools::gpui::GpuiRuntimeFocusSnapshot;
+
+let focus = GpuiRuntimeFocusSnapshot::from_window(window_id, window, cx);
+```
+
+The snapshot now carries optional `focused_element_rendered`, opaque `focus_claim_revision`, and
+opaque `rendered_frame_revision` facts. `focus_scope_count` and `focus_handle_count` are also
+optional: a producer that cannot prove a fact must emit `None`, not a guessed false or zero. This
+keeps older imported JSON distinguishable from a live negative observation. An inactive window may
+retain a logical `FocusHandle`, but `from_window` reports no `focused_window_id` until that window
+again owns keyboard focus. Downstream JSON consumers must accept null for every unavailable fact.

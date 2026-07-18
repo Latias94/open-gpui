@@ -10,8 +10,8 @@ use crate::{
     },
 };
 use open_gpui::{
-    Bounds, Pixels, Point, ScrollViewportChangeSource, ScrollViewportProgrammaticSource,
-    ScrollViewportSnapshot, Size as GpuiSize,
+    App, Bounds, Pixels, Point, ScrollViewportChangeSource, ScrollViewportProgrammaticSource,
+    ScrollViewportSnapshot, Size as GpuiSize, Window,
 };
 use serde::{Deserialize, Serialize};
 
@@ -59,15 +59,49 @@ pub struct GpuiRuntimeWindowSnapshot {
 
 /// Metadata for focus state without element names, labels, or text values.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GpuiRuntimeFocusSnapshot {
     /// Active window id, when known.
     pub active_window_id: Option<u64>,
-    /// Focused window id, when known.
+    /// Window id that currently owns keyboard focus, when known.
     pub focused_window_id: Option<u64>,
-    /// Number of focus scopes known to the producer.
-    pub focus_scope_count: usize,
-    /// Number of focus handles known to the producer.
-    pub focus_handle_count: usize,
+    /// Whether the active focused handle belongs to the latest rendered dispatch tree.
+    ///
+    /// `None` means the producer or imported payload cannot prove this fact.
+    pub focused_element_rendered: Option<bool>,
+    /// Opaque revision of the latest explicit focus claim, when known.
+    pub focus_claim_revision: Option<u64>,
+    /// Opaque revision of the latest completed rendered frame, when known.
+    pub rendered_frame_revision: Option<u64>,
+    /// Number of focus scopes known to an external producer, when it can prove that count.
+    pub focus_scope_count: Option<usize>,
+    /// Number of focus handles known to an external producer, when it can prove that count.
+    pub focus_handle_count: Option<usize>,
+}
+
+impl GpuiRuntimeFocusSnapshot {
+    /// Captures authoritative focus facts directly from one rendered GPUI window.
+    ///
+    /// GPUI does not expose global scope or handle registries, so those optional producer facts
+    /// remain absent instead of being guessed from the currently focused handle.
+    pub fn from_window(window_id: u64, window: &Window, cx: &App) -> Self {
+        let active = window.is_window_active();
+        let focused = window.focused(cx);
+        Self {
+            active_window_id: active.then_some(window_id),
+            focused_window_id: (active && focused.is_some()).then_some(window_id),
+            focused_element_rendered: Some(
+                active
+                    && focused
+                        .as_ref()
+                        .is_some_and(|handle| window.is_focus_handle_rendered(handle)),
+            ),
+            focus_claim_revision: Some(window.focus_claim_revision()),
+            rendered_frame_revision: Some(window.rendered_frame_revision()),
+            focus_scope_count: None,
+            focus_handle_count: None,
+        }
+    }
 }
 
 /// Metadata-only input counters; raw key text and clipboard contents are intentionally absent.
@@ -446,6 +480,9 @@ fn gpui_focus_payload(focus: &GpuiRuntimeFocusSnapshot) -> serde_json::Value {
     serde_json::json!({
         "active_window_id": focus.active_window_id,
         "focused_window_id": focus.focused_window_id,
+        "focused_element_rendered": focus.focused_element_rendered,
+        "focus_claim_revision": focus.focus_claim_revision,
+        "rendered_frame_revision": focus.rendered_frame_revision,
         "focus_scope_count": focus.focus_scope_count,
         "focus_handle_count": focus.focus_handle_count,
     })

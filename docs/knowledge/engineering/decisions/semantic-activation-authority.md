@@ -228,3 +228,7 @@ command dispatch and make simple value controls depend on application action inf
 - [ADR 0005: Open GPUI Official Component Architecture](../../../adr/0005-open-gpui-official-component-architecture.md)
 - [Focus scope and window overlay runtime ownership](focus-scope-window-overlay-runtime.md)
 - [Semantic accessibility and final-tree authority](semantic-accessibility-final-tree-authority.md)
+- [Theme scope resolution and deferred capture](theme-scope-resolution.md)
+- [ADR 0008: Open GPUI UI Component Productization Roadmap](../../../adr/0008-open-gpui-ui-component-productization-roadmap.md)
+- [ADR 0009: Open GPUI Table and Virtualizer Product Shape](../../../adr/0009-open-gpui-table-and-virtualizer-product-shape.md)
+- [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../../adr/0014-remove-native-ui-hybrid-registry.md)

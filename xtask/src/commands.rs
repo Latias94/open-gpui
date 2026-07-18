@@ -91,40 +91,133 @@ pub fn run_from_env() -> ExitCode {
     }
 }
 
-fn verify(root: &Path) -> Result<(), ()> {
-    run(root, "cargo", &["fmt", "--all", "--check"])?;
-    run(root, "cargo", &["check", "--workspace"])?;
-    run(root, "cargo", &["check", "-p", "open-gpui-smoke-native"])?;
-    run_motion_tests(root)?;
-    run_ecosystem_tests(root)?;
-    run_gpui_tests(root)?;
-    run_ui_component_tests(root)?;
-    verify_release_docs(root, &[])?;
-    scan_doc_links(root)?;
-    dependency_health(root)?;
-    scan_theme_drift(root)?;
-    scan_import_boundary(root)?;
-    scan_public_api(root, &["--check".to_string()])?;
-    scan_ui_contract(root)?;
-    Ok(())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerifyHost {
+    Windows,
+    Other,
 }
 
-fn run_gpui_tests(root: &Path) -> Result<(), ()> {
-    run(root, "cargo", &["nextest", "run", "-p", "open-gpui"])?;
-    Ok(())
+impl VerifyHost {
+    fn current() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Windows
+        } else {
+            Self::Other
+        }
+    }
 }
 
-fn run_motion_tests(root: &Path) -> Result<(), ()> {
-    run(root, "cargo", &["nextest", "run", "-p", "open-gpui-motion"])?;
-    run(root, "cargo", &["test", "-p", "open-gpui-motion", "--doc"])?;
-    Ok(())
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifyCommand {
+    program: &'static str,
+    args: Vec<&'static str>,
+    environment: Vec<(&'static str, &'static str)>,
 }
 
-fn run_ecosystem_tests(root: &Path) -> Result<(), ()> {
-    run(
-        root,
-        "cargo",
-        &[
+impl VerifyCommand {
+    fn cargo(args: impl IntoIterator<Item = &'static str>) -> Self {
+        Self {
+            program: "cargo",
+            args: args.into_iter().collect(),
+            environment: Vec::new(),
+        }
+    }
+
+    fn with_environment(mut self, key: &'static str, value: &'static str) -> Self {
+        self.environment.push((key, value));
+        self
+    }
+
+    fn run(&self, root: &Path) -> Result<(), ()> {
+        run_with_environment(root, self.program, &self.args, self.environment.as_slice())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerifyGate {
+    ReleaseDocs,
+    DocLinks,
+    DependencyHealth,
+    ThemeDrift,
+    ThemeSchema,
+    ImportBoundary,
+    PublicApi,
+    UiContract,
+}
+
+impl VerifyGate {
+    fn run(self, root: &Path) -> Result<(), ()> {
+        match self {
+            Self::ReleaseDocs => verify_release_docs(root, &[]),
+            Self::DocLinks => scan_doc_links(root),
+            Self::DependencyHealth => dependency_health(root),
+            Self::ThemeDrift => scan_theme_drift(root),
+            Self::ThemeSchema => scan_theme_schema(root),
+            Self::ImportBoundary => scan_import_boundary(root),
+            Self::PublicApi => scan_public_api(root, &["--check".to_owned()]),
+            Self::UiContract => scan_ui_contract(root),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VerifyStep {
+    Command(VerifyCommand),
+    Gate(VerifyGate),
+}
+
+impl VerifyStep {
+    fn run(&self, root: &Path) -> Result<(), ()> {
+        match self {
+            Self::Command(command) => command.run(root),
+            Self::Gate(gate) => gate.run(root),
+        }
+    }
+}
+
+fn devtools_all_features_command(
+    host: VerifyHost,
+    args: impl IntoIterator<Item = &'static str>,
+) -> VerifyCommand {
+    let command = VerifyCommand::cargo(args);
+    match host {
+        VerifyHost::Windows => command.with_environment("CARGO_BUILD_JOBS", "1"),
+        VerifyHost::Other => command,
+    }
+}
+
+fn verify_plan(host: VerifyHost) -> Vec<VerifyStep> {
+    use VerifyGate as Gate;
+
+    vec![
+        VerifyStep::Command(VerifyCommand::cargo(["fmt", "--all", "--", "--check"])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "check",
+            "--workspace",
+            "--all-targets",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "check",
+            "-p",
+            "open-gpui-smoke-native",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "nextest",
+            "run",
+            "-p",
+            "open-gpui-motion",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "test",
+            "-p",
+            "open-gpui-motion",
+            "--doc",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
             "nextest",
             "run",
             "-p",
@@ -133,24 +226,88 @@ fn run_ecosystem_tests(root: &Path) -> Result<(), ()> {
             "open-gpui-resource",
             "-p",
             "open-gpui-devtools",
-        ],
-    )?;
-    Ok(())
+            "--locked",
+        ])),
+        VerifyStep::Command(devtools_all_features_command(
+            host,
+            [
+                "nextest",
+                "run",
+                "-p",
+                "open-gpui-devtools",
+                "--all-features",
+                "--no-fail-fast",
+                "--locked",
+            ],
+        )),
+        VerifyStep::Command(devtools_all_features_command(
+            host,
+            [
+                "test",
+                "-p",
+                "open-gpui-devtools",
+                "--all-features",
+                "--doc",
+                "--locked",
+            ],
+        )),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "nextest",
+            "run",
+            "-p",
+            "open-gpui",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "nextest",
+            "run",
+            "-p",
+            "open-gpui-ui-core",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "nextest",
+            "run",
+            "-p",
+            "open-gpui-ui-components",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "nextest",
+            "run",
+            "-p",
+            "open-gpui-ui-foundation-gallery",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "test",
+            "-p",
+            "open-gpui-ui-core",
+            "--doc",
+            "--locked",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "test",
+            "-p",
+            "open-gpui-ui-components",
+            "--doc",
+            "--locked",
+        ])),
+        VerifyStep::Gate(Gate::ReleaseDocs),
+        VerifyStep::Gate(Gate::DocLinks),
+        VerifyStep::Gate(Gate::DependencyHealth),
+        VerifyStep::Gate(Gate::ThemeDrift),
+        VerifyStep::Gate(Gate::ThemeSchema),
+        VerifyStep::Gate(Gate::ImportBoundary),
+        VerifyStep::Gate(Gate::PublicApi),
+        VerifyStep::Gate(Gate::UiContract),
+    ]
 }
 
-fn run_ui_component_tests(root: &Path) -> Result<(), ()> {
-    for package in [
-        "open-gpui-ui-core",
-        "open-gpui-ui-components",
-        "open-gpui-ui-foundation-gallery",
-    ] {
-        run(root, "cargo", &["nextest", "run", "-p", package])?;
+fn verify(root: &Path) -> Result<(), ()> {
+    for step in verify_plan(VerifyHost::current()) {
+        step.run(root)?;
     }
-
-    for package in ["open-gpui-ui-core", "open-gpui-ui-components"] {
-        run(root, "cargo", &["test", "-p", package, "--doc"])?;
-    }
-
     Ok(())
 }
 
@@ -165,25 +322,36 @@ fn renderer_smoke(root: &Path) -> Result<(), ()> {
             "open-gpui-wgpu",
             "--features",
             "font-kit",
+            "--locked",
             "renderer_smoke_creates_core_pipelines",
         ],
     )
 }
 
 pub(crate) fn run(root: &Path, program: &str, args: &[&str]) -> Result<(), ()> {
+    run_with_environment(root, program, args, &[])
+}
+
+fn run_with_environment(
+    root: &Path,
+    program: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+) -> Result<(), ()> {
     let display = std::iter::once(program)
         .chain(args.iter().copied())
         .collect::<Vec<_>>()
         .join(" ");
 
     println!("==> {display}");
-    let status = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
-        .current_dir(root)
-        .status()
-        .map_err(|error| {
-            eprintln!("failed to run `{display}`: {error}");
-        })?;
+        .envs(environment.iter().copied())
+        .current_dir(root);
+    let status = command.status().map_err(|error| {
+        eprintln!("failed to run `{display}`: {error}");
+    })?;
 
     if status.success() {
         Ok(())
@@ -197,4 +365,175 @@ pub(crate) fn workspace_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask manifest should live under the workspace root")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cargo_commands(plan: &[VerifyStep]) -> Vec<&VerifyCommand> {
+        plan.iter()
+            .filter_map(|step| match step {
+                VerifyStep::Command(command) if command.program == "cargo" => Some(command),
+                VerifyStep::Command(_) | VerifyStep::Gate(_) => None,
+            })
+            .collect()
+    }
+
+    fn is_devtools_all_features(command: &&VerifyCommand) -> bool {
+        command.args.windows(2).any(|args| {
+            args == ["-p", "open-gpui-devtools"] || args == ["--package", "open-gpui-devtools"]
+        }) && command.args.contains(&"--all-features")
+    }
+
+    #[test]
+    fn verify_plan_covers_u11_targets_features_and_process_scoped_environment() {
+        let windows_plan = verify_plan(VerifyHost::Windows);
+        let windows_commands = cargo_commands(&windows_plan);
+
+        assert!(windows_commands.iter().any(|command| {
+            command.args == ["check", "--workspace", "--all-targets", "--locked"]
+        }));
+        assert_eq!(
+            windows_commands
+                .iter()
+                .map(|command| command.args.as_slice())
+                .collect::<Vec<_>>(),
+            [
+                &["fmt", "--all", "--", "--check"][..],
+                &["check", "--workspace", "--all-targets", "--locked"][..],
+                &["check", "-p", "open-gpui-smoke-native", "--locked"][..],
+                &["nextest", "run", "-p", "open-gpui-motion", "--locked"][..],
+                &["test", "-p", "open-gpui-motion", "--doc", "--locked"][..],
+                &[
+                    "nextest",
+                    "run",
+                    "-p",
+                    "open-gpui-form",
+                    "-p",
+                    "open-gpui-resource",
+                    "-p",
+                    "open-gpui-devtools",
+                    "--locked",
+                ][..],
+                &[
+                    "nextest",
+                    "run",
+                    "-p",
+                    "open-gpui-devtools",
+                    "--all-features",
+                    "--no-fail-fast",
+                    "--locked",
+                ][..],
+                &[
+                    "test",
+                    "-p",
+                    "open-gpui-devtools",
+                    "--all-features",
+                    "--doc",
+                    "--locked",
+                ][..],
+                &["nextest", "run", "-p", "open-gpui", "--locked"][..],
+                &["nextest", "run", "-p", "open-gpui-ui-core", "--locked"][..],
+                &[
+                    "nextest",
+                    "run",
+                    "-p",
+                    "open-gpui-ui-components",
+                    "--locked",
+                ][..],
+                &[
+                    "nextest",
+                    "run",
+                    "-p",
+                    "open-gpui-ui-foundation-gallery",
+                    "--locked",
+                ][..],
+                &["test", "-p", "open-gpui-ui-core", "--doc", "--locked"][..],
+                &["test", "-p", "open-gpui-ui-components", "--doc", "--locked",][..],
+            ]
+        );
+
+        for command in &windows_commands {
+            let is_nextest = command.args.starts_with(&["nextest", "run"]);
+            let is_doctest =
+                command.args.first() == Some(&"test") && command.args.contains(&"--doc");
+            if is_nextest || is_doctest {
+                assert!(
+                    command.args.contains(&"--locked"),
+                    "verification command is not lockfile-stable: {:?}",
+                    command.args
+                );
+            }
+        }
+
+        let windows_devtools = windows_commands
+            .iter()
+            .copied()
+            .filter(is_devtools_all_features)
+            .collect::<Vec<_>>();
+        assert_eq!(windows_devtools.len(), 2);
+        assert!(windows_devtools.iter().any(|command| {
+            command.args
+                == [
+                    "nextest",
+                    "run",
+                    "-p",
+                    "open-gpui-devtools",
+                    "--all-features",
+                    "--no-fail-fast",
+                    "--locked",
+                ]
+        }));
+        assert!(windows_devtools.iter().any(|command| {
+            command.args
+                == [
+                    "test",
+                    "-p",
+                    "open-gpui-devtools",
+                    "--all-features",
+                    "--doc",
+                    "--locked",
+                ]
+        }));
+        assert!(
+            windows_devtools
+                .iter()
+                .all(|command| { command.environment == [("CARGO_BUILD_JOBS", "1")] })
+        );
+        assert_eq!(
+            windows_commands
+                .iter()
+                .filter(|command| !command.environment.is_empty())
+                .count(),
+            windows_devtools.len()
+        );
+
+        let other_plan = verify_plan(VerifyHost::Other);
+        assert!(
+            cargo_commands(&other_plan)
+                .into_iter()
+                .filter(is_devtools_all_features)
+                .all(|command| command.environment.is_empty())
+        );
+        assert_eq!(
+            other_plan
+                .iter()
+                .filter_map(|step| match step {
+                    VerifyStep::Gate(gate) => Some(*gate),
+                    VerifyStep::Command(_) => None,
+                })
+                .collect::<Vec<_>>(),
+            [
+                VerifyGate::ReleaseDocs,
+                VerifyGate::DocLinks,
+                VerifyGate::DependencyHealth,
+                VerifyGate::ThemeDrift,
+                VerifyGate::ThemeSchema,
+                VerifyGate::ImportBoundary,
+                VerifyGate::PublicApi,
+                VerifyGate::UiContract,
+            ]
+        );
+    }
 }

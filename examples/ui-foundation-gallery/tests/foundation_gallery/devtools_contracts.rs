@@ -1,22 +1,68 @@
 use super::*;
+use open_gpui::ClipboardItem;
 use open_gpui_devtools::{
     DevtoolsArtifactJsonlSink, DevtoolsArtifactSink, DevtoolsDiffKind, DevtoolsDiffStatus,
-    DevtoolsSessionFrame, SnapshotEnvelope,
+    DevtoolsSessionFrame, SnapshotEnvelope, adapters::opaque_stable_id,
 };
 use open_gpui_motion::MotionPreference;
 use open_gpui_ui_components::theme::{ThemeContext, ThemeDefinition, ThemeRegistry, ThemeSnapshot};
 use open_gpui_ui_core::ThemeDesignScales;
 
+const DEVTOOLS_CLIPBOARD_ROUTE_CANARY: &str = "gallery-clipboard-route-canary-019f4ad7";
+
 fn assert_devtools_canaries_absent(serialized: &str) {
-    for &canary in pages::components::FORM_DEVTOOLS_DOGFOOD_CANARIES
-        .iter()
-        .chain(pages::focus_a11y::FOCUS_A11Y_SENSITIVE_TEXT)
-    {
+    for canary in devtools_sensitive_source_forms() {
         assert!(
-            !serialized.contains(canary),
-            "DevTools canary leaked: {canary}"
+            !serialized.contains(&canary),
+            "DevTools canary or derived source form leaked: {canary}"
         );
     }
+}
+
+fn devtools_sensitive_source_forms() -> Vec<String> {
+    let mut forms = pages::components::FORM_DEVTOOLS_DOGFOOD_CANARIES
+        .iter()
+        .chain(pages::focus_a11y::FOCUS_A11Y_SENSITIVE_TEXT)
+        .chain(pages::devtools::DEVTOOLS_GALLERY_TABLE_CANARIES)
+        .copied()
+        .chain([DEVTOOLS_CLIPBOARD_ROUTE_CANARY])
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    for namespace in ["table", "table-column", "table-row", "table-cell"] {
+        forms.extend(
+            pages::devtools::DEVTOOLS_GALLERY_TABLE_CANARIES
+                .iter()
+                .map(|value| opaque_stable_id(namespace, value)),
+        );
+    }
+
+    for refresh_index in [1, 2] {
+        let snapshot = pages::devtools::devtools_gallery_table_behavior_snapshot(refresh_index);
+        for row in snapshot.rows() {
+            forms.push(format!("{:?}", row.identity()));
+            forms.push(row.identity().debug_label());
+            forms.push(row.identity().key().as_str().to_owned());
+            forms.push(TableDebugSelector::row(snapshot.table_id(), row.identity()));
+            for cell in row.cells() {
+                forms.push(TableDebugSelector::cell(
+                    snapshot.table_id(),
+                    row.identity(),
+                    cell.column_id(),
+                ));
+            }
+        }
+        forms.extend(
+            snapshot
+                .row_identity_diagnostics()
+                .iter()
+                .map(|diagnostic| format!("{diagnostic:?}")),
+        );
+    }
+
+    forms.sort();
+    forms.dedup();
+    forms
 }
 
 fn form_snapshot(frame: &DevtoolsSessionFrame) -> &SnapshotEnvelope {
@@ -26,6 +72,47 @@ fn form_snapshot(frame: &DevtoolsSessionFrame) -> &SnapshotEnvelope {
         .iter()
         .find(|snapshot| snapshot.probe_id.as_str() == "form")
         .expect("form snapshot in DevTools frame")
+}
+
+fn table_snapshot(frame: &DevtoolsSessionFrame) -> &SnapshotEnvelope {
+    frame
+        .capture
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "table")
+        .expect("Table snapshot in DevTools frame")
+}
+
+fn assert_table_projection(
+    snapshot: &SnapshotEnvelope,
+    expected_final_rows: usize,
+) -> serde_json::Value {
+    let root = snapshot.tree.nodes.first().expect("Table projection root");
+    let payload = root.payload.as_ref().expect("Table projection payload");
+
+    assert_eq!(payload["table_id"].as_str(), Some("table-1"));
+    assert_eq!(
+        payload["rows"]["final"].as_u64(),
+        Some(expected_final_rows as u64)
+    );
+    assert_eq!(payload["identity_diagnostic_count"].as_u64(), Some(1));
+    assert_eq!(payload["columns"]["aria"].as_u64(), Some(1));
+    assert!(snapshot.redaction.redacted_values > 0);
+    payload.clone()
+}
+
+fn table_opaque_row_ids(snapshot: &SnapshotEnvelope) -> Vec<String> {
+    snapshot.tree.nodes[0]
+        .children
+        .iter()
+        .filter_map(|node| {
+            node.payload
+                .as_ref()
+                .filter(|payload| payload["role"] == "row")
+                .and_then(|payload| payload["row_id"].as_str())
+                .map(str::to_owned)
+        })
+        .collect()
 }
 
 fn assert_form_validation_projection(
@@ -83,13 +170,28 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             "form",
             "layout.scroll-viewport",
             "motion",
+            "overlay.window",
             "resource",
+            "table",
             "theme",
             "timeline.motion-frame",
             "gpui.runtime.gallery"
         ]
     );
     let form_snapshot = pages::components::form_devtools_dogfood_snapshot();
+    let table_input = pages::devtools::devtools_gallery_table_behavior_snapshot(1);
+    assert_eq!(table_input.row_identity_diagnostics().len(), 1);
+    assert!(
+        table_input
+            .row_identity_diagnostics()
+            .iter()
+            .any(|diagnostic| {
+                matches!(
+                    diagnostic,
+                    open_gpui_ui_core::TableRowIdentityDiagnostic::DuplicateRowId { .. }
+                )
+            })
+    );
     let expected_form_redactions = form_snapshot.fields.len()
         + form_snapshot.errors.len()
         + form_snapshot
@@ -104,6 +206,32 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             .filter(|snapshot| snapshot.kind.as_label() == "command")
             .count(),
         3
+    );
+    let table_projection = collection
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "table")
+        .expect("Table projection in Gallery collection");
+    assert_table_projection(table_projection, 5);
+    let overlay_projection = collection
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "overlay.window")
+        .expect("headless Gallery overlay projection");
+    assert_eq!(
+        overlay_projection.tree.nodes[0].payload.as_ref().unwrap()["availability"],
+        "unavailable",
+        "headless fixtures must not invent a window overlay authority"
+    );
+    let gpui_projection = collection
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "gpui.runtime.gallery")
+        .expect("headless Gallery GPUI projection");
+    assert_eq!(
+        gpui_projection.tree.nodes[0].payload.as_ref().unwrap()["has_focus"],
+        false,
+        "headless fixtures must not invent focus facts without a window"
     );
     assert_eq!(
         collection
@@ -184,7 +312,7 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
             .iter()
             .any(|diagnostic| diagnostic.code.starts_with("capture.duplicate_"))
     );
-    assert_eq!(capture.snapshot_collection().snapshots.len(), 11);
+    assert_eq!(capture.snapshot_collection().snapshots.len(), 13);
     assert_devtools_canaries_absent(&serde_json::to_string(&capture).unwrap());
 }
 
@@ -209,6 +337,17 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
     assert_eq!(export.frames.len(), 2);
     assert_form_validation_projection(form_snapshot(&export.frames[0]), "Validating", 1);
     assert_form_validation_projection(form_snapshot(&export.frames[1]), "SubmitFailed", 0);
+    let first_table = assert_table_projection(table_snapshot(&export.frames[0]), 4);
+    let second_table = assert_table_projection(table_snapshot(&export.frames[1]), 5);
+    assert_eq!(first_table["table_id"], second_table["table_id"]);
+    let first_table_rows = table_opaque_row_ids(table_snapshot(&export.frames[0]));
+    let second_table_rows = table_opaque_row_ids(table_snapshot(&export.frames[1]));
+    assert!(
+        first_table_rows
+            .iter()
+            .all(|row_id| second_table_rows.contains(row_id)),
+        "existing Table opaque row ids must remain stable across Gallery session frames"
+    );
     assert!(diff.summary.changed > 0);
     assert!(state.diff_rows().iter().any(|row| {
         row.status == DevtoolsDiffStatus::Changed
@@ -227,6 +366,11 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
             && row.status == DevtoolsDiffStatus::Changed
             && row.identity == "form:form"
     }));
+    assert!(diff.rows.iter().any(|row| {
+        row.kind == DevtoolsDiffKind::Snapshot
+            && row.status == DevtoolsDiffStatus::Changed
+            && row.identity == "table:element"
+    }));
 
     let export_json = serde_json::to_string(&export).unwrap();
     assert!(export_json.contains("open-gpui-devtools-session/v1"));
@@ -239,6 +383,14 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
 fn devtools_gallery_inspector_copies_validating_form_detail(
     test_cx: &mut open_gpui::TestAppContext,
 ) {
+    test_cx.write_to_clipboard(ClipboardItem::new_string(
+        DEVTOOLS_CLIPBOARD_ROUTE_CANARY.to_owned(),
+    ));
+    assert_eq!(
+        test_cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(DEVTOOLS_CLIPBOARD_ROUTE_CANARY.to_owned())
+    );
+
     let (shell, cx) = open_gallery_page_with_shell(test_cx, GalleryPage::Devtools);
     let inspector = cx.update(|_, app| shell.read(app).devtools_inspector().clone());
 
@@ -262,6 +414,16 @@ fn devtools_gallery_inspector_copies_validating_form_detail(
         detail_kind,
         Some(open_gpui_devtools::DevtoolsInspectorDetailKind::LegacySnapshot)
     );
+    let live_capture_json = cx.update(|_, app| {
+        serde_json::to_string(&inspector.read(app).state().current_capture())
+            .expect("live Inspector capture serializes")
+    });
+    assert_devtools_canaries_absent(&live_capture_json);
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(DEVTOOLS_CLIPBOARD_ROUTE_CANARY.to_owned()),
+        "Inspector navigation must not read or replace clipboard contents"
+    );
 
     scroll_page_selector_into_view(&shell, cx, "devtools-inspector:copy-detail");
     click(cx, "devtools-inspector:copy-detail");
@@ -269,6 +431,7 @@ fn devtools_gallery_inspector_copies_validating_form_detail(
         .read_from_clipboard()
         .and_then(|item| item.text())
         .expect("copied form detail JSON");
+    assert_ne!(clipboard_json, DEVTOOLS_CLIPBOARD_ROUTE_CANARY);
     let clipboard_snapshot =
         serde_json::from_str::<SnapshotEnvelope>(&clipboard_json).expect("valid snapshot JSON");
 
@@ -316,6 +479,16 @@ fn devtools_gallery_headless_artifacts_use_artifact_records() {
     assert_eq!(lines.len(), 2);
     assert!(lines[0].contains("\"artifact_kind\":\"session-export\""));
     assert!(lines[1].contains("\"artifact_kind\":\"report\""));
+    let current_frame = artifacts
+        .session_export
+        .frames
+        .last()
+        .expect("current headless Gallery frame");
+    let table_projection = table_snapshot(current_frame);
+    assert_table_projection(table_projection, 5);
+    assert!(
+        artifacts.report.summary.redacted_value_count >= table_projection.redaction.redacted_values
+    );
     let session_json = serde_json::to_string(&artifacts.session_export).unwrap();
     let report_json = serde_json::to_string(&artifacts.report).unwrap();
     assert_devtools_canaries_absent(&jsonl);

@@ -26,13 +26,17 @@ use open_gpui_devtools::{
     command as devtools_command, form, gpui, motion, resource,
     ui_components::{
         self, ComponentSemanticIdentity, OpaqueSemanticNodeId, ResolvedSemanticNode,
-        resolved_semantics_probe_snapshot,
+        TableDevtoolsSession, resolved_semantics_probe_snapshot,
     },
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
-use open_gpui_ui_components::theme::ThemeContext;
-use open_gpui_ui_core::{Role, SemanticDescriptor, ThemeTokens};
+use open_gpui_ui_components::{
+    Table, gpui_adapter::WindowOverlaySnapshot, table::TableBehaviorSnapshot, theme::ThemeContext,
+};
+use open_gpui_ui_core::{
+    Role, SemanticDescriptor, TableColumn, TableRow, TableState, ThemeTokens, ui_px,
+};
 
 use super::components::{
     form_devtools_dogfood_snapshot, form_devtools_validation_dogfood_snapshot,
@@ -67,6 +71,8 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::resource::resource_snapshot_probe",
     "open_gpui_devtools::ui_components::theme_probe_snapshot",
     "open_gpui_devtools::ui_components::resolved_semantics_probe_snapshot",
+    "open_gpui_devtools::ui_components::window_overlay_probe_snapshot",
+    "open_gpui_devtools::ui_components::TableDevtoolsSession",
     "open_gpui_devtools::motion::motion_frame_demand_probe_snapshot",
     "open_gpui_devtools::motion::motion_frame_demand_timeline_probe_snapshot",
 ];
@@ -76,6 +82,31 @@ pub const DEVTOOLS_GALLERY_ARTIFACT_PRODUCER_ID: &str = "ui-foundation-gallery.d
 /// Scenario id used by deterministic Gallery headless artifacts.
 pub const DEVTOOLS_GALLERY_ARTIFACT_SCENARIO_ID: &str = "gallery.devtools.headless";
 const DEVTOOLS_GALLERY_ARTIFACT_TIMESTAMP_MS: u64 = 1_725_000_000_000;
+const DEVTOOLS_TABLE_ID_CANARY: &str = "gallery-table-id-canary-019f4ad7";
+const DEVTOOLS_TABLE_LABEL_CANARY: &str = "gallery-table-label-canary-4d33";
+const DEVTOOLS_TABLE_COLUMN_ID_CANARY: &str = "gallery-table-column-id-canary-7573";
+const DEVTOOLS_TABLE_COLUMN_LABEL_CANARY: &str = "gallery-table-column-label-canary-ac26";
+const DEVTOOLS_TABLE_ROW_ID_CANARY: &str = "gallery-table-row-id-canary-94bc";
+const DEVTOOLS_TABLE_INSTANCE_ID_CANARY: &str = "gallery-table-instance-id-canary-135cc634";
+const DEVTOOLS_TABLE_SECOND_INSTANCE_ID_CANARY: &str =
+    "gallery-table-second-instance-id-canary-6f06";
+const DEVTOOLS_TABLE_GROUP_VALUE_CANARY: &str = "gallery-table-group-value-canary-table";
+const DEVTOOLS_TABLE_CELL_VALUE_CANARY: &str = "gallery-table-cell-value-canary-history";
+const DEVTOOLS_TABLE_NEXT_ROW_CANARY: &str = "gallery-table-next-row-canary-diff";
+
+/// Raw Table source strings that must never cross the Gallery DevTools adapter boundary.
+pub const DEVTOOLS_GALLERY_TABLE_CANARIES: &[&str] = &[
+    DEVTOOLS_TABLE_ID_CANARY,
+    DEVTOOLS_TABLE_LABEL_CANARY,
+    DEVTOOLS_TABLE_COLUMN_ID_CANARY,
+    DEVTOOLS_TABLE_COLUMN_LABEL_CANARY,
+    DEVTOOLS_TABLE_ROW_ID_CANARY,
+    DEVTOOLS_TABLE_INSTANCE_ID_CANARY,
+    DEVTOOLS_TABLE_SECOND_INSTANCE_ID_CANARY,
+    DEVTOOLS_TABLE_GROUP_VALUE_CANARY,
+    DEVTOOLS_TABLE_CELL_VALUE_CANARY,
+    DEVTOOLS_TABLE_NEXT_ROW_CANARY,
+];
 
 actions!(
     gallery_devtools_command,
@@ -83,7 +114,7 @@ actions!(
 );
 
 /// Allowlisted shell facts that Gallery contributes to its live DevTools workbench.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct GalleryDevtoolsLiveFacts {
     active_page: String,
     viewport_width_px: f32,
@@ -91,6 +122,30 @@ pub struct GalleryDevtoolsLiveFacts {
     density: String,
     control_size: String,
     theme: ThemeContext,
+    focus: Option<gpui::GpuiRuntimeFocusSnapshot>,
+    overlay: Option<WindowOverlaySnapshot>,
+}
+
+impl std::fmt::Debug for GalleryDevtoolsLiveFacts {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GalleryDevtoolsLiveFacts")
+            .field("active_page", &self.active_page)
+            .field("viewport_width_px", &self.viewport_width_px)
+            .field("shell_mode", &self.shell_mode)
+            .field("density", &self.density)
+            .field("control_size", &self.control_size)
+            .field("theme", &self.theme)
+            .field("has_window_focus", &self.focus.is_some())
+            .field(
+                "overlay_layer_count",
+                &self
+                    .overlay
+                    .as_ref()
+                    .map(|snapshot| snapshot.layers().len()),
+            )
+            .finish()
+    }
 }
 
 impl GalleryDevtoolsLiveFacts {
@@ -110,7 +165,20 @@ impl GalleryDevtoolsLiveFacts {
             density: sanitize_sensitive_text(density.as_ref()),
             control_size: sanitize_sensitive_text(control_size.as_ref()),
             theme,
+            focus: None,
+            overlay: None,
         }
+    }
+
+    /// Attaches runtime facts captured from the current Gallery window.
+    pub fn with_window_runtime(
+        mut self,
+        focus: gpui::GpuiRuntimeFocusSnapshot,
+        overlay: WindowOverlaySnapshot,
+    ) -> Self {
+        self.focus = Some(focus);
+        self.overlay = Some(overlay);
+        self
     }
 
     fn default_devtools_page() -> Self {
@@ -359,8 +427,12 @@ fn devtools_gallery_session_with_facts(
 ) -> DevtoolsSession {
     let mut registry = DevtoolsRegistry::default();
     let refresh_index = Arc::new(AtomicU64::new(0));
+    let table_session = Arc::new(Mutex::new(
+        TableDevtoolsSession::default().with_identity_retention(4),
+    ));
     let provider_refresh_index = Arc::clone(&refresh_index);
     let provider_live_facts = Arc::clone(&live_facts);
+    let provider_table_session = Arc::clone(&table_session);
     registry
         .register_capture_provider_fn("gallery.devtools", move || {
             let refresh_index = provider_refresh_index.fetch_add(1, Ordering::SeqCst) + 1;
@@ -375,6 +447,7 @@ fn devtools_gallery_session_with_facts(
             Ok(devtools_gallery_provider_capture(
                 refresh_index,
                 &live_facts,
+                Arc::clone(&provider_table_session),
             ))
         })
         .expect("unique gallery devtools capture provider");
@@ -385,10 +458,19 @@ fn devtools_gallery_session_with_facts(
 fn devtools_gallery_provider_capture(
     refresh_index: u64,
     live_facts: &GalleryDevtoolsLiveFacts,
+    table_session: Arc<Mutex<TableDevtoolsSession>>,
 ) -> DevtoolsCapture {
-    let collection = devtools_gallery_legacy_collection(refresh_index, &live_facts.theme);
+    let collection = devtools_gallery_legacy_collection(
+        refresh_index,
+        &live_facts.theme,
+        live_facts.overlay.as_ref(),
+        table_session,
+    );
     let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
-    let gpui_capture = gpui::gpui_runtime_capture(&gallery_gpui_runtime_sample(refresh_index));
+    let gpui_capture = gpui::gpui_runtime_capture(&gallery_gpui_runtime_sample(
+        refresh_index,
+        live_facts.focus.clone(),
+    ));
     let shell_target_id =
         DevtoolsTargetId::from_parts(["gallery", "shell", live_facts.active_page.as_str()]);
     let shell_domain_id = DevtoolsDomainId::from_parts(["gallery", "shell", "live"]);
@@ -482,9 +564,49 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
     devtools_gallery_capture().snapshot_collection()
 }
 
+/// Returns the raw Table behavior input projected by the Gallery DevTools session.
+///
+/// The first frame contains a duplicate business id with distinct explicit instances, so the
+/// adapter receives a real structured identity diagnostic while every logical identity remains
+/// stable. Even-numbered frames add one source row.
+pub fn devtools_gallery_table_behavior_snapshot(refresh_index: u64) -> TableBehaviorSnapshot {
+    let mut rows = vec![
+        TableRow::new(DEVTOOLS_TABLE_ROW_ID_CANARY)
+            .with_instance_id(DEVTOOLS_TABLE_SECOND_INSTANCE_ID_CANARY)
+            .with_cell(
+                DEVTOOLS_TABLE_COLUMN_ID_CANARY,
+                DEVTOOLS_TABLE_GROUP_VALUE_CANARY,
+            ),
+        TableRow::new(DEVTOOLS_TABLE_ROW_ID_CANARY)
+            .with_instance_id(DEVTOOLS_TABLE_INSTANCE_ID_CANARY)
+            .with_cell(
+                DEVTOOLS_TABLE_COLUMN_ID_CANARY,
+                DEVTOOLS_TABLE_CELL_VALUE_CANARY,
+            ),
+    ];
+    if refresh_index % 2 == 0 {
+        rows.push(TableRow::new(DEVTOOLS_TABLE_NEXT_ROW_CANARY).with_cell(
+            DEVTOOLS_TABLE_COLUMN_ID_CANARY,
+            DEVTOOLS_TABLE_GROUP_VALUE_CANARY,
+        ));
+    }
+
+    let state = TableState::new(rows)
+        .with_columns([TableColumn::new(
+            DEVTOOLS_TABLE_COLUMN_ID_CANARY,
+            DEVTOOLS_TABLE_COLUMN_LABEL_CANARY,
+        )])
+        .with_grouping([DEVTOOLS_TABLE_COLUMN_ID_CANARY])
+        .with_all_rows_expanded();
+    Table::new(DEVTOOLS_TABLE_ID_CANARY, DEVTOOLS_TABLE_LABEL_CANARY, state)
+        .behavior_snapshot(ui_px(0.0), ui_px(320.0))
+}
+
 fn devtools_gallery_legacy_collection(
     refresh_index: u64,
     theme: &ThemeContext,
+    overlay: Option<&WindowOverlaySnapshot>,
+    table_session: Arc<Mutex<TableDevtoolsSession>>,
 ) -> SnapshotCollection {
     let mut registry = DevtoolsRegistry::default();
     let form_snapshot = if refresh_index % 2 == 0 {
@@ -541,6 +663,15 @@ fn devtools_gallery_legacy_collection(
             ))
         })
         .expect("unique layout scroll viewport probe");
+    let overlay = overlay.cloned();
+    registry
+        .register_snapshot_probe("overlay.window", SnapshotKind::Element, move || {
+            Ok(match &overlay {
+                Some(snapshot) => ui_components::window_overlay_probe_snapshot(snapshot),
+                None => unavailable_window_overlay_snapshot(),
+            })
+        })
+        .expect("unique window overlay probe");
     registry
         .register_snapshot_probe("motion", SnapshotKind::Motion, || {
             Ok(motion::motion_frame_demand_probe_snapshot(
@@ -566,6 +697,17 @@ fn devtools_gallery_legacy_collection(
             .expect("valid resource probe"),
         )
         .expect("unique resource probe");
+    let table_snapshot = devtools_gallery_table_behavior_snapshot(refresh_index);
+    registry
+        .register_snapshot_probe("table", SnapshotKind::Element, move || {
+            let mut table_session = table_session.lock().map_err(|_| {
+                open_gpui_devtools::ProbeSnapshotError::CollectionFailed(
+                    "gallery Table DevTools session lock poisoned".to_owned(),
+                )
+            })?;
+            Ok(table_session.snapshot(&table_snapshot))
+        })
+        .expect("unique Table probe");
     let theme = theme.clone();
     registry
         .register_snapshot_probe("theme", SnapshotKind::Theme, move || {
@@ -805,15 +947,35 @@ fn gallery_scroll_viewport_sample() -> ScrollViewportSnapshot {
     )
 }
 
-fn gallery_gpui_runtime_sample(refresh_index: u64) -> gpui::GpuiRuntimeSnapshot {
+fn unavailable_window_overlay_snapshot() -> SnapshotProbeSnapshot {
+    SnapshotProbeSnapshot::new(SnapshotTree::new([snapshot_node_with_payload(
+        ["window-overlay"],
+        "Window overlay runtime unavailable",
+        serde_json::json!({
+            "availability": "unavailable",
+            "layer_count": 0,
+        }),
+    )]))
+}
+
+fn gallery_gpui_runtime_sample(
+    refresh_index: u64,
+    focus: Option<gpui::GpuiRuntimeFocusSnapshot>,
+) -> gpui::GpuiRuntimeSnapshot {
+    let window_active = focus
+        .as_ref()
+        .is_some_and(|focus| focus.active_window_id.is_some());
+    let window_focused = focus
+        .as_ref()
+        .is_some_and(|focus| focus.focused_window_id.is_some());
     gpui::GpuiRuntimeSnapshot {
         runtime_id: "gallery".to_owned(),
         generation: refresh_index,
         windows: vec![gpui::GpuiRuntimeWindowSnapshot {
             window_id: 1,
             display_id: Some("gallery-display".to_owned()),
-            active: true,
-            focused: true,
+            active: window_active,
+            focused: window_focused,
             bounds: Some(gpui::GpuiRuntimeRectSnapshot {
                 origin: gpui::GpuiRuntimePointSnapshot { x: 0.0, y: 0.0 },
                 size: gpui::GpuiRuntimeSizeSnapshot {
@@ -827,12 +989,7 @@ fn gallery_gpui_runtime_sample(refresh_index: u64) -> gpui::GpuiRuntimeSnapshot 
             }),
             scale_factor: Some(1.0),
         }],
-        focus: Some(gpui::GpuiRuntimeFocusSnapshot {
-            active_window_id: Some(1),
-            focused_window_id: Some(1),
-            focus_scope_count: 3,
-            focus_handle_count: 9,
-        }),
+        focus,
         input: Some(gpui::GpuiRuntimeInputSnapshot {
             key_down_count: refresh_index,
             pointer_event_count: refresh_index.saturating_add(1),
@@ -881,7 +1038,7 @@ mod tests {
                 .map(|field| field.meta.errors.len())
                 .sum::<usize>();
 
-        assert_eq!(rows.len(), 11);
+        assert_eq!(rows.len(), 13);
         assert!(rows.iter().any(
             |row| row.probe_id.as_str() == "accessibility" && row.kind_label == "accessibility"
         ));
@@ -919,13 +1076,21 @@ mod tests {
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "motion"));
         assert!(
             rows.iter()
+                .any(|row| row.probe_id.as_str() == "overlay.window"
+                    && row.kind_label == "element")
+        );
+        assert!(rows.iter().any(|row| row.probe_id.as_str() == "table"
+            && row.kind_label == "element"
+            && row.redacted_values > 0));
+        assert!(
+            rows.iter()
                 .any(|row| row.probe_id.as_str() == "timeline.motion-frame"
                     && row.category_label == "timeline"
                     && row.kind_label == "timeline")
         );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
         assert_eq!(state.diagnostics().len(), 1);
-        assert_eq!(state.target_rows().len(), 15);
+        assert_eq!(state.target_rows().len(), 16);
         let event_state = devtools_gallery_state().with_filter("motion-frame-demand");
         assert!(event_state.event_rows().iter().any(|row| {
             row.event_id == "gallery.motion-frame-demand" && row.kind_label == "instant"

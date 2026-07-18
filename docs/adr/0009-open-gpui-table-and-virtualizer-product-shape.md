@@ -99,6 +99,19 @@ Negative:
   invalidation key, not a foundation-wide default import.
 - Re-audit this ADR against the local TanStack reference when adding a new row-model authority.
 
+Table product facts remain federated. The Table engine owns executable row identities and models,
+the component adapter owns behavior snapshots and runtime projection, Gallery owns its stories and
+selectors, native tests own scenario coordinates, and DevTools owns its pre-capture redaction
+adapter. These facts must not be copied into a central manifest or conformance registry.
+
+## Related Decisions
+
+- [Focus scope and window overlay runtime ownership](../knowledge/engineering/decisions/focus-scope-window-overlay-runtime.md)
+- [Semantic accessibility and final-tree authority](../knowledge/engineering/decisions/semantic-accessibility-final-tree-authority.md)
+- [Semantic activation authority](../knowledge/engineering/decisions/semantic-activation-authority.md)
+- [Theme scope resolution and deferred capture](../knowledge/engineering/decisions/theme-scope-resolution.md)
+- [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](0014-remove-native-ui-hybrid-registry.md)
+
 ## Citations
 
 [1] [ADR 0008](0008-open-gpui-ui-component-productization-roadmap.md)

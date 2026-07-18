@@ -22,7 +22,11 @@ pub(crate) fn scan_doc_links(root: &Path) -> Result<(), ()> {
 
 fn doc_link_failures(root: &Path) -> Vec<String> {
     let mut failures = Vec::new();
-    for path in strict_doc_files(root) {
+    let files = match strict_doc_files(root) {
+        Ok(files) => files,
+        Err(failure) => return vec![failure],
+    };
+    for path in files {
         let label = display_path(root, &path);
         let contents = match fs::read_to_string(&path) {
             Ok(contents) => contents,
@@ -36,12 +40,13 @@ fn doc_link_failures(root: &Path) -> Vec<String> {
     failures
 }
 
-fn strict_doc_files(root: &Path) -> Vec<PathBuf> {
+fn strict_doc_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = vec![
         root.join("README.md"),
         root.join("CHANGELOG.md"),
         root.join("docs/adr/README.md"),
         root.join("docs/release/breaking-changes.md"),
+        root.join("docs/ui/migration-v0.3.md"),
         root.join("docs/verification.md"),
     ];
 
@@ -57,7 +62,37 @@ fn strict_doc_files(root: &Path) -> Vec<PathBuf> {
         files.push(root.join(crate_dir).join("README.md"));
     }
 
-    files
+    let decisions_dir = root.join("docs/knowledge/engineering/decisions");
+    let entries = fs::read_dir(&decisions_dir).map_err(|error| {
+        format!(
+            "{}: failed to discover decision records: {error}",
+            display_path(root, &decisions_dir)
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "{}: failed to read decision record entry: {error}",
+                display_path(root, &decisions_dir)
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "{}: failed to read decision record type: {error}",
+                display_path(root, &entry.path())
+            )
+        })?;
+        let path = entry.path();
+        if file_type.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
+        {
+            files.push(path);
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    Ok(files)
 }
 
 fn markdown_link_failures(root: &Path, file: &Path, contents: &str) -> Vec<String> {
@@ -240,5 +275,40 @@ mod tests {
         let file = root.join("README.md");
 
         assert!(resolve_markdown_link_target(&root, &file, "/tmp/outside.md").is_err());
+    }
+
+    #[test]
+    fn strict_doc_set_includes_current_migration_and_decision_records() {
+        let root = crate::commands::workspace_root();
+        let files =
+            strict_doc_files(root).expect("strict documentation set should be discoverable");
+        assert!(files.contains(&root.join("docs/ui/migration-v0.3.md")));
+
+        let decisions_dir = root.join("docs/knowledge/engineering/decisions");
+        let decision_files = fs::read_dir(&decisions_dir)
+            .expect("decision record directory should be readable")
+            .map(|entry| entry.expect("decision record entry should be readable"))
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .expect("decision record type should be readable")
+                    .is_file()
+                    && entry
+                        .path()
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        == Some("md")
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+
+        assert!(!decision_files.is_empty());
+        for decision_file in decision_files {
+            assert!(
+                files.contains(&decision_file),
+                "decision record is outside the strict documentation gate: {}",
+                decision_file.display()
+            );
+        }
     }
 }

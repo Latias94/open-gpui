@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-02
+**Updated**: 2026-07-19
 
 ## Context
 
@@ -37,6 +38,14 @@ Open GPUI removes the native UI hybrid registry layer.
   product rows, typed export declarations, Gallery projection, docs projection, scenario bindings,
   and exact nextest coordinates, but owns none of those downstream facts.
 
+## 2026-07-19 Reaffirmation
+
+The authority-convergence implementation completed this deletion. Same-declaration export facts,
+Gallery-owned stories, test-owned scenario sidecars, canonical DevTools metadata, and narrow
+component rows are deliberately separate authorities. `scan-ui-contract` joins them for drift and
+execution checks, but no JSON product, generated manifest, method/source inventory, accessibility
+evidence table, or central conformance registry is recreated.
+
 ## Consequences
 
 Positive:
@@ -62,7 +71,16 @@ Negative:
 
 ## Related Documents
 
-- `docs/adr/0013-open-gpui-native-ui-hybrid-registry.md`
-- `docs/architecture/native-ui-framework-strategy.md`
-- `docs/ui/component-contract.md`
-- `docs/verification.md`
+- [ADR 0013: Open GPUI Native UI Hybrid Registry](0013-open-gpui-native-ui-hybrid-registry.md)
+- [Native UI Framework Strategy](../architecture/native-ui-framework-strategy.md)
+- [UI component contract](../ui/component-contract.md)
+- [Verification guide](../verification.md)
+
+## Related Decisions
+
+- [ADR 0008: Open GPUI UI Component Productization Roadmap](0008-open-gpui-ui-component-productization-roadmap.md)
+- [ADR 0009: Open GPUI Table and Virtualizer Product Shape](0009-open-gpui-table-and-virtualizer-product-shape.md)
+- [Focus scope and window overlay runtime ownership](../knowledge/engineering/decisions/focus-scope-window-overlay-runtime.md)
+- [Semantic accessibility and final-tree authority](../knowledge/engineering/decisions/semantic-accessibility-final-tree-authority.md)
+- [Semantic activation authority](../knowledge/engineering/decisions/semantic-activation-authority.md)
+- [Theme scope resolution and deferred capture](../knowledge/engineering/decisions/theme-scope-resolution.md)

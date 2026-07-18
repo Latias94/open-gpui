@@ -20,7 +20,7 @@
               "label": "Application",
               "parent_id": null,
               "metadata": {
-                "snapshot_count": 10,
+                "snapshot_count": 12,
                 "diagnostic_count": 1
               }
             },
@@ -95,6 +95,16 @@
               }
             },
             {
+              "id": "probe.overlay.window",
+              "kind": "Probe",
+              "label": "overlay.window",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "overlay.window",
+                "snapshot_kind": "element"
+              }
+            },
+            {
               "id": "probe.resource",
               "kind": "Probe",
               "label": "resource",
@@ -102,6 +112,16 @@
               "metadata": {
                 "probe_id": "resource",
                 "snapshot_kind": "resource"
+              }
+            },
+            {
+              "id": "probe.table",
+              "kind": "Probe",
+              "label": "table",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "table",
+                "snapshot_kind": "element"
               }
             },
             {
@@ -133,7 +153,7 @@
                 "runtime_id": "gallery",
                 "generation": 1,
                 "window_count": 1,
-                "has_focus": true,
+                "has_focus": false,
                 "has_input": true,
                 "has_frame": true,
                 "scroll_viewport_count": 1,
@@ -148,8 +168,8 @@
               "metadata": {
                 "window_id": 1,
                 "display_id": "gallery-display",
-                "active": true,
-                "focused": true,
+                "active": false,
+                "focused": false,
                 "bounds": {
                   "origin": {
                     "x": 0.0,
@@ -1297,6 +1317,40 @@
             "diagnostics": []
           },
           {
+            "id": "domain.overlay.window.element",
+            "target_id": "probe.overlay.window",
+            "kind": "Layout",
+            "label": "element",
+            "summary": {
+              "probe_id": "overlay.window",
+              "snapshot_kind": "element",
+              "root_nodes": 1,
+              "redacted_values": 0
+            },
+            "snapshot": {
+              "probe_id": "overlay.window",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "window-overlay",
+                    "label": "Window overlay runtime unavailable",
+                    "payload": {
+                      "availability": "unavailable",
+                      "layer_count": 0
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "diagnostics": []
+          },
+          {
             "id": "domain.resource.resource",
             "target_id": "probe.resource",
             "kind": "Data",
@@ -1363,6 +1417,352 @@
                 "notes": [
                   "resource data projects",
                   "mutation data save-project-token=[redacted]"
+                ]
+              }
+            },
+            "diagnostics": []
+          },
+          {
+            "id": "domain.table.element",
+            "target_id": "probe.table",
+            "kind": "Layout",
+            "label": "element",
+            "summary": {
+              "probe_id": "table",
+              "snapshot_kind": "element",
+              "root_nodes": 1,
+              "redacted_values": 23
+            },
+            "snapshot": {
+              "probe_id": "table",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "table.table-1",
+                    "label": "Table behavior",
+                    "payload": {
+                      "table_id": "table-1",
+                      "label": {
+                        "kind": "redacted"
+                      },
+                      "roles": {
+                        "root": "table",
+                        "row": "row",
+                        "column_header": "column-header",
+                        "cell": "cell"
+                      },
+                      "stages": {
+                        "filtering": "client",
+                        "sorting": "client",
+                        "pagination": "client",
+                        "faceting": "client"
+                      },
+                      "pagination": {
+                        "page_index": 0,
+                        "page_size": 18446744073709551615,
+                        "row_count": null,
+                        "page_count": null
+                      },
+                      "rows": {
+                        "core": 2,
+                        "filtered": 2,
+                        "grouped": 4,
+                        "sorted": 4,
+                        "expanded": 4,
+                        "paginated": 4,
+                        "final": 4,
+                        "pinned_top": 0,
+                        "pinned_center": 4,
+                        "pinned_bottom": 0,
+                        "rendered": 4,
+                        "visible": 4,
+                        "selected": 0,
+                        "groups": 2,
+                        "leaves": 2,
+                        "aria": 5
+                      },
+                      "visible_window": {
+                        "visible_start": 0,
+                        "visible_end": 4,
+                        "overscan_start": 0,
+                        "overscan_end": 4,
+                        "center_overscan_count": 6
+                      },
+                      "columns": {
+                        "left": 0,
+                        "center": 1,
+                        "right": 0,
+                        "aria": 1,
+                        "resizable": 1,
+                        "split_pinned_lanes": false,
+                        "row_pinning_page_only": false
+                      },
+                      "header": {
+                        "rows": 1,
+                        "visible_groups": 0
+                      },
+                      "tree": {
+                        "rows": 0,
+                        "branches": 0,
+                        "unloaded_branches": 0,
+                        "loading_rows": 0,
+                        "failed_rows": 0,
+                        "max_depth": 1
+                      },
+                      "configuration": {
+                        "row_measurement": "fixed",
+                        "grouping_columns": 1,
+                        "aggregations": 0,
+                        "custom_aggregation_functions": 0,
+                        "manual_expansion": false,
+                        "all_rows_expanded": true,
+                        "expanded_group_inputs": 2,
+                        "expanded_tree_inputs": 0,
+                        "facet_columns": 1
+                      },
+                      "identity_diagnostic_count": 1
+                    },
+                    "children": [
+                      {
+                        "id": "table.identity-diagnostic.diagnostic-1",
+                        "label": "Table identity diagnostic",
+                        "payload": {
+                          "diagnostic_id": "diagnostic-1",
+                          "kind": "duplicate-row-id",
+                          "occurrences": 2,
+                          "source_identity": {
+                            "kind": "redacted"
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.column.column-1",
+                        "label": "Table column",
+                        "payload": {
+                          "column_id": "column-1",
+                          "label": {
+                            "kind": "redacted"
+                          },
+                          "role": "column-header",
+                          "region": "center",
+                          "aria_column_index": 1,
+                          "sortable": true,
+                          "resizable": true,
+                          "width_policy": "fixed",
+                          "width_px": 128.0,
+                          "sort_direction": null,
+                          "editor": null,
+                          "select_option_count": 0,
+                          "actions": [
+                            "sort"
+                          ]
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.row.row-1",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-1",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 0,
+                          "region_index": 0,
+                          "aria_row_index": 2,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-1-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-1-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-2",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-2",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 1,
+                          "region_index": 1,
+                          "aria_row_index": 3,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-2-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-2-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-3",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-3",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 2,
+                          "region_index": 2,
+                          "aria_row_index": 4,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-3-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-3-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-4",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-4",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 3,
+                          "region_index": 3,
+                          "aria_row_index": 5,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-4-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-4-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 23,
+                "notes": [
+                  "Table caller-owned id redacted",
+                  "Table accessible label redacted",
+                  "Table grouping column id redacted",
+                  "Table facet identity and values redacted",
+                  "Table identity diagnostic source id redacted",
+                  "Table column id redacted",
+                  "Table column label redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted"
                 ]
               }
             },
@@ -1808,7 +2208,7 @@
               "runtime_id": "gallery",
               "generation": 1,
               "window_count": 1,
-              "has_focus": true,
+              "has_focus": false,
               "has_input": true,
               "has_frame": true,
               "scroll_viewport_count": 1,
@@ -1828,7 +2228,7 @@
                       "runtime_id": "gallery",
                       "generation": 1,
                       "window_count": 1,
-                      "has_focus": true,
+                      "has_focus": false,
                       "has_input": true,
                       "has_frame": true,
                       "scroll_viewport_count": 1,
@@ -1841,8 +2241,8 @@
                         "payload": {
                           "window_id": 1,
                           "display_id": "gallery-display",
-                          "active": true,
-                          "focused": true,
+                          "active": false,
+                          "focused": false,
                           "bounds": {
                             "origin": {
                               "x": 0.0,
@@ -1858,17 +2258,6 @@
                             "height": 720.0
                           },
                           "scale_factor": 1.0
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "gpui.runtime.focus",
-                        "label": "Focus metadata",
-                        "payload": {
-                          "active_window_id": 1,
-                          "focused_window_id": 1,
-                          "focus_scope_count": 3,
-                          "focus_handle_count": 9
                         },
                         "children": []
                       },
@@ -3026,6 +3415,27 @@
             }
           },
           {
+            "probe_id": "overlay.window",
+            "kind": "Element",
+            "tree": {
+              "nodes": [
+                {
+                  "id": "window-overlay",
+                  "label": "Window overlay runtime unavailable",
+                  "payload": {
+                    "availability": "unavailable",
+                    "layer_count": 0
+                  },
+                  "children": []
+                }
+              ]
+            },
+            "redaction": {
+              "redacted_values": 0,
+              "notes": []
+            }
+          },
+          {
             "probe_id": "resource",
             "kind": "Resource",
             "tree": {
@@ -3081,6 +3491,339 @@
               "notes": [
                 "resource data projects",
                 "mutation data save-project-token=[redacted]"
+              ]
+            }
+          },
+          {
+            "probe_id": "table",
+            "kind": "Element",
+            "tree": {
+              "nodes": [
+                {
+                  "id": "table.table-1",
+                  "label": "Table behavior",
+                  "payload": {
+                    "table_id": "table-1",
+                    "label": {
+                      "kind": "redacted"
+                    },
+                    "roles": {
+                      "root": "table",
+                      "row": "row",
+                      "column_header": "column-header",
+                      "cell": "cell"
+                    },
+                    "stages": {
+                      "filtering": "client",
+                      "sorting": "client",
+                      "pagination": "client",
+                      "faceting": "client"
+                    },
+                    "pagination": {
+                      "page_index": 0,
+                      "page_size": 18446744073709551615,
+                      "row_count": null,
+                      "page_count": null
+                    },
+                    "rows": {
+                      "core": 2,
+                      "filtered": 2,
+                      "grouped": 4,
+                      "sorted": 4,
+                      "expanded": 4,
+                      "paginated": 4,
+                      "final": 4,
+                      "pinned_top": 0,
+                      "pinned_center": 4,
+                      "pinned_bottom": 0,
+                      "rendered": 4,
+                      "visible": 4,
+                      "selected": 0,
+                      "groups": 2,
+                      "leaves": 2,
+                      "aria": 5
+                    },
+                    "visible_window": {
+                      "visible_start": 0,
+                      "visible_end": 4,
+                      "overscan_start": 0,
+                      "overscan_end": 4,
+                      "center_overscan_count": 6
+                    },
+                    "columns": {
+                      "left": 0,
+                      "center": 1,
+                      "right": 0,
+                      "aria": 1,
+                      "resizable": 1,
+                      "split_pinned_lanes": false,
+                      "row_pinning_page_only": false
+                    },
+                    "header": {
+                      "rows": 1,
+                      "visible_groups": 0
+                    },
+                    "tree": {
+                      "rows": 0,
+                      "branches": 0,
+                      "unloaded_branches": 0,
+                      "loading_rows": 0,
+                      "failed_rows": 0,
+                      "max_depth": 1
+                    },
+                    "configuration": {
+                      "row_measurement": "fixed",
+                      "grouping_columns": 1,
+                      "aggregations": 0,
+                      "custom_aggregation_functions": 0,
+                      "manual_expansion": false,
+                      "all_rows_expanded": true,
+                      "expanded_group_inputs": 2,
+                      "expanded_tree_inputs": 0,
+                      "facet_columns": 1
+                    },
+                    "identity_diagnostic_count": 1
+                  },
+                  "children": [
+                    {
+                      "id": "table.identity-diagnostic.diagnostic-1",
+                      "label": "Table identity diagnostic",
+                      "payload": {
+                        "diagnostic_id": "diagnostic-1",
+                        "kind": "duplicate-row-id",
+                        "occurrences": 2,
+                        "source_identity": {
+                          "kind": "redacted"
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "table.column.column-1",
+                      "label": "Table column",
+                      "payload": {
+                        "column_id": "column-1",
+                        "label": {
+                          "kind": "redacted"
+                        },
+                        "role": "column-header",
+                        "region": "center",
+                        "aria_column_index": 1,
+                        "sortable": true,
+                        "resizable": true,
+                        "width_policy": "fixed",
+                        "width_px": 128.0,
+                        "sort_direction": null,
+                        "editor": null,
+                        "select_option_count": 0,
+                        "actions": [
+                          "sort"
+                        ]
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "table.row.row-1",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-1",
+                        "role": "row",
+                        "kind": "group",
+                        "region": "center",
+                        "model_index": 0,
+                        "region_index": 0,
+                        "aria_row_index": 2,
+                        "selected": false,
+                        "depth": 0,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-1-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-1-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "table.row.row-2",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-2",
+                        "role": "row",
+                        "kind": "source",
+                        "region": "center",
+                        "model_index": 1,
+                        "region_index": 1,
+                        "aria_row_index": 3,
+                        "selected": false,
+                        "depth": 1,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-2-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-2-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "table.row.row-3",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-3",
+                        "role": "row",
+                        "kind": "group",
+                        "region": "center",
+                        "model_index": 2,
+                        "region_index": 2,
+                        "aria_row_index": 4,
+                        "selected": false,
+                        "depth": 0,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-3-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-3-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "table.row.row-4",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-4",
+                        "role": "row",
+                        "kind": "source",
+                        "region": "center",
+                        "model_index": 3,
+                        "region_index": 3,
+                        "aria_row_index": 5,
+                        "selected": false,
+                        "depth": 1,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-4-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-4-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "redaction": {
+              "redacted_values": 23,
+              "notes": [
+                "Table caller-owned id redacted",
+                "Table accessible label redacted",
+                "Table grouping column id redacted",
+                "Table facet identity and values redacted",
+                "Table identity diagnostic source id redacted",
+                "Table column id redacted",
+                "Table column label redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted"
               ]
             }
           },
@@ -3501,7 +4244,7 @@
                     "runtime_id": "gallery",
                     "generation": 1,
                     "window_count": 1,
-                    "has_focus": true,
+                    "has_focus": false,
                     "has_input": true,
                     "has_frame": true,
                     "scroll_viewport_count": 1,
@@ -3514,8 +4257,8 @@
                       "payload": {
                         "window_id": 1,
                         "display_id": "gallery-display",
-                        "active": true,
-                        "focused": true,
+                        "active": false,
+                        "focused": false,
                         "bounds": {
                           "origin": {
                             "x": 0.0,
@@ -3531,17 +4274,6 @@
                           "height": 720.0
                         },
                         "scale_factor": 1.0
-                      },
-                      "children": []
-                    },
-                    {
-                      "id": "gpui.runtime.focus",
-                      "label": "Focus metadata",
-                      "payload": {
-                        "active_window_id": 1,
-                        "focused_window_id": 1,
-                        "focus_scope_count": 3,
-                        "focus_handle_count": 9
                       },
                       "children": []
                     },
@@ -3635,7 +4367,7 @@
               "label": "Application",
               "parent_id": null,
               "metadata": {
-                "snapshot_count": 10,
+                "snapshot_count": 12,
                 "diagnostic_count": 1
               }
             },
@@ -3710,6 +4442,16 @@
               }
             },
             {
+              "id": "probe.overlay.window",
+              "kind": "Probe",
+              "label": "overlay.window",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "overlay.window",
+                "snapshot_kind": "element"
+              }
+            },
+            {
               "id": "probe.resource",
               "kind": "Probe",
               "label": "resource",
@@ -3717,6 +4459,16 @@
               "metadata": {
                 "probe_id": "resource",
                 "snapshot_kind": "resource"
+              }
+            },
+            {
+              "id": "probe.table",
+              "kind": "Probe",
+              "label": "table",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "table",
+                "snapshot_kind": "element"
               }
             },
             {
@@ -3748,7 +4500,7 @@
                 "runtime_id": "gallery",
                 "generation": 2,
                 "window_count": 1,
-                "has_focus": true,
+                "has_focus": false,
                 "has_input": true,
                 "has_frame": true,
                 "scroll_viewport_count": 1,
@@ -3763,8 +4515,8 @@
               "metadata": {
                 "window_id": 1,
                 "display_id": "gallery-display",
-                "active": true,
-                "focused": true,
+                "active": false,
+                "focused": false,
                 "bounds": {
                   "origin": {
                     "x": 0.0,
@@ -4912,6 +5664,40 @@
             "diagnostics": []
           },
           {
+            "id": "domain.overlay.window.element",
+            "target_id": "probe.overlay.window",
+            "kind": "Layout",
+            "label": "element",
+            "summary": {
+              "probe_id": "overlay.window",
+              "snapshot_kind": "element",
+              "root_nodes": 1,
+              "redacted_values": 0
+            },
+            "snapshot": {
+              "probe_id": "overlay.window",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "window-overlay",
+                    "label": "Window overlay runtime unavailable",
+                    "payload": {
+                      "availability": "unavailable",
+                      "layer_count": 0
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "diagnostics": []
+          },
+          {
             "id": "domain.resource.resource",
             "target_id": "probe.resource",
             "kind": "Data",
@@ -4978,6 +5764,399 @@
                 "notes": [
                   "resource data projects",
                   "mutation data save-project-token=[redacted]"
+                ]
+              }
+            },
+            "diagnostics": []
+          },
+          {
+            "id": "domain.table.element",
+            "target_id": "probe.table",
+            "kind": "Layout",
+            "label": "element",
+            "summary": {
+              "probe_id": "table",
+              "snapshot_kind": "element",
+              "root_nodes": 1,
+              "redacted_values": 27
+            },
+            "snapshot": {
+              "probe_id": "table",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "table.table-1",
+                    "label": "Table behavior",
+                    "payload": {
+                      "table_id": "table-1",
+                      "label": {
+                        "kind": "redacted"
+                      },
+                      "roles": {
+                        "root": "table",
+                        "row": "row",
+                        "column_header": "column-header",
+                        "cell": "cell"
+                      },
+                      "stages": {
+                        "filtering": "client",
+                        "sorting": "client",
+                        "pagination": "client",
+                        "faceting": "client"
+                      },
+                      "pagination": {
+                        "page_index": 0,
+                        "page_size": 18446744073709551615,
+                        "row_count": null,
+                        "page_count": null
+                      },
+                      "rows": {
+                        "core": 3,
+                        "filtered": 3,
+                        "grouped": 5,
+                        "sorted": 5,
+                        "expanded": 5,
+                        "paginated": 5,
+                        "final": 5,
+                        "pinned_top": 0,
+                        "pinned_center": 5,
+                        "pinned_bottom": 0,
+                        "rendered": 5,
+                        "visible": 5,
+                        "selected": 0,
+                        "groups": 2,
+                        "leaves": 3,
+                        "aria": 6
+                      },
+                      "visible_window": {
+                        "visible_start": 0,
+                        "visible_end": 5,
+                        "overscan_start": 0,
+                        "overscan_end": 5,
+                        "center_overscan_count": 6
+                      },
+                      "columns": {
+                        "left": 0,
+                        "center": 1,
+                        "right": 0,
+                        "aria": 1,
+                        "resizable": 1,
+                        "split_pinned_lanes": false,
+                        "row_pinning_page_only": false
+                      },
+                      "header": {
+                        "rows": 1,
+                        "visible_groups": 0
+                      },
+                      "tree": {
+                        "rows": 0,
+                        "branches": 0,
+                        "unloaded_branches": 0,
+                        "loading_rows": 0,
+                        "failed_rows": 0,
+                        "max_depth": 1
+                      },
+                      "configuration": {
+                        "row_measurement": "fixed",
+                        "grouping_columns": 1,
+                        "aggregations": 0,
+                        "custom_aggregation_functions": 0,
+                        "manual_expansion": false,
+                        "all_rows_expanded": true,
+                        "expanded_group_inputs": 2,
+                        "expanded_tree_inputs": 0,
+                        "facet_columns": 1
+                      },
+                      "identity_diagnostic_count": 1
+                    },
+                    "children": [
+                      {
+                        "id": "table.identity-diagnostic.diagnostic-1",
+                        "label": "Table identity diagnostic",
+                        "payload": {
+                          "diagnostic_id": "diagnostic-1",
+                          "kind": "duplicate-row-id",
+                          "occurrences": 2,
+                          "source_identity": {
+                            "kind": "redacted"
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.column.column-1",
+                        "label": "Table column",
+                        "payload": {
+                          "column_id": "column-1",
+                          "label": {
+                            "kind": "redacted"
+                          },
+                          "role": "column-header",
+                          "region": "center",
+                          "aria_column_index": 1,
+                          "sortable": true,
+                          "resizable": true,
+                          "width_policy": "fixed",
+                          "width_px": 128.0,
+                          "sort_direction": null,
+                          "editor": null,
+                          "select_option_count": 0,
+                          "actions": [
+                            "sort"
+                          ]
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.row.row-1",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-1",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 0,
+                          "region_index": 0,
+                          "aria_row_index": 2,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-1-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-1-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-2",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-2",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 1,
+                          "region_index": 1,
+                          "aria_row_index": 3,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-2-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-2-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-5",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-5",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 2,
+                          "region_index": 2,
+                          "aria_row_index": 4,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-5-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-5-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-3",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-3",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 3,
+                          "region_index": 3,
+                          "aria_row_index": 5,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-3-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-3-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-4",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-4",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 4,
+                          "region_index": 4,
+                          "aria_row_index": 6,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-4-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-4-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 27,
+                "notes": [
+                  "Table caller-owned id redacted",
+                  "Table accessible label redacted",
+                  "Table grouping column id redacted",
+                  "Table facet identity and values redacted",
+                  "Table identity diagnostic source id redacted",
+                  "Table column id redacted",
+                  "Table column label redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted"
                 ]
               }
             },
@@ -5423,7 +6602,7 @@
               "runtime_id": "gallery",
               "generation": 2,
               "window_count": 1,
-              "has_focus": true,
+              "has_focus": false,
               "has_input": true,
               "has_frame": true,
               "scroll_viewport_count": 1,
@@ -5443,7 +6622,7 @@
                       "runtime_id": "gallery",
                       "generation": 2,
                       "window_count": 1,
-                      "has_focus": true,
+                      "has_focus": false,
                       "has_input": true,
                       "has_frame": true,
                       "scroll_viewport_count": 1,
@@ -5456,8 +6635,8 @@
                         "payload": {
                           "window_id": 1,
                           "display_id": "gallery-display",
-                          "active": true,
-                          "focused": true,
+                          "active": false,
+                          "focused": false,
                           "bounds": {
                             "origin": {
                               "x": 0.0,
@@ -5473,17 +6652,6 @@
                             "height": 720.0
                           },
                           "scale_factor": 1.0
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "gpui.runtime.focus",
-                        "label": "Focus metadata",
-                        "payload": {
-                          "active_window_id": 1,
-                          "focused_window_id": 1,
-                          "focus_scope_count": 3,
-                          "focus_handle_count": 9
                         },
                         "children": []
                       },
@@ -6641,6 +7809,27 @@
             }
           },
           {
+            "probe_id": "overlay.window",
+            "kind": "Element",
+            "tree": {
+              "nodes": [
+                {
+                  "id": "window-overlay",
+                  "label": "Window overlay runtime unavailable",
+                  "payload": {
+                    "availability": "unavailable",
+                    "layer_count": 0
+                  },
+                  "children": []
+                }
+              ]
+            },
+            "redaction": {
+              "redacted_values": 0,
+              "notes": []
+            }
+          },
+          {
             "probe_id": "resource",
             "kind": "Resource",
             "tree": {
@@ -6696,6 +7885,386 @@
               "notes": [
                 "resource data projects",
                 "mutation data save-project-token=[redacted]"
+              ]
+            }
+          },
+          {
+            "probe_id": "table",
+            "kind": "Element",
+            "tree": {
+              "nodes": [
+                {
+                  "id": "table.table-1",
+                  "label": "Table behavior",
+                  "payload": {
+                    "table_id": "table-1",
+                    "label": {
+                      "kind": "redacted"
+                    },
+                    "roles": {
+                      "root": "table",
+                      "row": "row",
+                      "column_header": "column-header",
+                      "cell": "cell"
+                    },
+                    "stages": {
+                      "filtering": "client",
+                      "sorting": "client",
+                      "pagination": "client",
+                      "faceting": "client"
+                    },
+                    "pagination": {
+                      "page_index": 0,
+                      "page_size": 18446744073709551615,
+                      "row_count": null,
+                      "page_count": null
+                    },
+                    "rows": {
+                      "core": 3,
+                      "filtered": 3,
+                      "grouped": 5,
+                      "sorted": 5,
+                      "expanded": 5,
+                      "paginated": 5,
+                      "final": 5,
+                      "pinned_top": 0,
+                      "pinned_center": 5,
+                      "pinned_bottom": 0,
+                      "rendered": 5,
+                      "visible": 5,
+                      "selected": 0,
+                      "groups": 2,
+                      "leaves": 3,
+                      "aria": 6
+                    },
+                    "visible_window": {
+                      "visible_start": 0,
+                      "visible_end": 5,
+                      "overscan_start": 0,
+                      "overscan_end": 5,
+                      "center_overscan_count": 6
+                    },
+                    "columns": {
+                      "left": 0,
+                      "center": 1,
+                      "right": 0,
+                      "aria": 1,
+                      "resizable": 1,
+                      "split_pinned_lanes": false,
+                      "row_pinning_page_only": false
+                    },
+                    "header": {
+                      "rows": 1,
+                      "visible_groups": 0
+                    },
+                    "tree": {
+                      "rows": 0,
+                      "branches": 0,
+                      "unloaded_branches": 0,
+                      "loading_rows": 0,
+                      "failed_rows": 0,
+                      "max_depth": 1
+                    },
+                    "configuration": {
+                      "row_measurement": "fixed",
+                      "grouping_columns": 1,
+                      "aggregations": 0,
+                      "custom_aggregation_functions": 0,
+                      "manual_expansion": false,
+                      "all_rows_expanded": true,
+                      "expanded_group_inputs": 2,
+                      "expanded_tree_inputs": 0,
+                      "facet_columns": 1
+                    },
+                    "identity_diagnostic_count": 1
+                  },
+                  "children": [
+                    {
+                      "id": "table.identity-diagnostic.diagnostic-1",
+                      "label": "Table identity diagnostic",
+                      "payload": {
+                        "diagnostic_id": "diagnostic-1",
+                        "kind": "duplicate-row-id",
+                        "occurrences": 2,
+                        "source_identity": {
+                          "kind": "redacted"
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "table.column.column-1",
+                      "label": "Table column",
+                      "payload": {
+                        "column_id": "column-1",
+                        "label": {
+                          "kind": "redacted"
+                        },
+                        "role": "column-header",
+                        "region": "center",
+                        "aria_column_index": 1,
+                        "sortable": true,
+                        "resizable": true,
+                        "width_policy": "fixed",
+                        "width_px": 128.0,
+                        "sort_direction": null,
+                        "editor": null,
+                        "select_option_count": 0,
+                        "actions": [
+                          "sort"
+                        ]
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "table.row.row-1",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-1",
+                        "role": "row",
+                        "kind": "group",
+                        "region": "center",
+                        "model_index": 0,
+                        "region_index": 0,
+                        "aria_row_index": 2,
+                        "selected": false,
+                        "depth": 0,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-1-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-1-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "table.row.row-2",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-2",
+                        "role": "row",
+                        "kind": "source",
+                        "region": "center",
+                        "model_index": 1,
+                        "region_index": 1,
+                        "aria_row_index": 3,
+                        "selected": false,
+                        "depth": 1,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-2-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-2-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "table.row.row-5",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-5",
+                        "role": "row",
+                        "kind": "source",
+                        "region": "center",
+                        "model_index": 2,
+                        "region_index": 2,
+                        "aria_row_index": 4,
+                        "selected": false,
+                        "depth": 1,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-5-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-5-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "table.row.row-3",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-3",
+                        "role": "row",
+                        "kind": "group",
+                        "region": "center",
+                        "model_index": 3,
+                        "region_index": 3,
+                        "aria_row_index": 5,
+                        "selected": false,
+                        "depth": 0,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-3-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-3-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "table.row.row-4",
+                      "label": "Table row",
+                      "payload": {
+                        "row_id": "row-4",
+                        "role": "row",
+                        "kind": "source",
+                        "region": "center",
+                        "model_index": 4,
+                        "region_index": 4,
+                        "aria_row_index": 6,
+                        "selected": false,
+                        "depth": 1,
+                        "tree_branch": false,
+                        "tree_expanded": null,
+                        "loaded_child_count": 0,
+                        "children_load_state": null,
+                        "cell_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.cell.cell-row-4-column-1",
+                          "label": "Table cell",
+                          "payload": {
+                            "cell_id": "cell-row-4-column-1",
+                            "column_id": "column-1",
+                            "role": "cell",
+                            "text": {
+                              "kind": "redacted"
+                            },
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "width_px": 128.0,
+                            "editor": null,
+                            "select_option_count": 0
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "redaction": {
+              "redacted_values": 27,
+              "notes": [
+                "Table caller-owned id redacted",
+                "Table accessible label redacted",
+                "Table grouping column id redacted",
+                "Table facet identity and values redacted",
+                "Table identity diagnostic source id redacted",
+                "Table column id redacted",
+                "Table column label redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted",
+                "Table row identity redacted",
+                "Table cell column id redacted",
+                "Table cell display text redacted",
+                "Table cell value redacted"
               ]
             }
           },
@@ -7116,7 +8685,7 @@
                     "runtime_id": "gallery",
                     "generation": 2,
                     "window_count": 1,
-                    "has_focus": true,
+                    "has_focus": false,
                     "has_input": true,
                     "has_frame": true,
                     "scroll_viewport_count": 1,
@@ -7129,8 +8698,8 @@
                       "payload": {
                         "window_id": 1,
                         "display_id": "gallery-display",
-                        "active": true,
-                        "focused": true,
+                        "active": false,
+                        "focused": false,
                         "bounds": {
                           "origin": {
                             "x": 0.0,
@@ -7146,17 +8715,6 @@
                           "height": 720.0
                         },
                         "scale_factor": 1.0
-                      },
-                      "children": []
-                    },
-                    {
-                      "id": "gpui.runtime.focus",
-                      "label": "Focus metadata",
-                      "payload": {
-                        "active_window_id": 1,
-                        "focused_window_id": 1,
-                        "focus_scope_count": 3,
-                        "focus_handle_count": 9
                       },
                       "children": []
                     },
@@ -7248,7 +8806,7 @@
               "label": "Application",
               "parent_id": null,
               "metadata": {
-                "snapshot_count": 10,
+                "snapshot_count": 12,
                 "diagnostic_count": 1
               }
             },
@@ -7258,7 +8816,7 @@
               "label": "Application",
               "parent_id": null,
               "metadata": {
-                "snapshot_count": 10,
+                "snapshot_count": 12,
                 "diagnostic_count": 1
               }
             },
@@ -7313,7 +8871,7 @@
                 "runtime_id": "gallery",
                 "generation": 1,
                 "window_count": 1,
-                "has_focus": true,
+                "has_focus": false,
                 "has_input": true,
                 "has_frame": true,
                 "scroll_viewport_count": 1,
@@ -7329,7 +8887,7 @@
                 "runtime_id": "gallery",
                 "generation": 2,
                 "window_count": 1,
-                "has_focus": true,
+                "has_focus": false,
                 "has_input": true,
                 "has_frame": true,
                 "scroll_viewport_count": 1,
@@ -7422,8 +8980,8 @@
               "metadata": {
                 "window_id": 1,
                 "display_id": "gallery-display",
-                "active": true,
-                "focused": true,
+                "active": false,
+                "focused": false,
                 "bounds": {
                   "origin": {
                     "x": 0.0,
@@ -7449,8 +9007,8 @@
               "metadata": {
                 "window_id": 1,
                 "display_id": "gallery-display",
-                "active": true,
-                "focused": true,
+                "active": false,
+                "focused": false,
                 "bounds": {
                   "origin": {
                     "x": 0.0,
@@ -7661,6 +9219,33 @@
           },
           {
             "kind": "Target",
+            "identity": "probe.overlay.window",
+            "label": "overlay.window",
+            "status": "Unchanged",
+            "previous": {
+              "id": "probe.overlay.window",
+              "kind": "Probe",
+              "label": "overlay.window",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "overlay.window",
+                "snapshot_kind": "element"
+              }
+            },
+            "current": {
+              "id": "probe.overlay.window",
+              "kind": "Probe",
+              "label": "overlay.window",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "overlay.window",
+                "snapshot_kind": "element"
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Target",
             "identity": "probe.resource",
             "label": "resource",
             "status": "Unchanged",
@@ -7682,6 +9267,33 @@
               "metadata": {
                 "probe_id": "resource",
                 "snapshot_kind": "resource"
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Target",
+            "identity": "probe.table",
+            "label": "table",
+            "status": "Unchanged",
+            "previous": {
+              "id": "probe.table",
+              "kind": "Probe",
+              "label": "table",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "table",
+                "snapshot_kind": "element"
+              }
+            },
+            "current": {
+              "id": "probe.table",
+              "kind": "Probe",
+              "label": "table",
+              "parent_id": "app",
+              "metadata": {
+                "probe_id": "table",
+                "snapshot_kind": "element"
               }
             },
             "diagnostic": null
@@ -9951,6 +11563,81 @@
           },
           {
             "kind": "Domain",
+            "identity": "domain.overlay.window.element",
+            "label": "element",
+            "status": "Unchanged",
+            "previous": {
+              "id": "domain.overlay.window.element",
+              "target_id": "probe.overlay.window",
+              "kind": "Layout",
+              "label": "element",
+              "summary": {
+                "probe_id": "overlay.window",
+                "snapshot_kind": "element",
+                "root_nodes": 1,
+                "redacted_values": 0
+              },
+              "snapshot": {
+                "probe_id": "overlay.window",
+                "kind": "Element",
+                "tree": {
+                  "nodes": [
+                    {
+                      "id": "window-overlay",
+                      "label": "Window overlay runtime unavailable",
+                      "payload": {
+                        "availability": "unavailable",
+                        "layer_count": 0
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                "redaction": {
+                  "redacted_values": 0,
+                  "notes": []
+                }
+              },
+              "diagnostics": []
+            },
+            "current": {
+              "id": "domain.overlay.window.element",
+              "target_id": "probe.overlay.window",
+              "kind": "Layout",
+              "label": "element",
+              "summary": {
+                "probe_id": "overlay.window",
+                "snapshot_kind": "element",
+                "root_nodes": 1,
+                "redacted_values": 0
+              },
+              "snapshot": {
+                "probe_id": "overlay.window",
+                "kind": "Element",
+                "tree": {
+                  "nodes": [
+                    {
+                      "id": "window-overlay",
+                      "label": "Window overlay runtime unavailable",
+                      "payload": {
+                        "availability": "unavailable",
+                        "layer_count": 0
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                "redaction": {
+                  "redacted_values": 0,
+                  "notes": []
+                }
+              },
+              "diagnostics": []
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Domain",
             "identity": "domain.resource.resource",
             "label": "resource",
             "status": "Unchanged",
@@ -10093,6 +11780,752 @@
                   "notes": [
                     "resource data projects",
                     "mutation data save-project-token=[redacted]"
+                  ]
+                }
+              },
+              "diagnostics": []
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Domain",
+            "identity": "domain.table.element",
+            "label": "element",
+            "status": "Changed",
+            "previous": {
+              "id": "domain.table.element",
+              "target_id": "probe.table",
+              "kind": "Layout",
+              "label": "element",
+              "summary": {
+                "probe_id": "table",
+                "snapshot_kind": "element",
+                "root_nodes": 1,
+                "redacted_values": 23
+              },
+              "snapshot": {
+                "probe_id": "table",
+                "kind": "Element",
+                "tree": {
+                  "nodes": [
+                    {
+                      "id": "table.table-1",
+                      "label": "Table behavior",
+                      "payload": {
+                        "table_id": "table-1",
+                        "label": {
+                          "kind": "redacted"
+                        },
+                        "roles": {
+                          "root": "table",
+                          "row": "row",
+                          "column_header": "column-header",
+                          "cell": "cell"
+                        },
+                        "stages": {
+                          "filtering": "client",
+                          "sorting": "client",
+                          "pagination": "client",
+                          "faceting": "client"
+                        },
+                        "pagination": {
+                          "page_index": 0,
+                          "page_size": 18446744073709551615,
+                          "row_count": null,
+                          "page_count": null
+                        },
+                        "rows": {
+                          "core": 2,
+                          "filtered": 2,
+                          "grouped": 4,
+                          "sorted": 4,
+                          "expanded": 4,
+                          "paginated": 4,
+                          "final": 4,
+                          "pinned_top": 0,
+                          "pinned_center": 4,
+                          "pinned_bottom": 0,
+                          "rendered": 4,
+                          "visible": 4,
+                          "selected": 0,
+                          "groups": 2,
+                          "leaves": 2,
+                          "aria": 5
+                        },
+                        "visible_window": {
+                          "visible_start": 0,
+                          "visible_end": 4,
+                          "overscan_start": 0,
+                          "overscan_end": 4,
+                          "center_overscan_count": 6
+                        },
+                        "columns": {
+                          "left": 0,
+                          "center": 1,
+                          "right": 0,
+                          "aria": 1,
+                          "resizable": 1,
+                          "split_pinned_lanes": false,
+                          "row_pinning_page_only": false
+                        },
+                        "header": {
+                          "rows": 1,
+                          "visible_groups": 0
+                        },
+                        "tree": {
+                          "rows": 0,
+                          "branches": 0,
+                          "unloaded_branches": 0,
+                          "loading_rows": 0,
+                          "failed_rows": 0,
+                          "max_depth": 1
+                        },
+                        "configuration": {
+                          "row_measurement": "fixed",
+                          "grouping_columns": 1,
+                          "aggregations": 0,
+                          "custom_aggregation_functions": 0,
+                          "manual_expansion": false,
+                          "all_rows_expanded": true,
+                          "expanded_group_inputs": 2,
+                          "expanded_tree_inputs": 0,
+                          "facet_columns": 1
+                        },
+                        "identity_diagnostic_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.identity-diagnostic.diagnostic-1",
+                          "label": "Table identity diagnostic",
+                          "payload": {
+                            "diagnostic_id": "diagnostic-1",
+                            "kind": "duplicate-row-id",
+                            "occurrences": 2,
+                            "source_identity": {
+                              "kind": "redacted"
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "table.column.column-1",
+                          "label": "Table column",
+                          "payload": {
+                            "column_id": "column-1",
+                            "label": {
+                              "kind": "redacted"
+                            },
+                            "role": "column-header",
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "sortable": true,
+                            "resizable": true,
+                            "width_policy": "fixed",
+                            "width_px": 128.0,
+                            "sort_direction": null,
+                            "editor": null,
+                            "select_option_count": 0,
+                            "actions": [
+                              "sort"
+                            ]
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "table.row.row-1",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-1",
+                            "role": "row",
+                            "kind": "group",
+                            "region": "center",
+                            "model_index": 0,
+                            "region_index": 0,
+                            "aria_row_index": 2,
+                            "selected": false,
+                            "depth": 0,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-1-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-1-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": "table.row.row-2",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-2",
+                            "role": "row",
+                            "kind": "source",
+                            "region": "center",
+                            "model_index": 1,
+                            "region_index": 1,
+                            "aria_row_index": 3,
+                            "selected": false,
+                            "depth": 1,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-2-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-2-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": "table.row.row-3",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-3",
+                            "role": "row",
+                            "kind": "group",
+                            "region": "center",
+                            "model_index": 2,
+                            "region_index": 2,
+                            "aria_row_index": 4,
+                            "selected": false,
+                            "depth": 0,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-3-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-3-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": "table.row.row-4",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-4",
+                            "role": "row",
+                            "kind": "source",
+                            "region": "center",
+                            "model_index": 3,
+                            "region_index": 3,
+                            "aria_row_index": 5,
+                            "selected": false,
+                            "depth": 1,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-4-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-4-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "redaction": {
+                  "redacted_values": 23,
+                  "notes": [
+                    "Table caller-owned id redacted",
+                    "Table accessible label redacted",
+                    "Table grouping column id redacted",
+                    "Table facet identity and values redacted",
+                    "Table identity diagnostic source id redacted",
+                    "Table column id redacted",
+                    "Table column label redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted"
+                  ]
+                }
+              },
+              "diagnostics": []
+            },
+            "current": {
+              "id": "domain.table.element",
+              "target_id": "probe.table",
+              "kind": "Layout",
+              "label": "element",
+              "summary": {
+                "probe_id": "table",
+                "snapshot_kind": "element",
+                "root_nodes": 1,
+                "redacted_values": 27
+              },
+              "snapshot": {
+                "probe_id": "table",
+                "kind": "Element",
+                "tree": {
+                  "nodes": [
+                    {
+                      "id": "table.table-1",
+                      "label": "Table behavior",
+                      "payload": {
+                        "table_id": "table-1",
+                        "label": {
+                          "kind": "redacted"
+                        },
+                        "roles": {
+                          "root": "table",
+                          "row": "row",
+                          "column_header": "column-header",
+                          "cell": "cell"
+                        },
+                        "stages": {
+                          "filtering": "client",
+                          "sorting": "client",
+                          "pagination": "client",
+                          "faceting": "client"
+                        },
+                        "pagination": {
+                          "page_index": 0,
+                          "page_size": 18446744073709551615,
+                          "row_count": null,
+                          "page_count": null
+                        },
+                        "rows": {
+                          "core": 3,
+                          "filtered": 3,
+                          "grouped": 5,
+                          "sorted": 5,
+                          "expanded": 5,
+                          "paginated": 5,
+                          "final": 5,
+                          "pinned_top": 0,
+                          "pinned_center": 5,
+                          "pinned_bottom": 0,
+                          "rendered": 5,
+                          "visible": 5,
+                          "selected": 0,
+                          "groups": 2,
+                          "leaves": 3,
+                          "aria": 6
+                        },
+                        "visible_window": {
+                          "visible_start": 0,
+                          "visible_end": 5,
+                          "overscan_start": 0,
+                          "overscan_end": 5,
+                          "center_overscan_count": 6
+                        },
+                        "columns": {
+                          "left": 0,
+                          "center": 1,
+                          "right": 0,
+                          "aria": 1,
+                          "resizable": 1,
+                          "split_pinned_lanes": false,
+                          "row_pinning_page_only": false
+                        },
+                        "header": {
+                          "rows": 1,
+                          "visible_groups": 0
+                        },
+                        "tree": {
+                          "rows": 0,
+                          "branches": 0,
+                          "unloaded_branches": 0,
+                          "loading_rows": 0,
+                          "failed_rows": 0,
+                          "max_depth": 1
+                        },
+                        "configuration": {
+                          "row_measurement": "fixed",
+                          "grouping_columns": 1,
+                          "aggregations": 0,
+                          "custom_aggregation_functions": 0,
+                          "manual_expansion": false,
+                          "all_rows_expanded": true,
+                          "expanded_group_inputs": 2,
+                          "expanded_tree_inputs": 0,
+                          "facet_columns": 1
+                        },
+                        "identity_diagnostic_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "table.identity-diagnostic.diagnostic-1",
+                          "label": "Table identity diagnostic",
+                          "payload": {
+                            "diagnostic_id": "diagnostic-1",
+                            "kind": "duplicate-row-id",
+                            "occurrences": 2,
+                            "source_identity": {
+                              "kind": "redacted"
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "table.column.column-1",
+                          "label": "Table column",
+                          "payload": {
+                            "column_id": "column-1",
+                            "label": {
+                              "kind": "redacted"
+                            },
+                            "role": "column-header",
+                            "region": "center",
+                            "aria_column_index": 1,
+                            "sortable": true,
+                            "resizable": true,
+                            "width_policy": "fixed",
+                            "width_px": 128.0,
+                            "sort_direction": null,
+                            "editor": null,
+                            "select_option_count": 0,
+                            "actions": [
+                              "sort"
+                            ]
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "table.row.row-1",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-1",
+                            "role": "row",
+                            "kind": "group",
+                            "region": "center",
+                            "model_index": 0,
+                            "region_index": 0,
+                            "aria_row_index": 2,
+                            "selected": false,
+                            "depth": 0,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-1-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-1-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": "table.row.row-2",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-2",
+                            "role": "row",
+                            "kind": "source",
+                            "region": "center",
+                            "model_index": 1,
+                            "region_index": 1,
+                            "aria_row_index": 3,
+                            "selected": false,
+                            "depth": 1,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-2-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-2-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": "table.row.row-5",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-5",
+                            "role": "row",
+                            "kind": "source",
+                            "region": "center",
+                            "model_index": 2,
+                            "region_index": 2,
+                            "aria_row_index": 4,
+                            "selected": false,
+                            "depth": 1,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-5-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-5-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": "table.row.row-3",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-3",
+                            "role": "row",
+                            "kind": "group",
+                            "region": "center",
+                            "model_index": 3,
+                            "region_index": 3,
+                            "aria_row_index": 5,
+                            "selected": false,
+                            "depth": 0,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-3-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-3-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": "table.row.row-4",
+                          "label": "Table row",
+                          "payload": {
+                            "row_id": "row-4",
+                            "role": "row",
+                            "kind": "source",
+                            "region": "center",
+                            "model_index": 4,
+                            "region_index": 4,
+                            "aria_row_index": 6,
+                            "selected": false,
+                            "depth": 1,
+                            "tree_branch": false,
+                            "tree_expanded": null,
+                            "loaded_child_count": 0,
+                            "children_load_state": null,
+                            "cell_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "table.cell.cell-row-4-column-1",
+                              "label": "Table cell",
+                              "payload": {
+                                "cell_id": "cell-row-4-column-1",
+                                "column_id": "column-1",
+                                "role": "cell",
+                                "text": {
+                                  "kind": "redacted"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "region": "center",
+                                "aria_column_index": 1,
+                                "width_px": 128.0,
+                                "editor": null,
+                                "select_option_count": 0
+                              },
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "redaction": {
+                  "redacted_values": 27,
+                  "notes": [
+                    "Table caller-owned id redacted",
+                    "Table accessible label redacted",
+                    "Table grouping column id redacted",
+                    "Table facet identity and values redacted",
+                    "Table identity diagnostic source id redacted",
+                    "Table column id redacted",
+                    "Table column label redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted",
+                    "Table row identity redacted",
+                    "Table cell column id redacted",
+                    "Table cell display text redacted",
+                    "Table cell value redacted"
                   ]
                 }
               },
@@ -11031,7 +13464,7 @@
                 "runtime_id": "gallery",
                 "generation": 1,
                 "window_count": 1,
-                "has_focus": true,
+                "has_focus": false,
                 "has_input": true,
                 "has_frame": true,
                 "scroll_viewport_count": 1,
@@ -11051,7 +13484,7 @@
                         "runtime_id": "gallery",
                         "generation": 1,
                         "window_count": 1,
-                        "has_focus": true,
+                        "has_focus": false,
                         "has_input": true,
                         "has_frame": true,
                         "scroll_viewport_count": 1,
@@ -11064,8 +13497,8 @@
                           "payload": {
                             "window_id": 1,
                             "display_id": "gallery-display",
-                            "active": true,
-                            "focused": true,
+                            "active": false,
+                            "focused": false,
                             "bounds": {
                               "origin": {
                                 "x": 0.0,
@@ -11081,17 +13514,6 @@
                               "height": 720.0
                             },
                             "scale_factor": 1.0
-                          },
-                          "children": []
-                        },
-                        {
-                          "id": "gpui.runtime.focus",
-                          "label": "Focus metadata",
-                          "payload": {
-                            "active_window_id": 1,
-                            "focused_window_id": 1,
-                            "focus_scope_count": 3,
-                            "focus_handle_count": 9
                           },
                           "children": []
                         },
@@ -11174,7 +13596,7 @@
                 "runtime_id": "gallery",
                 "generation": 2,
                 "window_count": 1,
-                "has_focus": true,
+                "has_focus": false,
                 "has_input": true,
                 "has_frame": true,
                 "scroll_viewport_count": 1,
@@ -11194,7 +13616,7 @@
                         "runtime_id": "gallery",
                         "generation": 2,
                         "window_count": 1,
-                        "has_focus": true,
+                        "has_focus": false,
                         "has_input": true,
                         "has_frame": true,
                         "scroll_viewport_count": 1,
@@ -11207,8 +13629,8 @@
                           "payload": {
                             "window_id": 1,
                             "display_id": "gallery-display",
-                            "active": true,
-                            "focused": true,
+                            "active": false,
+                            "focused": false,
                             "bounds": {
                               "origin": {
                                 "x": 0.0,
@@ -11224,17 +13646,6 @@
                               "height": 720.0
                             },
                             "scale_factor": 1.0
-                          },
-                          "children": []
-                        },
-                        {
-                          "id": "gpui.runtime.focus",
-                          "label": "Focus metadata",
-                          "payload": {
-                            "active_window_id": 1,
-                            "focused_window_id": 1,
-                            "focus_scope_count": 3,
-                            "focus_handle_count": 9
                           },
                           "children": []
                         },
@@ -13362,7 +15773,7 @@
                       "runtime_id": "gallery",
                       "generation": 1,
                       "window_count": 1,
-                      "has_focus": true,
+                      "has_focus": false,
                       "has_input": true,
                       "has_frame": true,
                       "scroll_viewport_count": 1,
@@ -13375,8 +15786,8 @@
                         "payload": {
                           "window_id": 1,
                           "display_id": "gallery-display",
-                          "active": true,
-                          "focused": true,
+                          "active": false,
+                          "focused": false,
                           "bounds": {
                             "origin": {
                               "x": 0.0,
@@ -13392,17 +15803,6 @@
                             "height": 720.0
                           },
                           "scale_factor": 1.0
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "gpui.runtime.focus",
-                        "label": "Focus metadata",
-                        "payload": {
-                          "active_window_id": 1,
-                          "focused_window_id": 1,
-                          "focus_scope_count": 3,
-                          "focus_handle_count": 9
                         },
                         "children": []
                       },
@@ -13486,7 +15886,7 @@
                       "runtime_id": "gallery",
                       "generation": 2,
                       "window_count": 1,
-                      "has_focus": true,
+                      "has_focus": false,
                       "has_input": true,
                       "has_frame": true,
                       "scroll_viewport_count": 1,
@@ -13499,8 +15899,8 @@
                         "payload": {
                           "window_id": 1,
                           "display_id": "gallery-display",
-                          "active": true,
-                          "focused": true,
+                          "active": false,
+                          "focused": false,
                           "bounds": {
                             "origin": {
                               "x": 0.0,
@@ -13516,17 +15916,6 @@
                             "height": 720.0
                           },
                           "scale_factor": 1.0
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "gpui.runtime.focus",
-                        "label": "Focus metadata",
-                        "payload": {
-                          "active_window_id": 1,
-                          "focused_window_id": 1,
-                          "focus_scope_count": 3,
-                          "focus_handle_count": 9
                         },
                         "children": []
                       },
@@ -13768,6 +16157,55 @@
           },
           {
             "kind": "Snapshot",
+            "identity": "overlay.window:element",
+            "label": "element",
+            "status": "Unchanged",
+            "previous": {
+              "probe_id": "overlay.window",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "window-overlay",
+                    "label": "Window overlay runtime unavailable",
+                    "payload": {
+                      "availability": "unavailable",
+                      "layer_count": 0
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "current": {
+              "probe_id": "overlay.window",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "window-overlay",
+                    "label": "Window overlay runtime unavailable",
+                    "payload": {
+                      "availability": "unavailable",
+                      "layer_count": 0
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Snapshot",
             "identity": "resource:resource",
             "label": "resource",
             "status": "Unchanged",
@@ -13886,6 +16324,726 @@
                 "notes": [
                   "resource data projects",
                   "mutation data save-project-token=[redacted]"
+                ]
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Snapshot",
+            "identity": "table:element",
+            "label": "element",
+            "status": "Changed",
+            "previous": {
+              "probe_id": "table",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "table.table-1",
+                    "label": "Table behavior",
+                    "payload": {
+                      "table_id": "table-1",
+                      "label": {
+                        "kind": "redacted"
+                      },
+                      "roles": {
+                        "root": "table",
+                        "row": "row",
+                        "column_header": "column-header",
+                        "cell": "cell"
+                      },
+                      "stages": {
+                        "filtering": "client",
+                        "sorting": "client",
+                        "pagination": "client",
+                        "faceting": "client"
+                      },
+                      "pagination": {
+                        "page_index": 0,
+                        "page_size": 18446744073709551615,
+                        "row_count": null,
+                        "page_count": null
+                      },
+                      "rows": {
+                        "core": 2,
+                        "filtered": 2,
+                        "grouped": 4,
+                        "sorted": 4,
+                        "expanded": 4,
+                        "paginated": 4,
+                        "final": 4,
+                        "pinned_top": 0,
+                        "pinned_center": 4,
+                        "pinned_bottom": 0,
+                        "rendered": 4,
+                        "visible": 4,
+                        "selected": 0,
+                        "groups": 2,
+                        "leaves": 2,
+                        "aria": 5
+                      },
+                      "visible_window": {
+                        "visible_start": 0,
+                        "visible_end": 4,
+                        "overscan_start": 0,
+                        "overscan_end": 4,
+                        "center_overscan_count": 6
+                      },
+                      "columns": {
+                        "left": 0,
+                        "center": 1,
+                        "right": 0,
+                        "aria": 1,
+                        "resizable": 1,
+                        "split_pinned_lanes": false,
+                        "row_pinning_page_only": false
+                      },
+                      "header": {
+                        "rows": 1,
+                        "visible_groups": 0
+                      },
+                      "tree": {
+                        "rows": 0,
+                        "branches": 0,
+                        "unloaded_branches": 0,
+                        "loading_rows": 0,
+                        "failed_rows": 0,
+                        "max_depth": 1
+                      },
+                      "configuration": {
+                        "row_measurement": "fixed",
+                        "grouping_columns": 1,
+                        "aggregations": 0,
+                        "custom_aggregation_functions": 0,
+                        "manual_expansion": false,
+                        "all_rows_expanded": true,
+                        "expanded_group_inputs": 2,
+                        "expanded_tree_inputs": 0,
+                        "facet_columns": 1
+                      },
+                      "identity_diagnostic_count": 1
+                    },
+                    "children": [
+                      {
+                        "id": "table.identity-diagnostic.diagnostic-1",
+                        "label": "Table identity diagnostic",
+                        "payload": {
+                          "diagnostic_id": "diagnostic-1",
+                          "kind": "duplicate-row-id",
+                          "occurrences": 2,
+                          "source_identity": {
+                            "kind": "redacted"
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.column.column-1",
+                        "label": "Table column",
+                        "payload": {
+                          "column_id": "column-1",
+                          "label": {
+                            "kind": "redacted"
+                          },
+                          "role": "column-header",
+                          "region": "center",
+                          "aria_column_index": 1,
+                          "sortable": true,
+                          "resizable": true,
+                          "width_policy": "fixed",
+                          "width_px": 128.0,
+                          "sort_direction": null,
+                          "editor": null,
+                          "select_option_count": 0,
+                          "actions": [
+                            "sort"
+                          ]
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.row.row-1",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-1",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 0,
+                          "region_index": 0,
+                          "aria_row_index": 2,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-1-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-1-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-2",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-2",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 1,
+                          "region_index": 1,
+                          "aria_row_index": 3,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-2-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-2-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-3",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-3",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 2,
+                          "region_index": 2,
+                          "aria_row_index": 4,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-3-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-3-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-4",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-4",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 3,
+                          "region_index": 3,
+                          "aria_row_index": 5,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-4-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-4-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 23,
+                "notes": [
+                  "Table caller-owned id redacted",
+                  "Table accessible label redacted",
+                  "Table grouping column id redacted",
+                  "Table facet identity and values redacted",
+                  "Table identity diagnostic source id redacted",
+                  "Table column id redacted",
+                  "Table column label redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted"
+                ]
+              }
+            },
+            "current": {
+              "probe_id": "table",
+              "kind": "Element",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "table.table-1",
+                    "label": "Table behavior",
+                    "payload": {
+                      "table_id": "table-1",
+                      "label": {
+                        "kind": "redacted"
+                      },
+                      "roles": {
+                        "root": "table",
+                        "row": "row",
+                        "column_header": "column-header",
+                        "cell": "cell"
+                      },
+                      "stages": {
+                        "filtering": "client",
+                        "sorting": "client",
+                        "pagination": "client",
+                        "faceting": "client"
+                      },
+                      "pagination": {
+                        "page_index": 0,
+                        "page_size": 18446744073709551615,
+                        "row_count": null,
+                        "page_count": null
+                      },
+                      "rows": {
+                        "core": 3,
+                        "filtered": 3,
+                        "grouped": 5,
+                        "sorted": 5,
+                        "expanded": 5,
+                        "paginated": 5,
+                        "final": 5,
+                        "pinned_top": 0,
+                        "pinned_center": 5,
+                        "pinned_bottom": 0,
+                        "rendered": 5,
+                        "visible": 5,
+                        "selected": 0,
+                        "groups": 2,
+                        "leaves": 3,
+                        "aria": 6
+                      },
+                      "visible_window": {
+                        "visible_start": 0,
+                        "visible_end": 5,
+                        "overscan_start": 0,
+                        "overscan_end": 5,
+                        "center_overscan_count": 6
+                      },
+                      "columns": {
+                        "left": 0,
+                        "center": 1,
+                        "right": 0,
+                        "aria": 1,
+                        "resizable": 1,
+                        "split_pinned_lanes": false,
+                        "row_pinning_page_only": false
+                      },
+                      "header": {
+                        "rows": 1,
+                        "visible_groups": 0
+                      },
+                      "tree": {
+                        "rows": 0,
+                        "branches": 0,
+                        "unloaded_branches": 0,
+                        "loading_rows": 0,
+                        "failed_rows": 0,
+                        "max_depth": 1
+                      },
+                      "configuration": {
+                        "row_measurement": "fixed",
+                        "grouping_columns": 1,
+                        "aggregations": 0,
+                        "custom_aggregation_functions": 0,
+                        "manual_expansion": false,
+                        "all_rows_expanded": true,
+                        "expanded_group_inputs": 2,
+                        "expanded_tree_inputs": 0,
+                        "facet_columns": 1
+                      },
+                      "identity_diagnostic_count": 1
+                    },
+                    "children": [
+                      {
+                        "id": "table.identity-diagnostic.diagnostic-1",
+                        "label": "Table identity diagnostic",
+                        "payload": {
+                          "diagnostic_id": "diagnostic-1",
+                          "kind": "duplicate-row-id",
+                          "occurrences": 2,
+                          "source_identity": {
+                            "kind": "redacted"
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.column.column-1",
+                        "label": "Table column",
+                        "payload": {
+                          "column_id": "column-1",
+                          "label": {
+                            "kind": "redacted"
+                          },
+                          "role": "column-header",
+                          "region": "center",
+                          "aria_column_index": 1,
+                          "sortable": true,
+                          "resizable": true,
+                          "width_policy": "fixed",
+                          "width_px": 128.0,
+                          "sort_direction": null,
+                          "editor": null,
+                          "select_option_count": 0,
+                          "actions": [
+                            "sort"
+                          ]
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "table.row.row-1",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-1",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 0,
+                          "region_index": 0,
+                          "aria_row_index": 2,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-1-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-1-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-2",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-2",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 1,
+                          "region_index": 1,
+                          "aria_row_index": 3,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-2-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-2-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-5",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-5",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 2,
+                          "region_index": 2,
+                          "aria_row_index": 4,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-5-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-5-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-3",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-3",
+                          "role": "row",
+                          "kind": "group",
+                          "region": "center",
+                          "model_index": 3,
+                          "region_index": 3,
+                          "aria_row_index": 5,
+                          "selected": false,
+                          "depth": 0,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-3-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-3-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "id": "table.row.row-4",
+                        "label": "Table row",
+                        "payload": {
+                          "row_id": "row-4",
+                          "role": "row",
+                          "kind": "source",
+                          "region": "center",
+                          "model_index": 4,
+                          "region_index": 4,
+                          "aria_row_index": 6,
+                          "selected": false,
+                          "depth": 1,
+                          "tree_branch": false,
+                          "tree_expanded": null,
+                          "loaded_child_count": 0,
+                          "children_load_state": null,
+                          "cell_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "table.cell.cell-row-4-column-1",
+                            "label": "Table cell",
+                            "payload": {
+                              "cell_id": "cell-row-4-column-1",
+                              "column_id": "column-1",
+                              "role": "cell",
+                              "text": {
+                                "kind": "redacted"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "region": "center",
+                              "aria_column_index": 1,
+                              "width_px": 128.0,
+                              "editor": null,
+                              "select_option_count": 0
+                            },
+                            "children": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 27,
+                "notes": [
+                  "Table caller-owned id redacted",
+                  "Table accessible label redacted",
+                  "Table grouping column id redacted",
+                  "Table facet identity and values redacted",
+                  "Table identity diagnostic source id redacted",
+                  "Table column id redacted",
+                  "Table column label redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted",
+                  "Table row identity redacted",
+                  "Table cell column id redacted",
+                  "Table cell display text redacted",
+                  "Table cell value redacted"
                 ]
               }
             },
@@ -14732,8 +17890,8 @@
         "summary": {
           "added": 0,
           "removed": 0,
-          "changed": 13,
-          "unchanged": 30,
+          "changed": 15,
+          "unchanged": 34,
           "collisions": 0
         }
       }

@@ -8,6 +8,7 @@ status: "active"
 source_session: "019ec6c8-5566-7062-8458-21ebe1360573"
 git_branch: "main"
 git_commit: "0d82a9d"
+updated: 2026-07-19T00:00:00+08:00
 ---
 
 # Decision
@@ -31,9 +32,16 @@ Priority order:
    targeted ergonomic and regression-hardening work when real usage exposes gaps.
 
 2026-07-01 update: the first deepening pass for `Command`, `Menu`, `ContextMenu`, `Tree`, and
-Table behavior snapshots has landed. The next risk has moved from complex-family depth to shared
-product contracts: component registry ownership, accessibility gates, and theme loading. Broadly
-splitting every remaining 1k+ component file is not a current priority.
+Table behavior snapshots landed. At that point the next risk was described as component registry
+ownership, accessibility gates, and theme loading.
+
+2026-07-19 update: U1-U10 of the ongoing authority-convergence series completed that component
+shared-contract slice without retaining the proposed central inventory. Product metadata is now
+intentionally narrow, public exports live with their declarations, Gallery owns stories and
+selectors, native targets own scenario coordinates, final AccessKit trees own semantic evidence,
+and `xtask` joins those owners without becoming a manifest. Later GPUI substrate units remain open;
+this update supersedes only the earlier registry workflow while preserving the decision to deepen
+existing component families before adding shallow breadth.
 
 # Context
 
@@ -56,15 +64,20 @@ The chosen path is to deepen complex families first. Leaf additions are easy to 
 but Command, Menu, Table, and Tree determine whether the library can support real application
 workflows.
 
-That path has now produced the first family-boundary baseline. The next chosen path is to harden
-the shared product contract layer before opening another large component-family split.
+That path produced the first family-boundary baseline. The next chosen path was to harden the
+shared product contract layer before opening another large component-family split, and the
+2026-07-19 authority-convergence update above records its completion.
 
 # Consequences
 
-- The next `ce-plan` should start with registry, accessibility, and theme productization unless a
-  new user-facing regression appears first.
-- Each new component-depth slice should update the API inventory, component contract, gallery
-  catalog/focused mode, and targeted `cargo nextest` gates.
+- Future component-depth planning starts from the federated authorities already in place rather
+  than reopening registry, inventory, or generated-manifest work.
+- A new component-depth slice updates the narrow component row only when product identity,
+  revision, family, or required scenarios change. Public exports, Gallery stories/selectors, and
+  native scenario coordinates move with their natural owners.
+- Final accessibility trees/actions, semantic activation tests, per-window overlay runtime tests,
+  theme scope/schema gates, and focused `cargo nextest` scenarios remain executable evidence; none
+  is mirrored into a central conformance table.
 - Visual regression tooling remains valuable, but it should follow a concrete rendering pain point
   rather than block the next product slice.
 - Standalone headless extraction remains deferred until repeated contracts across several complex
@@ -77,3 +90,6 @@ the shared product contract layer before opening another large component-family 
 [3] [UI component roadmap reference research](../subagents/ui-component-roadmap-reference-research.md)
 [4] [Component contract](../../../ui/component-contract.md)
 [5] [API and overlay productization plan](../../../plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md)
+[6] [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../../adr/0014-remove-native-ui-hybrid-registry.md)
+[7] [Semantic accessibility and final-tree authority](semantic-accessibility-final-tree-authority.md)
+[8] [Theme scope resolution and deferred capture](theme-scope-resolution.md)

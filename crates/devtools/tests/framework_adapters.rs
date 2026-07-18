@@ -21,6 +21,27 @@ struct WindowOverlayProjectionProbe {
     runtime: open_gpui_ui_components::gpui_adapter::WindowOverlayRuntime,
 }
 
+#[cfg(feature = "gpui")]
+struct WindowFocusProjectionProbe {
+    focus: open_gpui::FocusHandle,
+}
+
+#[cfg(feature = "gpui")]
+impl open_gpui::Render for WindowFocusProjectionProbe {
+    fn render(
+        &mut self,
+        _: &mut open_gpui::Window,
+        _: &mut open_gpui::Context<Self>,
+    ) -> impl open_gpui::IntoElement {
+        use open_gpui::prelude::*;
+
+        open_gpui::div()
+            .id("window-focus-projection-probe")
+            .focusable()
+            .track_focus(&self.focus)
+    }
+}
+
 #[cfg(feature = "ui-components")]
 impl open_gpui::Render for WindowOverlayProjectionProbe {
     fn render(
@@ -226,6 +247,91 @@ fn framework_adapters_convert_scroll_viewport_snapshots() {
 }
 
 #[cfg(feature = "gpui")]
+#[open_gpui::test]
+fn framework_focus_snapshot_reads_the_rendered_window_authority(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| WindowFocusProjectionProbe {
+        focus: cx.focus_handle(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe.focus.focus(window, cx);
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let (window_active, snapshot) = cx.update(|window, cx| {
+        (
+            window.is_window_active(),
+            gpui::GpuiRuntimeFocusSnapshot::from_window(42, window, cx),
+        )
+    });
+
+    assert_eq!(snapshot.active_window_id, window_active.then_some(42));
+    assert_eq!(snapshot.focused_window_id, Some(42));
+    assert_eq!(snapshot.focused_element_rendered, Some(true));
+    assert!(
+        snapshot
+            .focus_claim_revision
+            .is_some_and(|revision| revision > 0)
+    );
+    assert!(
+        snapshot
+            .rendered_frame_revision
+            .is_some_and(|revision| revision > 0)
+    );
+    assert_eq!(snapshot.focus_scope_count, None);
+    assert_eq!(snapshot.focus_handle_count, None);
+}
+
+#[cfg(feature = "gpui")]
+#[open_gpui::test]
+fn framework_focus_snapshot_does_not_claim_keyboard_focus_for_an_inactive_window(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| WindowFocusProjectionProbe {
+        focus: cx.focus_handle(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe.focus.focus(window, cx);
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.deactivate_window();
+
+    let (logical_focus_retained, snapshot) = cx.update(|window, cx| {
+        (
+            window.focused(cx).is_some(),
+            gpui::GpuiRuntimeFocusSnapshot::from_window(42, window, cx),
+        )
+    });
+
+    assert!(logical_focus_retained);
+    assert_eq!(snapshot.active_window_id, None);
+    assert_eq!(snapshot.focused_window_id, None);
+    assert_eq!(snapshot.focused_element_rendered, Some(false));
+}
+
+#[cfg(feature = "gpui")]
+#[test]
+fn framework_focus_snapshot_preserves_unknown_new_facts_in_legacy_json() {
+    let snapshot: gpui::GpuiRuntimeFocusSnapshot = serde_json::from_value(serde_json::json!({
+        "active_window_id": 42,
+        "focused_window_id": 42,
+        "focus_scope_count": 2,
+        "focus_handle_count": 5
+    }))
+    .unwrap();
+
+    assert_eq!(snapshot.focused_element_rendered, None);
+    assert_eq!(snapshot.focus_claim_revision, None);
+    assert_eq!(snapshot.rendered_frame_revision, None);
+}
+
+#[cfg(feature = "gpui")]
 #[test]
 fn framework_adapters_convert_gpui_runtime_metadata() {
     use open_gpui::{ScrollViewportChangeSource, ScrollViewportSnapshot, bounds, point, px, size};
@@ -263,8 +369,11 @@ fn framework_adapters_convert_gpui_runtime_metadata() {
         focus: Some(gpui::GpuiRuntimeFocusSnapshot {
             active_window_id: Some(42),
             focused_window_id: Some(42),
-            focus_scope_count: 2,
-            focus_handle_count: 5,
+            focused_element_rendered: Some(true),
+            focus_claim_revision: Some(7),
+            rendered_frame_revision: Some(3),
+            focus_scope_count: Some(2),
+            focus_handle_count: Some(5),
         }),
         input: Some(gpui::GpuiRuntimeInputSnapshot {
             key_down_count: 4,

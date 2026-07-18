@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-06-17
+**Updated**: 2026-07-19
 
 ## Context
 
@@ -30,19 +31,20 @@ Treat the current UI crates as the product boundary for the next phase.
 - Keep renderer-neutral state and adapter classification as hygiene, not as the primary product
   objective.
 
-After the Command, Menu, ContextMenu, Tree, and Table behavior boundary work, the next sequence
-should therefore be:
+When this ADR was accepted, the next sequence was framed as splitting a growing component contract
+registry, adding accessibility contract gates, and adding a theme loader. That framing is retained
+as history, but its central-registry workflow is superseded by ADR 0014 and the completed U1-U10
+component-authority slice of the ongoing authority-convergence series. That slice produced:
 
-1. Split the component contract registry by product responsibility so registry rows, projections,
-   source mappings, inventory, docs status, gallery status, and validation helpers do not keep
-   growing inside one module.
-2. Add focused accessibility contract gates for representative official component families,
-   separating renderer-neutral intent from GPUI adapter mapping and documenting unsupported platform
-   details.
-3. Add a theme JSON schema and file-loader facade so `ThemeDefinition` can become a portable product
-   contract instead of a code-only construction path.
-4. Keep the gallery, verification docs, and engineering memory aligned with the active product
-   story.
+1. `ComponentContractEntry` owns only product id, revision, family, and required scenario ids.
+   Public export declarations, Gallery stories/selectors, native scenario coordinates, DevTools
+   projections, and documentation remain with their natural owners.
+2. Accessibility semantics derive from resolved component state and are proven at final AccessKit
+   tree and real action-dispatch boundaries, not by static evidence rows.
+3. Theme v1 is a complete portable payload with validated JSON loading, app/window/subtree
+   resolution, and opening-generation capture for detached surfaces.
+4. `scan-ui-contract` joins federated typed facts and executes owner-provided scenarios. It is a
+   verification gate, not a registry, generated manifest, or replacement source of truth.
 
 Broad splitting of every remaining 1k+ component file is not part of this sequence. A large file
 should move only when a concrete contract, runtime, accessibility, or theme ownership problem makes
@@ -64,8 +66,10 @@ Positive:
   story.
 - Runtime foundations, shell/navigation, and choice/search can be improved as one coherent product
   line.
-- The next work can harden shared product contracts before adding another large visible component
-  or package boundary.
+- The completed authority-convergence work hardened shared product contracts before another large
+  visible component or package boundary was opened.
+- The original registry-splitting sequence is complete and superseded by federated ownership; it
+  must not be revived as an API inventory, generated manifest, or central conformance table.
 
 Negative:
 
@@ -89,10 +93,10 @@ next implementation phase.
 
 ## Follow-Up Work
 
-- Implement the registry, accessibility, and theme productization plan in
-  `docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`.
-- Update the engineering wiki memory bundle so later sessions resume from the registry/a11y/theme
-  productization narrative.
+- Preserve the completed authority split through the focused gates in
+  [the verification guide](../verification.md).
+- Use the [v0.3 UI migration guide](../ui/migration-v0.3.md) as the downstream entry point for the
+  breaking callback, accessibility, overlay, theme, Table identity, and typeahead changes.
 - Keep ADR 0006 and ADR 0007 available as historical boundary references.
 
 ## Citations
@@ -101,3 +105,12 @@ next implementation phase.
 [2] [ADR 0006](0006-open-gpui-ui-headless-extraction-checkpoint.md)
 [3] [ADR 0007](0007-open-gpui-ui-headless-boundary-design.md)
 [4] [Productization roadmap plan](../plans/2026-06-17-003-feat-ui-component-productization-roadmap-plan.md)
+
+## Related Decisions
+
+- [ADR 0009: Open GPUI Table and Virtualizer Product Shape](0009-open-gpui-table-and-virtualizer-product-shape.md)
+- [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](0014-remove-native-ui-hybrid-registry.md)
+- [Focus scope and window overlay runtime ownership](../knowledge/engineering/decisions/focus-scope-window-overlay-runtime.md)
+- [Semantic accessibility and final-tree authority](../knowledge/engineering/decisions/semantic-accessibility-final-tree-authority.md)
+- [Semantic activation authority](../knowledge/engineering/decisions/semantic-activation-authority.md)
+- [Theme scope resolution and deferred capture](../knowledge/engineering/decisions/theme-scope-resolution.md)

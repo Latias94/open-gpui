@@ -20,7 +20,7 @@ use open_gpui_ui_components::{
     SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState,
     SwitchState, TextInputState, TextareaState, ThemeResolver, ToggleState, Tooltip,
     gpui_adapter::{
-        DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt,
+        DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, WindowOverlayRuntime,
         focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui,
         init_text_input,
     },
@@ -147,8 +147,12 @@ impl GalleryShell {
         cx.set_global(pages::components::TreeSampleRuntimeLog::default());
         cx.set_global(pages::components::SidebarSampleRuntimeLog::default());
         let initial_snapshot = foundation_snapshot(DEFAULT_GALLERY_WIDTH, selected_page);
-        let devtools_facts =
-            Self::devtools_live_facts(initial_snapshot, ThemeResolver::current(window, cx));
+        let devtools_facts = Self::devtools_live_facts(
+            initial_snapshot,
+            ThemeResolver::current(window, cx),
+            window,
+            cx,
+        );
         let devtools_workbench = pages::devtools::GalleryDevtoolsWorkbench::new(devtools_facts);
         let devtools_state = devtools_workbench.inspector_state();
 
@@ -233,7 +237,7 @@ impl GalleryShell {
 
     pub fn refresh_devtools(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let theme = ThemeResolver::current(window, cx);
-        let facts = Self::devtools_live_facts(self.snapshot(), theme);
+        let facts = Self::devtools_live_facts(self.snapshot(), theme, window, cx);
         let selected_before = self
             .devtools_inspector
             .read(cx)
@@ -280,7 +284,13 @@ impl GalleryShell {
     fn devtools_live_facts(
         snapshot: GalleryShellSnapshot,
         theme: ThemeContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> pages::devtools::GalleryDevtoolsLiveFacts {
+        let focus = open_gpui_devtools::GpuiRuntimeFocusSnapshot::from_window(1, window, cx);
+        let overlay = WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("Gallery overlay snapshot must belong to its window");
         pages::devtools::GalleryDevtoolsLiveFacts::new(
             snapshot.selected_page.id(),
             snapshot.viewport_width.as_f32(),
@@ -289,6 +299,7 @@ impl GalleryShell {
             snapshot.control_size.as_str(),
             theme,
         )
+        .with_window_runtime(focus, overlay)
     }
 
     fn select_page(&mut self, page: GalleryPage, cx: &mut Context<Self>) {

@@ -8,7 +8,8 @@ GPUI UI surfaces later:
 
 - `form` for `open-gpui-form` snapshots.
 - `resource` for `open-gpui-resource` snapshots.
-- `ui-components` for theme, resolved accessibility semantics, and window overlay runtime snapshots.
+- `ui-components` for theme, resolved accessibility semantics, window overlay runtime snapshots,
+  and session-scoped Table behavior projections.
 - `motion` for `open-gpui-motion` frame-demand snapshots.
 - `docking` for `open-gpui-docking` runtime diagnostics.
 - `command` for `open-gpui-command` registry, keybinding, and keymap-resolution snapshots.
@@ -67,7 +68,10 @@ mutation and live property editing are intentionally out of scope for the initia
   records are available.
 - `gpui` exposes metadata-only `GpuiRuntimeSnapshot` adapters for app/window/focus/input/frame and
   scroll facts. Raw user input, clipboard payloads, editable text values, unredacted titles, and
-  accessibility labels do not belong in runtime metadata.
+  accessibility labels do not belong in runtime metadata. Use
+  `GpuiRuntimeFocusSnapshot::from_window` for live focus facts; it reads rendered focus and revision
+  authority directly, reports keyboard focus only for an active window, and leaves unobservable or
+  legacy-imported facts absent.
 - `ui_components::window_overlay_probe_snapshot` projects the real `WindowOverlaySnapshot` through
   an allowlist. Layers and parents use snapshot-local ordinal ids; raw `OverlayLayerId`, window
   identity, lifecycle generations, and intent revisions are omitted. This inspection path covers
@@ -77,6 +81,15 @@ mutation and live property editing are intentionally out of scope for the initia
   `SemanticDescriptor` used by the renderer. It preserves contract id/family, role, state, actions,
   structural counts, and opaque node ids while converting all accessible text and numeric values
   to typed redaction markers before snapshot construction.
+- `ui_components::TableDevtoolsSession` projects a real `TableBehaviorSnapshot` with structured
+  stage, role, action, geometry, and count facts. Caller-owned table, column, row, instance, group,
+  grouping, and diagnostic-source identities stay only inside bounded typed in-memory map keys;
+  snapshots contain sequential table/column/row/diagnostic ids scoped to that session, while cell
+  ids compose opaque row and column ids. Complete diagnostic records are not retained. Source
+  representations, labels, values, encoded identities, and debug selectors are never formatted,
+  persisted, or exported, and the adapter never hashes those source values. Typed source
+  identities are retained for eight projections by default; use `with_identity_retention` to match
+  a different owning DevTools history limit. Identities outside that window are released.
 - `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
   session-frame loading, diff rows, target/domain/event navigation, diagnostics, selected-detail
   JSON, and legacy snapshot export without requiring a GPUI window.
@@ -408,6 +421,14 @@ summary from `RedactedResourceValue::Redacted`; only resource values explicitly 
 by the source snapshot are eligible for resource payload exposure. Generic sanitization remains a
 defense-in-depth layer for both adapters.
 
+Table identity has a stricter correlation boundary than form field identity. It uses
+`TableDevtoolsSession` ordinals that have meaning only inside one session; it must not use
+`adapters::opaque_stable_id`, source formatting, encoded row keys, diagnostic labels, or debug
+selectors. Table labels, cell values, select options, loading messages, and identity diagnostic
+sources become typed redaction markers or counts before a snapshot tree is constructed. Each
+diagnostic source receives its own session ordinal, and source identity maps are pruned to the
+configured projection-retention window.
+
 ## Verification
 
 For focused devtools changes, run:
@@ -430,6 +451,7 @@ cargo nextest run -p open-gpui-devtools --features motion timeline --no-fail-fas
 cargo nextest run -p open-gpui-devtools --features gpui layout --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features ui-components --test table_redaction --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features docking --test docking_runtime_contracts --no-fail-fast --locked
 cargo check -p xtask --locked
 cargo nextest run -p xtask --test devtools_cli_contracts --no-fail-fast --locked

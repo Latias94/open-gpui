@@ -1,5 +1,7 @@
 //! DevTools adapters for `open-gpui-ui-components` public facts.
 
+mod table;
+
 use std::collections::HashMap;
 
 use open_gpui_ui_components::{
@@ -14,6 +16,8 @@ use crate::{
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::snapshot_node_with_payload,
 };
+
+pub use table::TableDevtoolsSession;
 
 /// Converts one effective complete Theme v1 context into a DevTools tree.
 pub fn theme_probe_snapshot(context: &ThemeContext) -> SnapshotProbeSnapshot {

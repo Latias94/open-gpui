@@ -82,6 +82,14 @@ DevTools projections are diagnostic views of the current resolved semantic autho
 consume `COMPONENT_A11Y_EVIDENCE`, Gallery claims, renderer node IDs, or application-provided text as
 an alternate semantic source.
 
+Table redaction is session-owned because exact typed row identity is richer than a public business
+id. The adapter maps table, column, and resolved-row identities to opaque ordinals that remain
+stable only inside one DevTools session; cell output derives from the opaque row and column
+ordinals. It never serializes, formats, debug-prints, or deterministically hashes source identity,
+label, cell value, diagnostic source identity, or debug selector. Sanitized diagnostic kinds and
+counts remain observable. Every downstream channel consumes the already-redacted projection rather
+than reopening Table authority.
+
 # Table As The Multi-Node Contract
 
 Table is the representative multi-node producer because one logical row crosses row-model stages,
@@ -167,10 +175,18 @@ the chosen design.
 - Future semantic features must extend the resolved-state projection and executable evidence path
   rather than introduce another authority.
 
-# Related Evidence
+# Related Decisions
+
+- [Focus scope and window overlay runtime ownership](focus-scope-window-overlay-runtime.md)
+- [Semantic activation authority](semantic-activation-authority.md)
+- [Theme scope resolution and deferred capture](theme-scope-resolution.md)
+- [ADR 0008: Open GPUI UI Component Productization Roadmap](../../../adr/0008-open-gpui-ui-component-productization-roadmap.md)
+- [ADR 0009: Open GPUI Table and Virtualizer Product Shape](../../../adr/0009-open-gpui-table-and-virtualizer-product-shape.md)
+- [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../../adr/0014-remove-native-ui-hybrid-registry.md)
+
+# Supporting Documents
 
 - [Authority convergence plan](../../../plans/2026-07-10-001-refactor-ui-framework-authority-convergence-plan.md)
 - [UI component contract](../../../ui/component-contract.md)
 - [v0.3 migration guide](../../../ui/migration-v0.3.md)
 - [Verification guide](../../../verification.md)
-- [Focus scope and window overlay runtime ownership](focus-scope-window-overlay-runtime.md)

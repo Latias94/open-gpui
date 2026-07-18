@@ -155,3 +155,12 @@ U8 replaced the color-only payload with complete Theme v1 scales and split sourc
 runtime-owned effective revision. The completed implementation preserves the same precedence,
 window ownership, scope identity, detached capture, and test matrix while extending canaries to
 non-color scales and same-transaction redraws.
+
+# Related Decisions
+
+- [Focus scope and window overlay runtime ownership](focus-scope-window-overlay-runtime.md)
+- [Semantic accessibility and final-tree authority](semantic-accessibility-final-tree-authority.md)
+- [Semantic activation authority](semantic-activation-authority.md)
+- [ADR 0008: Open GPUI UI Component Productization Roadmap](../../../adr/0008-open-gpui-ui-component-productization-roadmap.md)
+- [ADR 0009: Open GPUI Table and Virtualizer Product Shape](../../../adr/0009-open-gpui-table-and-virtualizer-product-shape.md)
+- [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../../adr/0014-remove-native-ui-hybrid-registry.md)

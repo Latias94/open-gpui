@@ -6,8 +6,8 @@ mod tree;
 
 use open_gpui_ui_core::{
     Role, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
-    TableResolvedState, TableRowId, TableRowIdentity, TableRowRegion, TableSelectionPolicy,
-    TableSelectionSummary, TableStageMode, TableState, UiPx,
+    TableResolvedState, TableRowId, TableRowIdentity, TableRowIdentityDiagnostic, TableRowRegion,
+    TableSelectionPolicy, TableSelectionSummary, TableStageMode, TableState, UiPx,
 };
 
 use super::render_plan::TableRenderPlan;
@@ -48,6 +48,7 @@ pub struct TableBehaviorSnapshot {
     column_regions: TableColumnRegionSnapshot,
     header_summary: TableHeaderSummarySnapshot,
     tree_summary: TableTreeSummarySnapshot,
+    row_identity_diagnostics: Vec<TableRowIdentityDiagnostic>,
     columns: Vec<TableColumnBehaviorSnapshot>,
     rows: Vec<TableRowBehaviorSnapshot>,
     column_facets: Vec<TableColumnFacets>,
@@ -108,6 +109,7 @@ impl TableBehaviorSnapshot {
             column_regions,
             header_summary,
             tree_summary,
+            row_identity_diagnostics: table.row_identity_diagnostics().to_vec(),
             columns,
             rows,
             column_facets: plan.column_facets().to_vec(),
@@ -253,6 +255,11 @@ impl TableBehaviorSnapshot {
     /// Returns source tree and grouped row behavior summary.
     pub const fn tree_summary(&self) -> TableTreeSummarySnapshot {
         self.tree_summary
+    }
+
+    /// Returns structured source-row identity diagnostics detected during resolution.
+    pub fn row_identity_diagnostics(&self) -> &[TableRowIdentityDiagnostic] {
+        &self.row_identity_diagnostics
     }
 
     /// Returns visible columns in behavior order.
