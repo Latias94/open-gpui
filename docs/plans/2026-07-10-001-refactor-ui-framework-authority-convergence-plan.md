@@ -13,7 +13,7 @@ deepened: 2026-07-10
 
 ## Goal Capsule
 
-Open GPUI should leave this work as a credible general-purpose desktop UI framework foundation, not only a large component catalog. The framework must have one authoritative path for form lifecycle, focus and overlay arbitration, accessibility semantics, activation, theme resolution, collection typeahead, and component conformance.
+Open GPUI should leave this work as a credible general-purpose desktop UI framework foundation, not only a large component catalog. The framework must have one authoritative path for form lifecycle, focus and overlay arbitration, accessibility semantics, activation, theme resolution, collection typeahead, component conformance, post-layout subtree geometry, and layout-preserving subtree presentation.
 
 The refactor is intentionally breaking. New authorities replace old forwarding layers, duplicated metadata, source-string scanners, and public callbacks in the same implementation unit. No compatibility aliases or parallel runtimes remain after a migration unit lands.
 
@@ -26,6 +26,8 @@ Success is observable when:
 - the replacement theme v1 owns stable design scales and resolves app, window, and subtree context without app-global selection leakage;
 - collection typeahead has one deterministic, fake-clock-testable session implementation;
 - federated typed authorities project their own facts and are cross-checked structurally across component metadata, gallery, DevTools, docs, public surfaces, and executable scenarios;
+- one finite, invertible, axis-aligned subtree transform composes paint, clipping, hit testing, local coordinates, accessibility bounds, deferred work, and cache replay without changing layout;
+- `Visible`, `Inert`, and `Hidden` have one layout-preserving subtree authority, with exact and testable paint, input, focus, and accessibility participation;
 - the existing GPUI substrate, table engine, virtualizer, motion engine, text editing, choice models, and `FormStore` architecture remain deep modules rather than being rewritten for symmetry.
 
 ## Product Contract
@@ -45,6 +47,8 @@ The framework currently has several models that look complete in isolation but a
 - Accessibility component state, renderer attributes, static evidence, DevTools output, and the final AccessKit tree can disagree because the final tree is not test-observable on `TestPlatform`.
 - `FormStatus::Validating` is effectively unreachable, field projection drops validation activity, and a completion for an old field value can overwrite newer state.
 - Theme selection is app-global, revisions are caller-controlled rather than effective-content authority, and the schema only models a small color vocabulary.
+- The public SVG-only transformation and renderer matrices cannot transform an arbitrary interactive subtree: visual output, hitboxes, event-local coordinates, clips, accessibility bounds, deferred draws, and cached frame journals have no shared geometry authority.
+- `Visibility::Hidden` is applied as a late `div` paint decision while input/focus registration and `Element::a11y_hidden` use separate paths, so a layout-preserving hidden or inert subtree cannot make one coherent cross-channel guarantee.
 - Public callbacks expose `ClickEvent` even where consumers only need semantic activation or value change.
 - Tree and VirtualizedList duplicate typeahead buffer and timeout behavior.
 - Component contract rows, API inventory, public owner tables, gallery catalog, accessibility evidence, and source parsers repeat product facts that can drift while all string checks remain green.
@@ -85,6 +89,10 @@ R15. Breaking migrations must update official components, gallery, DevTools, doc
 
 R16. Duplicate Table source rows must never alias focus, edits, callbacks, render/semantic nodes, or virtualizer measurements. Occurrence identities are valid only within their resolved source snapshot; callers that retain identity across source reorder must provide explicit instance IDs. A partial column order reorders columns without hiding otherwise visible columns.
 
+R17. Provide one public, layout-neutral interactive subtree transform in `open-gpui` for finite positive axis-aligned `scale(x, y)`, finite translation, and an explicit origin. Scale, inverse, and nested composition must remain representable under a checked numeric contract. The transform must compose through every observable visual, input, accessibility, deferred, portal-anchor, cache, motion, and diagnostic geometry path; a numeric failure suppresses the whole subtree before channel registration rather than using identity, clamping, or a partial projection. Rotation, skew, perspective, and 3D are not part of this contract.
+
+R18. Provide one layout-preserving subtree presentation authority with exact `Visible`, `Inert`, and `Hidden` semantics. `Hidden` preserves layout but removes paint, input, focus, IME, and accessibility participation; `Inert` preserves layout and paint but removes input, focus, IME, and accessibility participation. Ancestor suppression is authoritative, and independent paint/input/focus/accessibility hiding flags cannot remain as competing subtree authorities.
+
 ### Acceptance Examples
 
 1. A user opens a Popover, opens a Menu from it, then opens a modal Dialog. Escape is offered only to the Dialog. If its policy ignores Escape, lower layers do not close. Closing the Dialog restores focus inside the Menu; closing the Menu restores its trigger; closing the Popover restores the original application target.
@@ -96,6 +104,8 @@ R16. Duplicate Table source rows must never alias focus, edits, callbacks, rende
 7. Tree and VirtualizedList accumulate typeahead within the configured interval, reset after fake-clock advancement, skip structural or disabled targets, preserve stable-key identity across reorder, and never share a buffer across instances or windows.
 8. Removing a component's executable scenario binding causes the conformance gate to fail with its component/scenario ID and owner path. Editing a comment or brace count cannot make the gate pass.
 9. Two Table rows share one business ID and provide explicit instance IDs. After filtering, sorting, pinning, virtual recycle, and return, focus, edit, keyboard activation, and AccessKit Click still target the chosen instance and reuse its logical node identity. A partial column order keeps every other visible column available and reorderable.
+10. A scaled and translated subtree contains text, a clipped scroll region, an editable control, and a button. Every primitive paints at the transformed position, pointer and captured-drag dispatch resolve the intended local coordinates, the IME and inspector bounds match the display, and AccessKit Click activates the same stable node. Its measured size and sibling layout do not change.
+11. Three otherwise identical subtrees are `Visible`, `Inert`, and `Hidden`. All three reserve the same layout space; the inert subtree remains painted but cannot receive hover, scrolling, focus, IME, pointer capture, tooltip, or AccessKit actions; the hidden subtree additionally paints nothing. Dynamic transitions remove stale focus, capture, and accessibility membership without affecting sibling layout.
 
 ### Scope Boundaries
 
@@ -109,18 +119,22 @@ In scope:
 - replacement theme v1, effective revisions, window/subtree resolution, and deferred inheritance;
 - shared collection typeahead;
 - typed conformance projections and deletion of duplicate/source-string authorities;
+- a finite, positive, invertible axis-aligned transform for arbitrary interactive subtrees, including renderer, input, accessibility, cache, deferred, motion, and Gallery integration;
+- layout-preserving visible/inert/hidden subtree semantics across paint, input, focus, IME, and accessibility;
 - common public-surface cleanup, gallery, DevTools, ADRs, migration notes, and verification.
 
 Explicitly out of scope:
 
 - a new standalone headless component crate or a second UI runtime;
 - copying the all-purpose `Root` implementation from `gpui-component` or Fret's runtime architecture;
-- rewriting GPUI `Element`, `Entity`, `Context`, `Window::use_keyed_state`, or the render pipeline;
+- rewriting GPUI `Element`, `Entity`, `Context`, `Window::use_keyed_state`, the layout engine, or the render pipeline from scratch;
 - rewriting Table, Virtualizer, Motion, Choice, text editing, or `FormStore` from scratch;
 - moving command execution into the UI activation module or deleting `ActionDescriptor`/`ResolvedActionState` without new evidence;
 - replacing the neutral accessibility vocabulary merely to mirror AccessKit types;
 - tokenizing every pixel literal; structural component metrics remain local;
 - cross-window overlays, portal routing across native windows, or a generalized dependency-injection container;
+- rotation, skew, perspective, 3D transforms, negative or zero scale, and a general affine-transform public API;
+- group opacity/compositing, rounded/path subtree clipping, unified focus-reveal policy, and a multi-pointer gesture arena; these remain follow-on research rather than implicit U12/U13 deliverables;
 - platform-specific screenshot baselines that cannot be generated and verified on the active platform. Gallery runtime and structural smoke coverage remains required.
 
 ## Planning Contract
@@ -154,6 +168,10 @@ KTD12. **Breaking means clean replacement.** No deprecated aliases are retained 
 KTD13. **TanStack Table is a semantic reference, not an implementation dependency.** The repository-local `repo-ref/tanstack-table` reference clone (currently `@tanstack/table-core` `9.0.0-beta.31` at `5af79a877fa80f63703c6dc21861acc9d18baecf`) anchors row-model ordering, stable row/column identity, client/manual stage ownership, and pinning-region semantics. Open GPUI retains its Rust engine, GPUI adapter, native keyboard/accessibility policy, and separate virtualizer; this plan does not adopt TanStack v9 atoms/plugins, add a runtime dependency, or pursue full API parity. Row pinning addresses exact authoritative row identities by default; pinning every source instance with one business row ID is an explicitly named bulk target, never implicit string coercion. Occurrence identity is exact only inside its current resolved source snapshot, while retained state across reorder requires a caller-owned explicit instance ID. Caller target order owns order within each pinned region, each bulk target expands in current model order, top targets are resolved first, and a logical row already claimed by top is excluded from bottom. Open GPUI intentionally diverges from TanStack's default index/string identity, stringified group keys, overlap tolerance, and core-row fallback for filtered pinned rows; typed grouping, duplicate diagnostics, top-wins partitioning, filter-aware pinning, and independent Virtualizer ownership remain local contracts.
 
 KTD14. **Complete theme scales are immutable values, not another registry.** Theme v1 reuses renderer-neutral `Density` and `MotionPreference` vocabulary and carries the admitted design scales directly in the immutable snapshot/context. It does not add a parallel scale registry or string lookup layer. Explicit component `Size` outranks theme density; adaptive device density remains a host recommendation rather than an implicit recipe input. Reduced motion is a safety floor: either theme policy or an explicit component request may reduce motion, while no component request may relax a reduced theme. Motion execution remains owned by `open-gpui-motion`.
+
+KTD15. **One transform owns observable subtree geometry.** A narrowly named immutable value validates positive finite scale with a representable finite reciprocal, finite translation, and explicit origin before entering a frame-scoped `Window` transform stack. A child's local transform applies before its parent's, so the resolved mapping is `parent_resolved compose child_local`; checked inverse/composition rejects overflow, underflow to zero, non-finite multiply-add results, and values outside the backend-representable contract. A failure preserves layout but suppresses the entire subtree before paint/input/focus/accessibility registration, with a structured diagnostic and no identity/clamp fallback. Layout and measurement stay in untransformed logical coordinates. The resolved transform is projected into scene primitives, rectangular clips, hitboxes and inverse local-coordinate conversion, pointer capture, IME/debug bounds, final accessibility bounds, deferred work, portal anchors, and cached replay. Backend matrices are projections of this authority rather than a second public transform model.
+
+KTD16. **Presentation is one inherited subtree policy.** `Visible`, `Inert`, and `Hidden` form one frame-scoped state that is resolved before paint, hitbox/listener registration, focus/IME registration, and accessibility projection. Hidden dominates inert, and a descendant cannot opt out of an ancestor's suppression. `Display::None` remains the separate layout-removing mechanism, while component disabled state and decorative semantic omission remain domain facts rather than alternate subtree-presentation switches.
 
 ### High-Level Technical Design
 
@@ -207,6 +225,25 @@ validation activity + submission phase ----------> derived FormStatus / eligibil
                                                     +-> snapshot -> UI / a11y / DevTools
 ```
 
+Post-layout subtree geometry:
+
+```text
+untransformed layout bounds
+        -> validated axis-aligned transform scope
+              |-> composed scene primitives / rectangular clips / diagnostics / IME
+              |-> transformed hitboxes -> inverse target-local input coordinates
+              |-> final AccessKit bounds and actions
+              `-> transform-aware deferred, portal-anchor, cache, and motion projection
+```
+
+Layout-preserving presentation:
+
+```text
+Visible -> layout + paint + input + focus/IME + accessibility
+Inert   -> layout + paint
+Hidden  -> layout
+```
+
 Dependency order:
 
 ```text
@@ -219,10 +256,13 @@ U3 Focus Scope (preparatory) -> U4 Window Overlay Runtime -------+-> U6 Activati
 U7 Scoped Theme Resolution -> U8 Complete Theme V1 --------------+
 U9 Collection Typeahead -----------------------------------------+
                                                                  |
-U1 + U5 + U6 + U8 + U9 -> U10 Federated Conformance Cleanup -> U11 Final Audit
+U1 + U5 + U6 + U8 + U9 -> U10 Federated Conformance Cleanup -> U11 Prior-Surface Audit
+                                                                        |
+                                                                        v
+                    U12 Interactive Subtree Transform -> U13 Presentation State -> final gate
 ```
 
-U2 and U3 have no logical dependency and may be developed independently, although shared-worktree execution may serialize their Cargo gates. U3 and U4 share one authority-completion gate: U3 may commit pure policy and private preparation, but Focus Scope is not declared the production authority until U4 has migrated official overlay consumers and removed their duplicate focus bookkeeping.
+U2 and U3 have no logical dependency and may be developed independently, although shared-worktree execution may serialize their Cargo gates. U3 and U4 share one authority-completion gate: U3 may commit pure policy and private preparation, but Focus Scope is not declared the production authority until U4 has migrated official overlay consumers and removed their duplicate focus bookkeeping. U12 and U13 are serialized after the prior product-surface audit because both change GPUI element/window/frame-journal boundaries; U13 must test its presentation lattice inside transformed, deferred, and cached subtrees before the plan can close.
 
 ### Assumptions
 
@@ -232,6 +272,7 @@ U2 and U3 have no logical dependency and may be developed independently, althoug
 - `TestPlatform` can retain final accessibility updates without requiring a real OS accessibility bridge.
 - The project and theme schema have not been released. Workspace call sites are migration targets, not compatibility obligations; the old color-only schema can be deleted and replaced by the complete contract under the `v1` name.
 - Existing ADRs remain binding unless explicitly superseded or amended by this work.
+- Supported renderer backends can compile the same backend-neutral scene contract on their native CI runners; an active-platform render smoke cannot stand in for those checks.
 
 ### Phased Delivery
 
@@ -245,18 +286,22 @@ Phase 3: Land semantic convergence: U5 Accessibility and U6 Activation.
 
 Phase 4: Land design-context depth: U7 scoped theme resolution using the existing immutable snapshot, U8's complete replacement Theme v1 on the proven scope channel, and U9 typeahead.
 
-Phase 5: Delete duplicate authorities and align product surfaces through U10 and U11.
+Phase 5: Delete duplicate authorities and align the U1-U10 product surfaces through U10 and U11.
+
+Phase 6: Add the GPUI substrate follow-ons in blast-radius order: U12 establishes one interactive subtree geometry authority, then U13 establishes one layout-preserving presentation authority and closes the final release gate.
 
 Each unit receives a focused commit after its tests and local review pass. Wide mechanical migrations are serialized even where model work could theoretically run in parallel.
 
 ### System-Wide Impact
 
-- `crates/gpui`: test accessibility capture/action support; narrowly scoped inherited render context only if U7's prototype and independent-consumer proof hold; possibly focus/tab-stop support needed by U3.
+- `crates/gpui`: test accessibility capture/action support; narrowly scoped inherited render context only if U7's prototype and independent-consumer proof hold; focus/tab-stop support needed by U3; authoritative subtree transform and presentation scopes spanning scene, input, focus/IME, accessibility, deferred work, and frame-journal replay.
 - `crates/form`: validation generation/activity and derived status authority.
 - `crates/ui_core`: pure focus/overlay policies, semantic descriptors, tokens, and public contract boundaries.
 - `crates/ui_components`: window runtime adapters, component migrations, recipes, typeahead session, federated contract/probe bindings, and public callback breaks.
 - `crates/open-gpui-command`: call-site migration only unless a concrete command bridge defect is exposed; command ownership remains unchanged.
 - `crates/devtools`: projection from real semantic/runtime authorities with redaction.
+- `crates/gpui_wgpu`, `crates/gpui_windows`, `crates/gpui_macos`, and `crates/gpui_linux`: consume the backend-neutral transformed scene contract and prove matrix/primitive ABI consistency on supported runners.
+- `crates/motion`: adapt scale/translation motion to the GPUI transform authority without taking geometry ownership.
 - `examples/ui-foundation-gallery`: real lifecycle scenarios and contract-derived catalog.
 - `xtask`, CI, docs, and ADRs: structured conformance, new gates, migrations, and architecture decisions.
 
@@ -276,6 +321,12 @@ Each unit receives a focused commit after its tests and local review pass. Wide 
 
 **Public churn without depth.** Mitigation: preserve Table/Virtualizer/Action/a11y vocabulary; common-export cleanup needs a consumer census and cannot alter engine behavior.
 
+**Visual-only transform authority.** A renderer matrix can make a subtree look correct while hit testing, clips, pointer capture, IME, AccessKit, deferred work, or cached replay remains untransformed. Mitigation: U12 starts from a backend-neutral validated geometry value, records one resolved frame transform on every affected channel, and requires cross-channel invariant tests before any public wrapper ships.
+
+**Transform scope outruns renderer support.** Adding general affine syntax would expose rotation/skew behavior that rectangular clips, text rasterization, native surfaces, and accessibility bounds cannot yet honor. Even restricted `f32` transforms can overflow or lose an inverse when nested. Mitigation: the public contract accepts only finite positive axis-aligned scale and translation with an explicit origin, uses checked composition/backend conversion, and fail-closes the complete subtree on numeric failure; unsupported forms have no placeholders, clamps, or identity fallbacks.
+
+**Presentation dual authority.** A paint-only hidden flag or independent accessibility/focus suppression can leave invisible interactive descendants or visible inert semantics in the final tree. Mitigation: U13 resolves one inherited presentation state before channel registration, tests dynamic stale-state cleanup, and deletes the old subtree-level gates in the same unit.
+
 **Windows resource exhaustion.** Mitigation: focused package gates per unit, serialized final DevTools/all-feature builds, and one final workspace gate rather than competing full builds.
 
 ### Sources & Research
@@ -290,6 +341,15 @@ Repository evidence:
 - `crates/ui_components/src/a11y.rs`
 - `crates/gpui/src/window/a11y.rs`
 - `crates/gpui/src/platform/test/`
+- `crates/gpui/src/geometry.rs`
+- `crates/gpui/src/element.rs`
+- `crates/gpui/src/style.rs`
+- `crates/gpui/src/scene.rs`
+- `crates/gpui/src/window.rs`
+- `crates/gpui/src/window/input_dispatch.rs`
+- `crates/gpui/src/window/frame_journal.rs`
+- `crates/gpui/src/elements/svg.rs`
+- `crates/gpui/src/elements/div.rs`
 - `crates/form/src/form.rs`
 - `crates/ui_components/src/form_adapter.rs`
 - `crates/ui_components/src/theme/`
@@ -319,6 +379,11 @@ Reference implementations:
 - `repo-ref/tanstack-table/packages/table-core/src/core/row-models/coreRowModelsFeature.utils.ts`
 - `repo-ref/tanstack-table/packages/table-core/src/core/rows/coreRowsFeature.utils.ts`
 - `repo-ref/tanstack-table/packages/table-core/src/features/row-pinning/rowPinningFeature.utils.ts`
+- `repo-ref/egui/crates/emath/src/ts_transform.rs`
+- `repo-ref/egui/crates/epaint/src/shape_transform.rs`
+- `repo-ref/egui/crates/egui/src/hit_test.rs`
+- `repo-ref/egui/crates/egui/src/containers/scene.rs`
+- `repo-ref/accesskit/common/src/geometry.rs`
 
 The references inform behavior and ownership only. Their package layouts, APIs, and runtimes are not copied wholesale.
 
@@ -910,11 +975,11 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - UI public-surface tests, xtask CLI fixture tests, structured scanners, Table characterization, and gallery catalog tests pass.
 - New conformance infrastructure must delete more duplicate authority than it adds, must not collapse failures into one mega-test, and must not make component rows the owner of Gallery/test/runtime facts.
 
-### U11. Audit Gallery, DevTools, ADRs, Migration Docs, And Release Gates
+### U11. Audit Prior Gallery, DevTools, ADRs, Migration Docs, And Release Gates
 
 **Outcome**
 
-The product surfaces already updated by U1-U10 are audited together, architecture decisions and migration notes are cross-linked, obsolete code is absent, and final gates cover the newly added GPUI/accessibility paths. U11 does not first implement a domain authority, Gallery scenario, DevTools projection, or migration guide.
+The product surfaces already updated by U1-U10 are audited together, architecture decisions and migration notes are cross-linked, obsolete code is absent, and the existing gates cover the newly added GPUI/accessibility paths. U11 does not close the expanded plan: U12 and U13 own their own Gallery, documentation, and release-gate changes rather than hiding them in this prior-surface audit.
 
 **Primary files**
 
@@ -954,19 +1019,136 @@ The product surfaces already updated by U1-U10 are audited together, architectur
 
 **Unit gate**
 
-- Focused gallery, DevTools, docs, xtask, and release gates pass before the final workspace verification.
+- Focused gallery, DevTools, docs, xtask, and release gates pass before U12 begins.
+
+### U12. Add One Layout-Neutral Interactive Subtree Transform
+
+**Outcome**
+
+`open-gpui` owns one deep, public subtree geometry primitive for finite positive axis-aligned scale, finite translation in logical pixels, and an explicit finite origin relative to the wrapped child's untransformed post-layout bounds origin. For a child-local point `p`, the contract is `p' = origin + scale * (p - origin) + translation`; the laid-out bounds origin then places that result in the parent coordinate space. Nested child transforms apply first and resolve as `parent_resolved compose child_local`. The primitive composes across nested subtrees and every observable geometry channel while measurement, Taffy layout, scroll extent, and sibling flow remain unchanged. Rotation, skew, perspective, 3D, reflection, singular transforms, and numerically unrepresentable inverse/composition results are rejected rather than approximated.
+
+**Primary files**
+
+- `crates/gpui/src/geometry.rs`
+- `crates/gpui/src/element.rs`
+- `crates/gpui/src/window.rs`
+- `crates/gpui/src/window/input_dispatch.rs`
+- `crates/gpui/src/window/frame_journal.rs`
+- `crates/gpui/src/window/a11y.rs`
+- `crates/gpui/src/scene.rs`
+- `crates/gpui/src/elements/`, especially `div.rs`, `svg.rs`, `deferred.rs`, `canvas.rs`, and `surface.rs`
+- `crates/gpui_wgpu/`, `crates/gpui_windows/`, `crates/gpui_macos/`, and `crates/gpui_linux/`
+- `crates/motion/`
+- `examples/ui-foundation-gallery/`
+- transform API, architecture, migration, and verification documentation
+
+**Behavioral work**
+
+- Add a narrowly named immutable value such as `SubtreeTransform`, with private fields and a checked constructor for two strictly positive finite scale components whose reciprocals are finite and backend-representable, finite child-local translation, and finite child-local origin. Provide identity plus fallible composition, point/vector/bounds projection, and inverse projection without exposing a general matrix constructor or silently normalizing invalid values. Document the supported scalar/coordinate range from the shared scene/backend representation.
+- Add one public element wrapper/extension that delegates layout request, measurement, and child bounds unchanged, then enters a panic-safe frame-scoped `Window` transform during prepaint and paint. Nested scopes compose deterministically; device-pixel snapping occurs after logical transform projection.
+- Resolve nested transforms with checked multiply-add operations in the fixed `parent_resolved compose child_local` order. Overflow, scale underflow to zero, non-finite translation/origin, non-representable inverse, or backend conversion failure emits one structured diagnostic and fail-closes the entire affected subtree to layout-only participation before any paint, hitbox, listener, focus/IME, deferred, cache, or accessibility entry is registered. No channel may independently clamp, drop the transform, or substitute identity.
+- Carry the resolved transform through every scene primitive: quads, borders, shadows, underlines, monochrome sprites, subpixel sprites, polychrome sprites, paths, text/glyph output, and native/GPU paint surfaces. Culling and existing rectangular content masks operate in the same resolved window space, and no backend may interpret an absent transform differently.
+- Record both local geometry and the resolved invertible mapping on hitboxes. Raw platform events and APIs documented as window-space remain window-space; hit testing and every target-local point or vector calculation use the hitbox inverse. Add explicit local-to-window and window-to-local helpers so controls do not duplicate scale/offset arithmetic.
+- Make hover/cursor resolution, click dispatch, drag/drop, wheel routing, scrollbars, scroll offsets, autoscroll requests, selection handles, and pointer capture transform-aware. A capture retains logical target identity while each committed frame supplies the transform that matches displayed geometry; stale or singular fallback coordinates are forbidden.
+- Keep scroll state and layout offsets in logical coordinates. Project descendant geometry through the transform before rectangular clipping/culling, and inverse-project pointer deltas before local scroll/drag policy. Autoscroll converts requested local bounds through each transform/scroll boundary exactly once.
+- Project text-input caret and composition bounds into platform window coordinates before IME updates. Inspector overlays, debug bounds, hitbox visualization, screenshots, and diagnostics must describe displayed geometry rather than pre-transform layout geometry.
+- Project final AccessKit bounds from the same resolved transform and preserve stable node identity. AccessKit Click and other semantic actions continue to enter the existing activation authority; transforms cannot create a parallel semantic node or action path.
+- Capture the current transform for ordinary deferred descendants. Define a named window-space portal boundary that resets content transform only deliberately; portal anchors must use the authoritative local-to-window conversion each frame. A coordinate-space reset does not by itself bypass theme or presentation inheritance.
+- Make cached-view/frame-journal replay transform-relative or invalidate it on resolved-transform changes. Replayed scene primitives, hitboxes, pointer-capture bindings, deferred entries, IME/debug geometry, and accessibility nodes must use the current displayed transform and must never reuse stale absolute geometry.
+- Adapt `open-gpui-motion` scale/translation animation to emit the GPUI transform value rather than owning another geometry model. Fake-clock tests cover intermediate and final projections; reduced motion resolves directly to the final transform without changing layout.
+- Add a Gallery scenario with nested non-uniform scaling and translation around an explicit origin, containing real text, button/semantic activation, text input/IME, clipped scrolling, drag/pointer capture, tooltip or deferred content, and inspector/accessibility probes. The scenario is an executable interaction surface, not a static transform sample.
+
+**Test scenarios**
+
+- Pure/property tests cover identity, the exact `parent_resolved compose child_local` order, inverse point/vector round trips, transformed bounds, child-local origin/translation behavior, large/small positive scale within the supported range, and rejection of NaN, infinity, zero, negative scale, non-representable reciprocal, composition overflow, scale underflow, multiply-add overflow, and inverse/backend-conversion failure.
+- Runtime numeric-failure tests prove a locally valid but unrepresentable nested composition preserves layout and suppresses paint, hitboxes/listeners, pointer capture, focus/IME, deferred/cache entries, diagnostics geometry, and final AccessKit nodes as one subtree transaction; identity/clamp/partial-channel fallback is forbidden.
+- Layout characterization proves transformed and identity-wrapped children have identical measured size, flex/grid placement, scroll extent, and sibling positions.
+- Backend-neutral scene tests assert every primitive carries the same resolved transform, clipping/culling occurs in transformed space, and scale/translation is applied exactly once. Text and surface primitives are mandatory; a quad-only demonstration is insufficient.
+- Pointer tests cover transformed hit/miss edges, nested transforms, overlapping z-order, cursor/hover, click local position, wheel and scrollbar behavior, drag/drop deltas, autoscroll, transform changes during pointer capture, and non-transformed siblings.
+- IME and diagnostics tests assert transformed caret/composition rectangles, inspector/debug bounds, and hitbox visualization.
+- Final `TreeUpdate` tests assert transformed AccessKit bounds, stable node identity across transform-only frames, action dispatch, and stale-node cleanup after cached/deferred changes.
+- Deferred tests distinguish inherited transformed content from explicit window-space portals and verify portal anchors. Cache tests change only an ancestor transform without notifying the child and prove scene, hitbox, capture, and accessibility journal replay is current.
+- Motion tests use a fake clock for nested animated scale/translation, pointer hit alignment during animation, final state, and reduced-motion completion.
+- Each supported renderer backend compiles the shared primitive contract on its native CI runner and has an ABI/conversion test for every transformed primitive batch. Capable runners execute a render-pixel smoke for nested scale/translation and clip; one active-platform screenshot cannot substitute for the matrix.
+- The Gallery scenario is exercised through real pointer, keyboard, AccessKit, scroll, text-input, deferred, and inspector paths at identity and non-identity transforms.
+
+**Deletion/replacement**
+
+- Migrate scale/translation consumers away from the SVG-only `Transformation`. Delete it if no production consumer requires SVG raster-space rotation; otherwise rename it and its method to an explicitly leaf-only `SvgPaintTransform`/`with_paint_transform` API whose documentation states that it does not affect layout, hit testing, descendants, or accessibility. No generic `Transformation` alias remains.
+- Delete per-element scale/translation math, visual-only subtree flags, duplicate input inversions, and cache-specific transform state replaced by the authority. Internal backend matrices remain projections and are not re-exported as a competing public model.
+- Do not add identity or clamp fallbacks, unchecked public constructors/composition, rotation/skew/3D placeholders, or a second transform stack in Motion, Gallery, Canvas, SVG, or a renderer backend.
+
+**Unit gate**
+
+- Focused `open-gpui` geometry, runtime/input, scene, accessibility, deferred/cache, IME/diagnostic, and public-surface tests pass with `test-support` and inspector coverage.
+- Motion and Gallery integration tests pass, supported-platform renderer compile/ABI jobs are green, and at least one capable backend render smoke verifies transformed pixels and clipping.
+- Review confirms layout is unchanged, numeric failure is transactional and fail-closed, every scene primitive and interactive channel consumes one resolved transform, and no public API claims unsupported affine behavior.
+
+### U13. Converge Layout-Preserving Hidden And Inert Subtree Semantics
+
+**Outcome**
+
+One `open-gpui` subtree presentation authority replaces paint-only visibility, inherited accessibility hiding, and ad hoc input/focus suppression. `Visible` participates in layout, paint, input, focus/IME, and accessibility; `Inert` participates only in layout and paint; `Hidden` participates only in layout. Layout participation includes measurement, flex/grid ordering, scroll extent, and sibling placement. `Display::None` remains the explicit layout-removing choice.
+
+**Primary files**
+
+- `crates/gpui/src/style.rs`
+- `crates/gpui/src/element.rs`
+- `crates/gpui/src/window.rs`
+- `crates/gpui/src/window/input_dispatch.rs`
+- `crates/gpui/src/window/frame_journal.rs`
+- `crates/gpui/src/window/a11y.rs`
+- `crates/gpui/src/elements/div.rs`
+- focus, text-input/IME, tooltip, deferred, portal, scroll, drag/drop, and inspector adapters under `crates/gpui/src/elements/` and `crates/gpui/src/window/`
+- official component call sites, Gallery scenarios, public API tests, architecture/migration docs, and release scanners
+
+**Behavioral work**
+
+- Replace subtree-level `Visibility` plus independent hiding switches with one public enum such as `SubtreePresentation::{Visible, Inert, Hidden}` and one element/style entry point. Composition chooses the most suppressive ancestor state (`Hidden` over `Inert` over `Visible`); descendants cannot opt back in.
+- Preserve request-layout, measurement, ordering, and scroll extent for all three states. `Hidden` skips descendant prepaint/paint work after layout whenever possible; central `Window` gates still guarantee that no raw/custom element can register a hidden channel accidentally. `Inert` paints normally through the U12 transform authority while registration of interactive and semantic channels is suppressed.
+- Define input suppression completely: no hitbox eligibility, hover/active/cursor state, pointer or wheel listener dispatch, scroll interaction, drag source/drop target, pointer-capture acquisition, tooltip trigger, or input-created overlay intent may originate in inert/hidden descendants.
+- Define focus/IME suppression completely: no focusable registration, Tab target, focus-scope initial/restoration target, focused text input, caret/composition update, or accessibility focus may target an inert/hidden descendant. A dynamic transition invalidates stale focus through the existing focus authority and never invents a second restoration policy.
+- Define pointer-capture transitions: when a captured target becomes inert, hidden, unmounted, or otherwise absent from the committed interactive frame, dispatch one existing cancellation path and release the binding before later events. Old-frame hitboxes cannot keep it interactive.
+- Define accessibility suppression at final-tree authority: inert/hidden descendants emit no AccessKit nodes, relations, focus, or actions in the next committed update, and stale actions against removed nodes are ignored. A decorative leaf may still choose not to emit semantics through the semantic projection, but there is no independent ancestor-level `a11y_hidden` presentation stack.
+- Make ordinary deferred descendants and cached journal fragments inherit the resolved presentation state. A coordinate-space portal reset does not reset presentation; an independently owned window overlay becomes a new visible root only through an explicit overlay-runtime boundary and its actual mounted presence, not as an accidental consequence of deferral.
+- On dynamic transitions, reconcile hover/cursor, tooltip, pressed/drag state, pointer capture, focus/IME, overlay trigger intent, inspector hitboxes, and final accessibility membership against the same committed frame. Returning to `Visible` rebuilds participation from current state without replaying stale input or focus claims.
+- Keep component disabled state separate: disabled controls may remain discoverable in accessibility and can expose disabled semantics, while an inert subtree is absent from accessibility and all interaction. Keep `Display::None` separate because it removes layout.
+- Add a Gallery matrix for visible/inert/hidden transformed subtrees with identical content and layout metrics. Include live state switching, focusable/editable controls, scroll/drag, tooltip/deferred content, overlay trigger, AccessKit probes, and inspector bounds.
+
+**Test scenarios**
+
+- A channel matrix proves exact layout, paint, hit/input, focus/IME, and final-accessibility participation for visible, inert, and hidden states, including custom elements that call low-level `Window` registration APIs.
+- Nested-state tests prove ancestor dominance, no descendant escape, hidden-over-inert composition, and identical layout/scroll extent across state changes and U12 nested transforms.
+- Dynamic visible-to-inert/hidden transitions clear hover/cursor, tooltip, pressed/drag state, pointer capture, focus/IME, stale overlay trigger intent, and AccessKit membership/actions in the same committed-frame contract; transitions back do not replay stale events or focus claims.
+- Pointer, wheel, scrollbar, drag/drop, autoscroll, text input, keyboard traversal, semantic activation, and AccessKit Click each fail closed for inert/hidden descendants while visible siblings continue normally.
+- Deferred and cache tests toggle only an ancestor presentation state without notifying a cached child and prove no stale paint, hitbox, capture, focus, IME, or accessibility entry survives. Portal tests prove explicit independent-overlay roots and non-resetting ordinary deferral.
+- Gallery tests compare layout metrics and exercise real interactions across all three states at identity and transformed geometry.
+- Public-surface and source-structure tests reject the removed `a11y_hidden` subtree hook, paint-only `Visibility::Hidden` gate, and any second ancestor-level inert/hidden flag.
+
+**Deletion/replacement**
+
+- Delete the late `div` paint-only `Visibility::Hidden` branch and replace its public subtree API atomically; no deprecated `Visibility` alias remains if the name cannot express inert semantics precisely.
+- Delete `Element::a11y_hidden` and its independent inherited stack as subtree-presentation authorities. Preserve intentional leaf semantic omission only through the unified semantic projection.
+- Delete ad hoc ancestor flags or component wrappers that separately suppress paint, hit testing, pointer listeners, focusability, IME, or accessibility where `SubtreePresentation` now owns the fact.
+- Do not conflate hidden/inert with `Display::None`, disabled component semantics, overlay presence, opacity, clipping, or transform scale.
+
+**Unit gate**
+
+- Focused `open-gpui` layout, scene, input/capture, focus/IME, accessibility, deferred/cache/portal, inspector, and public-surface tests pass.
+- Official component, Gallery, DevTools, docs, scanner, and migration tests cover the breaking presentation API and prove no old subtree authority remains.
+- Review confirms the exact three-state matrix, dynamic cleanup, transform composition, custom-element fail-closed behavior, and no accessibility or focus escape hatch around an inert/hidden ancestor.
 
 ## Verification Contract
 
 Verification is layered. A lower layer cannot substitute for a higher authority claim.
 
-1. **Pure/domain tests:** form generations/status, overlay stack policy, focus ordering, token/schema, typeahead session, table characterization.
-2. **GPUI runtime tests:** real input dispatch, focus traversal, per-window isolation, controlled lifecycle, final accessibility updates/actions, deferred theme capture.
-3. **Projection tests:** UI state, final AccessKit tree, allowlisted DevTools summaries, federated contract/Gallery/scenario/public-API bindings, and redaction agree.
-4. **Gallery flows:** representative user journeys run through actual component adapters rather than hand-built state.
-5. **Workspace/release gates:** formatting, checks, nextest, docs, xtask scanners, dependency/import boundaries, and release verification.
+1. **Pure/domain tests:** form generations/status, overlay stack policy, focus ordering, token/schema, typeahead session, table characterization, transform validation/composition/inversion, and the presentation-state lattice.
+2. **GPUI runtime tests:** real input dispatch, focus traversal, per-window isolation, controlled lifecycle, final accessibility updates/actions, deferred theme capture, transformed scene/input/IME/cache behavior, and dynamic hidden/inert cleanup.
+3. **Projection tests:** UI state, every transformed scene primitive, final AccessKit tree/bounds/actions, allowlisted DevTools summaries, inspector geometry, federated contract/Gallery/scenario/public-API bindings, and redaction agree.
+4. **Gallery flows:** representative user journeys run through actual component adapters; U12/U13 additionally exercise transformed and visible/inert/hidden subtrees through pointer, keyboard, scrolling, text input, deferred content, AccessKit, and inspector paths.
+5. **Workspace/release gates:** formatting, checks, nextest, docs, xtask scanners, dependency/import boundaries, supported-platform renderer compile/ABI/render smoke, and release verification.
 
-Focused commands are run per unit using the packages and test targets named above. The final gate is:
+Focused commands are run per unit using the packages and test targets named above. After U13 and its review checkpoint, the deterministic local final gate is:
 
 ```powershell
 cargo fmt --all -- --check
@@ -974,6 +1156,7 @@ cargo check --workspace --all-targets --locked
 cargo nextest run --workspace --no-fail-fast --locked
 
 $env:CARGO_BUILD_JOBS = '1'
+cargo nextest run -p open-gpui --features test-support,inspector --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked
 
 cargo test -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-form -p open-gpui-devtools --doc --locked
@@ -989,19 +1172,23 @@ cargo run -p xtask -- verify
 git diff --check
 ```
 
+The local command block is necessary but not sufficient for U12. CI must also compile each supported native renderer on its owning platform, run its transform primitive conversion/ABI tests, and run the designated render-pixel smoke on capable runners. Those jobs are part of the final gate even though no single developer platform can execute the whole matrix.
+
 Test execution rules:
 
-- Use fake clocks for typeahead, motion-final-state, debounce, and validation timing; correctness tests cannot use sleeps.
+- Use fake clocks for typeahead, transform motion/intermediate/final state, debounce, and validation timing; correctness tests cannot use sleeps.
 - Do not run competing full-workspace Cargo gates from multiple agents against the shared target directory.
 - Use package-focused nextest during implementation and one final workspace run.
-- On Windows, serialize resource-heavy all-feature DevTools/link steps with `CARGO_BUILD_JOBS=1`.
+- On Windows, serialize resource-heavy GPUI inspector, all-feature DevTools, and link steps with `CARGO_BUILD_JOBS=1`.
 - Correctness tests use no retries. Any introduced nextest timeout/group configuration must preserve fast unit-test parallelism and isolate only native/GPU/singleton tests.
 - Platform-specific visual baselines are not a completion claim for this plan; structural/gallery/runtime assertions must pass on the active platform.
+- Transform correctness requires backend-neutral primitive assertions plus native-backend conversion/ABI coverage. Unsupported local input must fail at construction, and an unrepresentable nested composition must fail-close the subtree transactionally; identity/clamp fallback, dropped primitive transforms, partial-channel output, and active-platform-only evidence fail the gate.
+- Presentation correctness is asserted at the committed frame boundary. Tests must cover stale hitboxes, pointer capture, focus/IME, deferred/cache replay, portals, and final AccessKit membership rather than checking only style values or paint output.
 - Redaction tests use unique canary strings, including Table identity/debug-label/selector sources, and assert their absence from live capture, history, diff, Inspector detail/copy, session export, artifact, report, and Gallery fixtures. Post-hoc generic string sanitization does not satisfy this contract.
 
 ## Definition of Done
 
-- U1-U11 are implemented in dependency order, and every unit's focused tests pass before its commit.
+- U1-U13 are implemented in dependency order, and every unit's focused tests pass before its commit.
 - `FormStatus::Validating` is reachable from real store activity, stale validation cannot mutate newer state, and UI/DevTools projections agree.
 - Every official overlay family uses the per-window runtime; old component-specific Escape/outside/focus tails and shallow host forwarding are gone. U3/U4 share this completion gate.
 - Nested modal focus trap, controlled close, exit/reopen, callback reentrancy, trigger loss, LIFO restore, and multi-window isolation are proven with real GPUI tests.
@@ -1011,6 +1198,8 @@ Test execution rules:
 - Tree and VirtualizedList no longer own duplicate typeahead buffer/timing implementations.
 - Federated typed component rows, Gallery probes, native scenario IDs, and public owners replace manual API inventory, duplicate catalogs/maps, source parsing, and the residual empty a11y-evidence exports/scaffolding left by U5 wherever covered by U10, without recreating a central registry.
 - Table keeps its engine/virtualizer ownership split while exact typed identities survive every row-model stage, pinning region, edit/focus path, and virtual recycle. U5's intentional typed-identity API and partial-column-order changes are documented and characterized. U10 preserves that completed post-U5 Table contract; only evidence-backed common/diagnostic export narrowing may add further public-surface breakage.
+- The sole public interactive subtree transform accepts only finite positive axis-aligned scale with a representable inverse, finite translation, and explicit child-local origin; checked child-before-parent composition fails closed transactionally on numeric/backend conversion error, layout is invariant, every scene primitive and observable geometry channel agrees, nested/deferred/portal/cache/motion paths are covered, and supported renderer jobs pass. Generic or visual-only transform aliases are absent.
+- The sole layout-preserving presentation authority implements the exact visible/inert/hidden matrix. Dynamic suppression removes stale paint/input/capture/focus/IME/accessibility state, descendant escape is impossible, transformed/deferred/cached paths agree, and old paint-only or a11y-only subtree authorities are absent.
 - Action presentation and command execution remain separate, with no speculative replacement runtime.
 - ADRs and breaking migration documentation match the shipped architecture; stale helpers, aliases, evidence, and docs are deleted.
 - DevTools allowlist and canary tests prove that sensitive free text cannot enter or persist through capture, inspection, export, artifact, report, or Gallery paths.
@@ -1022,7 +1211,7 @@ Test execution rules:
 
 | Requirement | Owning unit(s) | Completion evidence |
 | --- | --- | --- |
-| R1-R2 | all units; preservation gates in U10/U11 | import/dependency scans and preserved-module focused tests |
+| R1-R2 | all units; preservation gates in U10-U13 | import/dependency scans and preserved-module focused tests |
 | R3 | U1 | lifecycle table tests from store through UI/DevTools |
 | R4 | U2 | final `TreeUpdate` capture and real action dispatch |
 | R5 | U3, completed with U4 | real nested Tab/Shift-Tab and restore tests |
@@ -1033,15 +1222,26 @@ Test execution rules:
 | R12 | U9 | fake-clock cross-collection tests and duplicate implementation deletion |
 | R13 | U10 | federated binding fixtures and source-scanner deletion |
 | R14 | U5, U10 | typed-identity/stage tests and post-U5 Table characterization through export cleanup |
-| R15 | each breaking unit; U11 audits | same-unit migration docs/Gallery/DevTools updates and final residual scan |
+| R15 | each breaking unit; U11 audits prior surfaces; U12/U13 own their migrations | same-unit migration docs/Gallery/DevTools updates and final residual scan |
 | R16 | U5; preservation gates in U10/U11 | occurrence invalidation and explicit-instance focus/edit/callback/NodeId/measurement tests, normalized partial-order characterization, and Table redaction canaries |
+| R17 | U12 | checked construction/inverse/composition and numeric fail-closed tests, layout invariance, all-primitive scene projection, inverse input/capture, IME/debug/a11y/deferred/cache/motion coverage, Gallery flow, and supported-renderer matrix |
+| R18 | U13 | exact channel matrix, nested/dynamic suppression, stale-state cleanup, transformed/deferred/cache/portal coverage, final-tree absence, and old-authority deletion scans |
 
 ### Priority Rationale
 
 - **P0 correctness:** U1 and U2. They fix data corruption risk and make a critical user-facing authority observable.
-- **P1 interaction/runtime:** U3-U6. They resolve modal, focus, accessibility, and activation correctness with the largest user impact.
+- **P1 interaction/runtime:** U3-U6 and U12-U13. They resolve modal, focus, accessibility, activation, geometry, and presentation correctness with the largest user impact. U12/U13 were discovered by the later substrate audit and are serialized after U11 because they share high-blast-radius GPUI frame boundaries; their later execution position does not reduce their severity.
 - **P2 framework depth:** U7-U9. Scoped resolution is proven before the complete Theme v1 replaces its payload; typeahead improves interaction consistency independently.
 - **P3 convergence/release:** U10-U11. They delete drift-prone scaffolding only after executable authorities can replace it.
+
+### Deferred Follow-on Research
+
+These candidates have no requirement IDs, implementation units, acceptance credit, or Definition-of-Done credit in this plan. U12/U13 must not add public placeholders for them.
+
+- **Group opacity and compositing:** determine isolation boundaries, offscreen target ownership, nested blend semantics, native-surface behavior, cache invalidation, GPU memory cost, and backend parity before exposing subtree opacity as more than a leaf paint property.
+- **Rounded and path subtree clipping:** determine clip-stack representation, tessellation/stencil strategy, transformed hit testing, scroll interaction, native-surface constraints, and accessibility/debug-bound projection before extending the existing rectangular content-mask contract.
+- **Unified focus reveal:** design one focus-authority request that can reveal a target through nested scroll containers, transforms, deferred/portal boundaries, and reduced-motion policy without component-specific scroll tails.
+- **Multi-pointer and gesture arena:** define pointer identity, recognizer ownership, arbitration, cancellation, capture transfer, nested scroll/drag interaction, touch/pen parity, and deterministic test input before adding gesture APIs.
 
 ### Explicit Preservation Gates
 
@@ -1049,6 +1249,8 @@ Test execution rules:
 - `ActionDescriptor`/`ResolvedActionState` stay unless implementation uncovers a separate proven deletion case; they are not the semantic activation runtime.
 - The renderer-neutral accessibility vocabulary stays unless an individual type demonstrably adds no domain value; only duplicate mappings/evidence are deleted.
 - `open-gpui-motion` retains execution ownership; theme supplies policy/defaults only.
+- Taffy measurement, layout order, scroll extent, and sibling flow stay authoritative; U12 is post-layout and U13 is layout-preserving. Existing renderer matrices remain internal projections rather than public subtree semantics.
+- `Display::None`, component disabled state, overlay presence, and decorative semantic omission remain distinct facts; U13 deletes only competing ancestor-level presentation authorities.
 - Cargo/typed contracts remain the distribution seam; no registry/scaffold system returns.
 
 ### Required Review Checkpoints
@@ -1058,4 +1260,6 @@ Test execution rules:
 - After U5/U6: final-tree/action parity and API migration review across representative families.
 - During U7 prototype: require an independent non-theme consumer before exposing generic inherited context; audit for hidden global state.
 - After U10: compare deleted duplicated authority and new federated conformance code; reject a net-shallower design or any central-registry revival.
-- Before completion: simplify-code pass, structured code review, full Verification Contract, and release-doc audit.
+- After U12: require joint renderer/input/accessibility review of primitive coverage, transform composition/inversion and numeric fail-closed behavior, clipping/scroll/capture/IME, deferred/portal/cache behavior, layout invariance, Motion ownership, and the supported-platform matrix. Reject visual-only success, identity/clamp recovery, partial-channel failure, or a prematurely general affine API.
+- After U13: require joint input/focus/overlay/accessibility review of the exact state matrix, ancestor dominance, dynamic stale-state cleanup, custom-element fail-closed behavior, and deletion of paint/a11y dual authorities.
+- Before completion: simplify-code pass, structured code review, supported-platform renderer evidence, full Verification Contract after U13, and release-doc audit.
