@@ -26,6 +26,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 unicode-segmentation.workspace = true
+web-time.workspace = true
 
 [dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }

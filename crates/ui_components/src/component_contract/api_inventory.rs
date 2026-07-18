@@ -296,12 +296,18 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Listbox",
-        controlled_inputs: &["selected", "active"],
-        default_seeds: &[DefaultSeedApi {
-            builder: "default_selected",
-            runtime_value: "selected",
-        }],
-        policy_hints: &["embedded", "typeahead_query", "activation_handle"],
+        controlled_inputs: &["selected"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_selected",
+                runtime_value: "selected",
+            },
+            DefaultSeedApi {
+                builder: "default_active",
+                runtime_value: "active",
+            },
+        ],
+        policy_hints: &["embedded", "activation_handle"],
         callbacks: &[CallbackApi {
             name: "on_select",
             payload: "ListboxSelection",
@@ -311,7 +317,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Select",
-        controlled_inputs: &["open", "selected", "active"],
+        controlled_inputs: &["open", "selected"],
         default_seeds: &[
             DefaultSeedApi {
                 builder: "default_open",
@@ -320,6 +326,10 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             DefaultSeedApi {
                 builder: "default_selected",
                 runtime_value: "selected",
+            },
+            DefaultSeedApi {
+                builder: "default_active",
+                runtime_value: "active",
             },
         ],
         policy_hints: &[
@@ -343,7 +353,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Combobox",
-        controlled_inputs: &["open", "selected", "active"],
+        controlled_inputs: &["open", "selected"],
         default_seeds: &[
             DefaultSeedApi {
                 builder: "default_open",
@@ -356,6 +366,10 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             DefaultSeedApi {
                 builder: "default_selected",
                 runtime_value: "selected",
+            },
+            DefaultSeedApi {
+                builder: "default_active",
+                runtime_value: "active",
             },
         ],
         policy_hints: &["placement", "outside_press_policy"],
@@ -379,7 +393,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "query",
             "selected",
             "selected_values",
-            "active",
             "index_snapshot",
             "provider_refresh_projection",
             "palette_projection",
@@ -400,6 +413,10 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             DefaultSeedApi {
                 builder: "default_selected_values",
                 runtime_value: "selected_values",
+            },
+            DefaultSeedApi {
+                builder: "default_active",
+                runtime_value: "active",
             },
         ],
         policy_hints: &[
@@ -1585,8 +1602,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "embedded",
             "selected",
             "default_selected",
-            "active",
-            "typeahead_query",
+            "default_active",
             "empty_label",
             "tokens",
             "on_select",
@@ -1606,7 +1622,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "default_open",
             "selected",
             "default_selected",
-            "active",
+            "default_active",
             "placement",
             "outside_press_policy",
             "initial_focus_intent",
@@ -1630,7 +1646,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "default_query",
             "selected",
             "default_selected",
-            "active",
+            "default_active",
             "empty_label",
             "placement",
             "outside_press_policy",
@@ -1667,7 +1683,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "default_selected",
             "selected_values",
             "default_selected_values",
-            "active",
+            "default_active",
             "viewport_item_count",
             "row_height",
             "overscan",

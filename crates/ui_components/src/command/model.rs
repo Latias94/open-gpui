@@ -559,7 +559,7 @@ pub struct CommandStateRequest {
     pub selected_value: Option<String>,
     /// Controlled selected values for multi-select mode.
     pub selected_values: Vec<String>,
-    /// Controlled active value.
+    /// Active item value for this renderer-neutral state resolution.
     pub active_value: Option<String>,
     /// Loading state supplied outside an index snapshot.
     pub loading_state: Option<CommandLoadingState>,
@@ -866,7 +866,6 @@ impl CommandState {
             label.clone(),
             listbox_selected_value,
             active_value,
-            (!query_is_empty).then_some(normalized_query.as_str()),
             empty_label.clone(),
             filtered_group_descriptors,
             filtered_item_descriptors,
@@ -1278,12 +1277,24 @@ impl CommandState {
 
     /// Resolves an activation payload for an APG-style activation key.
     pub fn activation_for_key(&self, key: &str) -> Option<CommandSelection> {
+        self.activation_for_key_from_value(key, self.active_value())
+    }
+
+    pub(crate) fn activation_for_key_from_value(
+        &self,
+        key: &str,
+        current_value: Option<&str>,
+    ) -> Option<CommandSelection> {
         if !matches!(key, "enter" | "space") {
             return None;
         }
+        let active_value = self
+            .listbox
+            .active_option_from_value(current_value)?
+            .value();
         self.items
             .iter()
-            .find(|item| item.active())
+            .find(|item| item.value() == active_value)
             .and_then(CommandSelection::from_item)
     }
 }

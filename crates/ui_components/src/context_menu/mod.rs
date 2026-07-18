@@ -18,6 +18,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
+use crate::collection_typeahead::CollectionTypeaheadInput;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::{gpui_point_from_ui, ui_point_from_gpui};
 use crate::menu::{
@@ -457,60 +458,100 @@ fn context_menu_surface(
         .ui_semantics(&surface_semantics)
         .on_key_down({
             move |event: &KeyDownEvent, window, cx| {
-                let Some(intent) = key_state.keyboard_intent_for_key(event.keystroke.key.as_str())
-                else {
+                if window.default_prevented() {
+                    return;
+                }
+
+                let current_path = key_runtime
+                    .read(cx)
+                    .focused_path
+                    .clone()
+                    .or_else(|| key_state.focused_path().map(|path| path.to_vec()));
+                let command_input =
+                    !event.keystroke.modifiers.modified() && !event.prefer_character_input;
+                if command_input
+                    && let Some(intent) = key_state.keyboard_intent_for_key_from_path(
+                        event.keystroke.key.as_str(),
+                        current_path.as_deref(),
+                    )
+                {
+                    match intent {
+                        MenuKeyboardIntent::NavigateSubmenu(target) => {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            key_runtime.update(cx, |runtime, cx| {
+                                runtime.apply_submenu_target(&target, cx);
+                            });
+                        }
+                        MenuKeyboardIntent::FocusItem {
+                            focused_path,
+                            focused_value,
+                        } => {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            key_runtime.update(cx, |runtime, cx| {
+                                runtime.focus_item(focused_path, focused_value, cx);
+                            });
+                        }
+                        MenuKeyboardIntent::Activate(selection) => {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            key_window_overlay_runtime
+                                .request_open_change_with_effect(
+                                    &key_root_binding,
+                                    false,
+                                    DismissReason::Selection,
+                                    window,
+                                    cx,
+                                    |window, cx| {
+                                        if let Some(item_handler) = key_items
+                                            .iter()
+                                            .zip(key_state.visible_items())
+                                            .find(|(_, item_state)| {
+                                                item_state.path() == selection.path()
+                                            })
+                                            .and_then(|(item, _)| item.select_handler())
+                                            .as_ref()
+                                        {
+                                            item_handler(selection.clone(), window, cx);
+                                        }
+                                        if let Some(on_select) = key_select.as_ref() {
+                                            on_select(selection, window, cx);
+                                        }
+                                    },
+                                )
+                                .expect(
+                                    "context menu keyboard selection should own the root registration",
+                                );
+                        }
+                    }
+                    return;
+                }
+
+                let now = cx.background_executor().now();
+                let update = key_runtime.update(cx, |runtime, _| {
+                    runtime
+                        .typeahead
+                        .push(CollectionTypeaheadInput::from_key_down(event), now)
+                });
+                let Some(update) = update else {
                     return;
                 };
 
-                match intent {
-                    MenuKeyboardIntent::NavigateSubmenu(target) => {
-                        cx.stop_propagation();
-                        window.prevent_default();
-                        key_runtime.update(cx, |runtime, _| {
-                            runtime.apply_submenu_target(&target);
-                        });
-                    }
-                    MenuKeyboardIntent::FocusItem {
-                        focused_path,
-                        focused_value,
-                    } => {
-                        cx.stop_propagation();
-                        window.prevent_default();
-                        key_runtime.update(cx, |runtime, _| {
-                            runtime.focus_item(focused_path, focused_value);
-                        });
-                    }
-                    MenuKeyboardIntent::Activate(selection) => {
-                        cx.stop_propagation();
-                        window.prevent_default();
-                        key_window_overlay_runtime
-                            .request_open_change_with_effect(
-                                &key_root_binding,
-                                false,
-                                DismissReason::Selection,
-                                window,
-                                cx,
-                                |window, cx| {
-                                    if let Some(item_handler) = key_items
-                                        .iter()
-                                        .zip(key_state.visible_items())
-                                        .find(|(_, item_state)| {
-                                            item_state.path() == selection.path()
-                                        })
-                                        .and_then(|(item, _)| item.select_handler())
-                                        .as_ref()
-                                    {
-                                        item_handler(selection.clone(), window, cx);
-                                    }
-                                    if let Some(on_select) = key_select.as_ref() {
-                                        on_select(selection, window, cx);
-                                    }
-                                },
-                            )
-                            .expect(
-                                "context menu keyboard selection should own the root registration",
-                            );
-                    }
+                cx.stop_propagation();
+                window.prevent_default();
+                if let Some(target) = key_state.typeahead_target_from_path(
+                    update.match_query(),
+                    current_path.as_deref(),
+                    update.searches_after_current(),
+                ) {
+                    key_runtime.update(cx, |runtime, cx| {
+                        runtime.focus_item(
+                            target.path().to_vec(),
+                            target.value().to_owned(),
+                            cx,
+                        );
+                    });
                 }
             }
         })
@@ -693,16 +734,16 @@ fn context_menu_branch_elements(
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(submenu_navigation) = submenu_navigation.clone() {
-                                    click_runtime.update(cx, |runtime, _| {
-                                        runtime.apply_submenu_target(&submenu_navigation);
+                                    click_runtime.update(cx, |runtime, cx| {
+                                        runtime.apply_submenu_target(&submenu_navigation, cx);
                                     });
                                     return;
                                 }
                                 let Some(selection) = selection.clone() else {
                                     return;
                                 };
-                                click_runtime.update(cx, |runtime, _| {
-                                    runtime.focus_item(item_path.clone(), item_value.clone());
+                                click_runtime.update(cx, |runtime, cx| {
+                                    runtime.focus_item(item_path.clone(), item_value.clone(), cx);
                                 });
                                 click_window_overlay_runtime
                                     .request_open_change_with_effect(

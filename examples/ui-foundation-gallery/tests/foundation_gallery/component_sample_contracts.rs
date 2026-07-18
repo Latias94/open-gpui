@@ -834,7 +834,6 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(framework.listbox().selected_value(), None);
     assert_eq!(framework.active_value(), Some("react"));
     assert_ne!(framework.selected_value(), framework.active_value());
-    assert_eq!(framework.listbox().typeahead_query(), Some("re"));
     assert_eq!(
         framework.overlay().policy().kind(),
         OverlayLayerKind::NonModalDismissible

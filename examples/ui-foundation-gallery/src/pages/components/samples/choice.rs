@@ -1343,7 +1343,6 @@ fn listbox_state(
         label,
         selected,
         active,
-        None,
         "No options",
         groups.iter().map(listbox_group_descriptor),
         options.iter().map(listbox_option_descriptor),

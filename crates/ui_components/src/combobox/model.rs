@@ -115,7 +115,7 @@ pub struct ComboboxStateRequest {
     pub query: String,
     /// Controlled selected option value.
     pub selected_value: Option<String>,
-    /// Controlled active option value.
+    /// Active option value for this renderer-neutral state resolution.
     pub active_value: Option<String>,
     /// Empty result label.
     pub empty_label: String,
@@ -236,7 +236,6 @@ impl ComboboxState {
             label.clone(),
             selected_value.as_deref(),
             active_value.as_deref(),
-            (!normalized_query.is_empty()).then_some(normalized_query.as_str()),
             empty_label.clone(),
             filtered_groups,
             filtered_options,
@@ -462,12 +461,24 @@ pub(super) enum ComboboxKeyboardAction {
     Ignore,
 }
 
+#[cfg(test)]
 pub(super) fn combobox_keyboard_action(state: &ComboboxState, key: &str) -> ComboboxKeyboardAction {
+    combobox_keyboard_action_from_value(state, key, state.active_value())
+}
+
+pub(super) fn combobox_keyboard_action_from_value(
+    state: &ComboboxState,
+    key: &str,
+    current_value: Option<&str>,
+) -> ComboboxKeyboardAction {
     if state.disabled() {
         return ComboboxKeyboardAction::Ignore;
     }
 
-    if let Some(target) = state.listbox().navigation_target(key) {
+    if let Some(target) = state
+        .listbox()
+        .navigation_target_from_value(key, current_value)
+    {
         return ComboboxKeyboardAction::Navigate(target.value().to_owned());
     }
 
@@ -475,7 +486,10 @@ pub(super) fn combobox_keyboard_action(state: &ComboboxState, key: &str) -> Comb
         return ComboboxKeyboardAction::Open;
     }
 
-    if let Some(selection) = state.listbox().activation_for_key(key) {
+    if let Some(selection) = state
+        .listbox()
+        .activation_for_key_from_value(key, current_value)
+    {
         return ComboboxKeyboardAction::Select(ComboboxSelection::new(
             selection.value().to_owned(),
             selection.label().to_owned(),

@@ -8,6 +8,7 @@ mod runtime;
 mod style;
 
 use crate::a11y::UiA11yElementExt;
+use crate::collection_typeahead::CollectionTypeaheadInput;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
 use crate::scroll_surface::{
@@ -21,7 +22,7 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div, px, rgb, rgba,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, UiPx, ui_px};
-use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use std::{collections::BTreeMap, rc::Rc};
 
 pub(crate) use descriptor::apply_tree_expanded_overrides;
 pub use descriptor::{TreeChildrenLoadState, TreeItemDescriptor};
@@ -40,7 +41,6 @@ type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
 type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
 type TreeMoveHandler = Rc<dyn Fn(TreeMove, &mut Window, &mut App)>;
 
-const TREE_TYPEAHEAD_RESET: Duration = Duration::from_millis(700);
 const DEFAULT_TREE_VIEWPORT_ITEM_COUNT: usize = 12;
 const DEFAULT_TREE_OVERSCAN_COUNT: usize = 4;
 
@@ -243,8 +243,7 @@ impl RenderOnce for Tree {
                 focused_value: focused_value.clone(),
                 expanded_values: BTreeMap::new(),
                 focus_handles: BTreeMap::new(),
-                typeahead_buffer: String::new(),
-                last_typeahead_at: None,
+                typeahead: Default::default(),
             });
             let runtime_snapshot = runtime.read(cx).clone();
             let resolved_items =
@@ -843,10 +842,18 @@ fn handle_tree_key_down(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let key = event.keystroke.key.as_str();
+    if window.default_prevented() {
+        return;
+    }
 
-    if !event.keystroke.modifiers.modified() {
-        if let Some(action) = state.keyboard_action_for_key(key) {
+    let key = event.keystroke.key.as_str();
+    let current_value = runtime.read(cx).focused_value.clone();
+    let command_input = !event.keystroke.modifiers.modified() && !event.prefer_character_input;
+
+    if command_input {
+        if let Some(action) =
+            state.keyboard_action_for_key_from_value(key, current_value.as_deref())
+        {
             cx.stop_propagation();
             window.prevent_default();
 
@@ -879,15 +886,25 @@ fn handle_tree_key_down(
         }
     }
 
-    let Some(typeahead_key) = tree_typeahead_key(event) else {
+    let now = cx.background_executor().now();
+    let update = runtime.update(cx, |runtime, _| {
+        let update = runtime
+            .typeahead
+            .push(CollectionTypeaheadInput::from_key_down(event), now)?;
+        Some(update)
+    });
+    let Some(update) = update else {
         return;
     };
 
     cx.stop_propagation();
     window.prevent_default();
 
-    let query = runtime.update(cx, |runtime, _| runtime.push_typeahead_key(&typeahead_key));
-    if let Some(target) = state.typeahead_target(&query) {
+    if let Some(target) = state.typeahead_target_from_value(
+        update.match_query(),
+        current_value.as_deref(),
+        update.searches_after_current(),
+    ) {
         let target = TreeFocusTarget::new(target.index(), target.value());
         focus_tree_target(&runtime, &scroll_handle, state, &target, window, cx);
     }
@@ -907,26 +924,6 @@ fn focus_tree_target(
         focus_handle.focus(window, cx);
     }
     scroll_tree_item_into_view(scroll_handle, state, target_index);
-}
-
-fn tree_typeahead_key(event: &KeyDownEvent) -> Option<String> {
-    let modifiers = event.keystroke.modifiers;
-    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
-        return None;
-    }
-
-    let key = event
-        .keystroke
-        .key_char
-        .as_deref()
-        .unwrap_or(event.keystroke.key.as_str());
-    let mut chars = key.chars();
-    let ch = chars.next()?;
-    if chars.next().is_some() || ch.is_control() {
-        return None;
-    }
-
-    Some(ch.to_string())
 }
 
 fn scroll_tree_item_into_view(scroll_handle: &ScrollHandle, state: &TreeState, index: usize) {

@@ -1943,17 +1943,18 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
         .expect("expected Command state row in shell components source");
 
     assert!(select_section.contains("if let Some(active) = state.active_value()"));
-    assert!(select_section.contains("select = select.active(active);"));
+    assert!(select_section.contains("select = select.default_active(active);"));
     assert!(combobox_section.contains("if let Some(active) = state.active_value()"));
-    assert!(combobox_section.contains("combobox = combobox.active(active);"));
+    assert!(combobox_section.contains("combobox = combobox.default_active(active);"));
     assert!(command_section.contains("if let Some(active) = state.active_value()"));
-    assert!(command_section.contains("command = command.active(active);"));
+    assert!(command_section.contains("command = command.default_active(active);"));
     assert!(command_section.contains("command.status_items(state.status_items().iter().cloned())"));
     assert!(command_section.contains("component_command_keymap_resolution_rows"));
-    assert!(listbox_readout.contains("typeahead_label"));
-    assert!(listbox_readout.contains("first_typeahead_target"));
+    assert!(listbox_readout.contains("selected {} / active {}"));
+    assert!(listbox_readout.contains("{} groups / {} options / {} disabled"));
     assert!(select_readout.contains("listbox selected"));
-    assert!(combobox_readout.contains("visible {} of {} / typeahead"));
+    assert!(combobox_readout.contains("query '{}' / selected {} / active {}"));
+    assert!(combobox_readout.contains("visible {} of {} / {:?}"));
     assert!(command_readout.contains("selected_values {:?}"));
     assert!(command_readout.contains("{} status / {} warnings / {} errors"));
     assert!(command_readout.contains("navigation loop {} / group jump {}"));

@@ -1,10 +1,11 @@
-use std::{collections::BTreeMap, time::Instant};
+use std::collections::BTreeMap;
 
 use open_gpui::{Context, FocusHandle};
 
+use crate::collection_typeahead::CollectionTypeaheadSession;
 use crate::scroll_surface::ScrollSurfaceRuntime;
 
-use super::{TREE_TYPEAHEAD_RESET, TreeState};
+use super::TreeState;
 #[derive(Debug, Clone, Default)]
 pub(super) struct TreeRuntime {
     pub(super) scroll_surface: ScrollSurfaceRuntime,
@@ -12,14 +13,16 @@ pub(super) struct TreeRuntime {
     pub(super) focused_value: Option<String>,
     pub(super) expanded_values: BTreeMap<String, bool>,
     pub(super) focus_handles: BTreeMap<String, FocusHandle>,
-    pub(super) typeahead_buffer: String,
-    pub(super) last_typeahead_at: Option<Instant>,
+    pub(super) typeahead: CollectionTypeaheadSession,
 }
 
 impl TreeRuntime {
     pub(super) fn sync(&mut self, state: &TreeState, cx: &mut Context<Self>) {
-        self.focus_handles
-            .retain(|value, _| state.items().iter().any(|item| item.value() == value));
+        self.focus_handles.retain(|value, _| {
+            state
+                .item_by_value(value)
+                .is_some_and(|item| item.focusable())
+        });
 
         for item in state.items().iter().filter(|item| item.focusable()) {
             self.focus_handles
@@ -59,19 +62,5 @@ impl TreeRuntime {
         if changed {
             cx.notify();
         }
-    }
-
-    pub(super) fn push_typeahead_key(&mut self, key: &str) -> String {
-        let now = Instant::now();
-        if self
-            .last_typeahead_at
-            .map_or(true, |last| now.duration_since(last) > TREE_TYPEAHEAD_RESET)
-        {
-            self.typeahead_buffer.clear();
-        }
-
-        self.typeahead_buffer.push_str(&key.to_lowercase());
-        self.last_typeahead_at = Some(now);
-        self.typeahead_buffer.clone()
     }
 }

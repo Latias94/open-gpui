@@ -85,7 +85,7 @@ pub struct Command {
     selection_mode: CommandSelectionMode,
     selection: SingleChoiceSelectionControl,
     multi_selection: MultiChoiceSelectionControl,
-    active_value: Option<String>,
+    default_active_value: Option<String>,
     viewport_item_count: usize,
     metrics: CommandMetrics,
     loading_state: Option<CommandLoadingState>,
@@ -127,7 +127,7 @@ impl Command {
             selection_mode: CommandSelectionMode::Single,
             selection: SingleChoiceSelectionControl::uncontrolled(None),
             multi_selection: MultiChoiceSelectionControl::uncontrolled(Vec::new()),
-            active_value: None,
+            default_active_value: None,
             viewport_item_count: DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT,
             metrics: CommandMetrics::from_size(size),
             loading_state: None,
@@ -336,9 +336,9 @@ impl Command {
         self
     }
 
-    /// Applies active item value.
-    pub fn active(mut self, value: impl Into<String>) -> Self {
-        self.active_value = Some(value.into());
+    /// Applies the initial active item for adapter-owned runtime state.
+    pub fn default_active(mut self, value: impl Into<String>) -> Self {
+        self.default_active_value = Some(value.into());
         self
     }
 
@@ -479,7 +479,7 @@ impl Command {
             query_mode,
             self.selection.value().as_deref(),
             self.multi_selection.value().iter().cloned(),
-            self.active_value.as_deref(),
+            self.default_active_value.as_deref(),
         )
     }
 
@@ -582,7 +582,7 @@ impl RenderOnce for Command {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
             CommandRuntime::new(
                 self.default_open,
-                self.active_value.clone(),
+                self.default_active_value.clone(),
                 self.selection.value().clone(),
                 self.multi_selection.value().clone(),
                 ChoiceSelectionOwnership::from_controlled(self.selection.is_controlled()),
@@ -641,11 +641,7 @@ impl RenderOnce for Command {
             .unwrap_or(controller_query.as_str())
             .to_owned();
         let selected_value = selected_value.as_deref();
-        let active_value = self
-            .active_value
-            .as_deref()
-            .or(runtime_active_value.as_deref())
-            .or(selected_value);
+        let active_value = runtime_active_value.as_deref().or(selected_value);
         let state = self.resolve_state_with_inputs(
             Some(resolved_open),
             query.as_str(),

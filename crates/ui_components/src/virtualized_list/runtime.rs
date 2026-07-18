@@ -1,4 +1,5 @@
 use crate::a11y::UiA11yElementExt;
+use crate::collection_typeahead::{CollectionTypeaheadInput, CollectionTypeaheadSession};
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
@@ -22,7 +23,7 @@ use open_gpui_ui_core::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::data::VirtualizedListDataSource;
 use super::descriptor::VirtualizedListItemDescriptor;
@@ -47,8 +48,6 @@ pub(super) type VirtualizedListSelectionChangeHandler =
     Rc<dyn Fn(VirtualizedListSelectionChange, &mut Window, &mut App)>;
 pub(super) type VirtualizedListRowRenderer =
     Rc<dyn Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> AnyElement>;
-
-const VIRTUALIZED_LIST_TYPEAHEAD_RESET: Duration = Duration::from_millis(700);
 
 #[derive(Debug, Clone)]
 struct VirtualizedListGeometryAuthority {
@@ -133,8 +132,7 @@ pub(super) struct VirtualizedListRuntime {
     pub(super) row_measurements: BTreeMap<String, UiPx>,
     geometry: VirtualizedListGeometryAuthority,
     pub(super) pending_scroll_to_active: Option<String>,
-    pub(super) typeahead_buffer: String,
-    pub(super) last_typeahead_at: Option<Instant>,
+    pub(super) typeahead: CollectionTypeaheadSession,
     pub(super) active_indicator: VirtualizedListActiveIndicatorRuntime,
     pub(super) active_indicator_frame_host: MotionFrameDriver,
 }
@@ -171,19 +169,6 @@ impl VirtualizedListRuntime {
             self.geometry.invalidate();
             cx.notify();
         }
-    }
-
-    fn push_typeahead_key(&mut self, key: &str) -> String {
-        let now = Instant::now();
-        if self.last_typeahead_at.map_or(true, |last| {
-            now.duration_since(last) > VIRTUALIZED_LIST_TYPEAHEAD_RESET
-        }) {
-            self.typeahead_buffer.clear();
-        }
-
-        self.typeahead_buffer.push_str(&key.to_lowercase());
-        self.last_typeahead_at = Some(now);
-        self.typeahead_buffer.clone()
     }
 }
 
@@ -567,8 +552,7 @@ impl RenderOnce for VirtualizedList {
                 self.snapshot.as_ref(),
             ),
             pending_scroll_to_active: None,
-            typeahead_buffer: String::new(),
-            last_typeahead_at: None,
+            typeahead: CollectionTypeaheadSession::default(),
             active_indicator: VirtualizedListActiveIndicatorRuntime::default(),
             active_indicator_frame_host: MotionFrameDriver::new(),
         });
@@ -798,32 +782,52 @@ fn handle_virtualized_list_key_down(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if state.disabled() || state.visible_empty() {
+    if state.disabled() || state.visible_empty() || window.default_prevented() {
         return;
     }
 
     let key = event.keystroke.key.as_str();
+    let character_input = event.prefer_character_input;
+    let unmodified = !event.keystroke.modifiers.modified() && !character_input;
     let shift_only = virtualized_list_shift_only(event);
-    if let Some(target) = state.navigation_target(key) {
+    let (current_key, current_selected_keys, runtime_anchor_key) = {
+        let runtime = runtime.read(cx);
+        (
+            runtime.active_key.clone(),
+            runtime.selected_keys.clone(),
+            runtime.selection_anchor_key.clone(),
+        )
+    };
+
+    if !character_input
+        && (unmodified || shift_only)
+        && let Some(target) = state.navigation_target_from_key(key, current_key.as_deref())
+    {
         let Some(target) = state.target_at_index(target) else {
             return;
         };
         cx.stop_propagation();
         window.prevent_default();
-        let runtime_anchor = runtime.read(cx).selection_anchor_key.clone();
         let anchor_key = shift_only
             .then(|| {
                 state
-                    .range_anchor_key(runtime_anchor.as_deref(), target.key())
+                    .range_anchor_key(
+                        runtime_anchor_key.as_deref().or(current_key.as_deref()),
+                        target.key(),
+                    )
                     .map(str::to_owned)
             })
             .flatten();
         let selection_change = if shift_only {
-            state.range_selection_change(anchor_key.as_deref(), target.key())
+            state.range_selection_change_from_selected(
+                anchor_key.as_deref(),
+                target.key(),
+                &current_selected_keys,
+            )
         } else {
             None
         };
-        runtime.update(cx, |runtime, _| {
+        runtime.update(cx, |runtime, cx| {
             runtime.active_key = Some(target.key().to_owned());
             runtime.selection_anchor_key = if shift_only {
                 anchor_key.clone().or_else(|| Some(target.key().to_owned()))
@@ -834,6 +838,7 @@ fn handle_virtualized_list_key_down(
                 runtime.selected_keys = selection_change.selected_key_set();
             }
             runtime.pending_scroll_to_active = Some(target.key().to_owned());
+            cx.notify();
         });
         scroll_active_key(
             &scroll_handle,
@@ -850,26 +855,34 @@ fn handle_virtualized_list_key_down(
         return;
     }
 
-    if shift_only
+    if !character_input
+        && shift_only
         && key == "space"
         && state.selection_mode() == VirtualizedListSelectionMode::Multiple
     {
-        let Some(active_key) = state.active_key() else {
+        let Some(active_key) = current_key.as_deref() else {
             return;
         };
         cx.stop_propagation();
         window.prevent_default();
-        let runtime_anchor = runtime.read(cx).selection_anchor_key.clone();
         let anchor_key = state
-            .range_anchor_key(runtime_anchor.as_deref(), active_key)
+            .range_anchor_key(
+                runtime_anchor_key.as_deref().or(Some(active_key)),
+                active_key,
+            )
             .map(str::to_owned);
-        let selection_change = state.range_selection_change(anchor_key.as_deref(), active_key);
-        runtime.update(cx, |runtime, _| {
+        let selection_change = state.range_selection_change_from_selected(
+            anchor_key.as_deref(),
+            active_key,
+            &current_selected_keys,
+        );
+        runtime.update(cx, |runtime, cx| {
             runtime.selection_anchor_key =
                 anchor_key.clone().or_else(|| Some(active_key.to_owned()));
             if let Some(selection_change) = selection_change.as_ref() {
                 runtime.selected_keys = selection_change.selected_key_set();
             }
+            cx.notify();
         });
         if let (Some(on_selection_change), Some(selection_change)) =
             (on_selection_change.as_ref(), selection_change)
@@ -879,23 +892,29 @@ fn handle_virtualized_list_key_down(
         return;
     }
 
-    if let Some(activation) = state.activation_for_key(key) {
+    if unmodified
+        && let Some(activation) =
+            state.activation_for_key_from_state(key, current_key.as_deref(), &current_selected_keys)
+    {
         cx.stop_propagation();
         window.prevent_default();
         let selection_change = if state.selection_mode() == VirtualizedListSelectionMode::Single {
             state
                 .target_at_index(activation.index())
-                .and_then(|target| state.selection_change_for_target(&target))
+                .and_then(|target| {
+                    state.selection_change_for_target_from_selected(&target, &current_selected_keys)
+                })
         } else {
             None
         };
-        runtime.update(cx, |runtime, _| {
+        runtime.update(cx, |runtime, cx| {
             runtime.active_key = Some(activation.key().to_owned());
             runtime.selection_anchor_key = Some(activation.key().to_owned());
             if let Some(selection_change) = selection_change.as_ref() {
                 runtime.selected_keys = selection_change.selected_key_set();
             }
             runtime.pending_scroll_to_active = Some(activation.key().to_owned());
+            cx.notify();
         });
         scroll_active_key(
             &scroll_handle,
@@ -915,12 +934,19 @@ fn handle_virtualized_list_key_down(
         return;
     }
 
-    if let Some(selection_change) = state.selection_change_for_key(key) {
+    if unmodified
+        && let Some(selection_change) = state.selection_change_for_key_from_state(
+            key,
+            current_key.as_deref(),
+            &current_selected_keys,
+        )
+    {
         cx.stop_propagation();
         window.prevent_default();
-        runtime.update(cx, |runtime, _| {
+        runtime.update(cx, |runtime, cx| {
             runtime.selected_keys = selection_change.selected_key_set();
             runtime.selection_anchor_key = Some(selection_change.changed_key().to_owned());
+            cx.notify();
         });
         if let Some(on_selection_change) = on_selection_change.as_ref() {
             on_selection_change(selection_change, window, cx);
@@ -928,19 +954,29 @@ fn handle_virtualized_list_key_down(
         return;
     }
 
-    let Some(typeahead_key) = virtualized_list_typeahead_key(event) else {
+    let now = cx.background_executor().now();
+    let update = runtime.update(cx, |runtime, _| {
+        runtime
+            .typeahead
+            .push(CollectionTypeaheadInput::from_key_down(event), now)
+    });
+    let Some(update) = update else {
         return;
     };
 
     cx.stop_propagation();
     window.prevent_default();
-    let query = runtime.update(cx, |runtime, _| runtime.push_typeahead_key(&typeahead_key));
-    if let Some(target) = state.typeahead_target(&query) {
+    if let Some(target) = state.typeahead_target_from_key(
+        update.match_query(),
+        current_key.as_deref(),
+        update.searches_after_current(),
+    ) {
         let target_key = target.key().to_owned();
-        runtime.update(cx, |runtime, _| {
+        runtime.update(cx, |runtime, cx| {
             runtime.active_key = Some(target_key.clone());
             runtime.selection_anchor_key = Some(target_key.clone());
             runtime.pending_scroll_to_active = Some(target_key.clone());
+            cx.notify();
         });
         scroll_active_key(
             &scroll_handle,
@@ -959,26 +995,6 @@ fn virtualized_list_shift_only(event: &KeyDownEvent) -> bool {
         && !modifiers.alt
         && !modifiers.platform
         && !modifiers.function
-}
-
-fn virtualized_list_typeahead_key(event: &KeyDownEvent) -> Option<String> {
-    let modifiers = event.keystroke.modifiers;
-    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
-        return None;
-    }
-
-    let key = event
-        .keystroke
-        .key_char
-        .as_deref()
-        .unwrap_or(event.keystroke.key.as_str());
-    let mut chars = key.chars();
-    let ch = chars.next()?;
-    if chars.next().is_some() || ch.is_control() {
-        return None;
-    }
-
-    Some(ch.to_string())
 }
 
 fn scroll_active_key(

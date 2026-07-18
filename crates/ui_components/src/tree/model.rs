@@ -270,13 +270,20 @@ impl TreeState {
         let descriptors = items.into_iter().collect::<Vec<_>>();
         let mut flattened = Vec::new();
         flatten_tree_items(&descriptors, None, 0, &mut flattened);
-        let collection = ChoiceCollection::resolve(
+        let collection = ChoiceCollection::resolve_unique(
             false,
             tree_choice_items(&flattened),
             selected_value,
             focused_value,
             tree_choice_policy(),
         );
+        for item in collection
+            .items()
+            .iter()
+            .filter(|item| item.ambiguous_value())
+        {
+            flattened[*item.item()].disabled = true;
+        }
         let selected_index = collection.selected_item().map(|item| *item.item());
         let focused_index = collection.active_item().map(|item| *item.item());
         let focusable_count = flattened.iter().filter(|item| !item.disabled).count();
@@ -382,9 +389,17 @@ impl TreeState {
 
     /// Returns the target item for Up, Down, Home, or End.
     pub fn navigation_target(&self, key: &str) -> Option<&TreeItemState> {
+        self.navigation_target_from_value(key, self.focused_value())
+    }
+
+    fn navigation_target_from_value(
+        &self,
+        key: &str,
+        current_value: Option<&str>,
+    ) -> Option<&TreeItemState> {
         let collection = self.choice_collection();
         collection
-            .navigation_target(key)
+            .navigation_target_from_value(key, current_value)
             .and_then(|target| self.items.get(*target.item()))
     }
 
@@ -396,16 +411,38 @@ impl TreeState {
             .and_then(|target| self.items.get(*target.item()))
     }
 
+    pub(crate) fn typeahead_target_from_value(
+        &self,
+        query: &str,
+        current_value: Option<&str>,
+        search_after_current: bool,
+    ) -> Option<&TreeItemState> {
+        let collection = self.choice_collection();
+        collection
+            .typeahead_target_from_value(query, current_value, search_after_current)
+            .and_then(|target| self.items.get(*target.item()))
+    }
+
     /// Resolves a keyboard action from the current focused item.
     pub fn keyboard_action_for_key(&self, key: &str) -> Option<TreeKeyboardAction> {
-        if let Some(target) = self.navigation_target(key) {
+        self.keyboard_action_for_key_from_value(key, self.focused_value())
+    }
+
+    pub(crate) fn keyboard_action_for_key_from_value(
+        &self,
+        key: &str,
+        current_value: Option<&str>,
+    ) -> Option<TreeKeyboardAction> {
+        if let Some(target) = self.navigation_target_from_value(key, current_value) {
             return Some(TreeKeyboardAction::Focus(TreeFocusTarget::new(
                 target.index(),
                 target.value(),
             )));
         }
 
-        let current = self.items.get(self.focused_index?)?;
+        let current = current_value
+            .and_then(|value| self.item_by_value(value))
+            .or_else(|| self.focused_item())?;
         match key {
             "left" if current.has_children() && current.expanded() => {
                 TreeToggle::from_item(current).map(TreeKeyboardAction::Toggle)
@@ -431,7 +468,9 @@ impl TreeState {
 
     /// Returns an item by stable value.
     pub fn item_by_value(&self, value: &str) -> Option<&TreeItemState> {
-        self.items.iter().find(|item| item.value() == value)
+        let mut matches = self.items.iter().filter(|item| item.value() == value);
+        let item = matches.next()?;
+        matches.next().is_none().then_some(item)
     }
 
     /// Resolves a legal controlled move payload for a visible Tree drop.
@@ -484,7 +523,7 @@ impl TreeState {
     }
 
     fn choice_collection(&self) -> ChoiceCollection<usize> {
-        ChoiceCollection::resolve(
+        ChoiceCollection::resolve_unique(
             false,
             tree_choice_items(&self.items),
             self.selected_value(),
@@ -674,6 +713,63 @@ mod tests {
             None,
             "collapsed descendants should not participate in visible Tree typeahead"
         );
+    }
+
+    #[test]
+    fn tree_typeahead_uses_event_time_stable_value_and_refinement_mode() {
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Typeahead tree",
+            None,
+            Some("alpha"),
+            [
+                TreeItemDescriptor::new("alpha", "Alpha"),
+                TreeItemDescriptor::new("alpine", "Alpine"),
+                TreeItemDescriptor::new("amber", "Amber"),
+            ],
+        );
+
+        assert_eq!(
+            state
+                .typeahead_target_from_value("a", Some("alpine"), true)
+                .map(TreeItemState::value),
+            Some("amber")
+        );
+        assert_eq!(
+            state
+                .typeahead_target_from_value("al", Some("alpha"), false)
+                .map(TreeItemState::value),
+            Some("alpha")
+        );
+        assert_eq!(
+            state
+                .typeahead_target_from_value("a", Some("removed"), true)
+                .map(TreeItemState::value),
+            Some("alpha")
+        );
+    }
+
+    #[test]
+    fn tree_duplicate_values_remain_visible_but_fail_closed() {
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Duplicate identity tree",
+            Some("duplicate"),
+            Some("duplicate"),
+            [
+                TreeItemDescriptor::new("duplicate", "Duplicate first"),
+                TreeItemDescriptor::new("duplicate", "Duplicate second"),
+                TreeItemDescriptor::new("unique", "Unique"),
+            ],
+        );
+
+        assert_eq!(state.items().len(), 3);
+        assert!(state.items()[0].disabled());
+        assert!(state.items()[1].disabled());
+        assert_eq!(state.selected_value(), None);
+        assert_eq!(state.focused_value(), Some("unique"));
+        assert_eq!(state.item_by_value("duplicate"), None);
+        assert_eq!(state.typeahead_target("du"), None);
     }
 
     #[test]

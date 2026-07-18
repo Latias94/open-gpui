@@ -904,6 +904,23 @@ versions, missing identity or nested design facts, unsupported mode/density/moti
 names, invalid elevation values, duplicate or incomplete token/state coverage, and invalid RGB
 values. The old color-only shape and `fallback_mode` are rejection cases, not fallback paths.
 
+Collection typeahead has a separate deterministic runtime gate:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components --lib typeahead --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-components --test typeahead_runtime --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-components --test layout --test choice --test overlay --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-foundation-gallery --no-fail-fast --locked
+```
+
+The private session owns accepted character normalization, the 700ms executor-clock deadline,
+repeated-character cycling, and instance lifecycle. Tree, VirtualizedList, Menu, ContextMenu, and
+standalone Listbox consume it; Select consumes it only through an open popup Listbox. Tests cover
+the exact timeout boundary, no-redraw cycling, IME/modifier propagation, disabled and structural
+rows, reveal without selection, reorder/remove by stable key, remount, same-window instances,
+equal IDs in different windows, close/reopen generations, and closed Select triggers. Combobox and
+Command runtime tests remain the negative gate for editor-owned query input.
+
 The foundation component family gate covers the shipped disclosure, numeric, navigation, display,
 action, and feedback additions: Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link,
 Breadcrumb, Tag, and ToastStack. These tests keep one canonical API per family, explicit
@@ -915,10 +932,11 @@ cargo nextest run -p open-gpui-ui-components --test public_surface --test form -
 cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_focuses_every_focusable_catalog_entry components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
 ```
 
-The choice and runtime seams are guarded separately: `choice.rs` owns stable-value and normalized
-query helpers for `Command`, `Combobox`, and `Select`; `roving_focus.rs` owns the shared enabled-item
-navigation targets used across listbox-like surfaces; and `menu/runtime.rs` owns submenu hover
-timing plus local scroll state for `Menu` and `ContextMenu`.
+The choice and runtime seams are guarded separately: `choice.rs` owns stable-value matching for
+choice models; `collection_typeahead.rs` privately owns collection input timing and acceptance;
+`roving_focus.rs` owns shared enabled-item navigation targets; and `menu/runtime.rs` owns
+instance-local menu typeahead alongside submenu hover timing and local scroll state. Editable
+Command and Combobox queries remain owned by their text-input controllers.
 Feedback coverage now promotes `StatusCue` and `EmptyState` as official rendered Components
 catalog entries. The focused component tests verify root/prelude exports, feedback intent labels,
 resolved roles, metrics, and theme color intents. The gallery metadata tests require their
@@ -1044,8 +1062,8 @@ metadata, and loading branches do not repeat toggle requests. The `remote-worksp
 proves unloaded, loading, loaded, and failed branch affordances plus runtime payload metadata.
 Tree typeahead is covered by a pure state test and a runtime adapter test: the pure helper matches
 visible, focusable row labels with wraparound and skips disabled/collapsed rows, while the rendered
-adapter buffers printable keys and moves focus without selecting. The `document-outline` gallery
-smoke now verifies typing `n o` focuses the visible Notes row after the expand/select path.
+adapter reads the shared private session and moves focus without selecting. The `document-outline`
+gallery smoke now verifies typing `n o` focuses the visible Notes row after the expand/select path.
 Tree and virtualized-list state-contract samples are verified through
 `components_page_samples_expose_component_metadata`: Tree readouts assert visible flattening,
 disabled-row position skipping, navigation skipping, toggle payloads, and Enter/Space selection
@@ -1494,8 +1512,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    option rejection, click selection, keyboard popup selection that skips disabled rows, selection
    payloads, and ordered popup close callbacks. The Combobox samples should expose editable
    filtering, selected value metadata that does not disappear when the query hides the selected
-   option, an empty filtered state, disabled input/popup suppression, and visible query/typeahead
-   metadata. The component runtime
+   option, an empty filtered state, disabled input/popup suppression, and visible query metadata.
+   The component runtime
    smoke now verifies real Combobox text-input editing, filtered popup options, filtered option
    click selection, and close callbacks. The Command samples should expose ranked search results,
    selected chips for multi-select, stable selected values independent of result order, a 10k-item

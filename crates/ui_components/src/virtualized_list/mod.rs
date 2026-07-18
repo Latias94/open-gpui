@@ -223,6 +223,42 @@ mod tests {
     }
 
     #[test]
+    fn virtualized_list_typeahead_uses_event_time_key_and_refinement_mode() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("alpine", "Alpine"),
+                VirtualizedListStateItem::new("amber", "Amber"),
+            ],
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(3),
+        );
+
+        assert_eq!(
+            state
+                .typeahead_target_from_key("a", Some("alpine"), true)
+                .map(VirtualizedListStateItem::key),
+            Some("amber")
+        );
+        assert_eq!(
+            state
+                .typeahead_target_from_key("al", Some("alpha"), false)
+                .map(VirtualizedListStateItem::key),
+            Some("alpha")
+        );
+        assert_eq!(
+            state
+                .typeahead_target_from_key("a", Some("removed"), true)
+                .map(VirtualizedListStateItem::key),
+            Some("alpha")
+        );
+    }
+
+    #[test]
     fn virtualized_list_data_source_projects_domain_items_and_status_rows() {
         #[derive(Clone)]
         struct ReleaseRow {

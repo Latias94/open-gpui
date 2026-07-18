@@ -226,15 +226,16 @@ or navigation.
 `ListboxState` is the renderer-neutral collection choice contract. It records grouped and
 standalone option descriptors, separator rows, disabled option state, selected value, active
 descendant value, tab-stop value, APG-style Up/Down/Home/End navigation, Enter/Space activation
-payloads, typeahead target metadata, resolved metrics, token intents, and listbox/listbox-option
+payloads, typeahead target resolution, resolved metrics, token intents, and listbox/listbox-option
 roles. It does not own popup state, adapter selection storage, scroll handles, focus handles,
 callbacks, or GPUI element ids. The GPUI adapter treats `selected(Option<String>)` as a
-caller-owned render-frame value and `default_selected` as an uncontrolled runtime seed. Pointer,
-unmodified Enter/Space key-up, AccessKit Click, and `activation_handle(value, handle)` requests
-enter one selection transaction. An option handler replaces the Listbox public fallback, while an
-embedding Select or Combobox owner transaction still commits selection, input, and overlay state
-before that one chosen callback is delivered. Duplicate selectable values fail closed; structural
-rows do not participate in domain-value uniqueness.
+caller-owned render-frame value and `default_selected` as an uncontrolled runtime seed.
+`default_active` seeds adapter-owned active state once; navigation and typeahead then resolve from
+the event-time runtime value. Pointer, unmodified Enter/Space key-up, AccessKit Click, and
+`activation_handle(value, handle)` requests enter one selection transaction. An option handler
+replaces the Listbox public fallback, while an embedding Select or Combobox owner transaction still
+commits selection, input, and overlay state before that one chosen callback is delivered. Duplicate
+selectable values fail closed; structural rows do not participate in domain-value uniqueness.
 
 `SelectState` composes a trigger, non-modal dismissible overlay, scroll viewport metadata, and a
 nested `ListboxState`. It records controlled versus uncontrolled open mode, default-open state,
@@ -244,8 +245,9 @@ intents, and the listbox content role. `SelectState::resolve` takes a `SelectSta
 callers group overlay policy, selection inputs, descriptors, and theme tokens explicitly. The GPUI
 `Select` adapter owns trigger/content rendering, keyed runtime open/selected/active state,
 callbacks, and deferred anchored rendering. `selected(Option<String>)` is caller-owned and
-`default_selected` seeds adapter-owned selection. Its window runtime binding owns outside/Escape
-arbitration, the popup layer, trigger/surface focus handles, controlled refusal, and restoration.
+`default_selected` seeds adapter-owned selection; `default_active` seeds popup active state. Its
+window runtime binding owns outside/Escape arbitration, the popup layer, trigger/surface focus
+handles, controlled refusal, and restoration.
 
 `choice.rs` owns the shared stable-value seam for the choice family. It projects flat item
 identity, normalizes query text, filters disabled or missing selected values, deduplicates
@@ -268,8 +270,9 @@ owns the `TextInputController`, keyed runtime query/open/selection state, callba
 and Escape policy inputs, deferred anchored rendering, and scroll handles. Its window runtime
 binding owns popup arbitration and preserves the editor focus/active-descendant authority.
 `Combobox::selected(Option<String>)` is caller-owned and `default_selected` seeds adapter-owned
-selection. A controlled selection intent cannot change runtime selection or editor text until the
-owner supplies a later selected prop.
+selection. `default_active` seeds the keyed active value; subsequent editor navigation is resolved
+from runtime state. A controlled selection intent cannot change runtime selection or editor text
+until the owner supplies a later selected prop.
 
 `CommandState` composes a search text input, ranked grouped command results, optional dialog
 wrapper, loading metadata, selected chips, a virtualized result window, and nested `ListboxState`.
@@ -298,7 +301,8 @@ outside/Escape arbitration, modal focus handles, controlled refusal, and restora
 does not register an overlay. The renderer-neutral state owns ranking, selection projection,
 snapshot metadata, and the virtualized result render plan.
 `Command::selected(Option<String>)` and `selected_values(...)` are caller-owned;
-`default_selected` and `default_selected_values` seed their adapter-owned counterparts.
+`default_selected`, `default_selected_values`, and `default_active` seed their adapter-owned
+counterparts.
 Multi-select change payloads toggle the raw caller/runtime selection set, preserving values that
 are currently missing, disabled, or filtered out; only chips and semantic selection projection
 filter that set against the current command collection.
@@ -1358,9 +1362,10 @@ loaded, unloaded, loading, or failed without making `Tree` own asynchronous fetc
 metadata so applications can start fetches or retries from toggle payloads. Loading branches render
 as branches but do not emit repeat toggle requests while the caller reports loading.
 `TreeState::typeahead_target` provides renderer-neutral prefix matching over the current visible,
-focusable row list; the GPUI adapter owns the printable-key buffer and reset timing, then moves
-focus without selecting the matched row. Typeahead intentionally does not search collapsed,
-unloaded, or virtualized descendants.
+focusable row list. The private collection typeahead session owns printable-input normalization,
+the buffer, and the 700ms executor-clock deadline; the GPUI adapter supplies the event-time stable
+focused value and moves focus without selecting the matched row. Typeahead intentionally does not
+search collapsed, unloaded, or virtualized descendants.
 The private `roving_focus` implementation module now owns the shared vertical, paged, and
 typeahead target helpers used by `Listbox`, `Tabs`, `RadioGroup`, `Menu`, `Sidebar`, `Toolbar`,
 `Tree`, and `VirtualizedList`; public low-level consumers use
@@ -1372,10 +1377,11 @@ runtime plus persistent `ScrollHandle`, and keeps row rendering inside its viewp
 `VirtualizedListState` remains the renderer-neutral keyboard/navigation contract:
 active/selected keys with index diagnostics, page navigation, activation payloads, viewport item
 count, row metrics, overscan, typeahead target resolution, replacement-style multi-select range
-selection, and semantic scroll strategy labels. The GPUI adapter owns the printable-key typeahead
-buffer, anchor-key lifecycle, and reveal side effects: typeahead moves the active row without
-selecting it, while Shift-range interaction replaces selected keys with the current selectable
-anchor-to-target range. `VirtualizedListBehaviorSnapshot::sticky_section` returns an optional
+selection, and semantic scroll strategy labels. The private collection typeahead session owns the
+printable-input buffer and deadline. The GPUI adapter supplies the event-time stable active key and
+owns reveal side effects: typeahead moves the active row without selecting it, while Shift-range
+interaction replaces selected keys with the current selectable anchor-to-target range.
+`VirtualizedListBehaviorSnapshot::sticky_section` returns an optional
 `VirtualizedListStickySectionSnapshot` for the section row that owns the first visible selectable
 row. `VirtualizedListBehaviorSnapshot::sticky_overlay` returns an optional
 `VirtualizedListStickyOverlaySnapshot` for the presentation-only sticky header layer: the overlay is

@@ -114,7 +114,7 @@ pub struct SelectStateRequest {
     pub placeholder: String,
     /// Controlled selected option value.
     pub selected_value: Option<String>,
-    /// Controlled active option value.
+    /// Active option value for this renderer-neutral state resolution.
     pub active_value: Option<String>,
     /// Grouped option descriptors.
     pub groups: Vec<ListboxGroupDescriptor>,
@@ -171,7 +171,6 @@ impl SelectState {
             label.clone(),
             selected_value.as_deref(),
             active_value.as_deref(),
-            None,
             "No options",
             groups.clone(),
             options.clone(),

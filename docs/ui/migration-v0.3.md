@@ -159,6 +159,41 @@ component motion preferences merge to the stricter value: either side can reques
 and an explicit animated request cannot override a reduced theme. Adaptive device density remains
 an application-shell recommendation rather than an implicit theme override.
 
+## Deterministic Collection Typeahead
+
+Collection typeahead now uses one crate-private, instance-owned session with GPUI executor time.
+Tree, VirtualizedList, Menu, ContextMenu, and standalone Listbox share its printable-input,
+composition, modifier, timeout, and repeated-character rules. Select receives the same behavior
+only from its mounted popup Listbox; printable input on a closed Select trigger remains inert.
+Combobox and Command keep their persistent editor-owned query and filtering paths and do not use
+the collection session.
+
+The timeout remains 700ms. Input at exactly the boundary refines the existing prefix; later input
+starts a new session. A first character and repeated equal characters scan after the current stable
+key and wrap. A different character refines the current prefix while including the current match.
+Matching, disabled or structural row filtering, focus, reveal, and selection remain owned by each
+component model. Sessions never store row indexes or target keys, so reorder resolves from the
+latest stable key and removal falls back safely.
+
+Tree values are stable row identities and must be unique within one resolved tree. Duplicate
+values now fail closed: ambiguous rows remain visible but cannot receive focus, selection, or
+typeahead targeting. Assign distinct values instead of relying on source order to disambiguate
+rows.
+
+`Listbox::typeahead_query`, `ListboxState::typeahead_query`, and the corresponding
+`ListboxState::resolve` argument were deleted without aliases. They copied an editable owner's
+query into inert Listbox metadata and were not the runtime buffer. Read `ComboboxState::query` or
+`CommandState::query` when displaying or inspecting editable search, and call
+`ListboxState::typeahead_target` directly when a pure caller-owned query needs model resolution.
+There is no public collection-session API.
+
+`Listbox::active`, `Select::active`, `Combobox::active`, and `Command::active` were also deleted.
+They behaved like caller-owned values but exposed no active-change intent, so every redraw could
+silently overwrite keyboard or typeahead progress. Use `default_active` to seed the adapter-owned
+keyed runtime once. Renderer-neutral state requests still accept an `active_value`, and the
+editor-owned Combobox adapter projects its current runtime value into its private embedded
+Listbox; neither path recreates a public controlled-active API.
+
 ## Semantic Activation Authority
 
 Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests

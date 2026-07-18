@@ -397,7 +397,10 @@ impl ActivationBinding {
         element
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 let runtime = key_down_runtime.read(cx);
-                if event.keystroke.modifiers.modified() || window.default_prevented() {
+                if event.keystroke.modifiers.modified()
+                    || event.prefer_character_input
+                    || window.default_prevented()
+                {
                     runtime.clear_armed_key();
                     return;
                 }

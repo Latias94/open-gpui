@@ -19,6 +19,7 @@ use crate::choice::{
     self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection,
     SingleChoiceSelectionControl,
 };
+use crate::collection_typeahead::{CollectionTypeaheadInput, CollectionTypeaheadSession};
 use crate::color::ColorIntent;
 use crate::debug_selector::{
     AuthoredSnapshot, StableValueItemRenderIdentity, StableValueItemRenderIdentityInput,
@@ -500,7 +501,6 @@ pub struct ListboxState {
     label: String,
     selected_value: Option<String>,
     active_value: Option<String>,
-    typeahead_query: Option<String>,
     empty_label: String,
     groups: Vec<ListboxGroupState>,
     options: Vec<ListboxOptionState>,
@@ -522,7 +522,6 @@ impl ListboxState {
         label: impl Into<String>,
         selected_value: Option<&str>,
         active_value: Option<&str>,
-        typeahead_query: Option<&str>,
         empty_label: impl Into<String>,
         groups: impl IntoIterator<Item = ListboxGroupDescriptor>,
         options: impl IntoIterator<Item = ListboxOptionDescriptor>,
@@ -530,9 +529,6 @@ impl ListboxState {
     ) -> Self {
         let label = label.into();
         let empty_label = empty_label.into();
-        let typeahead_query = typeahead_query
-            .map(choice::normalize_query)
-            .filter(|query| !query.is_empty());
         let group_descriptors: Vec<ListboxGroupDescriptor> = groups.into_iter().collect();
         let standalone_options: Vec<ListboxOptionDescriptor> = options.into_iter().collect();
         let groups = group_descriptors
@@ -608,7 +604,6 @@ impl ListboxState {
             label,
             selected_value,
             active_value,
-            typeahead_query,
             empty_label,
             groups,
             options,
@@ -643,11 +638,6 @@ impl ListboxState {
     /// Returns active descendant value.
     pub fn active_value(&self) -> Option<&str> {
         self.active_value.as_deref()
-    }
-
-    /// Returns typeahead query metadata.
-    pub fn typeahead_query(&self) -> Option<&str> {
-        self.typeahead_query.as_deref()
     }
 
     /// Returns empty-state label.
@@ -706,8 +696,16 @@ impl ListboxState {
 
     /// Resolves a navigation target for an APG-style listbox key.
     pub fn navigation_target(&self, key: &str) -> Option<&ListboxOptionState> {
+        self.navigation_target_from_value(key, self.active_value())
+    }
+
+    pub(crate) fn navigation_target_from_value(
+        &self,
+        key: &str,
+        current_value: Option<&str>,
+    ) -> Option<&ListboxOptionState> {
         self.choice_collection()
-            .navigation_target(key)
+            .navigation_target_from_value(key, current_value)
             .and_then(|target| self.options.get(target.source_index()))
     }
 
@@ -718,15 +716,51 @@ impl ListboxState {
             .and_then(|target| self.options.get(target.source_index()))
     }
 
+    fn typeahead_target_from_value(
+        &self,
+        query: &str,
+        current_value: Option<&str>,
+        search_after_current: bool,
+    ) -> Option<&ListboxOptionState> {
+        self.choice_collection()
+            .typeahead_target_from_value(query, current_value, search_after_current)
+            .and_then(|target| self.options.get(target.source_index()))
+    }
+
     /// Resolves an activation payload for an APG-style activation key.
     pub fn activation_for_key(&self, key: &str) -> Option<ListboxSelection> {
+        self.activation_for_key_from_value(key, self.active_value())
+    }
+
+    pub(crate) fn activation_for_key_from_value(
+        &self,
+        key: &str,
+        current_value: Option<&str>,
+    ) -> Option<ListboxSelection> {
         if !matches!(key, "enter" | "space") {
             return None;
         }
 
-        self.active_index
-            .and_then(|index| self.options.get(index))
+        self.active_option_from_value(current_value)
             .and_then(ListboxSelection::from_option)
+    }
+
+    pub(crate) fn active_index_from_value(&self, current_value: Option<&str>) -> Option<usize> {
+        self.active_option_from_value(current_value)
+            .map(ListboxOptionState::index)
+    }
+
+    pub(crate) fn active_option_from_value(
+        &self,
+        current_value: Option<&str>,
+    ) -> Option<&ListboxOptionState> {
+        current_value
+            .and_then(|value| {
+                self.options
+                    .iter()
+                    .find(|option| option.value() == value && option.focusable())
+            })
+            .or_else(|| self.active_option())
     }
 
     /// Returns listbox accessibility role.
@@ -881,6 +915,7 @@ impl ListboxGroup {
 struct ListboxRuntime {
     active_value: Option<String>,
     selected_value: Option<String>,
+    typeahead: CollectionTypeaheadSession,
 }
 
 impl ListboxRuntime {
@@ -943,8 +978,8 @@ pub struct Listbox {
     focus_owner: ListboxFocusOwner,
     active_focus: Option<FocusHandle>,
     selection: SingleChoiceSelectionControl,
-    active_value: Option<String>,
-    typeahead_query: Option<String>,
+    default_active_value: Option<String>,
+    projected_active_value: Option<String>,
     empty_label: SharedString,
     tokens: ThemeTokens,
     on_select: Option<ListboxSelectHandler>,
@@ -966,8 +1001,8 @@ impl Listbox {
             focus_owner: ListboxFocusOwner::Listbox,
             active_focus: None,
             selection: SingleChoiceSelectionControl::uncontrolled(None),
-            active_value: None,
-            typeahead_query: None,
+            default_active_value: None,
+            projected_active_value: None,
             empty_label: "No options".into(),
             tokens: ThemeTokens::default(),
             on_select: None,
@@ -1038,15 +1073,14 @@ impl Listbox {
         self
     }
 
-    /// Applies active option value.
-    pub fn active(mut self, value: impl Into<String>) -> Self {
-        self.active_value = Some(value.into());
+    /// Applies the initial active option for adapter-owned runtime state.
+    pub fn default_active(mut self, value: impl Into<String>) -> Self {
+        self.default_active_value = Some(value.into());
         self
     }
 
-    /// Applies typeahead query metadata.
-    pub fn typeahead_query(mut self, query: impl Into<String>) -> Self {
-        self.typeahead_query = Some(query.into());
+    pub(crate) fn projected_active(mut self, value: impl Into<String>) -> Self {
+        self.projected_active_value = Some(value.into());
         self
     }
 
@@ -1096,8 +1130,9 @@ impl Listbox {
             self.disabled,
             self.label.to_string(),
             self.selection.value().as_deref(),
-            self.active_value.as_deref(),
-            self.typeahead_query.as_deref(),
+            self.projected_active_value
+                .as_deref()
+                .or(self.default_active_value.as_deref()),
             self.empty_label.to_string(),
             self.groups.iter().map(ListboxGroup::descriptor),
             self.options.iter().map(ListboxOption::descriptor),
@@ -1120,8 +1155,12 @@ impl RenderOnce for Listbox {
             let theme = ThemeResolver::current(window, cx);
             let selection_controlled = self.selection.is_controlled();
             let runtime = window.use_keyed_state("runtime", cx, |_, _| ListboxRuntime {
-                active_value: self.active_value.clone(),
+                active_value: self
+                    .projected_active_value
+                    .clone()
+                    .or_else(|| self.default_active_value.clone()),
                 selected_value: self.selection.value().clone(),
+                typeahead: CollectionTypeaheadSession::default(),
             });
             let runtime_state = runtime.read(cx).clone();
             let selected_value = if selection_controlled {
@@ -1130,7 +1169,7 @@ impl RenderOnce for Listbox {
                 runtime_state.selected_value
             };
             let active_value = self
-                .active_value
+                .projected_active_value
                 .as_deref()
                 .or(runtime_state.active_value.as_deref());
             let state = ListboxState::resolve(
@@ -1139,7 +1178,6 @@ impl RenderOnce for Listbox {
                 self.label.to_string(),
                 selected_value.as_deref(),
                 active_value,
-                self.typeahead_query.as_deref(),
                 self.empty_label.to_string(),
                 self.groups.iter().map(ListboxGroup::descriptor),
                 self.options.iter().map(ListboxOption::descriptor),
@@ -1372,14 +1410,40 @@ fn handle_listbox_navigation_key_down(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if event.keystroke.modifiers.modified() || window.default_prevented() {
+    if state.disabled() || state.empty() || window.default_prevented() {
         return;
     }
 
     let key = event.keystroke.key.as_str();
-    if let Some(target) = state.navigation_target(key) {
+    if !event.keystroke.modifiers.modified()
+        && !event.prefer_character_input
+        && let Some(target) = state.navigation_target(key)
+    {
         cx.stop_propagation();
         window.prevent_default();
+        let value = target.value().to_owned();
+        runtime.update(cx, |runtime, cx| runtime.set_active(value, cx));
+        return;
+    }
+
+    let now = cx.background_executor().now();
+    let update = runtime.update(cx, |runtime, _| {
+        let update = runtime
+            .typeahead
+            .push(CollectionTypeaheadInput::from_key_down(event), now)?;
+        Some((update, runtime.active_value.clone()))
+    });
+    let Some((update, current_value)) = update else {
+        return;
+    };
+
+    cx.stop_propagation();
+    window.prevent_default();
+    if let Some(target) = state.typeahead_target_from_value(
+        update.match_query(),
+        current_value.as_deref(),
+        update.searches_after_current(),
+    ) {
         let value = target.value().to_owned();
         runtime.update(cx, |runtime, cx| runtime.set_active(value, cx));
     }

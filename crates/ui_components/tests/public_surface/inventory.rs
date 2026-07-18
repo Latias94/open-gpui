@@ -394,18 +394,21 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
     assert_inventory_contains_callback("Popover", "on_open_change", "OverlayOpenIntent");
     assert_inventory_contains_controlled_input("Listbox", "selected");
     assert_inventory_contains_default_seed("Listbox", "default_selected", "selected");
+    assert_inventory_contains_default_seed("Listbox", "default_active", "active");
     assert_inventory_contains_controlled_input("Select", "selected");
     assert_inventory_contains_default_seed("Select", "default_selected", "selected");
-    assert_inventory_contains_controlled_input("Select", "active");
+    assert_inventory_contains_default_seed("Select", "default_active", "active");
     assert_inventory_contains_callback("Select", "on_select", "SelectSelection");
     assert_inventory_contains_default_seed("Combobox", "default_query", "query");
     assert_inventory_contains_default_seed("Combobox", "default_selected", "selected");
+    assert_inventory_contains_default_seed("Combobox", "default_active", "active");
     assert_inventory_contains_controlled_input("Command", "query");
     assert_inventory_contains_controlled_input("Command", "selected_values");
     assert_inventory_contains_controlled_input("Command", "index_snapshot");
     assert_inventory_contains_default_seed("Command", "default_query", "query");
     assert_inventory_contains_default_seed("Command", "default_selected", "selected");
     assert_inventory_contains_default_seed("Command", "default_selected_values", "selected_values");
+    assert_inventory_contains_default_seed("Command", "default_active", "active");
     assert_inventory_contains_callback("Command", "on_query_change", "String");
     assert_inventory_contains_callback(
         "Command",

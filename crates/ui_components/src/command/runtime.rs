@@ -92,6 +92,13 @@ impl CommandRuntime {
             ChoiceSelectionOwnership::from_controlled(multi_selection.is_controlled());
     }
 
+    fn set_active(&mut self, value: String, cx: &mut Context<Self>) {
+        if self.active_value.as_ref() != Some(&value) {
+            self.active_value = Some(value);
+            cx.notify();
+        }
+    }
+
     fn commit_single_value(&mut self, value: String, cx: &mut Context<Self>) {
         let mut changed = self.active_value.as_ref() != Some(&value);
         if !self.selection_ownership.caller_owned() {
@@ -295,17 +302,30 @@ pub(super) fn command_content_element(
         .ui_semantics(&content_semantics)
         .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            let key = command_key_down_event_key(event);
-            if event.prefer_character_input {
+            if event.prefer_character_input || window.default_prevented() {
                 return;
             }
+            let Some(key) = command_key_down_event_key(event) else {
+                return;
+            };
 
-            match command_keyboard_action(&key_state, key, viewport_extent) {
+            let current_value = key_runtime
+                .read(cx)
+                .active_value
+                .clone()
+                .or_else(|| key_state.active_value().map(str::to_owned));
+
+            match command_keyboard_action_from_value(
+                &key_state,
+                key,
+                viewport_extent,
+                current_value.as_deref(),
+            ) {
                 CommandKeyboardAction::Navigate(target) => {
                     cx.stop_propagation();
                     window.prevent_default();
-                    key_runtime.update(cx, |runtime, _| {
-                        runtime.active_value = Some(target.value.clone());
+                    key_runtime.update(cx, |runtime, cx| {
+                        runtime.set_active(target.value.clone(), cx);
                     });
                     scroll_command_item_into_view(&key_scroll_handle, &key_state, target.index);
                 }
@@ -445,36 +465,49 @@ struct CommandNavigationTarget {
     value: String,
 }
 
+#[cfg(test)]
 fn command_keyboard_action(
     state: &CommandState,
     key: &str,
     viewport_extent: UiPx,
 ) -> CommandKeyboardAction {
+    command_keyboard_action_from_value(state, key, viewport_extent, state.active_value())
+}
+
+fn command_keyboard_action_from_value(
+    state: &CommandState,
+    key: &str,
+    viewport_extent: UiPx,
+    current_value: Option<&str>,
+) -> CommandKeyboardAction {
     if state.disabled() {
         return CommandKeyboardAction::Ignore;
     }
 
-    if let Some(target) = command_navigation_target(state, key, viewport_extent) {
+    if let Some(target) =
+        command_navigation_target_from_value(state, key, viewport_extent, current_value)
+    {
         return CommandKeyboardAction::Navigate(CommandNavigationTarget {
             index: target.index(),
             value: target.value().to_owned(),
         });
     }
 
-    if let Some(selection) = state.activation_for_key(key) {
+    if let Some(selection) = state.activation_for_key_from_value(key, current_value) {
         return CommandKeyboardAction::Select(selection);
     }
 
     CommandKeyboardAction::Ignore
 }
 
-fn command_navigation_target<'a>(
+fn command_navigation_target_from_value<'a>(
     state: &'a CommandState,
     key: &str,
     viewport_extent: UiPx,
+    current_value: Option<&str>,
 ) -> Option<&'a crate::listbox::ListboxOptionState> {
     let key = command_navigation_key(key);
-    let current = state.listbox().active_index()?;
+    let current = state.listbox().active_index_from_value(current_value)?;
     let options = state.listbox().options();
     if current >= options.len() {
         return None;
@@ -519,26 +552,29 @@ fn command_navigation_key(key: &str) -> &str {
     }
 }
 
-fn command_key_down_event_key(event: &KeyDownEvent) -> &str {
+fn command_key_down_event_key(event: &KeyDownEvent) -> Option<&str> {
     let key = event.keystroke.key.as_str();
     let modifiers = event.keystroke.modifiers;
+    if !modifiers.modified() {
+        return Some(key);
+    }
     if modifiers.control && modifiers.number_of_modifiers() == 1 {
         return match key {
-            "j" | "n" => "down",
-            "k" | "p" => "up",
-            "d" => "pagedown",
-            "u" => "pageup",
-            _ => key,
+            "j" | "n" => Some("down"),
+            "k" | "p" => Some("up"),
+            "d" => Some("pagedown"),
+            "u" => Some("pageup"),
+            _ => None,
         };
     }
     if modifiers.alt && modifiers.number_of_modifiers() == 1 {
         return match key {
-            "up" => "alt-up",
-            "down" => "alt-down",
-            _ => key,
+            "up" => Some("alt-up"),
+            "down" => Some("alt-down"),
+            _ => None,
         };
     }
-    key
+    None
 }
 
 fn command_first_focusable_option(
@@ -1108,7 +1144,7 @@ mod tests {
     fn grouped_keyboard_command(active: &str) -> Command {
         Command::new("grouped-palette", "Command palette")
             .open(true)
-            .active(active)
+            .default_active(active)
             .item(CommandItem::new("global-open", "Global Open"))
             .group(
                 CommandGroup::new("file", "File")
@@ -1128,7 +1164,7 @@ mod tests {
             .open(true)
             .default_query("file")
             .selected(Some("open-file".to_owned()))
-            .active("open-file")
+            .default_active("open-file")
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("close-file", "Close File"))
             .state();
@@ -1136,7 +1172,7 @@ mod tests {
             .open(true)
             .default_query("file")
             .selected(Some("close-file".to_owned()))
-            .active("close-file")
+            .default_active("close-file")
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("close-file", "Close File"))
             .state();
@@ -1144,7 +1180,7 @@ mod tests {
             .open(true)
             .default_query("close")
             .selected(Some("close-file".to_owned()))
-            .active("close-file")
+            .default_active("close-file")
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("close-file", "Close File"))
             .state();
@@ -1335,7 +1371,7 @@ mod tests {
             prefer_character_input: false,
         };
 
-        assert_eq!(command_key_down_event_key(&event), "down");
+        assert_eq!(command_key_down_event_key(&event), Some("down"));
     }
 
     #[test]
@@ -1352,7 +1388,7 @@ mod tests {
             is_held: false,
             prefer_character_input: false,
         };
-        assert_eq!(command_key_down_event_key(&down), "alt-down");
+        assert_eq!(command_key_down_event_key(&down), Some("alt-down"));
 
         let up = KeyDownEvent {
             keystroke: Keystroke {
@@ -1366,7 +1402,37 @@ mod tests {
             is_held: false,
             prefer_character_input: false,
         };
-        assert_eq!(command_key_down_event_key(&up), "alt-up");
+        assert_eq!(command_key_down_event_key(&up), Some("alt-up"));
+    }
+
+    #[test]
+    fn keyboard_event_key_rejects_undeclared_modifier_combinations() {
+        for modifiers in [
+            Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            },
+            Modifiers {
+                platform: true,
+                ..Modifiers::none()
+            },
+            Modifiers {
+                control: true,
+                alt: true,
+                ..Modifiers::none()
+            },
+        ] {
+            let event = KeyDownEvent {
+                keystroke: Keystroke {
+                    modifiers,
+                    key: "down".to_string(),
+                    key_char: None,
+                },
+                is_held: false,
+                prefer_character_input: false,
+            };
+            assert_eq!(command_key_down_event_key(&event), None);
+        }
     }
 
     #[test]

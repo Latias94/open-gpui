@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-use open_gpui::{App, Entity, Pixels, Point, ScrollHandle, Task, Window};
+use open_gpui::{App, Context, Entity, Pixels, Point, ScrollHandle, Task, Window};
 use open_gpui_ui_core::Rect;
 
+use crate::collection_typeahead::CollectionTypeaheadSession;
 use crate::overlay::OverlayLayerBinding;
 
 pub(crate) const MENU_SUBMENU_OPEN_DELAY: Duration = Duration::from_millis(120);
@@ -72,6 +73,7 @@ pub(crate) struct MenuRuntime {
     pub(crate) branch_layers: MenuBranchLayers,
     pub(crate) focused_value: Option<String>,
     pub(crate) focused_path: Option<Vec<String>>,
+    pub(crate) typeahead: CollectionTypeaheadSession,
     pub(crate) open_path: Vec<String>,
     pub(crate) submenu_hovered_path: Option<Vec<String>>,
     pub(crate) submenu_hovering_surface: bool,
@@ -90,6 +92,7 @@ impl MenuRuntime {
             branch_layers: MenuBranchLayers::default(),
             focused_value,
             focused_path: None,
+            typeahead: CollectionTypeaheadSession::default(),
             open_path: Vec::new(),
             submenu_hovered_path: None,
             submenu_hovering_surface: false,
@@ -118,19 +121,40 @@ impl MenuRuntime {
     pub(crate) fn reset_closed_state(&mut self) {
         self.focused_value = None;
         self.focused_path = None;
+        self.typeahead.reset();
         self.open_path.clear();
         self.reset_submenu_state();
     }
 
-    pub(crate) fn focus_item(&mut self, focused_path: Vec<String>, focused_value: String) {
+    pub(crate) fn focus_item(
+        &mut self,
+        focused_path: Vec<String>,
+        focused_value: String,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.focused_path.as_deref() != Some(focused_path.as_slice())
+            || self.focused_value.as_deref() != Some(focused_value.as_str());
         self.focused_path = Some(focused_path);
         self.focused_value = Some(focused_value);
+        if changed {
+            cx.notify();
+        }
     }
 
-    pub(crate) fn apply_submenu_target(&mut self, target: &MenuSubmenuNavigation) {
+    pub(crate) fn apply_submenu_target(
+        &mut self,
+        target: &MenuSubmenuNavigation,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.open_path != target.open_path()
+            || self.focused_path.as_deref() != Some(target.focused_path())
+            || self.focused_value.as_deref() != Some(target.focused_value());
         self.open_path = target.open_path().to_vec();
         self.focused_path = Some(target.focused_path().to_vec());
         self.focused_value = Some(target.focused_value().to_owned());
+        if changed {
+            cx.notify();
+        }
     }
 
     pub(crate) fn commit_branch_closed(&mut self, path: &[String], focused_value: String) {
@@ -196,6 +220,7 @@ pub(crate) struct ContextMenuRuntime {
     pub(crate) seeded_focused_value: bool,
     pub(crate) focused_value: Option<String>,
     pub(crate) focused_path: Option<Vec<String>>,
+    pub(crate) typeahead: CollectionTypeaheadSession,
     pub(crate) open_path: Vec<String>,
     pub(crate) scroll_handle: ScrollHandle,
 }
@@ -214,6 +239,7 @@ impl ContextMenuRuntime {
             seeded_focused_value: false,
             focused_value,
             focused_path: None,
+            typeahead: CollectionTypeaheadSession::default(),
             open_path: Vec::new(),
             scroll_handle: ScrollHandle::new(),
         }
@@ -241,26 +267,48 @@ impl ContextMenuRuntime {
         self.seeded_focused_value = false;
         self.focused_value = None;
         self.focused_path = None;
+        self.typeahead.reset();
         self.open_path.clear();
     }
 
     pub(crate) fn prepare_open_at(&mut self, anchor_point: Point<Pixels>) {
         self.anchor_point = anchor_point;
         self.focused_path = None;
+        self.typeahead.reset();
         self.open_path.clear();
     }
 
-    pub(crate) fn focus_item(&mut self, focused_path: Vec<String>, focused_value: String) {
+    pub(crate) fn focus_item(
+        &mut self,
+        focused_path: Vec<String>,
+        focused_value: String,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.focused_path.as_deref() != Some(focused_path.as_slice())
+            || self.focused_value.as_deref() != Some(focused_value.as_str());
         self.seeded_focused_value = true;
         self.focused_value = Some(focused_value);
         self.focused_path = Some(focused_path);
+        if changed {
+            cx.notify();
+        }
     }
 
-    pub(crate) fn apply_submenu_target(&mut self, target: &MenuSubmenuNavigation) {
+    pub(crate) fn apply_submenu_target(
+        &mut self,
+        target: &MenuSubmenuNavigation,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.open_path != target.open_path()
+            || self.focused_path.as_deref() != Some(target.focused_path())
+            || self.focused_value.as_deref() != Some(target.focused_value());
         self.seeded_focused_value = true;
         self.open_path = target.open_path().to_vec();
         self.focused_path = Some(target.focused_path().to_vec());
         self.focused_value = Some(target.focused_value().to_owned());
+        if changed {
+            cx.notify();
+        }
     }
 
     pub(crate) fn commit_branch_closed(&mut self, path: &[String], focused_value: String) {
@@ -306,9 +354,9 @@ pub(crate) fn update_menu_hover_target(
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
+    runtime.update(cx, |runtime, cx| {
         if hovered {
-            runtime.focus_item(focused_path.clone(), focused_value.clone());
+            runtime.focus_item(focused_path.clone(), focused_value.clone(), cx);
             runtime.submenu_hovered_path = Some(focused_path.clone());
         } else if runtime.submenu_hovered_path.as_deref() == Some(focused_path.as_slice()) {
             runtime.submenu_hovered_path = None;

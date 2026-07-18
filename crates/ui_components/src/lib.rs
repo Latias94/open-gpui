@@ -18,6 +18,7 @@ pub mod checkbox;
 mod choice;
 mod choice_overlay_runtime;
 pub mod collapsible;
+mod collection_typeahead;
 pub mod color;
 pub mod combobox;
 pub mod command;

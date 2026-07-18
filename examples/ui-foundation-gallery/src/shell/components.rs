@@ -933,7 +933,7 @@ pub(crate) fn component_listbox_samples_section(
                             .selected(state.selected_value().map(str::to_owned));
 
                     if let Some(active) = state.active_value() {
-                        listbox = listbox.active(active);
+                        listbox = listbox.default_active(active);
                     }
 
                     for option in listbox_options.iter() {
@@ -1043,7 +1043,7 @@ pub(crate) fn component_select_samples_section(
                     select = select.selected(state.selected_value().map(str::to_owned));
 
                     if let Some(active) = state.active_value() {
-                        select = select.active(active);
+                        select = select.default_active(active);
                     }
 
                     select = match state.open_mode() {
@@ -1166,7 +1166,7 @@ pub(crate) fn component_combobox_samples_section(
                     combobox = combobox.selected(state.selected_value().map(str::to_owned));
 
                     if let Some(active) = state.active_value() {
-                        combobox = combobox.active(active);
+                        combobox = combobox.default_active(active);
                     }
 
                     combobox = match state.open_mode() {
@@ -1300,7 +1300,7 @@ pub(crate) fn component_command_samples_section(
                     };
 
                     if let Some(active) = state.active_value() {
-                        command = command.active(active);
+                        command = command.default_active(active);
                     }
 
                     if let Some(dialog) = state.dialog() {
@@ -1474,20 +1474,6 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
-    let typeahead = state.typeahead_query().unwrap_or("");
-    let typeahead_label = if typeahead.is_empty() {
-        "none"
-    } else {
-        typeahead
-    };
-    let first_typeahead_target = if typeahead.is_empty() {
-        "none"
-    } else {
-        state
-            .typeahead_target(typeahead)
-            .map(|option| option.value())
-            .unwrap_or("none")
-    };
 
     let disabled_count = state
         .options()
@@ -1503,10 +1489,6 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
         .text_color(rgb(0x5a6472))
         .child(format!("{:?} / {}", state.role(), state.size().as_str()))
         .child(format!("selected {} / active {}", selected, active))
-        .child(format!(
-            "typeahead '{}' / target {}",
-            typeahead_label, first_typeahead_target
-        ))
         .child(format!(
             "{} groups / {} options / {} disabled",
             state.groups().len(),
@@ -1560,7 +1542,6 @@ fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
 
     let active = state.active_value().unwrap_or("none");
     let query = state.query();
-    let typeahead = state.listbox().typeahead_query().unwrap_or("none");
 
     div()
         .flex()
@@ -1579,10 +1560,9 @@ fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
             query, selected, active
         ))
         .child(format!(
-            "visible {} of {} / typeahead '{}' / {:?}",
+            "visible {} of {} / {:?}",
             state.filtered_option_count(),
             state.total_option_count(),
-            typeahead,
             state.outside_press_policy()
         ))
 }

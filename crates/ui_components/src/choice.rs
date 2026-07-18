@@ -455,12 +455,28 @@ impl<T> ChoiceCollection<T> {
     }
 
     /// Resolves an APG-style navigation target from the active item.
+    #[cfg(test)]
     pub(crate) fn navigation_target(&self, key: &str) -> Option<&ChoiceItemProjection<T>> {
+        self.navigation_target_from_value(key, self.active_value())
+    }
+
+    /// Resolves navigation from a caller-owned stable active value.
+    pub(crate) fn navigation_target_from_value(
+        &self,
+        key: &str,
+        current_value: Option<&str>,
+    ) -> Option<&ChoiceItemProjection<T>> {
         if self.disabled {
             return None;
         }
 
-        let current = self.active_index()?;
+        let current = current_value
+            .and_then(|value| {
+                self.items
+                    .iter()
+                    .position(|item| item.value() == value && self.policy.item_addressable(item))
+            })
+            .or(self.active_index())?;
         let disabled = self.disabled_map();
         self.policy
             .navigation_target_index(key, current, &disabled)
@@ -473,7 +489,32 @@ impl<T> ChoiceCollection<T> {
             return None;
         }
 
-        typeahead_target_with_policy(self.items(), self.active_index(), query, self.policy)
+        typeahead_target_with_policy(self.items(), self.active_index(), query, true, self.policy)
+    }
+
+    /// Resolves a typeahead target from a caller-owned stable active value.
+    pub(crate) fn typeahead_target_from_value(
+        &self,
+        query: &str,
+        current_value: Option<&str>,
+        search_after_current: bool,
+    ) -> Option<&ChoiceItemProjection<T>> {
+        if self.disabled || !self.policy.typeahead() {
+            return None;
+        }
+
+        let current = current_value.and_then(|value| {
+            self.items
+                .iter()
+                .position(|item| item.value() == value && self.policy.item_addressable(item))
+        });
+        typeahead_target_with_policy(
+            self.items(),
+            current,
+            query,
+            search_after_current,
+            self.policy,
+        )
     }
 }
 
@@ -612,6 +653,7 @@ fn typeahead_target_with_policy<'a, T>(
     items: &'a [ChoiceItemProjection<T>],
     current: Option<usize>,
     query: &str,
+    search_after_current: bool,
     policy: ChoiceInteractionPolicy,
 ) -> Option<&'a ChoiceItemProjection<T>> {
     if !policy.typeahead() {
@@ -624,7 +666,13 @@ fn typeahead_target_with_policy<'a, T>(
     }
 
     let len = items.len();
-    let start = current.map_or(0, |index| (index + 1) % len);
+    let start = current.map_or(0, |index| {
+        if search_after_current {
+            (index + 1) % len
+        } else {
+            index
+        }
+    });
     (0..len)
         .map(|step| (start + step) % len)
         .filter_map(|index| items.get(index))
@@ -1098,5 +1146,42 @@ mod tests {
             Some("alpha")
         );
         assert!(wrapped.typeahead_target("missing").is_none());
+    }
+
+    #[test]
+    fn typeahead_uses_caller_owned_stable_anchor_and_scan_mode() {
+        let collection = ChoiceCollection::resolve_unique(
+            false,
+            vec![
+                ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),
+                ChoiceItemProjection::new(1, None, "alpine", "Alpine", false, ()),
+                ChoiceItemProjection::new(2, None, "amber", "Amber", false, ()),
+            ],
+            None,
+            Some("alpha"),
+            ChoiceInteractionPolicy::listbox(),
+        );
+
+        assert_eq!(
+            collection
+                .typeahead_target_from_value("a", Some("alpine"), true)
+                .map(ChoiceItemProjection::value),
+            Some("amber"),
+            "the event-time stable value must override render-time active state"
+        );
+        assert_eq!(
+            collection
+                .typeahead_target_from_value("al", Some("alpha"), false)
+                .map(ChoiceItemProjection::value),
+            Some("alpha"),
+            "multi-character refinement must include the current match"
+        );
+        assert_eq!(
+            collection
+                .typeahead_target_from_value("a", Some("missing"), true)
+                .map(ChoiceItemProjection::value),
+            Some("alpha"),
+            "a removed anchor must restart from a safe model-owned position"
+        );
     }
 }

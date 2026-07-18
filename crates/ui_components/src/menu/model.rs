@@ -744,9 +744,18 @@ impl MenuState {
 
     /// Resolves a focus target for an APG-style menu navigation key.
     pub fn navigation_target(&self, key: &str) -> Option<&MenuItemState> {
+        self.navigation_target_from_path(key, self.focused_path())
+    }
+
+    fn navigation_target_from_path(
+        &self,
+        key: &str,
+        current_path: Option<&[String]>,
+    ) -> Option<&MenuItemState> {
         let collection = self.choice_collection();
+        let current_path_key = current_path.map(super::menu_path_key);
         collection
-            .navigation_target(key)
+            .navigation_target_from_value(key, current_path_key.as_deref())
             .and_then(|target| self.visible_items.get(*target.item()))
     }
 
@@ -758,22 +767,48 @@ impl MenuState {
             .and_then(|target| self.visible_items.get(*target.item()))
     }
 
+    pub(crate) fn typeahead_target_from_path(
+        &self,
+        query: &str,
+        current_path: Option<&[String]>,
+        search_after_current: bool,
+    ) -> Option<&MenuItemState> {
+        let collection = self.choice_collection();
+        let current_path_key = current_path.map(super::menu_path_key);
+        collection
+            .typeahead_target_from_value(query, current_path_key.as_deref(), search_after_current)
+            .and_then(|target| self.visible_items.get(*target.item()))
+    }
+
     /// Resolves an activation payload for an APG-style activation key.
     pub fn activation_for_key(&self, key: &str) -> Option<MenuSelection> {
+        self.activation_for_key_from_path(key, self.focused_path())
+    }
+
+    fn activation_for_key_from_path(
+        &self,
+        key: &str,
+        current_path: Option<&[String]>,
+    ) -> Option<MenuSelection> {
         if !matches!(key, "enter" | "space") {
             return None;
         }
 
-        self.focused_index
-            .and_then(|index| self.visible_items.get(index))
+        self.focused_item_from_path(current_path)
             .and_then(MenuSelection::from_item)
     }
 
     /// Resolves submenu open/close targets for Right and Left keys.
     pub fn submenu_navigation_target(&self, key: &str) -> Option<MenuSubmenuNavigation> {
-        let current = self
-            .focused_index
-            .and_then(|index| self.visible_items.get(index))?;
+        self.submenu_navigation_target_from_path(key, self.focused_path())
+    }
+
+    fn submenu_navigation_target_from_path(
+        &self,
+        key: &str,
+        current_path: Option<&[String]>,
+    ) -> Option<MenuSubmenuNavigation> {
+        let current = self.focused_item_from_path(current_path)?;
 
         match key {
             "right" if current.has_submenu() => {
@@ -785,33 +820,41 @@ impl MenuState {
                     focused_item.value().to_owned(),
                 ))
             }
-            "left" => self.close_submenu_target(),
+            "left" => self.close_submenu_target_from_path(current_path),
             _ => None,
         }
     }
 
-    /// Resolves the renderer-neutral keyboard intent for a menu surface key.
-    pub(crate) fn keyboard_intent_for_key(&self, key: &str) -> Option<MenuKeyboardIntent> {
-        if let Some(target) = self.submenu_navigation_target(key) {
+    pub(crate) fn keyboard_intent_for_key_from_path(
+        &self,
+        key: &str,
+        current_path: Option<&[String]>,
+    ) -> Option<MenuKeyboardIntent> {
+        if let Some(target) = self.submenu_navigation_target_from_path(key, current_path) {
             return Some(MenuKeyboardIntent::NavigateSubmenu(target));
         }
 
-        if let Some(target) = self.navigation_target(key) {
+        if let Some(target) = self.navigation_target_from_path(key, current_path) {
             return Some(MenuKeyboardIntent::FocusItem {
                 focused_path: target.path().to_vec(),
                 focused_value: target.value().to_owned(),
             });
         }
 
-        self.activation_for_key(key)
+        self.activation_for_key_from_path(key, current_path)
             .map(MenuKeyboardIntent::Activate)
     }
 
     /// Resolves the next branch/focus target when closing an active submenu branch.
     pub fn close_submenu_target(&self) -> Option<MenuSubmenuNavigation> {
-        let current = self
-            .focused_index
-            .and_then(|index| self.visible_items.get(index))?;
+        self.close_submenu_target_from_path(self.focused_path())
+    }
+
+    fn close_submenu_target_from_path(
+        &self,
+        current_path: Option<&[String]>,
+    ) -> Option<MenuSubmenuNavigation> {
+        let current = self.focused_item_from_path(current_path)?;
 
         if current.depth() == 0 {
             return current.submenu_open().then(|| {
@@ -831,6 +874,15 @@ impl MenuState {
             parent_path,
             parent.value().to_owned(),
         ))
+    }
+
+    fn focused_item_from_path(&self, current_path: Option<&[String]>) -> Option<&MenuItemState> {
+        current_path
+            .and_then(|path| self.visible_items.iter().find(|item| item.path() == path))
+            .or_else(|| {
+                self.focused_index
+                    .and_then(|index| self.visible_items.get(index))
+            })
     }
 
     /// Returns whether the menu surface should use a local scroll viewport.

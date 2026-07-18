@@ -71,7 +71,7 @@ pub struct Select {
     open: Option<bool>,
     default_open: bool,
     selection: SingleChoiceSelectionControl,
-    active_value: Option<String>,
+    default_active_value: Option<String>,
     placement_side: OverlayPlacementSide,
     placement_alignment: OverlayPlacementAlignment,
     outside_press_policy: OutsidePressPolicy,
@@ -97,7 +97,7 @@ impl Select {
             open: None,
             default_open: false,
             selection: SingleChoiceSelectionControl::uncontrolled(None),
-            active_value: None,
+            default_active_value: None,
             placement_side: OverlayPlacementSide::Bottom,
             placement_alignment: OverlayPlacementAlignment::Start,
             outside_press_policy: OutsidePressPolicy::DismissAndConsume,
@@ -178,9 +178,9 @@ impl Select {
         self
     }
 
-    /// Applies active option value.
-    pub fn active(mut self, value: impl Into<String>) -> Self {
-        self.active_value = Some(value.into());
+    /// Applies the initial active option for adapter-owned popup state.
+    pub fn default_active(mut self, value: impl Into<String>) -> Self {
+        self.default_active_value = Some(value.into());
         self
     }
 
@@ -247,7 +247,7 @@ impl Select {
             label: self.label.to_string(),
             placeholder: self.placeholder.to_string(),
             selected_value: self.selection.value().clone(),
-            active_value: self.active_value.clone(),
+            active_value: self.default_active_value.clone(),
             groups: self.groups.iter().map(ListboxGroup::descriptor).collect(),
             options: self.options.iter().map(ListboxOption::descriptor).collect(),
             placement_side: self.placement_side,
@@ -272,7 +272,7 @@ impl RenderOnce for Select {
         let theme = ThemeResolver::current(window, cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| SelectRuntime {
             open: self.default_open,
-            active_value: self.active_value.clone(),
+            active_value: self.default_active_value.clone(),
             selected_value: self.selection.value().clone(),
             selection_ownership: ChoiceSelectionOwnership::from_controlled(
                 self.selection.is_controlled(),
@@ -293,11 +293,7 @@ impl RenderOnce for Select {
         }
 
         let selected_value = runtime_state.selected_value.as_deref();
-        let active_value = self
-            .active_value
-            .as_deref()
-            .or(runtime_state.active_value.as_deref())
-            .or(selected_value);
+        let active_value = runtime_state.active_value.as_deref().or(selected_value);
         let state = SelectState::resolve(SelectStateRequest {
             size: self.size,
             disabled: self.disabled,
@@ -316,7 +312,6 @@ impl RenderOnce for Select {
             focus_restore_intent: self.focus_restore_intent.clone(),
             tokens: self.tokens,
         });
-        let explicit_active_value = self.active_value.clone();
         let plan = SelectRenderPlan::from_state(self.id, &state);
         let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
         let ownership = if open_state.controlled() {
@@ -440,7 +435,10 @@ impl RenderOnce for Select {
                             let overlay_binding = overlay_binding.clone();
                             move |event: &KeyDownEvent, window, cx| {
                                 let key = event.keystroke.key.as_str();
-                                if matches!(key, "enter" | "space" | "down" | "up") {
+                                if !event.keystroke.modifiers.modified()
+                                    && !event.prefer_character_input
+                                    && matches!(key, "enter" | "space" | "down" | "up")
+                                {
                                     cx.stop_propagation();
                                     window.prevent_default();
                                     if !open {
@@ -505,7 +503,6 @@ impl RenderOnce for Select {
                             state.clone(),
                             window_overlay_runtime.clone(),
                             overlay_binding.clone(),
-                            explicit_active_value.clone(),
                             self.options,
                             self.groups,
                             runtime.clone(),
@@ -528,7 +525,6 @@ fn select_content_element(
     state: SelectState,
     window_overlay_runtime: WindowOverlayRuntime,
     overlay_binding: OverlayLayerBinding,
-    explicit_active_value: Option<String>,
     options: Vec<ListboxOption>,
     groups: Vec<ListboxGroup>,
     runtime: open_gpui::Entity<SelectRuntime>,
@@ -542,6 +538,7 @@ fn select_content_element(
     let listbox_window_overlay_runtime = window_overlay_runtime.clone();
     let listbox_overlay_binding = overlay_binding.clone();
     let selected_value = state.selected_value().map(str::to_owned);
+    let active_value = state.active_value().map(str::to_owned);
     let label = state.label().to_owned();
     let listbox = options
         .into_iter()
@@ -578,8 +575,8 @@ fn select_content_element(
         listbox
     };
     let mut listbox = listbox.selected(selected_value);
-    if let Some(active_value) = explicit_active_value {
-        listbox = listbox.active(active_value);
+    if let Some(active_value) = active_value {
+        listbox = listbox.default_active(active_value);
     }
 
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();

@@ -496,11 +496,21 @@ impl VirtualizedListState {
 
     /// Returns the target index for an APG-style navigation key.
     pub fn navigation_target(&self, key: &str) -> Option<usize> {
+        self.navigation_target_from_key(key, self.active_key())
+    }
+
+    pub(crate) fn navigation_target_from_key(
+        &self,
+        key: &str,
+        current_key: Option<&str>,
+    ) -> Option<usize> {
         if self.disabled {
             return None;
         }
 
-        let active_index = self.active_index?;
+        let active_index = current_key
+            .and_then(|key| self.selectable_index_for_key(key))
+            .or(self.active_index)?;
         let selectable_indices = self.selectable_indices();
         let active_position = selectable_indices
             .iter()
@@ -520,24 +530,41 @@ impl VirtualizedListState {
     /// The scan starts after the current active row and wraps once. Disabled,
     /// structural, and duplicate-key rows do not participate in typeahead.
     pub fn typeahead_target(&self, query: &str) -> Option<&VirtualizedListStateItem> {
-        let index = self.typeahead_target_index(query)?;
+        let index = self.typeahead_target_index(query, self.active_key(), true)?;
+        self.items.get(index)
+    }
+
+    pub(crate) fn typeahead_target_from_key(
+        &self,
+        query: &str,
+        current_key: Option<&str>,
+        search_after_current: bool,
+    ) -> Option<&VirtualizedListStateItem> {
+        let index = self.typeahead_target_index(query, current_key, search_after_current)?;
         self.items.get(index)
     }
 
     /// Returns activation payload for Enter or Space.
     pub fn activation_for_key(&self, key: &str) -> Option<VirtualizedListActivation> {
+        self.activation_for_key_from_state(key, self.active_key(), &self.selected_keys)
+    }
+
+    pub(crate) fn activation_for_key_from_state(
+        &self,
+        key: &str,
+        current_key: Option<&str>,
+        selected_keys: &BTreeSet<String>,
+    ) -> Option<VirtualizedListActivation> {
         if self.disabled {
             return None;
         }
 
         match (key, self.selection_mode) {
             ("enter", _) | ("space", VirtualizedListSelectionMode::Single) => {
-                let target = self.active_target()?;
+                let target = self.active_target_from_key(current_key)?;
                 Some(VirtualizedListActivation::from_target(
                     target,
-                    self.active_key
-                        .as_deref()
-                        .is_some_and(|key| self.selected_keys.contains(key)),
+                    current_key.is_some_and(|key| selected_keys.contains(key)),
                 ))
             }
             _ => None,
@@ -546,12 +573,21 @@ impl VirtualizedListState {
 
     /// Returns selection change payload for selection keyboard commands.
     pub fn selection_change_for_key(&self, key: &str) -> Option<VirtualizedListSelectionChange> {
+        self.selection_change_for_key_from_state(key, self.active_key(), &self.selected_keys)
+    }
+
+    pub(crate) fn selection_change_for_key_from_state(
+        &self,
+        key: &str,
+        current_key: Option<&str>,
+        selected_keys: &BTreeSet<String>,
+    ) -> Option<VirtualizedListSelectionChange> {
         if key != "space" {
             return None;
         }
 
-        let target = self.active_target()?;
-        self.selection_change_for_target(&target)
+        let target = self.active_target_from_key(current_key)?;
+        self.selection_change_for_target_from_selected(&target, selected_keys)
     }
 
     /// Returns replacement-style range selection for multi-select lists.
@@ -559,6 +595,15 @@ impl VirtualizedListState {
         &self,
         anchor_key: Option<&str>,
         target_key: &str,
+    ) -> Option<VirtualizedListSelectionChange> {
+        self.range_selection_change_from_selected(anchor_key, target_key, &self.selected_keys)
+    }
+
+    pub(crate) fn range_selection_change_from_selected(
+        &self,
+        anchor_key: Option<&str>,
+        target_key: &str,
+        current_selected_keys: &BTreeSet<String>,
     ) -> Option<VirtualizedListSelectionChange> {
         if self.disabled || self.selection_mode != VirtualizedListSelectionMode::Multiple {
             return None;
@@ -580,7 +625,7 @@ impl VirtualizedListState {
             })
             .collect::<Vec<_>>();
         let selected_key_set = selected_keys.iter().cloned().collect::<BTreeSet<_>>();
-        if selected_key_set == self.selected_keys {
+        if selected_key_set == *current_selected_keys {
             return None;
         }
 
@@ -656,7 +701,12 @@ impl VirtualizedListState {
         valid_index(index, self.item_count()).or_else(|| self.item_count().checked_sub(1))
     }
 
-    fn typeahead_target_index(&self, query: &str) -> Option<usize> {
+    fn typeahead_target_index(
+        &self,
+        query: &str,
+        current_key: Option<&str>,
+        search_after_current: bool,
+    ) -> Option<usize> {
         if self.disabled {
             return None;
         }
@@ -671,13 +721,20 @@ impl VirtualizedListState {
             return None;
         }
 
-        let active_position = self.active_index.and_then(|active_index| {
-            selectable_indices
-                .iter()
-                .position(|index| *index == active_index)
+        let active_position = current_key
+            .and_then(|key| self.selectable_index_for_key(key))
+            .and_then(|active_index| {
+                selectable_indices
+                    .iter()
+                    .position(|index| *index == active_index)
+            });
+        let start_position = active_position.map_or(0, |position| {
+            if search_after_current {
+                (position + 1) % selectable_indices.len()
+            } else {
+                position
+            }
         });
-        let start_position =
-            active_position.map_or(0, |position| (position + 1) % selectable_indices.len());
 
         (0..selectable_indices.len())
             .map(|step| selectable_indices[(start_position + step) % selectable_indices.len()])
@@ -700,8 +757,13 @@ impl VirtualizedListState {
         })
     }
 
-    fn active_target(&self) -> Option<VirtualizedListItemTarget> {
-        self.active_index
+    fn active_target_from_key(
+        &self,
+        current_key: Option<&str>,
+    ) -> Option<VirtualizedListItemTarget> {
+        current_key
+            .and_then(|key| self.selectable_index_for_key(key))
+            .or(self.active_index)
             .and_then(|index| self.target_at_index(index))
     }
 
@@ -767,11 +829,19 @@ impl VirtualizedListState {
         &self,
         target: &VirtualizedListItemTarget,
     ) -> Option<VirtualizedListSelectionChange> {
+        self.selection_change_for_target_from_selected(target, &self.selected_keys)
+    }
+
+    pub(super) fn selection_change_for_target_from_selected(
+        &self,
+        target: &VirtualizedListItemTarget,
+        current_selected_keys: &BTreeSet<String>,
+    ) -> Option<VirtualizedListSelectionChange> {
         if self.disabled || target.disabled() {
             return None;
         }
 
-        let mut selected_keys = self.selected_keys.clone();
+        let mut selected_keys = current_selected_keys.clone();
         match self.selection_mode {
             VirtualizedListSelectionMode::Single => {
                 if selected_keys.len() == 1 && selected_keys.contains(target.key()) {

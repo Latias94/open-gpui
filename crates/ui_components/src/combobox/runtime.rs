@@ -31,7 +31,7 @@ use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 use super::descriptor::{ComboboxGroup, ComboboxOption};
 use super::model::{
     ComboboxKeyboardAction, ComboboxSelection, ComboboxState, ComboboxStateRequest,
-    combobox_keyboard_action,
+    combobox_keyboard_action_from_value,
 };
 use super::render_plan::ComboboxRenderPlan;
 
@@ -57,6 +57,13 @@ struct ComboboxRuntime {
 }
 
 impl ComboboxRuntime {
+    fn set_active(&mut self, value: String, cx: &mut Context<Self>) {
+        if self.active_value.as_ref() != Some(&value) {
+            self.active_value = Some(value);
+            cx.notify();
+        }
+    }
+
     fn sync_selection(&mut self, selection: &SingleChoiceSelectionControl) -> bool {
         let selection_ownership =
             ChoiceSelectionOwnership::from_controlled(selection.is_controlled());
@@ -118,7 +125,7 @@ pub struct Combobox {
     default_open: bool,
     default_query: String,
     selection: SingleChoiceSelectionControl,
-    active_value: Option<String>,
+    default_active_value: Option<String>,
     empty_label: SharedString,
     placement_side: OverlayPlacementSide,
     placement_alignment: OverlayPlacementAlignment,
@@ -146,7 +153,7 @@ impl Combobox {
             default_open: false,
             default_query: String::new(),
             selection: SingleChoiceSelectionControl::uncontrolled(None),
-            active_value: None,
+            default_active_value: None,
             empty_label: "No results".into(),
             placement_side: OverlayPlacementSide::Bottom,
             placement_alignment: OverlayPlacementAlignment::Start,
@@ -235,9 +242,9 @@ impl Combobox {
         self
     }
 
-    /// Applies active option value.
-    pub fn active(mut self, value: impl Into<String>) -> Self {
-        self.active_value = Some(value.into());
+    /// Applies the initial active option for adapter-owned runtime state.
+    pub fn default_active(mut self, value: impl Into<String>) -> Self {
+        self.default_active_value = Some(value.into());
         self
     }
 
@@ -300,7 +307,7 @@ impl Combobox {
             placeholder: self.placeholder.to_string(),
             query: self.default_query.to_string(),
             selected_value: self.selection.value().clone(),
-            active_value: self.active_value.clone(),
+            active_value: self.default_active_value.clone(),
             empty_label: self.empty_label.to_string(),
             groups: self.groups.iter().map(ComboboxGroup::descriptor).collect(),
             options: self
@@ -330,7 +337,7 @@ impl RenderOnce for Combobox {
         let theme = ThemeResolver::current(window, cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ComboboxRuntime {
             open: self.default_open,
-            active_value: self.active_value.clone(),
+            active_value: self.default_active_value.clone(),
             selected_value: self.selection.value().clone(),
             selection_ownership: ChoiceSelectionOwnership::from_controlled(
                 self.selection.is_controlled(),
@@ -378,11 +385,7 @@ impl RenderOnce for Combobox {
         }
 
         let selected_value = runtime_state.selected_value.as_deref();
-        let active_value = self
-            .active_value
-            .as_deref()
-            .or(runtime_state.active_value.as_deref())
-            .or(selected_value);
+        let active_value = runtime_state.active_value.as_deref().or(selected_value);
         let state = ComboboxState::resolve(ComboboxStateRequest {
             size: self.size,
             disabled: self.disabled,
@@ -535,16 +538,29 @@ impl RenderOnce for Combobox {
                             let key_state = state.clone();
                             let window_overlay_runtime = window_overlay_runtime.clone();
                             let overlay_binding = overlay_binding.clone();
-                            move |event: &KeyDownEvent, window, cx| match combobox_keyboard_action(
-                                &key_state,
-                                event.keystroke.key.as_str(),
-                            ) {
-                                ComboboxKeyboardAction::Navigate(value) => {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-                                    if !key_state.open() {
-                                        let effect_runtime = runtime.clone();
-                                        window_overlay_runtime
+                            move |event: &KeyDownEvent, window, cx| {
+                                if event.prefer_character_input
+                                    || event.keystroke.modifiers.modified()
+                                    || window.default_prevented()
+                                {
+                                    return;
+                                }
+                                let current_value = runtime
+                                    .read(cx)
+                                    .active_value
+                                    .clone()
+                                    .or_else(|| key_state.active_value().map(str::to_owned));
+                                match combobox_keyboard_action_from_value(
+                                    &key_state,
+                                    event.keystroke.key.as_str(),
+                                    current_value.as_deref(),
+                                ) {
+                                    ComboboxKeyboardAction::Navigate(value) => {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        if !key_state.open() {
+                                            let effect_runtime = runtime.clone();
+                                            window_overlay_runtime
                                             .request_open_change_with_effect(
                                                 &overlay_binding,
                                                 true,
@@ -552,70 +568,77 @@ impl RenderOnce for Combobox {
                                                 window,
                                                 cx,
                                                 move |_, cx| {
-                                                    effect_runtime.update(cx, |runtime, _| {
-                                                        runtime.active_value = Some(value);
+                                                    effect_runtime.update(cx, |runtime, cx| {
+                                                        runtime.set_active(value, cx);
                                                     });
                                                 },
                                             )
                                             .expect(
                                                 "Combobox navigation should own its registration",
                                             );
-                                    } else {
-                                        runtime.update(cx, |runtime, _| {
-                                            runtime.active_value = Some(value);
-                                        });
+                                        } else {
+                                            runtime.update(cx, |runtime, cx| {
+                                                runtime.set_active(value, cx);
+                                            });
+                                        }
                                     }
-                                }
-                                ComboboxKeyboardAction::Select(selection) => {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-                                    let selected_value = selection.value().to_owned();
-                                    let selected_label = selection.label().to_owned();
-                                    let input_controller = input_controller.clone();
-                                    let on_select = on_select.clone();
-                                    let effect_runtime = runtime.clone();
-                                    request_registered_choice_selection(
-                                        &window_overlay_runtime,
-                                        &overlay_binding,
-                                        window,
-                                        cx,
-                                        move |window, cx| {
-                                            let input_user_edit_revision =
-                                                input_controller.read(cx).user_edit_revision();
-                                            let committed =
-                                                effect_runtime.update(cx, |runtime, _| {
-                                                    runtime.commit_selection(
-                                                        selected_value,
-                                                        input_user_edit_revision,
-                                                    )
-                                                });
-                                            if committed {
-                                                input_controller.update(cx, |controller, cx| {
-                                                    controller.set_value(selected_label, cx);
-                                                });
-                                            }
-                                            if let Some(on_select) = on_select.as_ref() {
-                                                on_select(selection, window, cx);
-                                            }
-                                        },
-                                    );
-                                }
-                                ComboboxKeyboardAction::Open => {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-                                    if !key_state.open() {
-                                        window_overlay_runtime
-                                            .request_open_change(
-                                                &overlay_binding,
-                                                true,
-                                                DismissReason::Trigger,
-                                                window,
-                                                cx,
-                                            )
-                                            .expect("Combobox open should own its registration");
+                                    ComboboxKeyboardAction::Select(selection) => {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        let selected_value = selection.value().to_owned();
+                                        let selected_label = selection.label().to_owned();
+                                        let input_controller = input_controller.clone();
+                                        let on_select = on_select.clone();
+                                        let effect_runtime = runtime.clone();
+                                        request_registered_choice_selection(
+                                            &window_overlay_runtime,
+                                            &overlay_binding,
+                                            window,
+                                            cx,
+                                            move |window, cx| {
+                                                let input_user_edit_revision =
+                                                    input_controller.read(cx).user_edit_revision();
+                                                let committed =
+                                                    effect_runtime.update(cx, |runtime, _| {
+                                                        runtime.commit_selection(
+                                                            selected_value,
+                                                            input_user_edit_revision,
+                                                        )
+                                                    });
+                                                if committed {
+                                                    input_controller.update(
+                                                        cx,
+                                                        |controller, cx| {
+                                                            controller
+                                                                .set_value(selected_label, cx);
+                                                        },
+                                                    );
+                                                }
+                                                if let Some(on_select) = on_select.as_ref() {
+                                                    on_select(selection, window, cx);
+                                                }
+                                            },
+                                        );
                                     }
+                                    ComboboxKeyboardAction::Open => {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        if !key_state.open() {
+                                            window_overlay_runtime
+                                                .request_open_change(
+                                                    &overlay_binding,
+                                                    true,
+                                                    DismissReason::Trigger,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .expect(
+                                                    "Combobox open should own its registration",
+                                                );
+                                        }
+                                    }
+                                    ComboboxKeyboardAction::Ignore => {}
                                 }
-                                ComboboxKeyboardAction::Ignore => {}
                             }
                         })
                         .child(
@@ -785,7 +808,7 @@ fn combobox_content_element(
     };
     let listbox = listbox.selected(selected_value);
     let listbox = if let Some(active_value) = active_value {
-        listbox.active(active_value)
+        listbox.projected_active(active_value)
     } else {
         listbox
     };

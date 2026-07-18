@@ -114,7 +114,6 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
         "Assignee",
         Some("bravo"),
         Some("missing"),
-        Some("ch"),
         "No assignees",
         [ListboxGroupDescriptor::new("team", "Team")
             .option(ListboxOptionDescriptor::option("charlie", "Charlie"))
@@ -129,7 +128,6 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
 
     assert_eq!(state.role(), Role::ListBox);
     assert_eq!(state.label(), "Assignee");
-    assert_eq!(state.typeahead_query(), Some("ch"));
     assert_eq!(state.groups().len(), 1);
     assert_eq!(state.groups()[0].role(), Role::Group);
     assert_eq!(state.groups()[0].option_count(), 3);
@@ -172,7 +170,6 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
         "Shared choices",
         Some("disabled"),
         Some("missing"),
-        Some("  AL "),
         "No choices",
         [ListboxGroupDescriptor::new("group", "Group")
             .option(ListboxOptionDescriptor::option("grouped", "Grouped"))],
@@ -209,7 +206,6 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
         .group(CommandGroup::new("group", "Group").item(CommandItem::new("grouped", "Grouped")))
         .state();
 
-    assert_eq!(listbox.typeahead_query(), Some("al"));
     assert_eq!(listbox.selected_value(), None);
     assert_eq!(listbox.active_value(), Some("alpha"));
     assert_eq!(
@@ -227,13 +223,11 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
     assert_eq!(combobox.filtered_option_count(), 1);
     assert_eq!(combobox.selected_value(), None);
     assert_eq!(combobox.active_value(), Some("alpha"));
-    assert_eq!(combobox.listbox().typeahead_query(), Some("al"));
 
     assert_eq!(command.query(), "  AL ");
     assert_eq!(command.filtered_item_count(), 1);
     assert_eq!(command.selected_value(), None);
     assert_eq!(command.active_value(), Some("alpha"));
-    assert_eq!(command.listbox().typeahead_query(), Some("al"));
 }
 
 #[test]
@@ -271,7 +265,6 @@ fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
         "Shared choices",
         Some("bravo"),
         Some("charlie"),
-        None,
         "No choices",
         [],
         [
@@ -285,7 +278,7 @@ fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
     let select = Select::new("shared-select-semantics", "Shared choices")
         .placeholder("Pick one")
         .selected(Some("bravo".to_owned()))
-        .active("charlie")
+        .default_active("charlie")
         .option(ListboxOption::new("alpha", "Alpha"))
         .option(ListboxOption::new("bravo", "Bravo"))
         .option(ListboxOption::new("disabled", "Disabled").disabled(true))
@@ -294,7 +287,7 @@ fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
     let combobox = Combobox::new("shared-combobox-semantics", "Shared choices")
         .placeholder("Search choices")
         .selected(Some("bravo".to_owned()))
-        .active("charlie")
+        .default_active("charlie")
         .option(ComboboxOption::new("alpha", "Alpha"))
         .option(ComboboxOption::new("bravo", "Bravo"))
         .option(ComboboxOption::new("disabled", "Disabled").disabled(true))
@@ -338,7 +331,6 @@ fn listbox_navigation_skips_separators_and_disabled_rows_across_groups() {
         "Grouped navigation",
         Some("group-beta"),
         Some("group-beta"),
-        None,
         "No choices",
         [ListboxGroupDescriptor::new("first", "First")
             .option(ListboxOptionDescriptor::option(
@@ -406,7 +398,6 @@ fn listbox_state_scrollable_content_tracks_flattened_option_count_threshold() {
         "Scrollable",
         None,
         None,
-        None,
         "No options",
         [],
         (0..7).map(|index| {
@@ -418,7 +409,6 @@ fn listbox_state_scrollable_content_tracks_flattened_option_count_threshold() {
         Size::Small,
         false,
         "Compact",
-        None,
         None,
         None,
         "No options",
@@ -1535,7 +1525,6 @@ fn combobox_state_filters_query_without_clearing_selection() {
     assert_eq!(state.active_value(), Some("react"));
     assert_eq!(state.listbox().role(), Role::ListBox);
     assert_eq!(state.listbox().selected_value(), None);
-    assert_eq!(state.listbox().typeahead_query(), Some("re"));
     assert_eq!(
         state.listbox().options()[0].role(),
         Some(Role::ListBoxOption)
@@ -2232,6 +2221,52 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
 }
 
 #[open_gpui::test]
+fn combobox_runtime_preserves_active_seed_and_uses_event_time_navigation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            Combobox::new("event-time-combobox", "Event-time combobox")
+                .default_open(true)
+                .default_active("alpha")
+                .option(ComboboxOption::new("alpha", "Alpha"))
+                .option(ComboboxOption::new("bravo", "Bravo"))
+                .option(ComboboxOption::new("charlie", "Charlie"))
+                .on_select(move |selection, _, _| {
+                    selections.borrow_mut().push(selection.value().to_owned());
+                })
+        }
+    }
+
+    cx.update(init_text_input);
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let input = cx
+        .debug_bounds("text-input:event-time-combobox-input:root")
+        .expect("Combobox editor should render");
+    cx.simulate_click(input.center(), Modifiers::none());
+
+    cx.simulate_event(key_down_event("down"));
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.simulate_event(key_down_event("down"));
+    cx.simulate_event(key_down_event("enter"));
+
+    assert_eq!(
+        selections.borrow().as_slice(),
+        ["charlie"],
+        "navigation and activation must resolve from runtime active state without a redraw"
+    );
+}
+
+#[open_gpui::test]
 fn controlled_combobox_escape_refusal_keeps_editor_and_runtime_authority(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -2820,13 +2855,13 @@ fn command_state_ranks_label_and_value_matches_before_keyword_only_matches() {
 fn command_state_tracks_active_and_selected_by_value_after_reorder() {
     let first = Command::new("first-command", "Commands")
         .selected(Some("target".to_owned()))
-        .active("target")
+        .default_active("target")
         .item(CommandItem::new("other", "Other"))
         .item(CommandItem::new("target", "Target"))
         .state();
     let reordered = Command::new("reordered-command", "Commands")
         .selected(Some("target".to_owned()))
-        .active("target")
+        .default_active("target")
         .item(CommandItem::new("target", "Target"))
         .item(CommandItem::new("other", "Other"))
         .state();
@@ -2846,7 +2881,7 @@ fn command_state_keeps_disabled_matches_visible_but_non_activatable() {
     let state = Command::new("disabled-command", "Commands")
         .default_query("delete")
         .selected(Some("delete-project".to_owned()))
-        .active("delete-project")
+        .default_active("delete-project")
         .item(CommandItem::new("delete-project", "Delete Project").disabled(true))
         .state();
 
@@ -2963,7 +2998,7 @@ fn command_index_snapshot_matches_equivalent_local_descriptors() {
     let local = Command::new("local-command", "Commands")
         .default_query("file")
         .selected(Some("new-file".to_owned()))
-        .active("new-file")
+        .default_active("new-file")
         .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
         .group(
             CommandGroup::new("file", "File")
@@ -2974,7 +3009,7 @@ fn command_index_snapshot_matches_equivalent_local_descriptors() {
     let indexed = Command::new("indexed-command", "Commands")
         .default_query("file")
         .selected(Some("new-file".to_owned()))
-        .active("new-file")
+        .default_active("new-file")
         .index_snapshot(snapshot)
         .state();
 
@@ -3155,12 +3190,12 @@ fn command_index_snapshot_revision_preserves_selection_by_value_after_reorder() 
         .item(CommandItemDescriptor::new("other", "Other"));
     let first_state = Command::new("snapshot-revision-command", "Commands")
         .selected(Some("target".to_owned()))
-        .active("target")
+        .default_active("target")
         .index_snapshot(first)
         .state();
     let second_state = Command::new("snapshot-revision-command", "Commands")
         .selected(Some("target".to_owned()))
-        .active("target")
+        .default_active("target")
         .index_snapshot(second)
         .state();
 
@@ -3355,7 +3390,7 @@ fn command_palette_projection_adapts_center_query_shortcuts_providers_and_diagno
     let state = Command::new("palette-projected-command", "Projected commands")
         .palette_projection(&projection)
         .selected(Some("provider.open.alpha".to_owned()))
-        .active("provider.open.alpha")
+        .default_active("provider.open.alpha")
         .state();
 
     assert_eq!(state.query(), "alpha");
@@ -3535,7 +3570,7 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
     let state = Command::new("controller-command", "Controller commands")
         .palette_projection(update.palette_projection())
         .selected(Some("provider.open.alpha".to_owned()))
-        .active("provider.open.alpha")
+        .default_active("provider.open.alpha")
         .state();
 
     assert_eq!(state.query(), "alpha");
@@ -4001,7 +4036,7 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
     let state = Command::new("async-controller-command", "Async commands")
         .palette_projection(ready.palette_projection())
         .selected(Some("provider.open.beta".to_owned()))
-        .active("provider.open.beta")
+        .default_active("provider.open.beta")
         .state();
 
     assert_eq!(state.query(), "beta");
@@ -4078,7 +4113,7 @@ fn command_provider_palette_projection_maps_refresh_projection_to_prefiltered_in
     let state = Command::new("provider-command", "Provider commands")
         .provider_refresh_projection(&projection)
         .selected(Some("provider.open.alpha".to_owned()))
-        .active("provider.open.alpha")
+        .default_active("provider.open.alpha")
         .state();
 
     assert_eq!(state.query(), "alpha");
@@ -4152,7 +4187,7 @@ fn command_behavior_snapshot_virtualizes_large_result_sets_with_stable_rows() {
             .with_size(Size::Small)
             .row_height(ui_px(28.0))
             .overscan(4)
-            .active("item-0104")
+            .default_active("item-0104")
             .selected(Some("item-0101".to_owned()))
             .items((0..10_000).map(|index| {
                 CommandItem::new(format!("item-{index:04}"), format!("Item {index:04}"))
@@ -4526,6 +4561,51 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
     assert!(
         cx.debug_bounds("command:runtime-command:content").is_some(),
         "inline command selection should not close non-dialog content"
+    );
+}
+
+#[open_gpui::test]
+fn command_runtime_preserves_active_seed_and_uses_event_time_navigation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            Command::new("event-time-command", "Event-time command")
+                .default_active("alpha")
+                .item(CommandItem::new("alpha", "Alpha"))
+                .item(CommandItem::new("bravo", "Bravo"))
+                .item(CommandItem::new("charlie", "Charlie"))
+                .on_select(move |selection, _, _| {
+                    selections.borrow_mut().push(selection.value().to_owned());
+                })
+        }
+    }
+
+    cx.update(init_text_input);
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let input = cx
+        .debug_bounds("text-input:event-time-command-input:root")
+        .expect("Command editor should render");
+    cx.simulate_click(input.center(), Modifiers::none());
+
+    cx.simulate_event(key_down_event("down"));
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.simulate_event(key_down_event("down"));
+    cx.simulate_event(key_down_event("enter"));
+
+    assert_eq!(
+        selections.borrow().as_slice(),
+        ["charlie"],
+        "navigation and activation must resolve from runtime active state without a redraw"
     );
 }
 

@@ -110,7 +110,7 @@ fn listbox_final_tree_and_click_action_follow_resolved_state(cx: &mut open_gpui:
             });
             let listbox = Listbox::new("a11y-listbox", "Choices")
                 .options(options.into_iter().flatten())
-                .active("alpha")
+                .default_active("alpha")
                 .disabled(self.disabled)
                 .on_select(move |selection, _, _| {
                     selections.borrow_mut().push(selection.value().to_owned());
