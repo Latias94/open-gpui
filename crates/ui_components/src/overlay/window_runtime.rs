@@ -22,6 +22,7 @@ use open_gpui_ui_core::{
 use super::focus_scope::{
     FocusScopeRegistration, FocusScopeRuntime, FocusScopeRuntimeError, FocusTargetRegistration,
 };
+use crate::theme::ThemeContext;
 
 mod api;
 mod focus;
@@ -628,6 +629,13 @@ pub struct OverlayLayerBinding {
     lease: OverlayLayerLease,
     trigger_focus: FocusHandle,
     surface_focus: FocusHandle,
+    opening_theme: Rc<RefCell<Option<OverlayOpeningTheme>>>,
+}
+
+#[derive(Clone)]
+struct OverlayOpeningTheme {
+    generation: OverlayLayerGeneration,
+    context: ThemeContext,
 }
 
 impl OverlayLayerBinding {
@@ -644,6 +652,36 @@ impl OverlayLayerBinding {
     /// Returns the runtime-owned surface focus handle.
     pub const fn surface_focus(&self) -> &FocusHandle {
         &self.surface_focus
+    }
+
+    pub(crate) fn opening_theme(&self) -> Option<ThemeContext> {
+        self.opening_theme
+            .borrow()
+            .as_ref()
+            .map(|capture| capture.context.clone())
+    }
+
+    fn sync_opening_theme(
+        &self,
+        generation: OverlayLayerGeneration,
+        presence: OverlayPresence,
+        current: impl FnOnce() -> ThemeContext,
+    ) {
+        let mut capture = self.opening_theme.borrow_mut();
+        match presence {
+            OverlayPresence::Open
+                if capture
+                    .as_ref()
+                    .is_none_or(|capture| capture.generation != generation) =>
+            {
+                *capture = Some(OverlayOpeningTheme {
+                    generation,
+                    context: current(),
+                });
+            }
+            OverlayPresence::Hidden => *capture = None,
+            OverlayPresence::Open | OverlayPresence::Closing => {}
+        }
     }
 }
 

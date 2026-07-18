@@ -3,9 +3,9 @@ mod support;
 use open_gpui::{ParentElement, div};
 use open_gpui_ui_components::theme::{
     THEME_JSON_SCHEMA_VERSION, ThemeDefinition, ThemeFileField, ThemeLoadError, ThemeRegistry,
-    ThemeRuntime, ThemeRuntimeError, ThemeValidationError, register_theme_json_file,
-    register_theme_json_str, theme_definition_from_json_file, theme_definition_from_json_str,
-    theme_json_schema,
+    ThemeSelectionError, ThemeValidationError, app_theme_context, install_theme_registry,
+    register_theme_json_file, register_theme_json_str, theme_definition_from_json_file,
+    theme_definition_from_json_str, theme_json_schema,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, Avatar, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
@@ -71,7 +71,10 @@ fn theme_resolver_keeps_token_intent_and_resolves_fallback_color() {
     assert_eq!(background.token(), tokens.accent);
     assert_eq!(background.state(), ColorState::Default);
     assert_eq!(background.fallback_rgb(), 0x1f7a66);
-    assert_eq!(u32::from(ThemeResolver::resolve(background)), 0x1f7a66ff);
+    assert_eq!(
+        u32::from(ThemeContext::light().resolve(background)),
+        0x1f7a66ff
+    );
     assert_eq!(
         u32::from(ThemeResolver::resolve_with(
             background,
@@ -115,7 +118,7 @@ fn theme_context_wraps_snapshot_for_render_resolution() {
 }
 
 #[open_gpui::test]
-fn theme_runtime_controls_app_resolver(cx: &mut open_gpui::TestAppContext) {
+fn installed_registry_controls_app_fallback(cx: &mut open_gpui::TestAppContext) {
     let mut registry = ThemeRegistry::with_builtins();
     registry
         .register(
@@ -128,12 +131,9 @@ fn theme_runtime_controls_app_resolver(cx: &mut open_gpui::TestAppContext) {
                 )),
         )
         .expect("brand theme should register");
-    cx.set_global(
-        ThemeRuntime::new(registry, "brand").expect("brand theme id should be available"),
-    );
-
     cx.update(|app| {
-        let resolver = ThemeResolver::current(app);
+        install_theme_registry(app, registry, "brand").expect("brand theme id should be available");
+        let resolver = app_theme_context(app);
         assert_eq!(resolver.mode(), ThemeMode::Dark);
         assert_eq!(resolver.revision(), 77);
         assert_eq!(
@@ -143,12 +143,16 @@ fn theme_runtime_controls_app_resolver(cx: &mut open_gpui::TestAppContext) {
     });
 }
 
-#[test]
-fn theme_runtime_rejects_unknown_active_theme() {
-    assert_eq!(
-        ThemeRuntime::new(ThemeRegistry::with_builtins(), "missing").unwrap_err(),
-        ThemeRuntimeError::UnknownThemeId("missing".to_owned())
-    );
+#[open_gpui::test]
+fn registry_install_rejects_unknown_app_selection_atomically(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|app| {
+        let before = app_theme_context(app);
+        assert_eq!(
+            install_theme_registry(app, ThemeRegistry::with_builtins(), "missing").unwrap_err(),
+            ThemeSelectionError::UnknownThemeId("missing".to_owned())
+        );
+        assert_eq!(app_theme_context(app), before);
+    });
 }
 
 #[test]

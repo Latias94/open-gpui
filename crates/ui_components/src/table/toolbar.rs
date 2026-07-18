@@ -224,8 +224,8 @@ impl Sizable for TableToolbar {
 }
 
 impl RenderOnce for TableToolbar {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let debug_id = state.id().to_owned();
         let primary_debug_id = debug_id.clone();

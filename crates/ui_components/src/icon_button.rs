@@ -319,13 +319,17 @@ impl RenderOnce for IconButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let disabled_reason = self.disabled_reason.clone();
         let accessibility_description = self.accessibility_description.clone();
-        let tooltip_text = self.tooltip_text.clone();
+        let custom_tooltip = self.tooltip.clone();
+        let tooltip_text = self
+            .tooltip_text
+            .clone()
+            .filter(|_| custom_tooltip.is_none());
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
-        let theme_context = ThemeResolver::current(cx);
+        let theme_context = ThemeResolver::current(window, cx);
         let theme = &theme_context;
         let border_color = theme.resolve(colors.border());
         let background = theme.resolve(colors.background());
@@ -351,9 +355,13 @@ impl RenderOnce for IconButton {
         }
         let activation_handle = self.activation_handle;
         let activation_state_key: ElementId = (self.id.clone(), "icon-button-activation").into();
+        let custom_tooltip_theme = theme_context.clone();
+        let text_tooltip_theme = theme_context.clone();
+        let debug_id = self.id.to_string();
 
         div()
             .id(self.id)
+            .debug_selector(move || format!("icon-button:{debug_id}:root"))
             .w(gpui_px_from_ui(metrics.size()))
             .h(gpui_px_from_ui(metrics.size()))
             .min_w(gpui_px_from_ui(metrics.size()))
@@ -389,11 +397,13 @@ impl RenderOnce for IconButton {
                 .with_programmatic_handle(activation_handle)
                 .bind(this)
             })
-            .when_some(self.tooltip, |this, tooltip| {
-                this.tooltip(move |window, cx| tooltip(window, cx))
+            .when_some(custom_tooltip, |this, tooltip| {
+                this.tooltip(Tooltip::scoped(custom_tooltip_theme, move |window, cx| {
+                    tooltip(window, cx)
+                }))
             })
             .when_some(tooltip_text, |this, tooltip| {
-                this.tooltip(Tooltip::text(tooltip))
+                this.tooltip(Tooltip::scoped(text_tooltip_theme, Tooltip::text(tooltip)))
             })
             .child(self.icon)
     }

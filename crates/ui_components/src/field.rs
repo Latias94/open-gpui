@@ -524,7 +524,7 @@ impl Sizable for Field {
 
 impl RenderOnce for Field {
     fn render(self, window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();

@@ -156,6 +156,8 @@ fn token_page_exposes_runtime_theme_mode_metadata() {
     assert!(samples[1].revision < samples[2].revision);
     assert_ne!(samples[0].surface_rgb, samples[1].surface_rgb);
     assert_ne!(samples[1].focus_ring_rgb, samples[2].focus_ring_rgb);
+    assert!(pages::tokens::SIGNALS.contains(&"ThemeScope::new(stable_id, context, child)"));
+    assert!(pages::tokens::SIGNALS.contains(&"deferred overlay opening ThemeContext"));
 }
 
 #[test]

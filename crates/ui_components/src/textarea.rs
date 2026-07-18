@@ -1007,7 +1007,7 @@ fn textarea_text_run_element_id(control_id: &ElementId, index: usize) -> Element
 
 impl RenderOnce for Textarea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let debug_id = self.id.to_string();
         let controller_id = format!("textarea:{debug_id}:controller");

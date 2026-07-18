@@ -1117,7 +1117,7 @@ impl RenderOnce for Listbox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let scope_id = self.id.clone();
         window.with_id(scope_id, |window| {
-            let theme = ThemeResolver::current(cx);
+            let theme = ThemeResolver::current(window, cx);
             let selection_controlled = self.selection.is_controlled();
             let runtime = window.use_keyed_state("runtime", cx, |_, _| ListboxRuntime {
                 active_value: self.active_value.clone(),

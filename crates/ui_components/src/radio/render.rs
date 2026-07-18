@@ -21,7 +21,7 @@ use crate::theme::ThemeResolver;
 
 impl RenderOnce for RadioGroup {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let RadioGroup {
             id,
             label,

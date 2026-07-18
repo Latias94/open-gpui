@@ -14,7 +14,7 @@ use crate::theme::ThemeResolver;
 
 impl RenderOnce for ToastStack {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let stack_metrics = state.metrics();
         let overflow_colors = ThemeResolver::feedback_colors(state.tokens, ToastIntent::Neutral);

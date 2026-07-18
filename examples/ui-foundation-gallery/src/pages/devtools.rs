@@ -31,7 +31,7 @@ use open_gpui_devtools::{
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
-use open_gpui_ui_components::ThemeSnapshot;
+use open_gpui_ui_components::theme::ThemeContext;
 use open_gpui_ui_core::{Role, SemanticDescriptor, ThemeTokens};
 
 use super::components::{
@@ -90,6 +90,7 @@ pub struct GalleryDevtoolsLiveFacts {
     shell_mode: String,
     density: String,
     control_size: String,
+    theme: ThemeContext,
 }
 
 impl GalleryDevtoolsLiveFacts {
@@ -100,6 +101,7 @@ impl GalleryDevtoolsLiveFacts {
         shell_mode: impl AsRef<str>,
         density: impl AsRef<str>,
         control_size: impl AsRef<str>,
+        theme: ThemeContext,
     ) -> Self {
         Self {
             active_page: sanitize_sensitive_text(active_page.as_ref()),
@@ -107,11 +109,19 @@ impl GalleryDevtoolsLiveFacts {
             shell_mode: sanitize_sensitive_text(shell_mode.as_ref()),
             density: sanitize_sensitive_text(density.as_ref()),
             control_size: sanitize_sensitive_text(control_size.as_ref()),
+            theme,
         }
     }
 
     fn default_devtools_page() -> Self {
-        Self::new("devtools", 1040.0, "desktop", "comfortable", "md")
+        Self::new(
+            "devtools",
+            1040.0,
+            "desktop",
+            "comfortable",
+            "md",
+            ThemeContext::light(),
+        )
     }
 }
 
@@ -376,7 +386,7 @@ fn devtools_gallery_provider_capture(
     refresh_index: u64,
     live_facts: &GalleryDevtoolsLiveFacts,
 ) -> DevtoolsCapture {
-    let collection = devtools_gallery_legacy_collection(refresh_index);
+    let collection = devtools_gallery_legacy_collection(refresh_index, &live_facts.theme);
     let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
     let gpui_capture = gpui::gpui_runtime_capture(&gallery_gpui_runtime_sample(refresh_index));
     let shell_target_id =
@@ -472,7 +482,10 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
     devtools_gallery_capture().snapshot_collection()
 }
 
-fn devtools_gallery_legacy_collection(refresh_index: u64) -> SnapshotCollection {
+fn devtools_gallery_legacy_collection(
+    refresh_index: u64,
+    theme: &ThemeContext,
+) -> SnapshotCollection {
     let mut registry = DevtoolsRegistry::default();
     let form_snapshot = if refresh_index % 2 == 0 {
         form_devtools_dogfood_snapshot()
@@ -553,9 +566,10 @@ fn devtools_gallery_legacy_collection(refresh_index: u64) -> SnapshotCollection 
             .expect("valid resource probe"),
         )
         .expect("unique resource probe");
+    let theme = theme.clone();
     registry
-        .register_snapshot_probe("theme", SnapshotKind::Theme, || {
-            Ok(ui_components::theme_probe_snapshot(ThemeSnapshot::light()))
+        .register_snapshot_probe("theme", SnapshotKind::Theme, move || {
+            Ok(ui_components::theme_probe_snapshot(theme.snapshot()))
         })
         .expect("unique theme probe");
 

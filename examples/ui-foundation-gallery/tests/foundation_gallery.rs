@@ -198,7 +198,8 @@ fn open_gallery_page_with_shell(
     page: GalleryPage,
 ) -> (Entity<GalleryShell>, &mut VisualTestContext) {
     cx.update(init_text_input);
-    let (shell, cx) = cx.add_window_view(|_, cx| GalleryShell::with_selected_page(page, cx));
+    let (shell, cx) =
+        cx.add_window_view(|window, cx| GalleryShell::with_selected_page(page, window, cx));
     set_short_gallery_viewport(cx);
     redraw(cx);
     (shell, cx)

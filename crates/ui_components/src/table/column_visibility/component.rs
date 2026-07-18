@@ -220,7 +220,7 @@ impl Sizable for TableColumnVisibility {
 
 impl RenderOnce for TableColumnVisibility {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let runtime_id = format!("{}-runtime", self.id);
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableColumnVisibilityRuntime {
             visibility: self.default_visibility.clone(),

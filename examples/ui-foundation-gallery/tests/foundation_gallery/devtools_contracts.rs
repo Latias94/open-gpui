@@ -412,13 +412,19 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
             "desktop",
             "comfortable",
             "md",
+            open_gpui_ui_components::theme::ThemeContext::light(),
         ),
     );
     let initial_generation = workbench.current_generation().expect("seeded frame");
 
     let frame = workbench
         .refresh_with_facts(pages::devtools::GalleryDevtoolsLiveFacts::new(
-            "devtools", 720.0, "mobile", "compact", "sm",
+            "devtools",
+            720.0,
+            "mobile",
+            "compact",
+            "sm",
+            open_gpui_ui_components::theme::ThemeContext::dark(),
         ))
         .expect("live facts refresh succeeds");
     let frame_json = serde_json::to_string(&frame).unwrap();
@@ -432,6 +438,17 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
     assert!(frame_json.contains("\"active_page\":\"devtools\""));
     assert!(frame_json.contains("\"viewport_width_px\":720.0"));
     assert!(frame_json.contains("gallery.shell-live-facts"));
+    let theme = frame
+        .capture
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "theme")
+        .expect("theme snapshot in refreshed DevTools frame");
+    assert_eq!(
+        theme.tree.nodes[0].payload.as_ref().unwrap()["mode"],
+        "dark",
+        "Gallery DevTools must project the supplied live ThemeContext"
+    );
 
     let sensitive_frame = workbench
         .refresh_with_facts(pages::devtools::GalleryDevtoolsLiveFacts::new(
@@ -440,6 +457,7 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
             "desktop",
             "comfortable",
             "md",
+            open_gpui_ui_components::theme::ThemeContext::light(),
         ))
         .expect("sensitive-looking live facts refresh succeeds");
     let sensitive_json = serde_json::to_string(&sensitive_frame).unwrap();
@@ -448,6 +466,37 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
     assert!(!sensitive_json.contains("/Users/alice"));
     assert!(!sensitive_json.contains("secret"));
     assert!(workbench.retained_frames() <= workbench.history_limit());
+}
+
+#[open_gpui::test]
+fn devtools_gallery_initial_frame_uses_the_window_effective_theme(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(init_text_input);
+    let (shell, cx) = cx.add_window_view(|window, cx| {
+        open_gpui_ui_components::theme::override_window_theme(
+            window,
+            cx,
+            open_gpui_ui_components::theme::ThemeContext::dark(),
+        );
+        GalleryShell::with_selected_page(GalleryPage::Devtools, window, cx)
+    });
+
+    let capture = cx.update(|_, app| {
+        let inspector = shell.read(app).devtools_inspector().read(app);
+        inspector.state().current_capture()
+    });
+    let theme = capture
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "theme")
+        .expect("theme snapshot in initial Gallery DevTools frame");
+
+    assert_eq!(
+        theme.tree.nodes[0].payload.as_ref().unwrap()["mode"],
+        "dark",
+        "the initial Gallery DevTools frame must project the window-effective theme"
+    );
 }
 
 fn assert_fixture_matches(name: &str, actual: &str) {

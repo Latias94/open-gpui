@@ -885,7 +885,7 @@ impl RenderOnce for AlertDialog {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_border = theme.resolve(colors.trigger_border());
         let trigger_background = theme.resolve(colors.trigger_background());
@@ -1035,11 +1035,12 @@ impl RenderOnce for AlertDialog {
             .when(open, |this| {
                 this.child(gpui_full_window_overlay_layer(
                     &overlay_adapter,
-                    alert_dialog_layer_element(
+                    &overlay_binding,
+                    |opening_theme| alert_dialog_layer_element(
                         content_id.clone(),
                         debug_id.clone(),
                         state.clone(),
-                        &theme,
+                        opening_theme,
                         viewport,
                         window_overlay_runtime.clone(),
                         overlay_binding.clone(),
@@ -1047,7 +1048,8 @@ impl RenderOnce for AlertDialog {
                         action_focus.clone(),
                         on_cancel.clone(),
                         on_action.clone(),
-                    ),
+                    )
+                    .into_any_element(),
                 ))
             })
     }

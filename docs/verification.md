@@ -872,19 +872,26 @@ The authority and privacy boundary is recorded in
 Theme portability is guarded by the theme focused gate:
 
 ```powershell
-cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test theme --test theme_scope --test public_surface --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-foundation-gallery -E 'test(tokens_gallery_renders_sibling_theme_scopes_and_a_deferred_overlay) | test(devtools_gallery_workbench_refreshes_from_shell_live_facts) | test(devtools_gallery_initial_frame_uses_the_window_effective_theme)' --no-fail-fast --locked
 cargo run -p xtask -- scan-theme-drift
 cargo run -p xtask -- scan-theme-schema
 ```
 
-That gate keeps runtime `ThemeContext` rendering, code-built `ThemeDefinition` registration, and
-the JSON loader facade working: `THEME_JSON_SCHEMA_VERSION`, `theme_json_schema`,
+That gate keeps app/window/subtree precedence, exact-window refresh, cached child invalidation,
+early-return and panic-safe scope restoration, complete-palette deferred opening-generation capture,
+delayed native tooltip capture, Gallery sibling scopes, window-effective initial DevTools capture,
+runtime `ThemeContext` rendering, code-built `ThemeDefinition` registration, and the JSON loader
+facade working: `THEME_JSON_SCHEMA_VERSION`, `theme_json_schema`,
 `theme_definition_from_json_str`, `theme_definition_from_json_file`, `register_theme_json_str`,
-and `register_theme_json_file`. Production component render paths should resolve color intents from
-`ThemeResolver::current(cx)` or an explicit snapshot; direct `ThemeResolver::resolve(...)` is a
-legacy default-light compatibility path and should not appear in `crates/ui_components/src`
-rendering code. Focus-ring painting follows the same rule: production render paths should use
-`focus_ring_shadow_with_theme(...)` with an explicit render-time theme context.
+and `register_theme_json_file`. Production component render paths resolve color intents from
+`ThemeResolver::current(window, cx)` or an explicit snapshot. The app-only resolver and direct
+default-light `ThemeResolver::resolve` path are absent. Direct GPUI tooltip attachment uses
+`Tooltip::scoped`; official components capture delayed builders automatically. Focus-ring painting
+follows the same rule: production render paths use `focus_ring_shadow_with_theme(...)` with an
+explicit render-time theme context.
+The ownership and detached-render boundary are recorded in
+[Theme scope resolution and deferred capture](knowledge/engineering/decisions/theme-scope-resolution.md).
 Loader failures are structured as `ThemeLoadError` / `ThemeFileField` for unsupported schema
 versions, missing identity fields, unsupported token or state names, duplicate token/state pairs,
 and invalid RGB values.
@@ -1213,7 +1220,7 @@ cargo nextest run -p open-gpui-ui-components --test choice --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test overlay --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test layout --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
-cargo nextest run -p open-gpui-ui-components theme a11y menu context_menu command --no-fail-fast
+cargo nextest run -p open-gpui-ui-components theme_scope theme a11y menu context_menu command --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery component --no-fail-fast
@@ -1221,6 +1228,7 @@ cargo run -p xtask -- scan-theme-drift
 cargo run -p xtask -- scan-theme-schema
 cargo run -p xtask -- scan-ui-contract
 rg -n "ThemeResolver::resolve\(" crates/ui_components/src -g "*.rs"; if ($LASTEXITCODE -eq 0) { exit 1 } elseif ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE } else { exit 0 }
+rg -n "ThemeRuntime|ThemeResolver::current\(cx\)" crates/ui_components/src examples/ui-foundation-gallery/src -g "*.rs"; if ($LASTEXITCODE -eq 0) { exit 1 } elseif ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE } else { exit 0 }
 git diff --check
 ```
 

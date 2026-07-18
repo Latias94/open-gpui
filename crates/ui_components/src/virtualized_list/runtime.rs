@@ -544,7 +544,7 @@ impl Sizable for VirtualizedList {
 
 impl RenderOnce for VirtualizedList {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let colors = ThemeResolver::virtualized_list_colors(self.tokens);
         let focus_shadow = focus_ring_shadow_with_theme(colors.focus_ring_shape(), &theme);
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
@@ -775,6 +775,7 @@ impl RenderOnce for VirtualizedList {
                             overlay,
                             colors,
                             estimated_row_height,
+                            window,
                             cx,
                         ))
                     }),

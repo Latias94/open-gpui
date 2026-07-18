@@ -1431,12 +1431,12 @@ fn resolve_text_input_character_lengths_when_active(
 }
 
 impl RenderOnce for TextInput {
-    fn render(self, _window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
         let state = self.state();
         let debug_id = self.id.to_string();
         let runtime_id = format!("text-input:{debug_id}:controller");
         let text_run_id: ElementId = (self.id.clone(), "text-run").into();
-        let text_run_node_id = _window.with_id(self.id.clone(), |window| {
+        let text_run_node_id = window.with_id(self.id.clone(), |window| {
             window.with_global_id(text_run_id.clone(), |global_id, _| {
                 global_id.accesskit_node_id()
             })
@@ -1444,12 +1444,12 @@ impl RenderOnce for TextInput {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let controller_is_external = self.controller.is_some();
         let controller = self.controller.clone().or_else(|| {
             self.on_change.as_ref().map(|_| {
                 let initial_value = self.value.clone();
-                _window.use_keyed_state(runtime_id, cx, |_, cx| {
+                window.use_keyed_state(runtime_id, cx, |_, cx| {
                     TextInputController::with_value(initial_value, cx)
                 })
             })
@@ -1490,7 +1490,7 @@ impl RenderOnce for TextInput {
                 (!placeholder.is_empty()).then_some(placeholder.as_ref()),
             );
         let character_lengths = resolve_text_input_character_lengths_when_active(
-            _window.is_accessibility_active(),
+            window.is_accessibility_active(),
             semantic_projection.exposes_text_runs(),
             || text_editing::accessible_character_lengths(semantic_projection.value()),
         )

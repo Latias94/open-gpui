@@ -1835,6 +1835,28 @@ impl Window {
         }
     }
 
+    /// Runs an element subtree while bypassing cached-view journal reuse when requested.
+    ///
+    /// Wrapper elements use this when an inherited render input changed independently of the
+    /// child view entity. The previous cache-refresh state is restored even if the subtree panics.
+    pub fn with_cached_view_refresh<R>(
+        &mut self,
+        refresh: bool,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if !refresh {
+            return f(self);
+        }
+
+        let previous = std::mem::replace(&mut self.refreshing, true);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        self.refreshing = previous;
+        match result {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
     /// Close this window.
     pub fn remove_window(&mut self, cx: &mut App) {
         if self.removed || self.removal_state == WindowRemovalState::Removing {

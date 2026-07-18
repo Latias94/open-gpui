@@ -188,7 +188,7 @@ impl Sizable for ContextMenu {
 
 impl RenderOnce for ContextMenu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
             ContextMenuRuntime::new(
                 self.default_open,
@@ -352,19 +352,23 @@ impl RenderOnce for ContextMenu {
                     &overlay_adapter,
                     &placement,
                     gpui_point_from_ui(state.anchor_point()),
-                    context_menu_surface(
-                        items,
-                        surface_id.clone(),
-                        debug_id.clone(),
-                        state.clone(),
-                        runtime.clone(),
-                        window_overlay_runtime.clone(),
-                        root_binding.clone(),
-                        branch_bindings.clone(),
-                        scroll_handle.clone(),
-                        on_select.clone(),
-                        &theme,
-                    ),
+                    &root_binding,
+                    |opening_theme| {
+                        context_menu_surface(
+                            items,
+                            surface_id.clone(),
+                            debug_id.clone(),
+                            state.clone(),
+                            runtime.clone(),
+                            window_overlay_runtime.clone(),
+                            root_binding.clone(),
+                            branch_bindings.clone(),
+                            scroll_handle.clone(),
+                            on_select.clone(),
+                            opening_theme,
+                        )
+                        .into_any_element()
+                    },
                 ))
             });
 

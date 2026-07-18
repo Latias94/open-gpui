@@ -158,7 +158,7 @@ pub use crate::text_input::{
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use crate::theme::{
     DARK_THEME_ID, DEFAULT_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID, ThemeColor,
-    ThemeContext, ThemeMode, ThemeResolver, ThemeSnapshot,
+    ThemeContext, ThemeMode, ThemeResolver, ThemeScope, ThemeSnapshot,
 };
 pub use crate::toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,

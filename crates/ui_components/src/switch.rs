@@ -304,7 +304,7 @@ impl RenderOnce for Switch {
         let next_checked = !state.checked();
         let label = self.label.clone();
         let debug_id = self.id.to_string();
-        let theme_context = ThemeResolver::current(cx);
+        let theme_context = ThemeResolver::current(window, cx);
         let theme = &theme_context;
         let border_color = theme.resolve(colors.border());
         let track_color = theme.resolve(colors.track());

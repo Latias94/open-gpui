@@ -13,6 +13,8 @@ pub const SIGNALS: &[&str] = &[
     "ThemeSnapshot::light()",
     "ThemeSnapshot::dark()",
     "ThemeSnapshot::high_contrast()",
+    "ThemeScope::new(stable_id, context, child)",
+    "deferred overlay opening ThemeContext",
     "semantic::SURFACE",
     "semantic::TEXT",
     "semantic::FOCUS_RING",

@@ -327,7 +327,7 @@ impl Sizable for Combobox {
 
 impl RenderOnce for Combobox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ComboboxRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
@@ -677,21 +677,25 @@ impl RenderOnce for Combobox {
                 this.child(gpui_relative_overlay_layer(
                     &overlay_adapter,
                     &placement,
-                    combobox_content_element(
-                        plan.content_id.clone(),
-                        plan.listbox_id.clone(),
-                        plan.debug_id.clone(),
-                        state.clone(),
-                        window_overlay_runtime.clone(),
-                        overlay_binding.clone(),
-                        self.options,
-                        self.groups,
-                        input_controller.clone(),
-                        runtime.clone(),
-                        self.on_select.clone(),
-                        self.tokens,
-                        &theme,
-                    ),
+                    &overlay_binding,
+                    |opening_theme| {
+                        combobox_content_element(
+                            plan.content_id.clone(),
+                            plan.listbox_id.clone(),
+                            plan.debug_id.clone(),
+                            state.clone(),
+                            window_overlay_runtime.clone(),
+                            overlay_binding.clone(),
+                            self.options,
+                            self.groups,
+                            input_controller.clone(),
+                            runtime.clone(),
+                            self.on_select.clone(),
+                            self.tokens,
+                            opening_theme,
+                        )
+                        .into_any_element()
+                    },
                 ))
             })
     }

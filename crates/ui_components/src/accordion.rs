@@ -536,7 +536,7 @@ impl RenderOnce for Accordion {
         );
         runtime.update(cx, |runtime, _| runtime.sync(&state));
 
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();

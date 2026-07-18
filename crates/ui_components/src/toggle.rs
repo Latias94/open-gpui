@@ -260,7 +260,7 @@ impl RenderOnce for Toggle {
         let activation_state_key: ElementId = (self.id.clone(), "toggle-activation").into();
         let activation_handle = self.activation_handle;
         let next_pressed = !state.pressed();
-        let theme_context = ThemeResolver::current(cx);
+        let theme_context = ThemeResolver::current(window, cx);
         let theme = &theme_context;
         let border_color = theme.resolve(colors.border());
         let background = theme.resolve(colors.background());

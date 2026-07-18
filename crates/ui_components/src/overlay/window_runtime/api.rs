@@ -82,6 +82,7 @@ impl WindowOverlayRuntime {
             lease,
             trigger_focus,
             surface_focus,
+            opening_theme: Rc::new(RefCell::new(None)),
         })
     }
 

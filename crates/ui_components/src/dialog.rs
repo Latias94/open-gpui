@@ -631,7 +631,7 @@ impl RenderOnce for Dialog {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_border = theme.resolve(colors.trigger_border());
         let trigger_background = theme.resolve(colors.trigger_background());
@@ -712,16 +712,20 @@ impl RenderOnce for Dialog {
             .when(open, |this| {
                 this.child(gpui_full_window_overlay_layer(
                     &overlay_adapter,
-                    dialog_layer_element(
-                        content,
-                        content_id.clone(),
-                        debug_id.clone(),
-                        state.clone(),
-                        &theme,
-                        viewport,
-                        window_overlay_runtime.clone(),
-                        overlay_binding.clone(),
-                    ),
+                    &overlay_binding,
+                    |opening_theme| {
+                        dialog_layer_element(
+                            content,
+                            content_id.clone(),
+                            debug_id.clone(),
+                            state.clone(),
+                            opening_theme,
+                            viewport,
+                            window_overlay_runtime.clone(),
+                            overlay_binding.clone(),
+                        )
+                        .into_any_element()
+                    },
                 ))
             })
     }

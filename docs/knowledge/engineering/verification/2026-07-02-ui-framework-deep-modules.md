@@ -30,9 +30,9 @@ related_plan: docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.
 
 # Evidence Scope
 
-- Theme rendering: production component render paths now use `ThemeResolver::current(cx)` /
-  `ThemeContext` or an explicit snapshot; direct `ThemeResolver::resolve(...)` is retained only as
-  a default-light compatibility path and has no hits under `crates/ui_components/src`.
+- Theme rendering: this checkpoint originally used the app-only resolver. U7 supersedes it with
+  `ThemeResolver::current(window, cx)`, window-owned state, `ThemeScope`, and opening-context
+  capture; the direct default-light `ThemeResolver::resolve` path is now deleted.
   Focus-ring painting now uses `focus_ring_shadow_with_theme` from production render paths; the
   default-light `focus_ring_shadow` compatibility helper is fenced to `focus.rs` by
   `production_render_paths_do_not_use_default_light_focus_ring_helper`.
@@ -54,7 +54,7 @@ related_plan: docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.
 
 - `cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast` initially
   exposed stale documentation vocabulary from the pre-refactor row-window and theme contract. The
-  public-surface doc sentinel now tracks `ThemeRuntime`, `RowWindow`, shared overlay placement,
+  public-surface doc sentinel now tracks `ThemeScope`, `RowWindow`, shared overlay placement,
   `CommandDescriptor`, and gallery story-contract helpers.
 - Code review found one real runtime-theme regression: production focus-ring rendering still used
   the default-light `focus_ring_shadow` helper. The fix migrated component and gallery render paths

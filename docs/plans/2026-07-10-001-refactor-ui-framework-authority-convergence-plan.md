@@ -701,6 +701,7 @@ Using the existing immutable color `ThemeSnapshot`, Open GPUI gains app fallback
 - a theme provider/environment element under `crates/ui_components/src/theme/`
 - `crates/gpui/src/window.rs` and the GPUI element/deferred frame modules only if the prototype gate proves a substrate gap
 - production `ThemeResolver::current` call sites
+- native GPUI tooltip attachment points owned by UI Components
 - `crates/ui_components/tests/theme_scope.rs`
 - gallery shell/token pages
 - theme-context migration documentation
@@ -714,6 +715,8 @@ Using the existing immutable color `ThemeSnapshot`, Open GPUI gains app fallback
 - A public generic GPUI context primitive additionally requires one current independent non-theme consumer with the same immutable stack behavior. U3 focus-scope association is a candidate only if its implementation cannot use existing focus hierarchy/window registration; direct and deferred ThemeContext reads are one consumer, not two.
 - Resolve precedence as `subtree override > window selection/override > app selection > built-in fallback`. App selection remains the global fallback for windows without an override.
 - Capture the effective opening snapshot for deferred overlays without leaking it to siblings, other windows, or later frames.
+- Treat delayed native tooltip builders as a detached render boundary: capture at the trigger's hover/open generation, scope both builder execution and its returned view, and require explicit theme capture for raw GPUI tooltip attachment.
+- Invalidate cached child-view journals when a stable subtree scope changes even if the child entity itself did not notify.
 - Invalidate only affected windows/scopes when selection changes and drop all window-local state on close.
 - Keep any generic primitive private until both proof conditions pass, immutable/clonable only, and unsuitable for arbitrary mutable services.
 - Update Gallery scoped-theme behavior and theme-context migration notes in this unit.
@@ -721,9 +724,12 @@ Using the existing immutable color `ThemeSnapshot`, Open GPUI gains app fallback
 **Test scenarios**
 
 - Two windows select independent themes while a third inherits app selection.
+- Inheriting windows observe app selection writes in the same transaction; selected and overridden windows read their immutable last-known snapshots without registry re-resolution or panic.
 - Nested providers choose the nearest value; siblings and post-scope rendering recover parent context.
 - Rerender, early return, and panic/unwind cannot leave scoped state imbalanced.
-- Deferred children and overlay surfaces retain the opening subtree's existing color snapshot.
+- Deferred children and overlay surfaces retain the opening subtree's complete color snapshot; a same-mode, same-revision palette canary proves that the full snapshot is frozen rather than reconstructed from metadata.
+- Button and IconButton delayed tooltip builders plus their returned views retain the trigger scope; close and reopen recaptures the then-current scope.
+- Gallery DevTools reports the window-effective theme in its initial frame when the shell is created under a window selection or override, before any manual refresh.
 - Unknown IDs or failed overrides leave effective context unchanged.
 - Window close clears local selection and provider state.
 

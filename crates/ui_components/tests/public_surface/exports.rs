@@ -146,6 +146,11 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .state()
             .semantic_projection();
     let root_theme_context = root::ThemeContext::light();
+    let _root_theme_scope = root::ThemeScope::new(
+        "root-theme-scope",
+        root_theme_context.clone(),
+        open_gpui::Empty,
+    );
 
     let prelude_button = prelude::Button::new("save", "Save");
     let prelude_accordion = prelude::Accordion::new("accordion")
@@ -253,6 +258,11 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .state()
             .semantic_projection();
     let prelude_theme_context = prelude::ThemeContext::dark();
+    let _prelude_theme_scope = prelude::ThemeScope::new(
+        "prelude-theme-scope",
+        prelude_theme_context.clone(),
+        open_gpui::Empty,
+    );
 
     let _ = (
         root_button.state(),
@@ -379,7 +389,7 @@ fn advanced_owner_surfaces_use_explicit_import_paths() {
 
     let _theme_schema = root::theme::theme_json_schema();
     let _theme_registry = root::theme::ThemeRegistry::with_builtins();
-    let _theme_runtime = root::theme::ThemeRuntime::with_builtins();
+    let _theme_selection_error = root::theme::ThemeSelectionError::UnknownThemeId(String::new());
 }
 
 #[test]
@@ -398,7 +408,18 @@ fn advanced_owner_surfaces_do_not_leak_from_default_exports() {
         "VirtualizerSnapshot",
         "GridViewport2D",
         "ThemeRegistry",
-        "ThemeRuntime",
+        "ThemeSelectionError",
+        "install_theme_registry",
+        "register_theme",
+        "registered_theme_context",
+        "app_theme_context",
+        "app_theme_id",
+        "theme_registry",
+        "set_app_theme",
+        "set_app_theme_mode",
+        "set_window_theme",
+        "override_window_theme",
+        "clear_window_theme",
         "theme_json_schema",
         "register_theme_json_str",
     ];
@@ -527,10 +548,30 @@ fn root_and_prelude_exports_match_contract_default_surface_intent() {
         "Tree",
         "VirtualizedList",
         "ThemeContext",
+        "ThemeScope",
     ] {
         assert!(
             prelude_exports.contains(required),
             "prelude/common should keep common component token `{required}`"
+        );
+    }
+}
+
+#[test]
+fn removed_app_only_theme_authority_is_absent_from_the_theme_facade() {
+    let theme_facade = include_str!("../../src/theme.rs");
+
+    for removed in [
+        "ThemeRuntime",
+        "ThemeRuntimeError",
+        "init_theme_runtime",
+        "try_theme_context",
+        "set_active_theme",
+        "set_active_theme_mode",
+    ] {
+        assert!(
+            !theme_facade.contains(removed),
+            "removed app-only theme authority `{removed}` must not be re-exported"
         );
     }
 }

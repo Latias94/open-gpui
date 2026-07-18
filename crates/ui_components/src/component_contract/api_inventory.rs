@@ -1944,6 +1944,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "new",
             "element",
             "text",
+            "scoped",
             "for_action",
             "for_action_in_context",
             "disabled",

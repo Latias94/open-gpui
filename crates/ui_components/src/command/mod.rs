@@ -578,7 +578,7 @@ impl Sizable for Command {
 
 impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
             CommandRuntime::new(
                 self.default_open,
@@ -850,26 +850,28 @@ impl RenderOnce for Command {
                     let overlay_adapter = gpui_overlay_state(dialog_state.overlay());
                     this.child(gpui_full_window_overlay_layer(
                         &overlay_adapter,
-                        command_dialog_layer_element(
-                    content_id,
-                    input_id,
-                    listbox_id,
-                    debug_id,
-                    state,
-                    scroll_handle,
-                    viewport_extent,
-                    scroll_offset,
-                    window_overlay_runtime.clone(),
-                    overlay_binding,
-                    viewport,
-                    input_controller,
-                    runtime,
-                    on_query_change,
-                    on_select,
-                    on_selected_values_change,
-                    tokens,
-                    &theme,
-                        ),
+                        &overlay_binding,
+                        |opening_theme| command_dialog_layer_element(
+                            content_id,
+                            input_id,
+                            listbox_id,
+                            debug_id,
+                            state,
+                            scroll_handle,
+                            viewport_extent,
+                            scroll_offset,
+                            window_overlay_runtime.clone(),
+                            overlay_binding.clone(),
+                            viewport,
+                            input_controller,
+                            runtime,
+                            on_query_change,
+                            on_select,
+                            on_selected_values_change,
+                            tokens,
+                            opening_theme,
+                        )
+                        .into_any_element(),
                     ))
                 },
             )

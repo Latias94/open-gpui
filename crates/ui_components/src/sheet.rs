@@ -771,7 +771,7 @@ impl Sizable for Sheet {
 
 impl RenderOnce for Sheet {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| SheetRuntime {
             open: self.default_open,
             close_focus: cx.focus_handle(),
@@ -977,17 +977,21 @@ impl RenderOnce for Sheet {
             .when(open, |this| {
                 this.child(gpui_full_window_overlay_layer(
                     &overlay_adapter,
-                    sheet_layer_element(
-                        content,
-                        content_id.clone(),
-                        debug_id.clone(),
-                        state.clone(),
-                        viewport,
-                        window_overlay_runtime.clone(),
-                        overlay_binding.clone(),
-                        close_focus.clone(),
-                        &theme,
-                    ),
+                    &overlay_binding,
+                    |opening_theme| {
+                        sheet_layer_element(
+                            content,
+                            content_id.clone(),
+                            debug_id.clone(),
+                            state.clone(),
+                            viewport,
+                            window_overlay_runtime.clone(),
+                            overlay_binding.clone(),
+                            close_focus.clone(),
+                            opening_theme,
+                        )
+                        .into_any_element()
+                    },
                 ))
             })
     }

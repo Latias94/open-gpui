@@ -49,7 +49,8 @@ The concrete component owns the GPUI adapter. This layer may use:
 - hitboxes, pointer events, keyboard actions, cursor behavior, and event propagation;
 - scroll handles, overlay anchoring, portals, and deferred rendering;
 - concrete color values produced from a render-time
-  `open_gpui_ui_components::ThemeContext`, usually via `ThemeResolver::current(cx)`.
+  `open_gpui_ui_components::ThemeContext`, usually via
+  `ThemeResolver::current(window, cx)`.
 
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
@@ -545,33 +546,54 @@ Component state should expose `ColorIntent` values rather than concrete GPUI col
 keeps the semantic `TokenKey`, `ColorState`, and fallback RGB visible for tests, documentation, and
 future adapter work.
 
-The GPUI adapter should resolve intents through `ThemeResolver::current(cx)` immediately before
-calling style APIs such as `bg`, `border_color`, and `text_color`. The returned `ThemeContext`
-owns the render-time snapshot, so adapters and their helper functions should pass it explicitly or
-pre-resolve concrete colors before storing style/event closures. `ThemeResolver::resolve` remains
-a legacy default-light compatibility path for tests or compatibility shims only; production render
-paths should not call it directly. Code with an immutable snapshot can call
-`ThemeResolver::resolve_with(intent, snapshot)` so `(TokenKey, ColorState)` lookups come from that
-snapshot before falling back to the intent RGB.
+The GPUI adapter resolves intents through `ThemeResolver::current(window, cx)` immediately before
+calling style APIs such as `bg`, `border_color`, and `text_color`. The resolver applies one
+precedence order: nearest `ThemeScope`, then window selection or override, then app selection, then
+the built-in light fallback. The returned `ThemeContext` owns the immutable render-time snapshot,
+so adapters and their helper functions pass it explicitly or pre-resolve concrete colors before
+storing style or event closures. Code with an explicit immutable snapshot can call
+`ThemeResolver::resolve_with(intent, snapshot)`. The former app-only resolver signature and the
+default-light `ThemeResolver::resolve` compatibility path are deleted.
 
-`ThemeSnapshot` is an immutable table view with a `ThemeMode`, `revision`, and color entries. The
-revision is the cache invalidation hook for future app-level theme providers. Components should not
-read global theme state directly; keep the resolved component state renderer-neutral and pass theme
-snapshots at the adapter edge.
+`ThemeScope::new` requires a stable `ElementId`, an owned `ThemeContext`, and one child subtree.
+Its window-local stack is restored by RAII after normal returns and unwinding. A changed scope
+context invalidates cached child-view journals even when the child entity itself did not notify.
+The implementation stays theme-specific: no independent non-theme immutable-stack consumer met
+the adoption gate for a public generic GPUI inherited-context API.
+The ownership and prototype evidence are recorded in
+[Theme scope resolution and deferred capture](../knowledge/engineering/decisions/theme-scope-resolution.md).
+
+Official overlay bindings capture the effective context when a lifecycle generation enters Open.
+Trigger styling continues to use the current context, while every surface color and deferred child
+uses that generation's opening context until Hidden; close and reopen starts a new capture.
+Delayed native tooltip builders are another detached render boundary. Button, IconButton, Menu,
+Sidebar, and Toolbar capture automatically. A caller attaching a UI Components tooltip builder
+directly through GPUI interactivity must wrap it with `Tooltip::scoped(context, builder)` so both
+builder execution and the returned view retain the same opening context.
+
+`ThemeSnapshot` is an immutable table view with a `ThemeMode`, `revision`, and color entries.
+Components do not read registry globals directly; resolved component state stays renderer-neutral,
+and the GPUI adapter consumes an owned context at the render edge. U8 replaces this color-only
+payload with complete Theme v1 scales without changing U7's precedence or scope channel.
 
 `ThemeColor` entries pair semantic tokens with `ColorState` values.
 
-`ThemeRegistry` is the app-level owner for built-in and user-loaded theme snapshots. The registry
-preloads light, dark, and high-contrast entries, validates `ThemeDefinition` identity fields,
-replaces entries by stable id, and stores owned color tables behind `ThemeRegistryEntry`.
+`ThemeRegistry` owns built-in and user-loaded definitions. Private app theme state owns the
+installed registry plus app fallback selection; `Window::use_window_state` owns each window's
+selection, explicit override, scope stack, and app-change observer. Public mutation APIs are
+`install_theme_registry`, `register_theme`, `set_app_theme`, `set_app_theme_mode`, `set_window_theme`,
+`override_window_theme`, and `clear_window_theme`. Unknown IDs are rejected before mutation, and
+equal selections do not update window state or refresh unaffected windows. A registry replacement
+that omits a window-selected id retains that window's last-known immutable context until the id is
+registered again or the caller explicitly clears the selection. The registry preloads
+light, dark, and high-contrast entries, validates `ThemeDefinition` identity fields, replaces
+entries by stable id, and stores owned color tables behind `ThemeRegistryEntry`.
 `ThemeRegistrationDiagnostics`
 records which built-in mode supplied fallback colors and how many entries were filled from that
 fallback. Missing optional token/state colors are completed from a built-in snapshot; missing id,
-label, mode, or revision fail validation with `ThemeValidationError`. `ThemeRuntime` is the GPUI
-app-global owner for the active theme id plus registry, and render code consumes cloned
-`ThemeContext` values from that runtime. Consumers can still choose an entry, take its immutable
-`ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with` when they need an explicit
-non-runtime lookup.
+label, mode, or revision fail validation with `ThemeValidationError`. Consumers can still resolve
+a registered definition to an owned `ThemeContext`, take its immutable `ThemeSnapshot`, and pass
+that snapshot to `ThemeResolver::resolve_with` for an explicit non-runtime lookup.
 
 Portable theme files are JSON and versioned by `THEME_JSON_SCHEMA_VERSION`. The public loader
 surface is the explicit theme-owner API under `open_gpui_ui_components::theme`:
@@ -1156,8 +1178,11 @@ descriptor projection are now the active
 architecture boundary. Broad remaining-1k-line component splitting and `open-gpui-ui-headless`
 extraction are not part of that slice. The runtime theme table now covers semantic component
 colors for light, dark, high-contrast, registry-loaded snapshots, and JSON-loaded
-`ThemeDefinition` values; UIs should load or construct definitions, register them, install or
-select a `ThemeRuntime`, and let component adapters resolve colors from `ThemeResolver::current(cx)`.
+`ThemeDefinition` values; UIs should load or construct definitions, install the app registry,
+select app or window fallback authority explicitly, and let component adapters resolve colors from
+`ThemeResolver::current(window, cx)`. Subtree overrides use `ThemeScope`, while official deferred
+overlays and delayed tooltip builders freeze the opening context rather than rereading ambient app
+state later.
 Single-line editable text input now uses GPUI's `EntityInputHandler`/
 `ElementInputHandler` path through `TextInputController`. Applications can either supply an
 adapter-owned controller directly or use the standard controlled shape

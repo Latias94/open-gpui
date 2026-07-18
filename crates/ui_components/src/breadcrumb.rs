@@ -482,7 +482,7 @@ impl Sizable for Breadcrumb {
 
 impl RenderOnce for Breadcrumb {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();

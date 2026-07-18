@@ -9,8 +9,10 @@ use open_gpui_ui_core::{
     OverlayLayerPolicy, OverlayLayerState, OverlayPresence,
 };
 
-use super::OverlayResolvedState;
+use crate::theme::{ThemeContext, ThemeScope};
+
 use super::placement::GpuiOverlayPlacement;
+use super::{OverlayLayerBinding, OverlayResolvedState};
 
 /// Default margin used when snapping an anchored overlay inside the window.
 pub const DEFAULT_OVERLAY_SAFE_MARGIN: Pixels = px(8.0);
@@ -196,24 +198,42 @@ pub fn gpui_overlay_state(overlay: &OverlayResolvedState) -> GpuiOverlayState {
     )
 }
 
+fn themed_deferred_overlay_layer(
+    adapter: &GpuiOverlayState,
+    binding: &OverlayLayerBinding,
+    build_layer: impl FnOnce(&ThemeContext) -> AnyElement,
+) -> AnyElement {
+    let opening_theme = binding
+        .opening_theme()
+        .expect("an open component overlay must capture its opening theme");
+    deferred(ThemeScope::new(
+        format!("overlay-theme:{}", binding.lease().layer_id().as_str()),
+        opening_theme.clone(),
+        build_layer(&opening_theme),
+    ))
+    .priority(adapter.deferred_priority())
+    .into_any_element()
+}
+
 /// Builds a deferred GPUI anchored overlay without forcing a window position.
 pub(crate) fn gpui_relative_overlay_layer(
     adapter: &GpuiOverlayState,
     placement: &GpuiOverlayPlacement,
-    child: impl IntoElement,
+    binding: &OverlayLayerBinding,
+    build_child: impl FnOnce(&ThemeContext) -> AnyElement,
 ) -> AnyElement {
-    let mut layer = anchored()
-        .anchor(placement.anchor())
-        .offset(placement.offset())
-        .snap_to_window_with_margin(placement.snap_edges());
-    if let Some(position) = placement.position() {
-        layer = layer
-            .position(position)
-            .position_mode(AnchoredPositionMode::Local);
-    }
-    deferred(layer.child(child))
-        .priority(adapter.deferred_priority())
-        .into_any_element()
+    themed_deferred_overlay_layer(adapter, binding, |opening_theme| {
+        let mut layer = anchored()
+            .anchor(placement.anchor())
+            .offset(placement.offset())
+            .snap_to_window_with_margin(placement.snap_edges());
+        if let Some(position) = placement.position() {
+            layer = layer
+                .position(position)
+                .position_mode(AnchoredPositionMode::Local);
+        }
+        layer.child(build_child(opening_theme)).into_any_element()
+    })
 }
 
 /// Builds a deferred GPUI anchored overlay at the resolved window position.
@@ -221,33 +241,33 @@ pub(crate) fn gpui_positioned_overlay_layer(
     adapter: &GpuiOverlayState,
     placement: &GpuiOverlayPlacement,
     fallback_position: Point<Pixels>,
-    child: impl IntoElement,
+    binding: &OverlayLayerBinding,
+    build_child: impl FnOnce(&ThemeContext) -> AnyElement,
 ) -> AnyElement {
-    deferred(
+    themed_deferred_overlay_layer(adapter, binding, |opening_theme| {
         anchored()
             .position(placement.position().unwrap_or(fallback_position))
             .anchor(placement.anchor())
             .offset(placement.offset())
             .snap_to_window_with_margin(placement.snap_edges())
-            .child(child),
-    )
-    .priority(adapter.deferred_priority())
-    .into_any_element()
+            .child(build_child(opening_theme))
+            .into_any_element()
+    })
 }
 
 /// Builds a deferred GPUI full-window overlay layer.
 pub(crate) fn gpui_full_window_overlay_layer(
     adapter: &GpuiOverlayState,
-    child: impl IntoElement,
+    binding: &OverlayLayerBinding,
+    build_child: impl FnOnce(&ThemeContext) -> AnyElement,
 ) -> AnyElement {
-    deferred(
+    themed_deferred_overlay_layer(adapter, binding, |opening_theme| {
         anchored()
             .position(point(px(0.0), px(0.0)))
             .snap_to_window()
-            .child(child),
-    )
-    .priority(adapter.deferred_priority())
-    .into_any_element()
+            .child(build_child(opening_theme))
+            .into_any_element()
+    })
 }
 
 /// Returns the default GPUI deferred priority for an overlay kind.

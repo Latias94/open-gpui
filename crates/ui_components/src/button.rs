@@ -383,13 +383,17 @@ impl RenderOnce for Button {
         let icon = self.icon.clone();
         let disabled_reason = self.disabled_reason.clone();
         let accessibility_description = self.accessibility_description.clone();
-        let tooltip_text = self.tooltip_text.clone();
+        let custom_tooltip = self.tooltip.clone();
+        let tooltip_text = self
+            .tooltip_text
+            .clone()
+            .filter(|_| custom_tooltip.is_none());
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
-        let theme_context = ThemeResolver::current(cx);
+        let theme_context = ThemeResolver::current(window, cx);
         let theme = &theme_context;
         let border_color = theme.resolve(colors.border());
         let background = theme.resolve(colors.background());
@@ -416,6 +420,8 @@ impl RenderOnce for Button {
         let debug_id = self.id.to_string();
         let activation_state_key: ElementId = (self.id.clone(), "button-activation").into();
         let activation_handle = self.activation_handle;
+        let custom_tooltip_theme = theme_context.clone();
+        let text_tooltip_theme = theme_context.clone();
 
         div()
             .id(self.id)
@@ -455,11 +461,13 @@ impl RenderOnce for Button {
                 .with_programmatic_handle(activation_handle)
                 .bind(this)
             })
-            .when_some(self.tooltip, |this, tooltip| {
-                this.tooltip(move |window, cx| tooltip(window, cx))
+            .when_some(custom_tooltip, |this, tooltip| {
+                this.tooltip(Tooltip::scoped(custom_tooltip_theme, move |window, cx| {
+                    tooltip(window, cx)
+                }))
             })
             .when_some(tooltip_text, |this, tooltip| {
-                this.tooltip(Tooltip::text(tooltip))
+                this.tooltip(Tooltip::scoped(text_tooltip_theme, Tooltip::text(tooltip)))
             })
             .when_some(icon, |this, icon| this.child(icon))
             .child(label)

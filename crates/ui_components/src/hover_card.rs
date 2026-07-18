@@ -699,7 +699,7 @@ impl Sizable for HoverCard {
 
 impl RenderOnce for HoverCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| HoverCardRuntime {
             open: self.default_open,
             focus_open: false,
@@ -947,21 +947,26 @@ impl RenderOnce for HoverCard {
                 this.child(gpui_relative_overlay_layer(
                     &overlay_adapter,
                     &placement,
-                    window_overlay_runtime.surface(
-                        &overlay_binding,
-                        OverlayInsideRegionId::new("surface"),
-                        format!("hover-card:{debug_id}:surface-runtime"),
-                        hover_card_content_element(
-                            content,
-                            content_id.clone(),
-                            state.clone(),
-                            runtime.clone(),
-                            window_overlay_runtime.clone(),
-                            overlay_binding.clone(),
-                            debug_id.clone(),
-                            &theme,
-                        ),
-                    ),
+                    &overlay_binding,
+                    |opening_theme| {
+                        window_overlay_runtime
+                            .surface(
+                                &overlay_binding,
+                                OverlayInsideRegionId::new("surface"),
+                                format!("hover-card:{debug_id}:surface-runtime"),
+                                hover_card_content_element(
+                                    content,
+                                    content_id.clone(),
+                                    state.clone(),
+                                    runtime.clone(),
+                                    window_overlay_runtime.clone(),
+                                    overlay_binding.clone(),
+                                    debug_id.clone(),
+                                    opening_theme,
+                                ),
+                            )
+                            .into_any_element()
+                    },
                 ))
             })
     }

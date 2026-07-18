@@ -5,6 +5,8 @@ mod model;
 mod render_plan;
 pub(crate) mod runtime;
 mod style;
+#[cfg(test)]
+mod theme_tests;
 
 use crate::geometry::gpui_px_from_ui;
 use crate::geometry::{ui_point_from_gpui, ui_size_from_gpui_size};
@@ -207,6 +209,9 @@ pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
         .map(|path| menu_path_key(path))
         .collect::<HashSet<_>>();
     let mut retained = runtime.read(cx).branch_layers().bindings().clone();
+    let branch_opening_theme = root_binding
+        .opening_theme()
+        .unwrap_or_else(|| ThemeResolver::current(window, cx));
 
     let released_keys = retained
         .iter()
@@ -247,8 +252,9 @@ pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
     closing.sort_by_key(|branch| std::cmp::Reverse(branch.path.len()));
     for branch in closing {
         window_overlay_runtime
-            .rebind_layer(
-                &branch.binding,
+            .bind_component_layer_with_theme(
+                runtime,
+                Some(&branch.binding),
                 menu_branch_registration(
                     layer_prefix,
                     debug_id,
@@ -258,6 +264,7 @@ pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
                     root_binding,
                     runtime,
                 ),
+                branch_opening_theme.clone(),
                 window,
                 cx,
             )
@@ -330,7 +337,7 @@ pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
             continue;
         }
         let binding = window_overlay_runtime
-            .bind_component_layer(
+            .bind_component_layer_with_theme(
                 runtime,
                 existing,
                 menu_branch_registration(
@@ -342,6 +349,7 @@ pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
                     root_binding,
                     runtime,
                 ),
+                branch_opening_theme.clone(),
                 window,
                 cx,
             )
@@ -364,7 +372,7 @@ pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
         let key = menu_path_key(path);
         let existing = retained.get(&key).map(|branch| &branch.binding);
         let binding = window_overlay_runtime
-            .bind_component_layer(
+            .bind_component_layer_with_theme(
                 runtime,
                 existing,
                 menu_branch_registration(
@@ -376,6 +384,7 @@ pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
                     root_binding,
                     runtime,
                 ),
+                branch_opening_theme.clone(),
                 window,
                 cx,
             )
@@ -661,7 +670,7 @@ fn menu_item_element(
                 })
                 .when(has_submenu, |this| this.child(div().ml_2().child(">")))
                 .when_some(item_tooltip, |this, tooltip| {
-                    this.tooltip(Tooltip::text(tooltip))
+                    this.tooltip(Tooltip::scoped(theme.clone(), Tooltip::text(tooltip)))
                 })
                 .into_any_element();
 
@@ -1099,7 +1108,7 @@ impl Sizable for Menu {
 
 impl RenderOnce for Menu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let descriptors: Vec<MenuItemDescriptor> =
             self.items.iter().map(MenuItem::descriptor).collect();
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
@@ -1210,6 +1219,7 @@ impl RenderOnce for Menu {
         let trigger_foreground = theme.resolve(colors.trigger_foreground());
         let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_tooltip_theme = theme.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
@@ -1315,7 +1325,10 @@ impl RenderOnce for Menu {
                                 })
                         })
                         .when_some(trigger_tooltip, |this, tooltip| {
-                            this.tooltip(move |window, cx| tooltip(window, cx))
+                            this.tooltip(Tooltip::scoped(
+                                trigger_tooltip_theme,
+                                move |window, cx| tooltip(window, cx),
+                            ))
                         })
                         .child(trigger_content),
                 ),
@@ -1325,22 +1338,26 @@ impl RenderOnce for Menu {
                 this.child(gpui_relative_overlay_layer(
                     &overlay_adapter,
                     &placement,
-                    menu_content_element(
-                        items,
-                        content_id.clone(),
-                        debug_id.clone(),
-                        state.clone(),
-                        runtime.clone(),
-                        window_overlay_runtime.clone(),
-                        root_binding.clone(),
-                        branch_bindings.clone(),
-                        scroll_handle.clone(),
-                        on_select.clone(),
-                        &theme,
-                        cx,
-                        overlay_adapter.snap_margin(),
-                        overlay_adapter.deferred_priority(),
-                    ),
+                    &root_binding,
+                    |opening_theme| {
+                        menu_content_element(
+                            items,
+                            content_id.clone(),
+                            debug_id.clone(),
+                            state.clone(),
+                            runtime.clone(),
+                            window_overlay_runtime.clone(),
+                            root_binding.clone(),
+                            branch_bindings.clone(),
+                            scroll_handle.clone(),
+                            on_select.clone(),
+                            opening_theme,
+                            cx,
+                            overlay_adapter.snap_margin(),
+                            overlay_adapter.deferred_priority(),
+                        )
+                        .into_any_element()
+                    },
                 ))
             })
     }
@@ -1558,7 +1575,6 @@ fn menu_branch_surface(
         root_binding.clone(),
         branch_bindings.clone(),
         on_select.clone(),
-        theme,
         cx,
         snap_margin,
         deferred_priority,
@@ -1645,7 +1661,6 @@ fn menu_submenu_layer(
     root_binding: OverlayLayerBinding,
     branch_bindings: MenuBranchBindings,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
-    theme: &ThemeContext,
     cx: &mut App,
     snap_margin: open_gpui::Pixels,
     deferred_priority: usize,
@@ -1654,9 +1669,9 @@ fn menu_submenu_layer(
         .iter()
         .find(|item| item.submenu_open() && item.has_submenu())?;
     let child_branch_path = open_child.path().to_vec();
-    if !branch_bindings.contains_key(&menu_path_key(&child_branch_path)) {
-        return None;
-    }
+    let submenu_binding = branch_bindings
+        .get(&menu_path_key(&child_branch_path))
+        .cloned()?;
     let trigger_bounds = runtime
         .read(cx)
         .submenu_trigger_bounds
@@ -1675,24 +1690,6 @@ fn menu_submenu_layer(
         .with_offset(UiPx::ZERO),
         snap_margin,
     );
-    let submenu_surface = menu_branch_surface(
-        items,
-        state,
-        &child_branch_path,
-        None,
-        debug_id,
-        runtime,
-        window_overlay_runtime,
-        root_binding,
-        branch_bindings,
-        on_select,
-        None,
-        theme,
-        cx,
-        snap_margin,
-        deferred_priority,
-    );
-
     let submenu_adapter = GpuiOverlayState::resolve(
         state.overlay().policy().clone(),
         deferred_priority,
@@ -1703,7 +1700,27 @@ fn menu_submenu_layer(
         &submenu_adapter,
         &placement,
         placement.position().unwrap_or_default(),
-        submenu_surface,
+        &submenu_binding,
+        |opening_theme| {
+            menu_branch_surface(
+                items,
+                state,
+                &child_branch_path,
+                None,
+                debug_id,
+                runtime,
+                window_overlay_runtime,
+                root_binding,
+                branch_bindings,
+                on_select,
+                None,
+                opening_theme,
+                cx,
+                snap_margin,
+                deferred_priority,
+            )
+            .into_any_element()
+        },
     ))
 }
 

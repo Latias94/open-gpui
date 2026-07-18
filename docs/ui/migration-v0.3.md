@@ -72,6 +72,59 @@ free-form errors. It emits typed redaction markers, counts, lifecycle facts, and
 opaque field identities before a `DevtoolsCapture` is constructed. Do not parse DevTools payloads
 for application form data; application and rendering code should consume `FormSnapshot` directly.
 
+## Theme Scope Authority
+
+Theme selection is no longer owned by a public app-global `ThemeRuntime`. Install definitions and
+select app or window authority through the explicit theme-owner API, then resolve the effective
+owned context with the window-aware resolver:
+
+```rust
+use open_gpui_ui_components::theme::{
+    ThemeContext, ThemeResolver, ThemeScope, install_theme_registry, set_app_theme,
+    set_window_theme,
+};
+
+install_theme_registry(cx, registry, "light")?;
+set_app_theme(cx, "dark")?;
+set_window_theme(window, cx, "high-contrast")?;
+
+let effective = ThemeResolver::current(window, cx);
+let subtree = ThemeScope::new("settings-theme", ThemeContext::dark(), child);
+```
+
+The precedence is nearest subtree scope, window selection or explicit override, app selection,
+then the built-in light fallback. `ThemeScope::new` now requires a stable element id so a context
+change can invalidate cached child-view journals. Window state is owned by the window and is
+dropped on close. Unknown ids and equal selections are atomic no-ops and do not refresh unrelated
+windows. Replacing the complete registry does not silently demote a window whose selected id is
+temporarily absent: it retains the last-known snapshot until that id returns or
+`clear_window_theme` explicitly restores app inheritance.
+
+Official overlays freeze the effective context when their lifecycle generation opens. Trigger
+styling follows the current context, but surface colors and deferred children retain the opening
+context until close; reopening captures again. Delayed Button, IconButton, Menu, Sidebar, and
+Toolbar tooltips capture automatically. Direct GPUI tooltip attachment must make the boundary
+explicit:
+
+```rust
+use open_gpui_ui_components::Tooltip;
+
+let context = ThemeResolver::current(window, cx);
+let trigger = div().tooltip(Tooltip::scoped(
+    context,
+    Tooltip::text("Saved"),
+));
+```
+
+When both a custom tooltip builder and text fallback are present, official Button, IconButton, and
+Toolbar adapters attach only the custom builder. The former `ThemeRuntime`, `ThemeRuntimeError`,
+`ThemeResolver::current(&App)`, `ThemeResolver::resolve`, `init_theme_runtime`,
+`current_theme_context`, `try_theme_context`, and `set_active_theme*` surfaces are deleted without
+aliases. The scope mechanism remains theme-specific because no independent non-theme consumer met
+the adoption gate for a public generic inherited-context API.
+See [Theme scope resolution and deferred capture](../knowledge/engineering/decisions/theme-scope-resolution.md)
+for the render-timing prototype and rejected generic-context decision.
+
 ## Semantic Activation Authority
 
 Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests

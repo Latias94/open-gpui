@@ -254,8 +254,8 @@ impl Sizable for Avatar {
 }
 
 impl RenderOnce for Avatar {
-    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+    fn render(self, window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -538,8 +538,8 @@ impl Sizable for AvatarGroupCount {
 }
 
 impl RenderOnce for AvatarGroupCount {
-    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+    fn render(self, window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();

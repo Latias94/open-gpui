@@ -255,8 +255,8 @@ impl Sizable for StatusCue {
 }
 
 impl RenderOnce for StatusCue {
-    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+    fn render(self, window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -486,8 +486,8 @@ impl Sizable for EmptyState {
 }
 
 impl RenderOnce for EmptyState {
-    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+    fn render(self, window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();

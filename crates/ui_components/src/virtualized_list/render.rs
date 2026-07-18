@@ -74,7 +74,7 @@ pub(super) fn render_virtualized_list_body(
         .children(row_elements)
         .when_some(active_indicator, |this, indicator| {
             this.child(render_virtualized_list_active_indicator(
-                indicator, colors, cx,
+                indicator, colors, window, cx,
             ))
         })
         .into_any_element()
@@ -83,9 +83,10 @@ pub(super) fn render_virtualized_list_body(
 fn render_virtualized_list_active_indicator(
     indicator: VirtualizedListActiveIndicatorSnapshot,
     colors: VirtualizedListColors,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
-    let theme = crate::theme::ThemeResolver::current(cx);
+    let theme = crate::theme::ThemeResolver::current(window, cx);
     let indicator_color = if indicator.frame_demand().needs_frame() {
         theme.resolve(colors.active_indicator_moving())
     } else {
@@ -108,9 +109,10 @@ pub(super) fn render_virtualized_list_sticky_overlay(
     overlay: VirtualizedListStickyOverlaySnapshot,
     colors: VirtualizedListColors,
     estimated_row_height: UiPx,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
-    let theme = crate::theme::ThemeResolver::current(cx);
+    let theme = crate::theme::ThemeResolver::current(window, cx);
     let section = overlay.section().clone();
     let key = section.key().to_owned();
     let label = section.label().to_owned();
@@ -165,7 +167,7 @@ fn render_virtualized_list_row(
     let badge = row.item().badge_ref().map(str::to_owned);
     let status = row.item().status_ref().map(str::to_owned);
     let retry_action_label = row.item().retry_action_label_ref().map(str::to_owned);
-    let theme = crate::theme::ThemeResolver::current(cx);
+    let theme = crate::theme::ThemeResolver::current(window, cx);
     let row_background = if row.selected() {
         theme.resolve(colors.row_selected_background())
     } else if row.active() {
@@ -193,6 +195,7 @@ fn render_virtualized_list_row(
             status,
             retry_action_label,
             colors,
+            window,
             cx,
         )
     };
@@ -329,9 +332,10 @@ fn render_default_virtualized_list_row_content(
     status: Option<String>,
     retry_action_label: Option<String>,
     colors: VirtualizedListColors,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
-    let theme = crate::theme::ThemeResolver::current(cx);
+    let theme = crate::theme::ThemeResolver::current(window, cx);
     if row_kind == VirtualizedListRowKind::Separator {
         return div()
             .mx(px(8.0))

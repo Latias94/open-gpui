@@ -22,7 +22,7 @@ use crate::overlay::{
     OverlayLayerRegistration, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
     gpui_overlay_state, gpui_relative_overlay_layer,
 };
-use crate::theme::{ThemeContext, ThemeResolver};
+use crate::theme::{ThemeContext, ThemeResolver, ThemeScope, scoped_theme_view_builder};
 
 /// Open affordance for a tooltip trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -389,6 +389,18 @@ impl Tooltip {
         move |_, cx| cx.new(|_| TextTooltipView { text: text.clone() }).into()
     }
 
+    /// Captures an explicit opening theme for a builder attached directly to GPUI interactivity.
+    ///
+    /// Theme-aware components such as [`crate::Button`] and [`crate::IconButton`] apply this
+    /// capture automatically. Direct GPUI tooltip callers must opt in because GPUI invokes the
+    /// builder after the trigger's render scope has exited.
+    pub fn scoped(
+        context: ThemeContext,
+        build: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+        scoped_theme_view_builder(context, build)
+    }
+
     /// Creates a tooltip builder that appends the active keybinding for an action when available.
     pub fn for_action(
         label: impl Into<SharedString>,
@@ -567,7 +579,6 @@ impl RenderOnce for Tooltip {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| TooltipRuntime {
             overlay_binding: None,
         });
-        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let active_tooltip_surface = self.active_tooltip_surface;
@@ -614,26 +625,57 @@ impl RenderOnce for Tooltip {
             .with_offset(ui_px(4.0)),
             overlay_adapter.snap_margin(),
         );
-        let surface = window_overlay_runtime
-            .surface(
-                &overlay_binding,
-                OverlayInsideRegionId::new("surface"),
-                format!("tooltip:{debug_id}:surface-runtime"),
-                tooltip_surface_element(
-                    content_id,
-                    debug_id.clone(),
-                    state,
-                    accessible_label,
-                    children,
-                    &theme,
-                ),
-            )
-            .into_any_element();
-        let layer = if active_tooltip_surface {
-            surface
-        } else {
-            gpui_relative_overlay_layer(&overlay_adapter, &placement, surface)
-        };
+        let layer = overlay_adapter.should_render_deferred_layer().then(|| {
+            if active_tooltip_surface {
+                let opening_theme = overlay_binding
+                    .opening_theme()
+                    .expect("an open tooltip must capture its opening theme");
+                ThemeScope::new(
+                    format!(
+                        "overlay-theme:{}",
+                        overlay_binding.lease().layer_id().as_str()
+                    ),
+                    opening_theme.clone(),
+                    window_overlay_runtime.surface(
+                        &overlay_binding,
+                        OverlayInsideRegionId::new("surface"),
+                        format!("tooltip:{debug_id}:surface-runtime"),
+                        tooltip_surface_element(
+                            content_id,
+                            debug_id.clone(),
+                            state,
+                            accessible_label,
+                            children,
+                            &opening_theme,
+                        ),
+                    ),
+                )
+                .into_any_element()
+            } else {
+                gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    &overlay_binding,
+                    |opening_theme| {
+                        window_overlay_runtime
+                            .surface(
+                                &overlay_binding,
+                                OverlayInsideRegionId::new("surface"),
+                                format!("tooltip:{debug_id}:surface-runtime"),
+                                tooltip_surface_element(
+                                    content_id,
+                                    debug_id.clone(),
+                                    state,
+                                    accessible_label,
+                                    children,
+                                    opening_theme,
+                                ),
+                            )
+                            .into_any_element()
+                    },
+                )
+            }
+        });
 
         div()
             .id(id)
@@ -642,9 +684,7 @@ impl RenderOnce for Tooltip {
                 move || format!("tooltip:{debug_id}:root")
             })
             .relative()
-            .when(overlay_adapter.should_render_deferred_layer(), |this| {
-                this.child(layer)
-            })
+            .when_some(layer, |this, layer| this.child(layer))
     }
 }
 

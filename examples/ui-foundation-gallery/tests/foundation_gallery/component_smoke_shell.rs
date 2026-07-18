@@ -612,6 +612,41 @@ fn components_gallery_smoke_focused_mode_resets_page_on_family_change(
 }
 
 #[open_gpui::test]
+fn tokens_gallery_renders_sibling_theme_scopes_and_a_deferred_overlay(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (_, cx) = open_gallery_page_with_shell(cx, GalleryPage::Tokens);
+
+    assert!(cx.debug_bounds("gallery:theme-scope:dark").is_some());
+    assert!(
+        cx.debug_bounds("gallery:theme-scope:high-contrast")
+            .is_some()
+    );
+    assert!(
+        cx.debug_bounds("button:gallery-theme-scope-app-button:root")
+            .is_some(),
+        "rendering sibling scopes must restore the app theme for following content"
+    );
+    assert!(
+        cx.debug_bounds("popover:gallery-theme-scope-dark-popover:content")
+            .is_none()
+    );
+
+    click(cx, "popover:gallery-theme-scope-dark-popover:trigger");
+    settle(cx);
+    assert!(
+        cx.debug_bounds("popover:gallery-theme-scope-dark-popover:content")
+            .is_some(),
+        "the scoped Gallery sample should open a real deferred Popover surface"
+    );
+    assert!(
+        cx.debug_bounds("button:gallery-theme-scope-overlay-action:root")
+            .is_some(),
+        "the deferred surface should render its official themed child"
+    );
+}
+
+#[open_gpui::test]
 fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
     cx: &mut open_gpui::TestAppContext,
 ) {

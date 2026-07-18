@@ -25,6 +25,7 @@ use open_gpui_ui_components::{
         init_text_input,
     },
     listbox::ListboxOption,
+    theme::{ThemeContext, ThemeScope},
 };
 
 use open_gpui_ui_core::{
@@ -141,12 +142,13 @@ pub struct GalleryShell {
 }
 
 impl GalleryShell {
-    fn build(selected_page: GalleryPage, cx: &mut Context<Self>) -> Self {
+    fn build(selected_page: GalleryPage, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.set_global(pages::components::TableSampleRuntimeLog::default());
         cx.set_global(pages::components::TreeSampleRuntimeLog::default());
         cx.set_global(pages::components::SidebarSampleRuntimeLog::default());
         let initial_snapshot = foundation_snapshot(DEFAULT_GALLERY_WIDTH, selected_page);
-        let devtools_facts = Self::devtools_live_facts(initial_snapshot);
+        let devtools_facts =
+            Self::devtools_live_facts(initial_snapshot, ThemeResolver::current(window, cx));
         let devtools_workbench = pages::devtools::GalleryDevtoolsWorkbench::new(devtools_facts);
         let devtools_state = devtools_workbench.inspector_state();
 
@@ -197,14 +199,18 @@ impl GalleryShell {
 impl GalleryShell {
     /// Creates a gallery shell entity.
 
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        Self::with_selected_page(GalleryPage::Tokens, cx)
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_selected_page(GalleryPage::Tokens, window, cx)
     }
 
     /// Creates a gallery shell entity with an initial page.
 
-    pub fn with_selected_page(page: GalleryPage, cx: &mut Context<Self>) -> Self {
-        Self::build(page, cx)
+    pub fn with_selected_page(
+        page: GalleryPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(page, window, cx)
     }
 
     /// Returns the currently selected page.
@@ -225,8 +231,9 @@ impl GalleryShell {
         &self.devtools_workbench
     }
 
-    pub fn refresh_devtools(&mut self, cx: &mut Context<Self>) {
-        let facts = Self::devtools_live_facts(self.snapshot());
+    pub fn refresh_devtools(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let theme = ThemeResolver::current(window, cx);
+        let facts = Self::devtools_live_facts(self.snapshot(), theme);
         let selected_before = self
             .devtools_inspector
             .read(cx)
@@ -272,6 +279,7 @@ impl GalleryShell {
 
     fn devtools_live_facts(
         snapshot: GalleryShellSnapshot,
+        theme: ThemeContext,
     ) -> pages::devtools::GalleryDevtoolsLiveFacts {
         pages::devtools::GalleryDevtoolsLiveFacts::new(
             snapshot.selected_page.id(),
@@ -279,6 +287,7 @@ impl GalleryShell {
             snapshot.shell_mode.as_str(),
             snapshot.density.as_str(),
             snapshot.control_size.as_str(),
+            theme,
         )
     }
 
@@ -586,9 +595,9 @@ impl GalleryShell {
 
             GalleryPage::Adaptive => self.render_adaptive_page(snapshot).into_any_element(),
 
-            GalleryPage::FocusAccessibility => {
-                self.render_focus_a11y_page(snapshot, cx).into_any_element()
-            }
+            GalleryPage::FocusAccessibility => self
+                .render_focus_a11y_page(snapshot, window, cx)
+                .into_any_element(),
 
             GalleryPage::Overlay => self
                 .render_overlay_page(snapshot, window, cx)
@@ -659,8 +668,8 @@ impl GalleryShell {
                             .variant(ButtonVariant::Secondary)
                             .with_size(Size::Small)
                             .accessibility_description("Refresh Gallery DevTools session")
-                            .on_activate(cx.processor(|this, _, _, cx| {
-                                this.refresh_devtools(cx);
+                            .on_activate(cx.processor(|this, _, window, cx| {
+                                this.refresh_devtools(window, cx);
                             })),
                     ),
             )
@@ -712,6 +721,72 @@ impl GalleryShell {
                     .text_sm()
                     .text_color(rgb(0x4d5968))
                     .child(registry_status),
+            )
+            .child(
+                div()
+                    .id("gallery-theme-scope-samples")
+                    .debug_selector(|| "gallery:theme-scope-samples".into())
+                    .flex()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(ThemeScope::new(
+                        "gallery-theme-scope-dark",
+                        ThemeContext::dark(),
+                        div()
+                            .debug_selector(|| "gallery:theme-scope:dark".into())
+                            .min_w(px(220.0))
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .gap_2()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xd6d8ce))
+                            .p_3()
+                            .child(Button::new(
+                                "gallery-theme-scope-dark-button",
+                                "Dark subtree",
+                            ))
+                            .child(Popover::element(
+                                "gallery-theme-scope-dark-popover",
+                                "Open dark overlay",
+                                Button::new("gallery-theme-scope-overlay-action", "Overlay action")
+                                    .variant(ButtonVariant::Secondary),
+                            )),
+                    ))
+                    .child(ThemeScope::new(
+                        "gallery-theme-scope-high-contrast",
+                        ThemeContext::high_contrast(),
+                        div()
+                            .debug_selector(|| "gallery:theme-scope:high-contrast".into())
+                            .min_w(px(220.0))
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .gap_2()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xd6d8ce))
+                            .p_3()
+                            .child(Button::new(
+                                "gallery-theme-scope-high-contrast-button",
+                                "High contrast subtree",
+                            )),
+                    ))
+                    .child(
+                        div()
+                            .min_w(px(220.0))
+                            .flex()
+                            .items_start()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xd6d8ce))
+                            .p_3()
+                            .child(Button::new(
+                                "gallery-theme-scope-app-button",
+                                "App theme after scopes",
+                            )),
+                    ),
             )
             .child(
                 div().flex().gap_3().children(
@@ -1008,6 +1083,7 @@ impl GalleryShell {
     fn render_focus_a11y_page(
         &self,
         snapshot: GalleryShellSnapshot,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let a11y = self.focus_a11y.demo_state();
@@ -1024,7 +1100,7 @@ impl GalleryShell {
                         .into_iter()
                         .zip(self.focus_controls.iter())
                         .map(|(spec, handle)| {
-                            self.render_focus_control(handle, spec, cx)
+                            self.render_focus_control(handle, spec, window, cx)
                                 .into_any_element()
                         }),
                 ),
@@ -1174,13 +1250,15 @@ impl GalleryShell {
 
         spec: pages::focus_a11y::FocusControlSpec,
 
+        window: &mut Window,
+
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_ring = FocusRing::from_color(ColorIntent::new(
             ThemeTokens::default().focus_ring,
             0x2f80ed,
         ));
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
@@ -1655,24 +1733,28 @@ impl GalleryShell {
                                 &tooltip_samples[0],
                                 &self.tooltip_focus_controls[0],
                                 self.tooltip_focus_controls[0].is_focused(window),
+                                window,
                                 cx,
                             ))
                             .child(self.render_tooltip_sample_card(
                                 &tooltip_samples[1],
                                 &self.tooltip_focus_controls[1],
                                 self.tooltip_focus_controls[1].is_focused(window),
+                                window,
                                 cx,
                             ))
                             .child(self.render_tooltip_sample_card(
                                 &tooltip_samples[2],
                                 &self.tooltip_focus_controls[2],
                                 self.tooltip_focus_controls[2].is_focused(window),
+                                window,
                                 cx,
                             ))
                             .child(self.render_tooltip_sample_card(
                                 &tooltip_samples[3],
                                 &self.tooltip_focus_controls[3],
                                 self.tooltip_focus_controls[3].is_focused(window),
+                                window,
                                 cx,
                             )),
                     ),
@@ -2089,6 +2171,8 @@ impl GalleryShell {
 
         focus_handle_is_focused: bool,
 
+        window: &mut Window,
+
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = sample.state.clone();
@@ -2116,7 +2200,7 @@ impl GalleryShell {
             0x2f80ed,
         ));
 
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         overlay_sample_card_shell(
@@ -3353,7 +3437,7 @@ pub fn open_gallery_page(page: GalleryPage, cx: &mut App) {
 
             ..Default::default()
         },
-        move |_, cx| cx.new(|cx| GalleryShell::with_selected_page(page, cx)),
+        move |window, cx| cx.new(|cx| GalleryShell::with_selected_page(page, window, cx)),
     )
     .expect("failed to open UI foundation gallery window");
 

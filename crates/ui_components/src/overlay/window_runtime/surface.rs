@@ -3,10 +3,11 @@
 use super::{
     AccessibilityTreeScope, AnyElement, App, Bounds, Element, ElementId, Entity, FocusHandle,
     GlobalElementId, InspectorElementId, IntoElement, LayoutId, LiveInsideRegion, MouseButton,
-    OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerId, OverlayLayerLease,
-    OverlayLayerLeaseStatus, OverlayLayerRegistration, Pixels, Rc, RefCell, Window,
-    WindowOverlayRuntime, WindowOverlayRuntimeError, WindowOverlayRuntimeState,
+    OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerGeneration, OverlayLayerId,
+    OverlayLayerLease, OverlayLayerLeaseStatus, OverlayLayerRegistration, Pixels, Rc, RefCell,
+    Window, WindowOverlayRuntime, WindowOverlayRuntimeError, WindowOverlayRuntimeState,
 };
+use crate::theme::ThemeResolver;
 
 impl WindowOverlayRuntime {
     /// Registers current-frame bounds as an inside region for the layer.
@@ -68,6 +69,27 @@ impl WindowOverlayRuntime {
             binding,
             registration,
             None,
+            ThemeResolver::current,
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn bind_component_layer_with_theme<T: 'static>(
+        &self,
+        owner: &Entity<T>,
+        binding: Option<&OverlayLayerBinding>,
+        registration: OverlayLayerRegistration,
+        opening_theme: crate::theme::ThemeContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
+        self.bind_component_layer_with_optional_trigger(
+            owner,
+            binding,
+            registration,
+            None,
+            move |_, _| opening_theme.clone(),
             window,
             cx,
         )
@@ -87,6 +109,7 @@ impl WindowOverlayRuntime {
             binding,
             registration,
             Some(trigger_focus),
+            ThemeResolver::current,
             window,
             cx,
         )
@@ -98,17 +121,20 @@ impl WindowOverlayRuntime {
         binding: Option<&OverlayLayerBinding>,
         mut registration: OverlayLayerRegistration,
         trigger_focus: Option<FocusHandle>,
+        resolve_opening_theme: impl Fn(&mut Window, &mut App) -> crate::theme::ThemeContext,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
         let frame_revision = window.rendered_frame_revision();
+        let presence = registration.policy.presence();
         if registration.parent.is_none()
             && let Some(parent) = self.current_parent_layer()
         {
             registration.parent = Some(parent);
         }
         if let Some(binding) = binding {
-            self.rebind_layer(binding, registration, window, cx)?;
+            let generation = self.rebind_layer(binding, registration, window, cx)?;
+            binding.sync_opening_theme(generation, presence, || resolve_opening_theme(window, cx));
             self.state.update(cx, |state, _| {
                 state.record_component_bind(&binding.lease, frame_revision)
             })?;
@@ -138,6 +164,8 @@ impl WindowOverlayRuntime {
         self.state.update(cx, |state, _| {
             state.record_component_bind(&binding.lease, frame_revision)
         })?;
+        let generation = self.state.read(cx).generation_for_lease(&binding.lease)?;
+        binding.sync_opening_theme(generation, presence, || resolve_opening_theme(window, cx));
         Ok(binding)
     }
 
@@ -421,6 +449,14 @@ impl Element for OverlaySurface {
 }
 
 impl WindowOverlayRuntimeState {
+    fn generation_for_lease(
+        &self,
+        lease: &OverlayLayerLease,
+    ) -> Result<OverlayLayerGeneration, WindowOverlayRuntimeError> {
+        self.validate_mutable_lease(lease)?;
+        Ok(self.entries[lease.layer_id()].generation)
+    }
+
     pub(super) fn refresh_inside_region(
         &mut self,
         lease: &OverlayLayerLease,

@@ -22,7 +22,7 @@ use crate::theme::ThemeResolver;
 
 impl RenderOnce for Tabs {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let Tabs {
             id,
             orientation,

@@ -26,7 +26,7 @@ use crate::tooltip::Tooltip;
 
 impl RenderOnce for Sidebar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let Sidebar {
             id,
             label,
@@ -456,7 +456,10 @@ impl RenderOnce for Sidebar {
                                                     })
                                                 })
                                                 .when_some(item_tooltip, |this, tooltip| {
-                                                    this.tooltip(Tooltip::text(tooltip))
+                                                    this.tooltip(Tooltip::scoped(
+                                                        item_theme.clone(),
+                                                        Tooltip::text(tooltip),
+                                                    ))
                                                 });
 
                                             activation.bind(item_element)

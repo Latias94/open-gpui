@@ -412,8 +412,8 @@ impl Sizable for Slider {
 }
 
 impl RenderOnce for Slider {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(window, cx);
         let state = Rc::new(self.state());
         let metrics = state.metrics();
         let colors = state.colors();

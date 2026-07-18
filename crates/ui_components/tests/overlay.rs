@@ -19,6 +19,7 @@ use open_gpui_ui_components::{
         WindowOverlayRuntime, default_deferred_priority, gpui_anchor, point_anchor_placement,
     },
     menu_navigation_target,
+    theme::ThemeResolver,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, FocusTargetAvailability, FocusTargetId,
@@ -5457,6 +5458,46 @@ fn tooltip_and_hover_card_register_passive_window_layers_without_focus_authority
 }
 
 #[open_gpui::test]
+fn hidden_and_disabled_tooltips_do_not_build_deferred_surfaces(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(Tooltip::new("hidden-tooltip", "Hidden tooltip"))
+                .child(
+                    Tooltip::new("disabled-tooltip", "Disabled tooltip")
+                        .open(true)
+                        .disabled(true),
+                )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("hidden tooltip snapshot should resolve")
+    });
+    for id in ["tooltip:hidden-tooltip", "tooltip:disabled-tooltip"] {
+        let layer = snapshot
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == id)
+            .unwrap_or_else(|| panic!("{id} should remain registered"));
+        assert_eq!(layer.phase(), OverlayLayerPhase::Hidden);
+    }
+    assert!(cx.debug_bounds("tooltip:hidden-tooltip:content").is_none());
+    assert!(
+        cx.debug_bounds("tooltip:disabled-tooltip:content")
+            .is_none()
+    );
+}
+
+#[open_gpui::test]
 fn hover_card_is_transparent_to_outside_press_arbitration(cx: &mut open_gpui::TestAppContext) {
     struct TestView {
         popover_events: Rc<RefCell<Vec<bool>>>,
@@ -5542,14 +5583,15 @@ fn native_text_tooltip_registers_its_visible_window_layer(cx: &mut open_gpui::Te
     struct TestView;
 
     impl Render for TestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = ThemeResolver::current(window, cx);
             div().size_full().child(
                 div()
                     .id("native-text-tooltip-trigger")
                     .debug_selector(|| "native-tooltip-test:text-trigger".to_owned())
                     .w(px(80.0))
                     .h(px(32.0))
-                    .tooltip(Tooltip::text("Native text tooltip"))
+                    .tooltip(Tooltip::scoped(theme, Tooltip::text("Native text tooltip")))
                     .tooltip_show_delay(Duration::ZERO),
             )
         }
@@ -5585,16 +5627,17 @@ fn native_action_tooltip_registers_its_visible_window_layer(cx: &mut open_gpui::
     struct TestView;
 
     impl Render for TestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = ThemeResolver::current(window, cx);
             div().size_full().child(
                 div()
                     .id("native-action-tooltip-trigger")
                     .debug_selector(|| "native-tooltip-test:action-trigger".to_owned())
                     .w(px(80.0))
                     .h(px(32.0))
-                    .tooltip(Tooltip::for_action(
-                        "Native action tooltip",
-                        TooltipRuntimeAction,
+                    .tooltip(Tooltip::scoped(
+                        theme,
+                        Tooltip::for_action("Native action tooltip", TooltipRuntimeAction),
                     ))
                     .tooltip_show_delay(Duration::ZERO),
             )

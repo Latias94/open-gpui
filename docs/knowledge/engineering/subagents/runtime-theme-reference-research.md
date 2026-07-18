@@ -25,14 +25,18 @@ components keep rendering while theme coverage grows.
 
 ## Decision
 
+This research records the earlier color-snapshot slice. The later U7 authority-convergence
+decision deletes the direct default-light compatibility resolver and is authoritative in
+`docs/knowledge/engineering/decisions/theme-scope-resolution.md`.
+
 Implement the U1 slice as immutable snapshots plus a resolver API:
 
 - `ColorIntent` keeps `TokenKey`, `ColorState`, and fallback RGB in resolved component state.
 - `ThemeSnapshot` exposes `ThemeMode`, `revision`, and color entries.
 - `ThemeResolver::resolve_with(intent, snapshot)` resolves from the snapshot first and
   falls back to the intent RGB.
-- `ThemeResolver::resolve(intent)` remains a compatibility path using the default light
-  snapshot.
+- At this checkpoint, `ThemeResolver::resolve(intent)` remained a default-light compatibility
+  path; U7 later removed it without an alias.
 
 App-level theme registries, user theme files, JSON schemas, and hot reload belong in a
 later slice after more component contracts exist.

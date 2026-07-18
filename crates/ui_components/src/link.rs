@@ -305,7 +305,7 @@ impl Sizable for Link {
 
 impl RenderOnce for Link {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();

@@ -27,7 +27,7 @@ use crate::tooltip::Tooltip;
 
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
+        let theme = ThemeResolver::current(window, cx);
         let Toolbar {
             id,
             label,
@@ -217,7 +217,12 @@ impl RenderOnce for Toolbar {
                         .or_else(|| item.icon_label().map(SharedString::from));
                     let item_tooltip =
                         toolbar_custom_tooltip(&items[index], item.duplicate_value());
-                    let item_tooltip_text = item.tooltip().map(str::to_owned);
+                    let item_tooltip_text = item
+                        .tooltip()
+                        .map(str::to_owned)
+                        .filter(|_| item_tooltip.is_none());
+                    let custom_tooltip_theme = theme.clone();
+                    let text_tooltip_theme = theme.clone();
                     let navigation_values = navigation_values.clone();
                     let disabled_items = disabled_items.clone();
                     let focus_handle = focus_handles[index].clone();
@@ -335,10 +340,16 @@ impl RenderOnce for Toolbar {
                                     }
                                 })
                                 .when_some(item_tooltip, |this, tooltip| {
-                                    this.tooltip(move |window, cx| tooltip(window, cx))
+                                    this.tooltip(Tooltip::scoped(
+                                        custom_tooltip_theme,
+                                        move |window, cx| tooltip(window, cx),
+                                    ))
                                 })
                                 .when_some(item_tooltip_text, |this, tooltip| {
-                                    this.tooltip(Tooltip::text(tooltip))
+                                    this.tooltip(Tooltip::scoped(
+                                        text_tooltip_theme,
+                                        Tooltip::text(tooltip),
+                                    ))
                                 })
                                 .child(visible_label.unwrap_or_else(|| item.label().into())),
                         )
