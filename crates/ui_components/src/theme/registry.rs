@@ -1,7 +1,11 @@
-use super::palette::builtin_theme_snapshot;
+use open_gpui_ui_core::{ThemeDesignScales, TokenKey};
+
+use crate::color::ColorState;
+
+use super::runtime::ThemeContext;
 use super::snapshot::{ThemeColor, ThemeMode, ThemeSnapshot};
 
-/// Validation failure for a user-supplied theme definition.
+/// Validation failure for a user-supplied complete Theme v1 definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeValidationError {
     /// The definition did not provide a non-empty stable id.
@@ -10,18 +14,57 @@ pub enum ThemeValidationError {
     MissingLabel,
     /// The definition did not provide a color mode.
     MissingMode,
-    /// The definition did not provide a revision.
-    MissingRevision,
+    /// The definition did not provide source revision metadata.
+    MissingSourceRevision,
+    /// The definition did not provide the complete design-scale payload.
+    MissingDesignScales,
+    /// A required color token/state pair was omitted.
+    MissingColor {
+        /// Missing semantic token.
+        token: TokenKey,
+        /// Missing component color state.
+        state: ColorState,
+    },
+    /// A color token/state pair occurred more than once.
+    DuplicateColor {
+        /// Duplicate semantic token.
+        token: TokenKey,
+        /// Duplicate component color state.
+        state: ColorState,
+    },
+    /// A color token/state pair is outside the complete Theme v1 table.
+    UnsupportedColor {
+        /// Unsupported semantic token.
+        token: TokenKey,
+        /// Unsupported component color state.
+        state: ColorState,
+    },
+    /// A color value is outside the supported 24-bit RGB range.
+    InvalidColorRgb {
+        /// Semantic token carrying the invalid value.
+        token: TokenKey,
+        /// Component color state carrying the invalid value.
+        state: ColorState,
+        /// Invalid RGB value.
+        rgb: u32,
+    },
+    /// An elevation layer opacity is outside zero through one hundred percent.
+    InvalidElevationOpacity {
+        /// Zero-based layer index.
+        layer: usize,
+        /// Invalid percentage.
+        opacity_percent: u8,
+    },
 }
 
-/// User-loadable theme definition before registry validation.
+/// User-loadable complete Theme v1 definition before registry validation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThemeDefinition {
     id: Option<String>,
     label: Option<String>,
     mode: Option<ThemeMode>,
-    revision: Option<u64>,
-    fallback_mode: Option<ThemeMode>,
+    source_revision: Option<u64>,
+    design_scales: Option<ThemeDesignScales>,
     colors: Vec<ThemeColor>,
 }
 
@@ -32,24 +75,35 @@ impl ThemeDefinition {
             id: None,
             label: None,
             mode: None,
-            revision: None,
-            fallback_mode: None,
+            source_revision: None,
+            design_scales: None,
             colors: Vec::new(),
         }
     }
 
-    /// Creates a complete definition with required identity fields.
+    /// Creates a definition with required identity and source metadata.
     pub fn new(
         id: impl Into<String>,
         label: impl Into<String>,
         mode: ThemeMode,
-        revision: u64,
+        source_revision: u64,
     ) -> Self {
         Self::draft()
             .id(id)
             .label(label)
             .mode(mode)
-            .revision(revision)
+            .source_revision(source_revision)
+    }
+
+    /// Creates a complete definition from an existing immutable snapshot.
+    pub fn from_snapshot(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        snapshot: &ThemeSnapshot,
+    ) -> Self {
+        Self::new(id, label, snapshot.mode(), snapshot.source_revision())
+            .design_scales(snapshot.design_scales())
+            .colors(snapshot.colors().iter().copied())
     }
 
     /// Applies the stable theme id.
@@ -70,29 +124,31 @@ impl ThemeDefinition {
         self
     }
 
-    /// Applies the revision used for cache invalidation.
-    pub const fn revision(mut self, revision: u64) -> Self {
-        self.revision = Some(revision);
+    /// Applies source-file revision metadata.
+    pub const fn source_revision(mut self, source_revision: u64) -> Self {
+        self.source_revision = Some(source_revision);
         self
     }
 
-    /// Applies the built-in snapshot used to fill omitted color tokens.
-    pub const fn fallback_mode(mut self, fallback_mode: ThemeMode) -> Self {
-        self.fallback_mode = Some(fallback_mode);
+    /// Applies the complete non-color design scales.
+    pub const fn design_scales(mut self, design_scales: ThemeDesignScales) -> Self {
+        self.design_scales = Some(design_scales);
         self
     }
 
-    /// Adds or replaces one color entry.
+    /// Adds one color entry.
+    ///
+    /// Duplicate entries are retained so complete validation can reject them atomically.
     pub fn color(mut self, color: ThemeColor) -> Self {
-        upsert_theme_color(&mut self.colors, color);
+        self.colors.push(color);
         self
     }
 
-    /// Adds or replaces color entries.
+    /// Adds color entries.
+    ///
+    /// Duplicate entries are retained so complete validation can reject them atomically.
     pub fn colors(mut self, colors: impl IntoIterator<Item = ThemeColor>) -> Self {
-        for color in colors {
-            upsert_theme_color(&mut self.colors, color);
-        }
+        self.colors.extend(colors);
         self
     }
 
@@ -101,14 +157,41 @@ impl ThemeDefinition {
         &self.colors
     }
 
+    /// Returns the supplied design scales, if present.
+    pub const fn supplied_design_scales(&self) -> Option<ThemeDesignScales> {
+        self.design_scales
+    }
+
+    pub(super) fn validate_complete(self) -> Result<Self, ThemeValidationError> {
+        let validated = self.validate()?;
+        Ok(Self {
+            id: Some(validated.id),
+            label: Some(validated.label),
+            mode: Some(validated.mode),
+            source_revision: Some(validated.source_revision),
+            design_scales: Some(validated.design_scales),
+            colors: validated.colors,
+        })
+    }
+
     fn validate(self) -> Result<ValidatedThemeDefinition, ThemeValidationError> {
+        let id = required_theme_string(self.id, ThemeValidationError::MissingId)?;
+        let label = required_theme_string(self.label, ThemeValidationError::MissingLabel)?;
+        let mode = self.mode.ok_or(ThemeValidationError::MissingMode)?;
+        let source_revision = self
+            .source_revision
+            .ok_or(ThemeValidationError::MissingSourceRevision)?;
+        let design_scales = self
+            .design_scales
+            .ok_or(ThemeValidationError::MissingDesignScales)?;
+        validate_design_scales(design_scales)?;
         Ok(ValidatedThemeDefinition {
-            id: required_theme_string(self.id, ThemeValidationError::MissingId)?,
-            label: required_theme_string(self.label, ThemeValidationError::MissingLabel)?,
-            mode: self.mode.ok_or(ThemeValidationError::MissingMode)?,
-            revision: self.revision.ok_or(ThemeValidationError::MissingRevision)?,
-            fallback_mode: self.fallback_mode,
-            colors: self.colors,
+            id,
+            label,
+            mode,
+            source_revision,
+            design_scales,
+            colors: validate_complete_colors(self.colors)?,
         })
     }
 }
@@ -124,39 +207,17 @@ struct ValidatedThemeDefinition {
     id: String,
     label: String,
     mode: ThemeMode,
-    revision: u64,
-    fallback_mode: Option<ThemeMode>,
+    source_revision: u64,
+    design_scales: ThemeDesignScales,
     colors: Vec<ThemeColor>,
 }
 
-/// Diagnostics emitted while registering a theme definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ThemeRegistrationDiagnostics {
-    fallback_mode: ThemeMode,
-    fallback_color_count: usize,
-}
-
-impl ThemeRegistrationDiagnostics {
-    /// Returns the built-in mode used to fill missing color entries.
-    pub const fn fallback_mode(self) -> ThemeMode {
-        self.fallback_mode
-    }
-
-    /// Returns how many registered color entries came from the fallback snapshot.
-    pub const fn fallback_color_count(self) -> usize {
-        self.fallback_color_count
-    }
-}
-
-/// One registered theme entry with owned color storage.
-#[derive(Debug, Clone, PartialEq)]
+/// One registered complete Theme v1 entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeRegistryEntry {
     id: String,
     label: String,
-    mode: ThemeMode,
-    revision: u64,
-    colors: Vec<ThemeColor>,
-    diagnostics: ThemeRegistrationDiagnostics,
+    context: ThemeContext,
 }
 
 impl ThemeRegistryEntry {
@@ -172,27 +233,31 @@ impl ThemeRegistryEntry {
 
     /// Returns the color mode.
     pub const fn mode(&self) -> ThemeMode {
-        self.mode
+        self.context.mode()
     }
 
-    /// Returns the revision used for cache invalidation.
-    pub const fn revision(&self) -> u64 {
-        self.revision
+    /// Returns source-file revision metadata.
+    pub const fn source_revision(&self) -> u64 {
+        self.context.source_revision()
     }
 
-    /// Returns registration diagnostics.
-    pub const fn diagnostics(&self) -> ThemeRegistrationDiagnostics {
-        self.diagnostics
+    /// Returns the runtime-owned effective revision for this registered content.
+    pub const fn effective_revision(&self) -> u64 {
+        self.context.effective_revision()
     }
 
-    /// Returns an immutable snapshot over this entry's owned color table.
-    pub fn snapshot(&self) -> ThemeSnapshot<'_> {
-        ThemeSnapshot::new(self.mode, self.revision, &self.colors)
+    /// Returns the immutable complete Theme v1 snapshot.
+    pub fn snapshot(&self) -> &ThemeSnapshot {
+        self.context.snapshot()
+    }
+
+    pub(super) fn context(&self) -> &ThemeContext {
+        &self.context
     }
 }
 
-/// App-level registry for built-in and user-loaded theme snapshots.
-#[derive(Debug, Clone, PartialEq)]
+/// App-level registry for built-in and user-loaded complete Theme v1 snapshots.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeRegistry {
     entries: Vec<ThemeRegistryEntry>,
 }
@@ -205,54 +270,61 @@ impl ThemeRegistry {
         }
     }
 
-    /// Creates a registry preloaded with the built-in snapshots.
+    /// Creates a registry preloaded with complete built-in snapshots.
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
-        registry.insert_builtin("light", "Light", ThemeSnapshot::light());
-        registry.insert_builtin("dark", "Dark", ThemeSnapshot::dark());
+        registry.insert_builtin("light", "Light", ThemeContext::light());
+        registry.insert_builtin("dark", "Dark", ThemeContext::dark());
         registry.insert_builtin(
             "high-contrast",
             "High contrast",
-            ThemeSnapshot::high_contrast(),
+            ThemeContext::high_contrast(),
         );
         registry
     }
 
-    /// Registers a user definition, replacing an existing entry with the same id.
+    /// Registers a complete definition, replacing an existing entry with the same id.
+    ///
+    /// Validation and canonicalization complete before the registry is mutated. Metadata-only or
+    /// byte-for-byte effective reloads preserve the previous effective revision.
     pub fn register(
         &mut self,
         definition: ThemeDefinition,
     ) -> Result<&ThemeRegistryEntry, ThemeValidationError> {
         let definition = definition.validate()?;
-        let fallback_mode = definition.fallback_mode.unwrap_or(definition.mode);
-        let fallback_snapshot = builtin_theme_snapshot(fallback_mode);
-        let fallback_color_count = fallback_snapshot
-            .colors()
-            .iter()
-            .filter(|fallback| !theme_colors_contain(&definition.colors, **fallback))
-            .count();
-        let mut colors = fallback_snapshot.colors().to_vec();
-        for color in definition.colors {
-            upsert_theme_color(&mut colors, color);
-        }
-        let entry = ThemeRegistryEntry {
-            id: definition.id,
-            label: definition.label,
-            mode: definition.mode,
-            revision: definition.revision,
-            colors,
-            diagnostics: ThemeRegistrationDiagnostics {
-                fallback_mode,
-                fallback_color_count,
-            },
-        };
+        let snapshot = ThemeSnapshot::new(
+            definition.mode,
+            definition.source_revision,
+            definition.colors,
+            definition.design_scales,
+        );
 
-        let index = if let Some(index) = self.entries.iter().position(|item| item.id == entry.id) {
-            self.entries[index] = entry;
+        let index = if let Some(index) = self
+            .entries
+            .iter()
+            .position(|item| item.id == definition.id)
+        {
+            let previous = &self.entries[index];
+            let context = if previous.snapshot().has_same_effective_content(&snapshot) {
+                previous
+                    .context
+                    .with_snapshot_preserving_effective_revision(snapshot)
+            } else {
+                ThemeContext::new(snapshot)
+            };
+            self.entries[index] = ThemeRegistryEntry {
+                id: definition.id,
+                label: definition.label,
+                context,
+            };
             index
         } else {
             let index = self.entries.len();
-            self.entries.push(entry);
+            self.entries.push(ThemeRegistryEntry {
+                id: definition.id,
+                label: definition.label,
+                context: ThemeContext::new(snapshot),
+            });
             index
         };
 
@@ -271,21 +343,19 @@ impl ThemeRegistry {
     }
 
     /// Looks up a registered immutable snapshot by id.
-    pub fn snapshot(&self, id: impl AsRef<str>) -> Option<ThemeSnapshot<'_>> {
+    pub fn snapshot(&self, id: impl AsRef<str>) -> Option<&ThemeSnapshot> {
         self.entry(id).map(ThemeRegistryEntry::snapshot)
     }
 
-    fn insert_builtin(&mut self, id: &str, label: &str, snapshot: ThemeSnapshot<'static>) {
+    pub(super) fn context(&self, id: impl AsRef<str>) -> Option<&ThemeContext> {
+        self.entry(id).map(ThemeRegistryEntry::context)
+    }
+
+    fn insert_builtin(&mut self, id: &str, label: &str, context: ThemeContext) {
         self.entries.push(ThemeRegistryEntry {
             id: id.to_owned(),
             label: label.to_owned(),
-            mode: snapshot.mode(),
-            revision: snapshot.revision(),
-            colors: snapshot.colors().to_vec(),
-            diagnostics: ThemeRegistrationDiagnostics {
-                fallback_mode: snapshot.mode(),
-                fallback_color_count: 0,
-            },
+            context,
         });
     }
 }
@@ -306,19 +376,67 @@ fn required_theme_string(
         .ok_or(error)
 }
 
-fn upsert_theme_color(colors: &mut Vec<ThemeColor>, color: ThemeColor) {
-    if let Some(existing) = colors
-        .iter_mut()
-        .find(|entry| entry.token() == color.token() && entry.state() == color.state())
-    {
-        *existing = color;
-    } else {
-        colors.push(color);
+fn validate_complete_colors(
+    colors: Vec<ThemeColor>,
+) -> Result<Vec<ThemeColor>, ThemeValidationError> {
+    for color in &colors {
+        if color.rgb() > 0x00ff_ffff {
+            return Err(ThemeValidationError::InvalidColorRgb {
+                token: color.token(),
+                state: color.state(),
+                rgb: color.rgb(),
+            });
+        }
     }
+    for (index, color) in colors.iter().copied().enumerate() {
+        if colors[..index]
+            .iter()
+            .any(|previous| previous.token() == color.token() && previous.state() == color.state())
+        {
+            return Err(ThemeValidationError::DuplicateColor {
+                token: color.token(),
+                state: color.state(),
+            });
+        }
+    }
+
+    let required = ThemeSnapshot::light();
+    for color in &colors {
+        if !required.colors().iter().any(|candidate| {
+            candidate.token() == color.token() && candidate.state() == color.state()
+        }) {
+            return Err(ThemeValidationError::UnsupportedColor {
+                token: color.token(),
+                state: color.state(),
+            });
+        }
+    }
+
+    let mut canonical = Vec::with_capacity(required.colors().len());
+    for required_color in required.colors().iter().copied() {
+        let Some(color) = colors.iter().copied().find(|candidate| {
+            candidate.token() == required_color.token()
+                && candidate.state() == required_color.state()
+        }) else {
+            return Err(ThemeValidationError::MissingColor {
+                token: required_color.token(),
+                state: required_color.state(),
+            });
+        };
+        canonical.push(color);
+    }
+    Ok(canonical)
 }
 
-fn theme_colors_contain(colors: &[ThemeColor], color: ThemeColor) -> bool {
-    colors
-        .iter()
-        .any(|entry| entry.token() == color.token() && entry.state() == color.state())
+fn validate_design_scales(scales: ThemeDesignScales) -> Result<(), ThemeValidationError> {
+    for (layer, elevation) in scales.elevation().overlay().into_iter().enumerate() {
+        let (_, _, _, _, opacity_percent) = elevation.raw_values();
+        if opacity_percent > 100 {
+            return Err(ThemeValidationError::InvalidElevationOpacity {
+                layer,
+                opacity_percent,
+            });
+        }
+    }
+    Ok(())
 }

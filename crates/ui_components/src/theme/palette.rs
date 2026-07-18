@@ -1,8 +1,12 @@
-use open_gpui_ui_core::semantic;
+use std::sync::LazyLock;
+
+use open_gpui_ui_core::{ThemeDesignScales, semantic};
 
 use crate::color::ColorState;
 
 use super::snapshot::{ThemeColor, ThemeMode, ThemeSnapshot};
+
+pub(super) const COMPLETE_THEME_COLOR_COUNT: usize = LIGHT_THEME_COLORS.len();
 
 pub(super) const DEFAULT_SURFACE: u32 = 0xffffff;
 pub(super) const DEFAULT_GHOST_SURFACE: u32 = 0xf6f7f2;
@@ -25,38 +29,51 @@ const LIGHT_THEME_REVISION: u64 = 1;
 const DARK_THEME_REVISION: u64 = 2;
 const HIGH_CONTRAST_THEME_REVISION: u64 = 3;
 
-impl ThemeSnapshot<'static> {
+static LIGHT_THEME_SNAPSHOT: LazyLock<ThemeSnapshot> = LazyLock::new(|| {
+    ThemeSnapshot::new(
+        ThemeMode::Light,
+        LIGHT_THEME_REVISION,
+        LIGHT_THEME_COLORS,
+        ThemeDesignScales::default(),
+    )
+});
+static DARK_THEME_SNAPSHOT: LazyLock<ThemeSnapshot> = LazyLock::new(|| {
+    ThemeSnapshot::new(
+        ThemeMode::Dark,
+        DARK_THEME_REVISION,
+        DARK_THEME_COLORS,
+        ThemeDesignScales::default(),
+    )
+});
+static HIGH_CONTRAST_THEME_SNAPSHOT: LazyLock<ThemeSnapshot> = LazyLock::new(|| {
+    ThemeSnapshot::new(
+        ThemeMode::HighContrast,
+        HIGH_CONTRAST_THEME_REVISION,
+        HIGH_CONTRAST_THEME_COLORS,
+        ThemeDesignScales::default(),
+    )
+});
+
+impl ThemeSnapshot {
     /// Returns the default light theme snapshot.
-    pub const fn light() -> Self {
-        Self::new(ThemeMode::Light, LIGHT_THEME_REVISION, LIGHT_THEME_COLORS)
+    pub fn light() -> Self {
+        LazyLock::force(&LIGHT_THEME_SNAPSHOT).clone()
     }
 
     /// Returns the default dark theme snapshot.
-    pub const fn dark() -> Self {
-        Self::new(ThemeMode::Dark, DARK_THEME_REVISION, DARK_THEME_COLORS)
+    pub fn dark() -> Self {
+        LazyLock::force(&DARK_THEME_SNAPSHOT).clone()
     }
 
     /// Returns the default high contrast theme snapshot.
-    pub const fn high_contrast() -> Self {
-        Self::new(
-            ThemeMode::HighContrast,
-            HIGH_CONTRAST_THEME_REVISION,
-            HIGH_CONTRAST_THEME_COLORS,
-        )
+    pub fn high_contrast() -> Self {
+        LazyLock::force(&HIGH_CONTRAST_THEME_SNAPSHOT).clone()
     }
 }
 
-impl Default for ThemeSnapshot<'static> {
+impl Default for ThemeSnapshot {
     fn default() -> Self {
         Self::light()
-    }
-}
-
-pub(super) const fn builtin_theme_snapshot(mode: ThemeMode) -> ThemeSnapshot<'static> {
-    match mode {
-        ThemeMode::Light => ThemeSnapshot::light(),
-        ThemeMode::Dark => ThemeSnapshot::dark(),
-        ThemeMode::HighContrast => ThemeSnapshot::high_contrast(),
     }
 }
 

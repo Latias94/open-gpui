@@ -220,6 +220,9 @@ impl VirtualizedListActiveIndicatorRuntime {
         };
 
         if state.key == target.key && state.target.approximately_equals(target.bounds) {
+            if state.frame_demand.needs_frame() && model.is_immediate() {
+                return state.retarget(target, now, model);
+            }
             return state.sample_at(now);
         }
 

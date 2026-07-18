@@ -23,7 +23,7 @@ use crate::overlay::{
     gpui_relative_overlay_layer, resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
-use crate::theme::{ThemeContext, ThemeResolver};
+use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 
 use super::model::{SelectSelection, SelectState, SelectStateRequest};
 use super::render_plan::SelectRenderPlan;
@@ -607,7 +607,9 @@ fn select_content_element(
             .text_color(theme.resolve(colors.content_foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .shadow_lg()
+            .shadow(gpui_elevation_shadow(
+                ThemeResolver::overlay_surface_elevation(theme),
+            ))
             .occlude()
             .child(
                 ScrollArea::new(scroll_viewport_id, listbox)

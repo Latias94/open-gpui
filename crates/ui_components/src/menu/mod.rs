@@ -37,7 +37,7 @@ use crate::overlay::{
     gpui_relative_overlay_layer, resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
-use crate::theme::{ThemeContext, ThemeResolver};
+use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 use crate::tooltip::Tooltip;
 use runtime::{
     MenuBranchBinding, MenuBranchRuntime, MenuRuntime, handle_menu_submenu_surface_hover,
@@ -1606,7 +1606,9 @@ fn menu_branch_surface(
         .border_1()
         .border_color(theme.resolve(colors.border()))
         .bg(theme.resolve(colors.surface()))
-        .shadow_lg()
+        .shadow(gpui_elevation_shadow(
+            ThemeResolver::overlay_surface_elevation(theme),
+        ))
         .occlude()
         .overflow_hidden()
         .when_some(branch_binding.clone(), |this, binding| {

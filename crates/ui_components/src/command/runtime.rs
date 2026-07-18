@@ -25,7 +25,7 @@ use crate::scroll_area::ScrollArea;
 use crate::scroll_surface::{ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, reveal_fixed_row};
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
-use crate::theme::ThemeContext;
+use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 
 use super::render_plan::resolve_command_viewport_extent;
 use super::{
@@ -288,7 +288,9 @@ pub(super) fn command_content_element(
         .border_color(theme.resolve(colors.border()))
         .bg(theme.resolve(colors.surface()))
         .text_color(theme.resolve(colors.foreground()))
-        .shadow_lg()
+        .shadow(gpui_elevation_shadow(
+            ThemeResolver::overlay_surface_elevation(theme),
+        ))
         .when(dialog_state.is_some(), |this| this.occlude())
         .ui_semantics(&content_semantics)
         .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())

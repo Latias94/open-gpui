@@ -1,5 +1,6 @@
 //! Theme snapshots, registries, and component color recipes.
 
+mod elevation;
 mod palette;
 mod recipes;
 mod registry;
@@ -9,10 +10,12 @@ mod schema;
 mod scope;
 mod snapshot;
 
-pub use registry::{
-    ThemeDefinition, ThemeRegistrationDiagnostics, ThemeRegistry, ThemeRegistryEntry,
-    ThemeValidationError,
+pub(crate) use elevation::gpui_elevation_shadow;
+pub use open_gpui_ui_core::{
+    ThemeDesignScales, ThemeElevationLayer, ThemeElevationScale, ThemeRadiusScale,
+    ThemeSpacingScale, ThemeTypographyScale,
 };
+pub use registry::{ThemeDefinition, ThemeRegistry, ThemeRegistryEntry, ThemeValidationError};
 pub use resolver::ThemeResolver;
 pub use runtime::{
     DARK_THEME_ID, DEFAULT_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID, ThemeContext,
@@ -23,7 +26,7 @@ pub use runtime::{
 pub use schema::{
     THEME_JSON_SCHEMA_VERSION, ThemeFileField, ThemeLoadError, register_theme_json_file,
     register_theme_json_str, theme_definition_from_json_file, theme_definition_from_json_str,
-    theme_json_schema,
+    theme_json_schema, theme_json_string,
 };
 pub use scope::ThemeScope;
 pub(crate) use scope::scoped_theme_view_builder;

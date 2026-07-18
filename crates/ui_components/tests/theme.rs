@@ -4,8 +4,9 @@ use open_gpui::{ParentElement, div};
 use open_gpui_ui_components::theme::{
     THEME_JSON_SCHEMA_VERSION, ThemeDefinition, ThemeFileField, ThemeLoadError, ThemeRegistry,
     ThemeSelectionError, ThemeValidationError, app_theme_context, install_theme_registry,
-    register_theme_json_file, register_theme_json_str, theme_definition_from_json_file,
-    theme_definition_from_json_str, theme_json_schema,
+    register_theme, register_theme_json_file, register_theme_json_str, set_app_theme,
+    theme_definition_from_json_file, theme_definition_from_json_str, theme_json_schema,
+    theme_json_string,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, Avatar, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
@@ -15,38 +16,72 @@ use open_gpui_ui_components::{
     TextInput, ThemeColor, ThemeContext, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
     ToggleVariant, listbox::ListboxOption,
 };
-use open_gpui_ui_core::{Sizable, semantic};
+use open_gpui_ui_core::{
+    Sizable, ThemeDesignScales, ThemeElevationLayer, ThemeElevationScale, semantic,
+};
 
 use support::tokens::custom_tokens;
 
-const VALID_THEME_JSON: &str = r##"{
+const OLD_COLOR_ONLY_THEME_JSON: &str = r##"{
   "schema_version": 1,
-  "id": "forest-json",
-  "label": "Forest JSON",
+  "id": "legacy-color-only",
+  "label": "Legacy color only",
   "mode": "dark",
-  "revision": 9001,
+  "revision": 1,
   "fallback_mode": "light",
   "colors": [
-    { "token": "semantic.accent", "state": "default", "rgb": "#227755" },
-    { "token": "semantic.accent", "state": "hover", "rgb": "#1b6044" },
-    { "token": "semantic.surface_muted", "state": "selected", "rgb": "#173c32" },
-    { "token": "semantic.surface_muted", "state": "disabled", "rgb": "#102820" },
-    { "token": "semantic.destructive", "state": "invalid", "rgb": "#ff5544" },
-    { "token": "semantic.focus_ring", "state": "focus-visible", "rgb": "#77b8ff" }
+    { "token": "semantic.accent", "state": "default", "rgb": "#227755" }
   ]
 }"##;
 
 fn portable_theme_definition(id: &str) -> ThemeDefinition {
+    let source = ThemeSnapshot::dark();
+    let colors = source.colors().iter().copied().map(|color| {
+        if color.token() == semantic::ACCENT && color.state() == ColorState::Default {
+            ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x227755)
+        } else if color.token() == semantic::ACCENT && color.state() == ColorState::Hover {
+            ThemeColor::new(semantic::ACCENT, ColorState::Hover, 0x1b6044)
+        } else {
+            color
+        }
+    });
     ThemeDefinition::new(id, "Forest JSON", ThemeMode::Dark, 9001)
-        .fallback_mode(ThemeMode::Light)
-        .colors([
-            ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x227755),
-            ThemeColor::new(semantic::ACCENT, ColorState::Hover, 0x1b6044),
-            ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Selected, 0x173c32),
-            ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0x102820),
-            ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Invalid, 0xff5544),
-            ThemeColor::new(semantic::FOCUS_RING, ColorState::FocusVisible, 0x77b8ff),
-        ])
+        .design_scales(ThemeDesignScales::default())
+        .colors(colors)
+}
+
+fn valid_theme_json() -> String {
+    let mut registry = ThemeRegistry::new();
+    let entry = registry
+        .register(portable_theme_definition("forest-json"))
+        .expect("complete portable theme should register");
+    theme_json_string(entry).expect("complete portable theme should serialize")
+}
+
+fn complete_theme_with_color(
+    id: &str,
+    label: &str,
+    mode: ThemeMode,
+    source_revision: u64,
+    token: open_gpui_ui_core::TokenKey,
+    state: ColorState,
+    rgb: u32,
+) -> ThemeDefinition {
+    let source = match mode {
+        ThemeMode::Light => ThemeSnapshot::light(),
+        ThemeMode::Dark => ThemeSnapshot::dark(),
+        ThemeMode::HighContrast => ThemeSnapshot::high_contrast(),
+    };
+    let colors = source.colors().iter().copied().map(|color| {
+        if color.token() == token && color.state() == state {
+            ThemeColor::new(token, state, rgb)
+        } else {
+            color
+        }
+    });
+    ThemeDefinition::new(id, label, mode, source_revision)
+        .design_scales(source.design_scales())
+        .colors(colors)
 }
 
 #[test]
@@ -78,7 +113,7 @@ fn theme_resolver_keeps_token_intent_and_resolves_fallback_color() {
     assert_eq!(
         u32::from(ThemeResolver::resolve_with(
             background,
-            ThemeSnapshot::dark()
+            &ThemeSnapshot::dark()
         )),
         0x1f7a66ff
     );
@@ -88,20 +123,28 @@ fn theme_resolver_keeps_token_intent_and_resolves_fallback_color() {
 fn theme_resolver_prefers_runtime_theme_table_for_known_tokens() {
     let state = Button::new("default", "Default").state();
     let background = state.colors().background();
-    let custom_colors = [ThemeColor::new(
-        semantic::ACCENT,
-        ColorState::Default,
-        0x123456,
-    )];
-    let snapshot = ThemeSnapshot::new(ThemeMode::Light, 42, &custom_colors);
+    let mut registry = ThemeRegistry::new();
+    let snapshot = registry
+        .register(complete_theme_with_color(
+            "custom-resolver",
+            "Custom resolver",
+            ThemeMode::Light,
+            42,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x123456,
+        ))
+        .expect("complete custom theme should register")
+        .snapshot()
+        .clone();
 
     assert_eq!(background.fallback_rgb(), 0x1f7a66);
     assert_eq!(
-        u32::from(ThemeResolver::resolve_with(background, snapshot)),
+        u32::from(ThemeResolver::resolve_with(background, &snapshot)),
         0x123456ff
     );
     assert_eq!(snapshot.mode(), ThemeMode::Light);
-    assert_eq!(snapshot.revision(), 42);
+    assert_eq!(snapshot.source_revision(), 42);
 }
 
 #[test]
@@ -110,7 +153,11 @@ fn theme_context_wraps_snapshot_for_render_resolution() {
     let cloned = context.clone();
 
     assert_eq!(context.mode(), ThemeMode::Dark);
-    assert_eq!(context.revision(), ThemeSnapshot::dark().revision());
+    assert_eq!(
+        context.source_revision(),
+        ThemeSnapshot::dark().source_revision()
+    );
+    assert!(context.effective_revision() > 0);
     assert_eq!(
         u32::from(cloned.resolve(ColorIntent::new(semantic::SURFACE, 0xffffff))),
         0x121417ff
@@ -121,21 +168,22 @@ fn theme_context_wraps_snapshot_for_render_resolution() {
 fn installed_registry_controls_app_fallback(cx: &mut open_gpui::TestAppContext) {
     let mut registry = ThemeRegistry::with_builtins();
     registry
-        .register(
-            ThemeDefinition::new("brand", "Brand", ThemeMode::Dark, 77)
-                .fallback_mode(ThemeMode::Light)
-                .color(ThemeColor::new(
-                    semantic::ACCENT,
-                    ColorState::Default,
-                    0x445566,
-                )),
-        )
+        .register(complete_theme_with_color(
+            "brand",
+            "Brand",
+            ThemeMode::Dark,
+            77,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x445566,
+        ))
         .expect("brand theme should register");
     cx.update(|app| {
         install_theme_registry(app, registry, "brand").expect("brand theme id should be available");
         let resolver = app_theme_context(app);
         assert_eq!(resolver.mode(), ThemeMode::Dark);
-        assert_eq!(resolver.revision(), 77);
+        assert_eq!(resolver.source_revision(), 77);
+        assert!(resolver.effective_revision() > 0);
         assert_eq!(
             u32::from(resolver.resolve(ColorIntent::new(semantic::ACCENT, 0x1f7a66))),
             0x445566ff
@@ -155,6 +203,84 @@ fn registry_install_rejects_unknown_app_selection_atomically(cx: &mut open_gpui:
     });
 }
 
+#[open_gpui::test]
+fn app_effective_revision_is_monotonic_for_selection_and_content_not_metadata(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let mut registry = ThemeRegistry::new();
+    registry
+        .register(complete_theme_with_color(
+            "brand-a",
+            "Brand A",
+            ThemeMode::Light,
+            1,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x123456,
+        ))
+        .expect("brand A should register");
+    registry
+        .register(complete_theme_with_color(
+            "brand-b",
+            "Brand B",
+            ThemeMode::Light,
+            1,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x123456,
+        ))
+        .expect("brand B should register");
+
+    cx.update(|app| {
+        install_theme_registry(app, registry, "brand-a").expect("brand A should install");
+        let brand_a = app_theme_context(app);
+
+        set_app_theme(app, "brand-b").expect("brand B should select");
+        let brand_b = app_theme_context(app);
+        assert!(brand_b.effective_revision() > brand_a.effective_revision());
+
+        set_app_theme(app, "brand-b").expect("brand B no-op should succeed");
+        assert_eq!(app_theme_context(app), brand_b);
+
+        register_theme(
+            app,
+            complete_theme_with_color(
+                "brand-b",
+                "Brand B metadata",
+                ThemeMode::Light,
+                2,
+                semantic::ACCENT,
+                ColorState::Default,
+                0x123456,
+            ),
+        )
+        .expect("metadata-only reload should register");
+        let metadata_only = app_theme_context(app);
+        assert_eq!(
+            metadata_only.effective_revision(),
+            brand_b.effective_revision()
+        );
+        assert_eq!(metadata_only.source_revision(), 2);
+
+        register_theme(
+            app,
+            complete_theme_with_color(
+                "brand-b",
+                "Brand B content",
+                ThemeMode::Light,
+                2,
+                semantic::ACCENT,
+                ColorState::Default,
+                0x654321,
+            ),
+        )
+        .expect("effective reload should register");
+        let changed = app_theme_context(app);
+        assert!(changed.effective_revision() > metadata_only.effective_revision());
+        assert_eq!(changed.source_revision(), 2);
+    });
+}
+
 #[test]
 fn default_theme_snapshots_expose_distinct_modes_and_revisions() {
     let light = ThemeSnapshot::light();
@@ -164,8 +290,11 @@ fn default_theme_snapshots_expose_distinct_modes_and_revisions() {
     assert_eq!(light.mode().as_str(), "light");
     assert_eq!(dark.mode().as_str(), "dark");
     assert_eq!(high_contrast.mode().as_str(), "high-contrast");
-    assert!(light.revision() < dark.revision());
-    assert!(dark.revision() < high_contrast.revision());
+    assert!(light.source_revision() < dark.source_revision());
+    assert!(dark.source_revision() < high_contrast.source_revision());
+    for snapshot in [&light, &dark, &high_contrast] {
+        assert_eq!(snapshot.design_scales(), ThemeDesignScales::default());
+    }
     assert_ne!(
         light.color_rgb(semantic::SURFACE, ColorState::Default),
         dark.color_rgb(semantic::SURFACE, ColorState::Default)
@@ -187,16 +316,24 @@ fn theme_registry_preloads_builtin_snapshots_without_global_theme_state() {
             .map(|entry| (
                 entry.id(),
                 entry.snapshot().mode(),
-                entry.snapshot().revision()
+                entry.snapshot().source_revision()
             ))
             .collect::<Vec<_>>(),
         vec![
-            ("light", ThemeMode::Light, ThemeSnapshot::light().revision()),
-            ("dark", ThemeMode::Dark, ThemeSnapshot::dark().revision()),
+            (
+                "light",
+                ThemeMode::Light,
+                ThemeSnapshot::light().source_revision()
+            ),
+            (
+                "dark",
+                ThemeMode::Dark,
+                ThemeSnapshot::dark().source_revision()
+            ),
             (
                 "high-contrast",
                 ThemeMode::HighContrast,
-                ThemeSnapshot::high_contrast().revision()
+                ThemeSnapshot::high_contrast().source_revision()
             ),
         ]
     );
@@ -209,38 +346,59 @@ fn theme_registry_preloads_builtin_snapshots_without_global_theme_state() {
 }
 
 #[test]
-fn theme_registry_registers_user_definition_with_fallback_diagnostics() {
+fn built_in_complete_themes_round_trip_through_the_v1_schema() {
+    let source = ThemeRegistry::with_builtins();
+    let serialized = source
+        .entries()
+        .iter()
+        .map(|entry| {
+            (
+                entry.id().to_owned(),
+                theme_json_string(entry).expect("built-in theme should serialize"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut round_tripped = ThemeRegistry::new();
+
+    for (id, json) in serialized {
+        register_theme_json_str(&mut round_tripped, &json)
+            .expect("serialized built-in theme should register");
+        let expected = source.snapshot(&id).expect("source built-in should exist");
+        let actual = round_tripped
+            .snapshot(&id)
+            .expect("round-tripped built-in should exist");
+        assert_eq!(actual.mode(), expected.mode());
+        assert_eq!(actual.source_revision(), expected.source_revision());
+        assert_eq!(actual.colors(), expected.colors());
+        assert_eq!(actual.design_scales(), expected.design_scales());
+    }
+}
+
+#[test]
+fn theme_registry_requires_and_retains_complete_v1_content() {
     let mut registry = ThemeRegistry::with_builtins();
     let entry = registry
-        .register(
-            ThemeDefinition::new("forest", "Forest", ThemeMode::Dark, 9001)
-                .fallback_mode(ThemeMode::Light)
-                .color(ThemeColor::new(
-                    semantic::ACCENT,
-                    ColorState::Default,
-                    0x227755,
-                ))
-                .color(ThemeColor::new(
-                    semantic::ACCENT,
-                    ColorState::Hover,
-                    0x1b6044,
-                )),
-        )
+        .register(complete_theme_with_color(
+            "forest",
+            "Forest",
+            ThemeMode::Dark,
+            9001,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x227755,
+        ))
         .expect("valid user theme definition should register");
     let snapshot = entry.snapshot();
 
     assert_eq!(entry.id(), "forest");
     assert_eq!(entry.label(), "Forest");
     assert_eq!(snapshot.mode(), ThemeMode::Dark);
-    assert_eq!(snapshot.revision(), 9001);
+    assert_eq!(snapshot.source_revision(), 9001);
+    assert!(entry.effective_revision() > 0);
+    assert_eq!(snapshot.design_scales(), ThemeDesignScales::default());
     assert_eq!(
-        entry.diagnostics().fallback_mode(),
-        ThemeMode::Light,
-        "the registry should record which built-in table filled omitted optional tokens"
-    );
-    assert!(
-        entry.diagnostics().fallback_color_count() > 0,
-        "omitted optional token/state entries should be filled from the fallback snapshot"
+        snapshot.colors().len(),
+        ThemeSnapshot::dark().colors().len()
     );
     assert_eq!(
         snapshot.color_rgb(semantic::ACCENT, ColorState::Default),
@@ -248,7 +406,7 @@ fn theme_registry_registers_user_definition_with_fallback_diagnostics() {
     );
     assert_eq!(
         snapshot.color_rgb(semantic::SURFACE, ColorState::Default),
-        ThemeSnapshot::light().color_rgb(semantic::SURFACE, ColorState::Default)
+        ThemeSnapshot::dark().color_rgb(semantic::SURFACE, ColorState::Default)
     );
     assert_eq!(
         u32::from(ThemeResolver::resolve_with(
@@ -257,11 +415,27 @@ fn theme_registry_registers_user_definition_with_fallback_diagnostics() {
         )),
         0x227755ff
     );
+
+    let before_invalid_replacement = registry.clone();
+    assert!(matches!(
+        registry.register(
+            ThemeDefinition::new("forest", "Invalid replacement", ThemeMode::Dark, 1)
+                .design_scales(ThemeDesignScales::default())
+                .color(ThemeColor::new(
+                    semantic::ACCENT,
+                    ColorState::Default,
+                    0x123456,
+                ))
+        ),
+        Err(ThemeValidationError::MissingColor { .. })
+    ));
+    assert_eq!(registry, before_invalid_replacement);
 }
 
 #[test]
 fn theme_json_loader_registers_portable_definition_like_code_built_theme() {
-    let json_definition = theme_definition_from_json_str(VALID_THEME_JSON)
+    let valid_theme_json = valid_theme_json();
+    let json_definition = theme_definition_from_json_str(&valid_theme_json)
         .expect("valid theme JSON should produce a ThemeDefinition");
     let mut json_registry = ThemeRegistry::with_builtins();
     let json_entry = json_registry
@@ -278,8 +452,11 @@ fn theme_json_loader_registers_portable_definition_like_code_built_theme() {
     assert_eq!(json_entry.id(), "forest-json");
     assert_eq!(json_entry.label(), "Forest JSON");
     assert_eq!(json_entry.snapshot().mode(), ThemeMode::Dark);
-    assert_eq!(json_entry.snapshot().revision(), 9001);
-    assert_eq!(json_entry.diagnostics().fallback_mode(), ThemeMode::Light);
+    assert_eq!(json_entry.snapshot().source_revision(), 9001);
+    assert_eq!(
+        json_entry.snapshot().design_scales(),
+        ThemeDesignScales::default()
+    );
     assert_eq!(
         json_entry
             .snapshot()
@@ -292,17 +469,17 @@ fn theme_json_loader_registers_portable_definition_like_code_built_theme() {
         json_entry
             .snapshot()
             .color_rgb(semantic::SURFACE_MUTED, ColorState::Disabled),
-        Some(0x102820)
+        ThemeSnapshot::dark().color_rgb(semantic::SURFACE_MUTED, ColorState::Disabled)
     );
     assert_eq!(
         json_entry
             .snapshot()
             .color_rgb(semantic::DESTRUCTIVE, ColorState::Invalid),
-        Some(0xff5544)
+        ThemeSnapshot::dark().color_rgb(semantic::DESTRUCTIVE, ColorState::Invalid)
     );
 
     let mut direct_registry = ThemeRegistry::with_builtins();
-    let direct_entry = register_theme_json_str(&mut direct_registry, VALID_THEME_JSON)
+    let direct_entry = register_theme_json_str(&mut direct_registry, &valid_theme_json)
         .expect("string facade should parse and register")
         .clone();
     assert_eq!(direct_entry.id(), "forest-json");
@@ -316,8 +493,20 @@ fn theme_json_schema_exposes_portable_theme_contract() {
     assert_eq!(THEME_JSON_SCHEMA_VERSION, 1);
     for token in [
         "schema_version",
-        "fallback_mode",
         "colors",
+        "design",
+        "typography",
+        "control_text",
+        "control_line_height",
+        "spacing",
+        "control_inline",
+        "control_block",
+        "radius",
+        "elevation",
+        "density",
+        "motion_policy",
+        "compact",
+        "reduced",
         "semantic.focus_ring",
         "focus-visible",
         "disabled",
@@ -331,10 +520,15 @@ fn theme_json_schema_exposes_portable_theme_contract() {
             "theme JSON schema should mention `{token}`"
         );
     }
+    assert!(!schema.contains("fallback_mode"));
 }
 
 #[test]
 fn theme_json_loader_reports_structured_errors_before_registration() {
+    assert!(matches!(
+        theme_definition_from_json_str(OLD_COLOR_ONLY_THEME_JSON),
+        Err(ThemeLoadError::InvalidJson { .. })
+    ));
     assert_eq!(
         theme_definition_from_json_str("{}").unwrap_err(),
         ThemeLoadError::MissingField(ThemeFileField::SchemaVersion)
@@ -437,16 +631,96 @@ fn theme_json_loader_reports_structured_errors_before_registration() {
             state: "default".to_owned()
         }
     );
+
+    let mut missing_design = serde_json::from_str::<serde_json::Value>(&valid_theme_json())
+        .expect("complete fixture should parse as JSON");
+    missing_design
+        .as_object_mut()
+        .expect("fixture root should be an object")
+        .remove("design");
+    assert_eq!(
+        theme_definition_from_json_str(&missing_design.to_string()).unwrap_err(),
+        ThemeLoadError::MissingField(ThemeFileField::Design)
+    );
+
+    let mut unsupported_density = serde_json::from_str::<serde_json::Value>(&valid_theme_json())
+        .expect("complete fixture should parse as JSON");
+    unsupported_density["design"]["density"] = serde_json::Value::String("dense".to_owned());
+    assert_eq!(
+        theme_definition_from_json_str(&unsupported_density.to_string()).unwrap_err(),
+        ThemeLoadError::UnsupportedDensity {
+            density: "dense".to_owned()
+        }
+    );
+
+    let mut padded_mode = serde_json::from_str::<serde_json::Value>(&valid_theme_json())
+        .expect("complete fixture should parse as JSON");
+    padded_mode["mode"] = serde_json::Value::String(" dark ".to_owned());
+    assert_eq!(
+        theme_definition_from_json_str(&padded_mode.to_string()).unwrap_err(),
+        ThemeLoadError::UnsupportedMode {
+            mode: " dark ".to_owned()
+        }
+    );
+
+    let mut padded_token = serde_json::from_str::<serde_json::Value>(&valid_theme_json())
+        .expect("complete fixture should parse as JSON");
+    padded_token["colors"][0]["token"] = serde_json::Value::String(" semantic.surface ".to_owned());
+    assert_eq!(
+        theme_definition_from_json_str(&padded_token.to_string()).unwrap_err(),
+        ThemeLoadError::UnsupportedToken {
+            token: " semantic.surface ".to_owned()
+        }
+    );
+
+    let mut prefixed_rgb = serde_json::from_str::<serde_json::Value>(&valid_theme_json())
+        .expect("complete fixture should parse as JSON");
+    prefixed_rgb["colors"][0]["rgb"] = serde_json::Value::String("0x123456".to_owned());
+    assert_eq!(
+        theme_definition_from_json_str(&prefixed_rgb.to_string()).unwrap_err(),
+        ThemeLoadError::InvalidRgb {
+            value: "0x123456".to_owned()
+        }
+    );
+
+    let mut missing_elevation_opacity =
+        serde_json::from_str::<serde_json::Value>(&valid_theme_json())
+            .expect("complete fixture should parse as JSON");
+    missing_elevation_opacity["design"]["elevation"]["overlay"][0]
+        .as_object_mut()
+        .expect("elevation layer should be an object")
+        .remove("opacity_percent");
+    assert_eq!(
+        theme_definition_from_json_str(&missing_elevation_opacity.to_string()).unwrap_err(),
+        ThemeLoadError::MissingElevationField {
+            index: 0,
+            field: ThemeFileField::ElevationOpacityPercent,
+        }
+    );
+
+    let mut incomplete_colors = serde_json::from_str::<serde_json::Value>(&valid_theme_json())
+        .expect("complete fixture should parse as JSON");
+    incomplete_colors["colors"]
+        .as_array_mut()
+        .expect("colors should be an array")
+        .pop();
+    assert!(matches!(
+        theme_definition_from_json_str(&incomplete_colors.to_string()),
+        Err(ThemeLoadError::Registration(
+            ThemeValidationError::MissingColor { .. }
+        ))
+    ));
 }
 
 #[test]
 fn theme_json_file_facade_reads_and_registers_theme_files() {
+    let valid_theme_json = valid_theme_json();
     let path = std::env::temp_dir().join(format!(
         "open-gpui-theme-loader-{}-{}.json",
         std::process::id(),
-        ThemeSnapshot::light().revision()
+        ThemeSnapshot::light().source_revision()
     ));
-    std::fs::write(&path, VALID_THEME_JSON).expect("temporary theme file should be writable");
+    std::fs::write(&path, valid_theme_json).expect("temporary theme file should be writable");
 
     let definition =
         theme_definition_from_json_file(&path).expect("file facade should load theme definition");
@@ -461,7 +735,7 @@ fn theme_json_file_facade_reads_and_registers_theme_files() {
     let direct_entry = register_theme_json_file(&mut direct_registry, &path)
         .expect("file register facade should load and register")
         .clone();
-    assert_eq!(direct_entry.snapshot().revision(), 9001);
+    assert_eq!(direct_entry.snapshot().source_revision(), 9001);
 
     std::fs::remove_file(&path).expect("temporary theme file should be removable");
 }
@@ -501,36 +775,153 @@ fn theme_registry_rejects_missing_required_identity_fields() {
                     .mode(ThemeMode::Light)
             )
             .unwrap_err(),
-        ThemeValidationError::MissingRevision
+        ThemeValidationError::MissingSourceRevision
     );
+    assert_eq!(
+        registry
+            .register(
+                ThemeDefinition::draft()
+                    .id("brand")
+                    .label("Brand")
+                    .mode(ThemeMode::Light)
+                    .source_revision(1)
+            )
+            .unwrap_err(),
+        ThemeValidationError::MissingDesignScales
+    );
+}
+
+#[test]
+fn theme_registry_rejects_duplicate_and_unsupported_programmatic_colors_atomically() {
+    let source = ThemeSnapshot::light();
+    let mut registry = ThemeRegistry::new();
+
+    assert_eq!(
+        registry
+            .register(
+                ThemeDefinition::from_snapshot("duplicate", "Duplicate", &source).color(
+                    ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x123456),
+                )
+            )
+            .unwrap_err(),
+        ThemeValidationError::DuplicateColor {
+            token: semantic::ACCENT,
+            state: ColorState::Default,
+        }
+    );
+    assert!(registry.entries().is_empty());
+
+    let unsupported = open_gpui_ui_core::TokenKey::new("semantic.unsupported");
+    assert_eq!(
+        registry
+            .register(
+                ThemeDefinition::from_snapshot("unsupported", "Unsupported", &source)
+                    .color(ThemeColor::new(unsupported, ColorState::Default, 0x123456),)
+            )
+            .unwrap_err(),
+        ThemeValidationError::UnsupportedColor {
+            token: unsupported,
+            state: ColorState::Default,
+        }
+    );
+    assert!(registry.entries().is_empty());
+
+    assert_eq!(
+        registry
+            .register(complete_theme_with_color(
+                "invalid-rgb",
+                "Invalid RGB",
+                ThemeMode::Light,
+                1,
+                semantic::ACCENT,
+                ColorState::Default,
+                0x0100_0000,
+            ))
+            .unwrap_err(),
+        ThemeValidationError::InvalidColorRgb {
+            token: semantic::ACCENT,
+            state: ColorState::Default,
+            rgb: 0x0100_0000,
+        }
+    );
+    assert!(registry.entries().is_empty());
+
+    let defaults = ThemeDesignScales::default();
+    let invalid_elevation = ThemeDesignScales::new(
+        defaults.typography(),
+        defaults.spacing(),
+        defaults.radius(),
+        ThemeElevationScale::new([
+            ThemeElevationLayer::new(0, 10, 15, -3, 101),
+            defaults.elevation().overlay()[1],
+        ]),
+        defaults.density(),
+        defaults.motion(),
+    );
+    assert_eq!(
+        registry
+            .register(
+                ThemeDefinition::from_snapshot("invalid-elevation", "Invalid elevation", &source)
+                    .design_scales(invalid_elevation)
+            )
+            .unwrap_err(),
+        ThemeValidationError::InvalidElevationOpacity {
+            layer: 0,
+            opacity_percent: 101,
+        }
+    );
+    assert!(registry.entries().is_empty());
 }
 
 #[test]
 fn theme_registry_replaces_existing_definition_by_stable_id() {
     let mut registry = ThemeRegistry::new();
 
-    registry
-        .register(
-            ThemeDefinition::new("brand", "Brand", ThemeMode::Light, 1).color(ThemeColor::new(
-                semantic::ACCENT,
-                ColorState::Default,
-                0x111111,
-            )),
-        )
-        .expect("initial theme should register");
-    registry
-        .register(
-            ThemeDefinition::new("brand", "Brand refreshed", ThemeMode::Light, 2).color(
-                ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x222222),
-            ),
-        )
-        .expect("theme refresh should replace by id");
+    let initial_revision = registry
+        .register(complete_theme_with_color(
+            "brand",
+            "Brand",
+            ThemeMode::Light,
+            1,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x111111,
+        ))
+        .expect("initial theme should register")
+        .effective_revision();
+    let metadata_only_revision = registry
+        .register(complete_theme_with_color(
+            "brand",
+            "Brand metadata refreshed",
+            ThemeMode::Light,
+            2,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x111111,
+        ))
+        .expect("metadata-only refresh should register")
+        .effective_revision();
+    assert_eq!(metadata_only_revision, initial_revision);
+
+    let changed_revision = registry
+        .register(complete_theme_with_color(
+            "brand",
+            "Brand content refreshed",
+            ThemeMode::Light,
+            2,
+            semantic::ACCENT,
+            ColorState::Default,
+            0x222222,
+        ))
+        .expect("effective theme refresh should replace by id")
+        .effective_revision();
+    assert!(changed_revision > metadata_only_revision);
 
     assert_eq!(registry.entries().len(), 1);
     let snapshot = registry
         .snapshot("brand")
         .expect("brand snapshot should exist");
-    assert_eq!(snapshot.revision(), 2);
+    assert_eq!(snapshot.source_revision(), 2);
     assert_eq!(
         snapshot.color_rgb(semantic::ACCENT, ColorState::Default),
         Some(0x222222)
@@ -543,12 +934,17 @@ fn theme_registry_types_live_on_explicit_theme_owner_surface() {
 
     let mut root_registry: theme_owner::ThemeRegistry = theme_owner::ThemeRegistry::with_builtins();
     let root_definition: theme_owner::ThemeDefinition =
-        theme_owner::ThemeDefinition::new("root-brand", "Root brand", root::ThemeMode::Light, 7);
+        theme_owner::ThemeDefinition::from_snapshot(
+            "root-brand",
+            "Root brand",
+            &root::ThemeSnapshot::light(),
+        )
+        .source_revision(7);
     let root_entry: theme_owner::ThemeRegistryEntry = root_registry
         .register(root_definition)
         .expect("theme owner ThemeRegistry should register exported ThemeDefinition")
         .clone();
-    let root_diagnostics: theme_owner::ThemeRegistrationDiagnostics = root_entry.diagnostics();
+    let root_scales: theme_owner::ThemeDesignScales = root_entry.snapshot().design_scales();
     let root_error: theme_owner::ThemeValidationError =
         theme_owner::ThemeValidationError::MissingId;
     let root_load_error: theme_owner::ThemeLoadError =
@@ -558,18 +954,18 @@ fn theme_registry_types_live_on_explicit_theme_owner_surface() {
 
     let mut prelude_registry: theme_owner::ThemeRegistry =
         theme_owner::ThemeRegistry::with_builtins();
-    let prelude_definition: theme_owner::ThemeDefinition = theme_owner::ThemeDefinition::new(
-        "prelude-brand",
-        "Prelude brand",
-        prelude::ThemeMode::Dark,
-        8,
-    );
+    let prelude_definition: theme_owner::ThemeDefinition =
+        theme_owner::ThemeDefinition::from_snapshot(
+            "prelude-brand",
+            "Prelude brand",
+            &prelude::ThemeSnapshot::dark(),
+        )
+        .source_revision(8);
     let prelude_entry: theme_owner::ThemeRegistryEntry = prelude_registry
         .register(prelude_definition)
         .expect("theme owner ThemeRegistry should register exported ThemeDefinition")
         .clone();
-    let prelude_diagnostics: theme_owner::ThemeRegistrationDiagnostics =
-        prelude_entry.diagnostics();
+    let prelude_scales: theme_owner::ThemeDesignScales = prelude_entry.snapshot().design_scales();
     let prelude_error: theme_owner::ThemeValidationError =
         theme_owner::ThemeValidationError::MissingLabel;
     let prelude_load_error: theme_owner::ThemeLoadError =
@@ -578,15 +974,11 @@ fn theme_registry_types_live_on_explicit_theme_owner_surface() {
         theme_owner::ThemeFileField::SchemaVersion;
     let _prelude_schema = theme_owner::theme_json_schema();
 
-    assert_eq!(root_entry.snapshot().revision(), 7);
-    assert_eq!(prelude_entry.snapshot().revision(), 8);
+    assert_eq!(root_entry.snapshot().source_revision(), 7);
+    assert_eq!(prelude_entry.snapshot().source_revision(), 8);
     assert_eq!(theme_owner::THEME_JSON_SCHEMA_VERSION, 1);
-    assert_eq!(root_diagnostics.fallback_mode(), root::ThemeMode::Light);
-    assert!(root_diagnostics.fallback_color_count() > 0);
-    assert_eq!(
-        prelude_diagnostics.fallback_mode(),
-        prelude::ThemeMode::Dark
-    );
+    assert_eq!(root_scales, theme_owner::ThemeDesignScales::default());
+    assert_eq!(prelude_scales, theme_owner::ThemeDesignScales::default());
     assert_eq!(root_error, theme_owner::ThemeValidationError::MissingId);
     assert_eq!(
         prelude_error,
@@ -600,19 +992,19 @@ fn theme_registry_types_live_on_explicit_theme_owner_surface() {
         prelude_load_error,
         theme_owner::ThemeLoadError::MissingField(prelude_file_field)
     );
-    theme_owner::register_theme_json_str(&mut root_registry, VALID_THEME_JSON)
+    let valid_theme_json = valid_theme_json();
+    theme_owner::register_theme_json_str(&mut root_registry, &valid_theme_json)
         .expect("theme owner register_theme_json_str should register exported loader output");
-    theme_owner::register_theme_json_str(&mut prelude_registry, VALID_THEME_JSON)
+    theme_owner::register_theme_json_str(&mut prelude_registry, &valid_theme_json)
         .expect("theme owner register_theme_json_str should register exported loader output");
 }
 
 #[test]
 fn default_theme_resolves_all_current_component_color_intents() {
-    let theme = [
-        ThemeSnapshot::light(),
-        ThemeSnapshot::dark(),
-        ThemeSnapshot::high_contrast(),
-    ];
+    let light = ThemeSnapshot::light();
+    let dark = ThemeSnapshot::dark();
+    let high_contrast = ThemeSnapshot::high_contrast();
+    let theme = [&light, &dark, &high_contrast];
     let buttons = [
         Button::new("default", "Default").state(),
         Button::new("secondary", "Secondary")
@@ -1171,7 +1563,7 @@ fn default_theme_resolves_all_current_component_color_intents() {
 }
 
 fn assert_theme_has_exact_color(
-    themes: [ThemeSnapshot<'_>; 3],
+    themes: [&ThemeSnapshot; 3],
     intent: open_gpui_ui_components::ColorIntent,
 ) {
     for theme in themes {
@@ -1240,21 +1632,21 @@ fn theme_snapshots_resolve_state_specific_component_tokens() {
     assert_eq!(
         u32::from(ThemeResolver::resolve_with(
             button.colors().hover_background(),
-            theme
+            &theme
         )),
         0xdfe6dcff
     );
     assert_eq!(
         u32::from(ThemeResolver::resolve_with(
             disabled_input.colors().background(),
-            theme
+            &theme
         )),
         0xf1f5eeff
     );
     assert_eq!(
         u32::from(ThemeResolver::resolve_with(
             invalid_input.colors().focus_ring(),
-            theme
+            &theme
         )),
         0x2f80edff
     );

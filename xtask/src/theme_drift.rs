@@ -12,6 +12,7 @@ pub(crate) fn scan_theme_drift(root: &Path) -> Result<(), ()> {
     let mut failures = Vec::new();
     scan_theme_recipe_coverage(root, &mut failures);
     scan_theme_palette_coverage(root, &mut failures);
+    scan_theme_design_scale_coverage(root, &mut failures);
 
     if failures.is_empty() {
         println!("theme drift scan passed");
@@ -72,7 +73,7 @@ fn scan_theme_recipe_coverage(root: &Path, failures: &mut Vec<String>) {
 
         if contents.contains("impl ThemeResolver") {
             failures.push(format!(
-                "{relative}: component files must not extend ThemeResolver; move color recipes to crates/ui_components/src/theme/recipes.rs"
+                "{relative}: component files must not extend ThemeResolver; move theme recipes to crates/ui_components/src/theme/recipes.rs"
             ));
         }
     }
@@ -163,6 +164,119 @@ fn scan_theme_palette_coverage(root: &Path, failures: &mut Vec<String>) {
     }
 }
 
+fn scan_theme_design_scale_coverage(root: &Path, failures: &mut Vec<String>) {
+    let theme_dir = root.join("crates/ui_components/src/theme");
+    let recipes_path = theme_dir.join("recipes.rs");
+    let Ok(recipes) = fs::read_to_string(&recipes_path) else {
+        return;
+    };
+    let source = theme_recipe_definition_source(&theme_dir, &recipes, failures);
+    for (token, marker, consumers) in [
+        (
+            "typography.control_text",
+            ".typography().control_text()",
+            ["button_metrics", "text_input_metrics"],
+        ),
+        (
+            "typography.control_line_height",
+            ".typography().control_line_height()",
+            ["button_metrics", "text_input_metrics"],
+        ),
+        (
+            "spacing.control_inline",
+            ".spacing().control_inline()",
+            ["button_metrics", "text_input_metrics"],
+        ),
+        (
+            "spacing.control_block",
+            ".spacing().control_block()",
+            ["button_metrics", "text_input_metrics"],
+        ),
+        (
+            "radius.control",
+            ".radius().control()",
+            ["button_metrics", "text_input_metrics"],
+        ),
+        (
+            "density",
+            ".resolve_size(",
+            ["button_metrics", "text_input_metrics"],
+        ),
+        (
+            "elevation.overlay",
+            ".elevation().overlay()",
+            ["overlay_surface_elevation", "tooltip_elevation"],
+        ),
+        (
+            "motion_policy",
+            ".resolve_motion(",
+            [
+                "splitter_motion_preference",
+                "virtualized_list_motion_preference",
+            ],
+        ),
+    ] {
+        for consumer in consumers {
+            let Some(body) = function_body(&source, consumer) else {
+                failures.push(format!(
+                    "theme design token `{token}` is missing production recipe `{consumer}`"
+                ));
+                continue;
+            };
+            if !body.contains(marker) {
+                failures.push(format!(
+                    "theme design token `{token}` is not consumed by production recipe `{consumer}`"
+                ));
+            }
+        }
+    }
+
+    for (recipe, relative_path) in [
+        ("button_metrics", "crates/ui_components/src/button.rs"),
+        (
+            "text_input_metrics",
+            "crates/ui_components/src/text_input.rs",
+        ),
+        (
+            "overlay_surface_elevation",
+            "crates/ui_components/src/dialog.rs",
+        ),
+        ("tooltip_elevation", "crates/ui_components/src/tooltip.rs"),
+        (
+            "splitter_motion_preference",
+            "crates/ui_components/src/splitter.rs",
+        ),
+        (
+            "virtualized_list_motion_preference",
+            "crates/ui_components/src/virtualized_list/runtime.rs",
+        ),
+    ] {
+        let path = root.join(relative_path);
+        let Ok(contents) = fs::read_to_string(&path) else {
+            failures.push(format!(
+                "{relative_path}: missing production consumer for theme recipe `{recipe}`"
+            ));
+            continue;
+        };
+        let call = format!("ThemeResolver::{recipe}(");
+        if !contents.contains(&call) {
+            failures.push(format!(
+                "{relative_path}: production rendering does not call theme recipe `{recipe}`"
+            ));
+        }
+    }
+
+    let palette_path = theme_dir.join("palette.rs");
+    if let Ok(palette) = fs::read_to_string(palette_path) {
+        let built_in_scale_count = palette.matches("ThemeDesignScales::default()").count();
+        if built_in_scale_count != 3 {
+            failures.push(format!(
+                "crates/ui_components/src/theme/palette.rs: expected three complete built-in design-scale payloads, found {built_in_scale_count}"
+            ));
+        }
+    }
+}
+
 fn recipe_definitions(contents: &str) -> BTreeSet<String> {
     contents
         .lines()
@@ -173,7 +287,7 @@ fn recipe_definitions(contents: &str) -> BTreeSet<String> {
             }
             let start = line.find("fn ")? + 3;
             let name = line[start..].split_once('(')?.0.trim();
-            name.ends_with("_colors").then(|| name.to_string())
+            is_theme_recipe_name(name).then(|| name.to_string())
         })
         .collect()
 }
@@ -193,12 +307,39 @@ fn theme_recipe_calls(root: &Path) -> BTreeSet<String> {
             continue;
         };
         for name in theme_resolver_method_names(&contents) {
-            if name.ends_with("_colors") {
+            if is_theme_recipe_name(&name) {
                 calls.insert(name);
             }
         }
     }
     calls
+}
+
+fn is_theme_recipe_name(name: &str) -> bool {
+    name.ends_with("_colors")
+        || name.ends_with("_metrics")
+        || name.ends_with("_elevation")
+        || name.ends_with("_motion_preference")
+}
+
+fn function_body<'a>(contents: &'a str, name: &str) -> Option<&'a str> {
+    let signature = format!("fn {name}(");
+    let start = contents.find(&signature)?;
+    let open = contents[start..].find('{').map(|index| start + index)?;
+    let mut depth = 0usize;
+    for (offset, byte) in contents.as_bytes()[open..].iter().copied().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(&contents[open + 1..open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn theme_recipe_catalog(contents: &str) -> BTreeSet<String> {

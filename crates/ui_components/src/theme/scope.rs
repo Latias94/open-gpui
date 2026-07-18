@@ -12,6 +12,7 @@ pub struct ThemeScope {
     id: ElementId,
     context: ThemeContext,
     child: Option<AnyElement>,
+    preserve_effective_revision: bool,
     source: &'static core::panic::Location<'static>,
 }
 
@@ -27,6 +28,22 @@ impl ThemeScope {
             id: id.into(),
             context: context.into(),
             child: Some(child.into_any_element()),
+            preserve_effective_revision: false,
+            source: core::panic::Location::caller(),
+        }
+    }
+
+    #[track_caller]
+    pub(crate) fn captured(
+        id: impl Into<ElementId>,
+        context: ThemeContext,
+        child: impl IntoElement,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            context,
+            child: Some(child.into_any_element()),
+            preserve_effective_revision: true,
             source: core::panic::Location::caller(),
         }
     }
@@ -52,18 +69,35 @@ impl Element for ThemeScope {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let id = id.expect("theme scopes always provide a stable element id");
-        let context_changed =
+        let (effective_context, context_changed) =
             window.with_element_state(id, |previous: Option<ThemeScopeElementState>, _| {
-                let changed = previous
-                    .as_ref()
-                    .is_none_or(|previous| previous.context != self.context);
+                let (effective_context, changed) = match previous {
+                    Some(previous)
+                        if previous
+                            .input_context
+                            .has_same_effective_identity(&self.context) =>
+                    {
+                        (
+                            previous
+                                .effective_context
+                                .with_snapshot_preserving_effective_revision(
+                                    self.context.snapshot().clone(),
+                                ),
+                            false,
+                        )
+                    }
+                    _ if self.preserve_effective_revision => (self.context.clone(), true),
+                    _ => (self.context.rebound(), true),
+                };
                 (
-                    changed,
+                    (effective_context.clone(), changed),
                     ThemeScopeElementState {
-                        context: self.context.clone(),
+                        input_context: self.context.clone(),
+                        effective_context,
                     },
                 )
             });
+        self.context = effective_context;
         let mut child = self.child.take().expect("theme scope child missing");
         let layout_id = with_theme_scope(self.context.clone(), window, cx, |window, cx| {
             child.request_layout(window, cx)
@@ -102,7 +136,8 @@ impl Element for ThemeScope {
 }
 
 struct ThemeScopeElementState {
-    context: ThemeContext,
+    input_context: ThemeContext,
+    effective_context: ThemeContext,
 }
 
 impl IntoElement for ThemeScope {
@@ -155,7 +190,7 @@ impl Render for ScopedThemeView {
         _window: &mut Window,
         _cx: &mut open_gpui::Context<Self>,
     ) -> impl IntoElement {
-        ThemeScope::new(
+        ThemeScope::captured(
             "scoped-theme-view",
             self.context.clone(),
             self.child.clone(),

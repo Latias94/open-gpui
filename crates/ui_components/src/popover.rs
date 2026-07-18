@@ -24,7 +24,7 @@ use crate::overlay::{
     WindowOverlayRuntime, gpui_overlay_state, gpui_relative_overlay_layer,
     resolve_overlay_open_state,
 };
-use crate::theme::{ThemeContext, ThemeResolver};
+use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 
 /// Popover open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -753,7 +753,9 @@ fn popover_content_element(
             .text_color(foreground)
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .shadow_lg()
+            .shadow(gpui_elevation_shadow(
+                ThemeResolver::overlay_surface_elevation(theme),
+            ))
             .occlude()
             .tab_group()
             .focusable()

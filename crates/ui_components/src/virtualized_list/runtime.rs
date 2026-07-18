@@ -254,7 +254,7 @@ pub struct VirtualizedList {
     viewport_item_count: usize,
     metrics: VirtualizedListMetrics,
     row_measure_mode: VirtualizedListRowMeasureMode,
-    motion_preference: MotionPreference,
+    motion_preference: Option<MotionPreference>,
     snapshot: Option<VirtualizerSnapshot>,
     scroll_handle: Option<ScrollHandle>,
     reveal_key: Option<String>,
@@ -299,7 +299,7 @@ impl VirtualizedList {
             viewport_item_count: DEFAULT_VIRTUALIZED_LIST_VIEWPORT_ITEM_COUNT,
             metrics: VirtualizedListMetrics::from_size(size),
             row_measure_mode: VirtualizedListRowMeasureMode::default(),
-            motion_preference: MotionPreference::Animated,
+            motion_preference: None,
             snapshot: None,
             scroll_handle: None,
             reveal_key: None,
@@ -378,9 +378,11 @@ impl VirtualizedList {
         self
     }
 
-    /// Applies the motion preference for active-descendant chrome.
+    /// Requests a motion preference for active-descendant chrome.
+    ///
+    /// Reduced motion from either this request or the active theme remains authoritative.
     pub fn motion_preference(mut self, motion_preference: MotionPreference) -> Self {
-        self.motion_preference = motion_preference;
+        self.motion_preference = Some(motion_preference);
         self
     }
 
@@ -550,8 +552,9 @@ impl RenderOnce for VirtualizedList {
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
         let debug_id = self.id.to_string();
         let now = Instant::now();
-        let active_indicator_model =
-            MotionPreset::affordance(self.motion_preference).resolve_model();
+        let motion_preference =
+            ThemeResolver::virtualized_list_motion_preference(&theme, self.motion_preference);
+        let active_indicator_model = MotionPreset::affordance(motion_preference).resolve_model();
         let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| VirtualizedListRuntime {
             scroll_surface: ScrollSurfaceRuntime::new(None),
             focus_handle: cx.focus_handle(),

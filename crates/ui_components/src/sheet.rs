@@ -27,7 +27,7 @@ use crate::overlay::{
     OverlayOpenIntent, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
     gpui_full_window_overlay_layer, gpui_overlay_state, resolve_overlay_open_state,
 };
-use crate::theme::{ThemeContext, ThemeResolver};
+use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 
 type SheetOpenChangeHandler = Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>;
 
@@ -1038,7 +1038,9 @@ fn sheet_surface_element(
             .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .shadow_lg()
+            .shadow(gpui_elevation_shadow(
+                ThemeResolver::overlay_surface_elevation(theme),
+            ))
             .occlude()
             .tab_group()
             .focusable()

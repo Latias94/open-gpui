@@ -6,13 +6,18 @@
     "schema_version": {
       "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 1,
+      "maximum": 1
     },
     "id": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "label": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "mode": {
       "$ref": "#/$defs/ThemeJsonMode"
@@ -22,21 +27,16 @@
       "format": "uint64",
       "minimum": 0
     },
-    "fallback_mode": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/ThemeJsonMode"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "colors": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/ThemeJsonColorEntry"
-      }
+      },
+      "minItems": 28,
+      "maxItems": 28
+    },
+    "design": {
+      "$ref": "#/$defs/ThemeJsonDesignScales"
     }
   },
   "additionalProperties": false,
@@ -46,7 +46,8 @@
     "label",
     "mode",
     "revision",
-    "colors"
+    "colors",
+    "design"
   ],
   "$defs": {
     "ThemeJsonMode": {
@@ -67,7 +68,8 @@
           "$ref": "#/$defs/ThemeJsonColorState"
         },
         "rgb": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^#?[0-9A-Fa-f]{6}$"
         }
       },
       "additionalProperties": false,
@@ -109,6 +111,193 @@
         "focus-visible",
         "overlay",
         "modal-overlay"
+      ]
+    },
+    "ThemeJsonDesignScales": {
+      "type": "object",
+      "properties": {
+        "typography": {
+          "$ref": "#/$defs/ThemeJsonTypographyScale"
+        },
+        "spacing": {
+          "$ref": "#/$defs/ThemeJsonSpacingScale"
+        },
+        "radius": {
+          "$ref": "#/$defs/ThemeJsonRadiusScale"
+        },
+        "elevation": {
+          "$ref": "#/$defs/ThemeJsonElevationScale"
+        },
+        "density": {
+          "$ref": "#/$defs/ThemeJsonDensity"
+        },
+        "motion_policy": {
+          "$ref": "#/$defs/ThemeJsonMotionPolicy"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "typography",
+        "spacing",
+        "radius",
+        "elevation",
+        "density",
+        "motion_policy"
+      ]
+    },
+    "ThemeJsonTypographyScale": {
+      "type": "object",
+      "properties": {
+        "control_text": {
+          "$ref": "#/$defs/ThemeJsonSizeScale"
+        },
+        "control_line_height": {
+          "$ref": "#/$defs/ThemeJsonSizeScale"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "control_text",
+        "control_line_height"
+      ]
+    },
+    "ThemeJsonSizeScale": {
+      "type": "object",
+      "properties": {
+        "xsmall": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "small": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "medium": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "large": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "xsmall",
+        "small",
+        "medium",
+        "large"
+      ]
+    },
+    "ThemeJsonSpacingScale": {
+      "type": "object",
+      "properties": {
+        "control_inline": {
+          "$ref": "#/$defs/ThemeJsonSizeScale"
+        },
+        "control_block": {
+          "$ref": "#/$defs/ThemeJsonSizeScale"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "control_inline",
+        "control_block"
+      ]
+    },
+    "ThemeJsonRadiusScale": {
+      "type": "object",
+      "properties": {
+        "control": {
+          "$ref": "#/$defs/ThemeJsonSizeScale"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "control"
+      ]
+    },
+    "ThemeJsonElevationScale": {
+      "type": "object",
+      "properties": {
+        "overlay": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ThemeJsonElevationLayer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "overlay"
+      ]
+    },
+    "ThemeJsonElevationLayer": {
+      "type": "object",
+      "properties": {
+        "offset_x": {
+          "type": "integer",
+          "format": "int16",
+          "minimum": -32768,
+          "maximum": 32767
+        },
+        "offset_y": {
+          "type": "integer",
+          "format": "int16",
+          "minimum": -32768,
+          "maximum": 32767
+        },
+        "blur_radius": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "spread_radius": {
+          "type": "integer",
+          "format": "int16",
+          "minimum": -32768,
+          "maximum": 32767
+        },
+        "opacity_percent": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "offset_x",
+        "offset_y",
+        "blur_radius",
+        "spread_radius",
+        "opacity_percent"
+      ]
+    },
+    "ThemeJsonDensity": {
+      "type": "string",
+      "enum": [
+        "compact",
+        "comfortable",
+        "spacious"
+      ]
+    },
+    "ThemeJsonMotionPolicy": {
+      "type": "string",
+      "enum": [
+        "animated",
+        "reduced"
       ]
     }
   }

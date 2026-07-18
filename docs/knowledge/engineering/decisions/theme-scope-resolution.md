@@ -69,6 +69,35 @@ the explicit fallback operation. Resolver reads derive inheriting contexts from 
 so app selection is visible in the same transaction before global observer effects flush. This
 avoids retain cycles, transient theme flashes, stale reads, and global redraws.
 
+# Complete Theme V1 Payload
+
+U8 replaces the color-only payload in place under schema version `v1`. Every immutable
+`ThemeSnapshot` and `ThemeContext` carries the complete admitted `ThemeDesignScales` value beside
+the required color table. The value reuses `open_gpui_ui_core::Density` and
+`open_gpui_motion::MotionPreference`; there is no parallel design-scale registry, string resolver,
+or mutable service lookup.
+
+Only tokens consumed by at least two distinct production component recipes enter the public
+contract. Tests, Gallery examples, repeated call sites in one component, and documentation are
+evidence but do not count as independent consumers. Structural component dimensions remain local,
+and motion execution remains in `open-gpui-motion`.
+
+Component size resolution is `explicit Size > theme density default`. Device-adaptive density is a
+host recommendation and never enters recipes implicitly. Reduced motion is an accessibility safety
+floor: a reduced theme or an explicit reduced component request wins, while an explicit animated
+request cannot relax a reduced theme.
+
+Serialized `revision` is source-file metadata. Runtime effective revisions come only from the theme
+authority allocator and increase when effective content or app/window/subtree authority selection
+changes. Callers cannot forge them. Identical effective reloads, metadata-only reloads, and exact
+selection/override no-ops preserve the effective revision. Registry validation completes before
+mutation, so failed parsing or replacement changes neither content, selection, revision, nor window
+invalidation.
+
+The old `fallback_mode`, partial color-table filling, registration diagnostics, color-only fixtures,
+and compatibility parsing are deleted. Complete v1 input missing any required color or admitted
+design scale fails atomically.
+
 # Detached Rendering
 
 Every official overlay binding stores one opening `ThemeContext` with its lifecycle generation.
@@ -122,6 +151,7 @@ atomicity, window-close isolation, complete-palette deferred capture with identi
 metadata, official Popover generation freeze, native Button and IconButton delayed tooltips,
 Gallery scoped Popover rendering, and window-effective Gallery DevTools initialization.
 
-U8 may replace the color-only payload with complete Theme v1 scales and add effective revision and
-source projection. It must preserve this precedence, window ownership, scope identity, detached
-capture, and test matrix unchanged.
+U8 replaced the color-only payload with complete Theme v1 scales and split source metadata from the
+runtime-owned effective revision. The completed implementation preserves the same precedence,
+window ownership, scope identity, detached capture, and test matrix while extending canaries to
+non-color scales and same-transaction redraws.

@@ -1405,6 +1405,35 @@ mod tests {
     }
 
     #[test]
+    fn virtualized_list_reduced_motion_finishes_an_in_flight_active_indicator() {
+        let start = Instant::now();
+        let animated = MotionPreset::affordance(MotionPreference::Animated).resolve_model();
+        let reduced = MotionPreset::affordance(MotionPreference::Reduced).resolve_model();
+        let mut indicator = VirtualizedListActiveIndicatorRuntime::default();
+        let first = indicator_plan("indicator-row-00", UiPx::ZERO);
+        let second = indicator_plan("indicator-row-02", UiPx::ZERO);
+
+        let _ = indicator.sync(&first, start, animated);
+        assert!(
+            indicator
+                .sync(&second, start + Duration::from_millis(16), animated)
+                .frame_demand()
+                .needs_frame()
+        );
+        let update = indicator.sync(&second, start + Duration::from_millis(45), reduced);
+
+        assert_eq!(update.frame_demand(), MotionFrameDemand::Idle);
+        assert_eq!(
+            update.reset_reason(),
+            Some(MotionFrameResetReason::Retarget)
+        );
+        let snapshot = indicator.snapshot().expect("settled indicator");
+        assert_eq!(snapshot.top(), ui_px(40.0));
+        assert_eq!(snapshot.height(), ui_px(20.0));
+        assert_eq!(snapshot.frame_demand(), MotionFrameDemand::Idle);
+    }
+
+    #[test]
     fn virtualized_list_active_indicator_hides_when_active_row_is_offscreen() {
         let start = Instant::now();
         let model = MotionPreset::affordance(MotionPreference::Animated).resolve_model();

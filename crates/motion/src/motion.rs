@@ -12,6 +12,14 @@ pub enum MotionPreference {
 }
 
 impl MotionPreference {
+    /// Returns the stable theme and diagnostics label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Animated => "animated",
+            Self::Reduced => "reduced",
+        }
+    }
+
     /// Returns whether transitions should complete immediately.
     pub const fn is_immediate(self) -> bool {
         matches!(self, Self::Reduced)

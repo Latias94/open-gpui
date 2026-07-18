@@ -16,7 +16,7 @@ impl ThemeResolver {
     }
 
     /// Resolves a color intent with an explicit theme snapshot.
-    pub fn resolve_with(intent: ColorIntent, theme: ThemeSnapshot<'_>) -> Rgba {
+    pub fn resolve_with(intent: ColorIntent, theme: &ThemeSnapshot) -> Rgba {
         theme.resolve(intent)
     }
 }

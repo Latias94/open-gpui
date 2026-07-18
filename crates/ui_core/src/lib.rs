@@ -53,7 +53,7 @@ pub use overlay::{
     anchor_rect_from_point, inset_rect, outer_bounds_with_window_margin, prefer_visual_bounds,
     rect, resolve_escape_key, resolve_outside_press, resolve_overlay_placement,
 };
-pub use sizing::{Density, Sizable, Size};
+pub use sizing::{Density, Sizable, Size, SizeScale};
 pub use split::{
     SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
     SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
@@ -85,7 +85,10 @@ pub use table::{
     TableSubRowSelectionPolicy, TableTextFilterOperator, TableTreeRow, drag_table_column_resize,
     end_table_column_resize,
 };
-pub use tokens::{ThemeTokens, TokenKey, semantic};
+pub use tokens::{
+    ThemeDesignScales, ThemeElevationLayer, ThemeElevationScale, ThemeRadiusScale,
+    ThemeSpacingScale, ThemeTokens, ThemeTypographyScale, TokenKey, semantic,
+};
 pub use virtualizer::{
     VirtualizerItemGeometry, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,

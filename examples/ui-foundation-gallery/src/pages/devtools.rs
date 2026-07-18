@@ -569,7 +569,7 @@ fn devtools_gallery_legacy_collection(
     let theme = theme.clone();
     registry
         .register_snapshot_probe("theme", SnapshotKind::Theme, move || {
-            Ok(ui_components::theme_probe_snapshot(theme.snapshot()))
+            Ok(ui_components::theme_probe_snapshot(&theme))
         })
         .expect("unique theme probe");
 

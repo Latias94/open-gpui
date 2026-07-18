@@ -9,7 +9,7 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeDesignScales, ThemeTokens, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -89,23 +89,51 @@ impl ButtonColors {
 /// Resolved button metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ButtonMetrics {
+    size: Size,
     height: UiPx,
     padding_x: UiPx,
     padding_y: UiPx,
     radius: UiPx,
     text_size: UiPx,
+    line_height: UiPx,
 }
 
 impl ButtonMetrics {
-    /// Resolves metrics from the shared foundation size vocabulary.
+    /// Resolves the built-in Theme v1 metric baseline for a size.
     pub const fn from_size(size: Size) -> Self {
+        let design = ThemeDesignScales::baseline();
+        Self::from_theme_values(
+            size,
+            design.spacing().control_inline().resolve(size),
+            design.spacing().control_block().resolve(size),
+            design.radius().control().resolve(size),
+            design.typography().control_text().resolve(size),
+            design.typography().control_line_height().resolve(size),
+        )
+    }
+
+    pub(crate) const fn from_theme_values(
+        size: Size,
+        padding_x: UiPx,
+        padding_y: UiPx,
+        radius: UiPx,
+        text_size: UiPx,
+        line_height: UiPx,
+    ) -> Self {
         Self {
+            size,
             height: size.button_h(),
-            padding_x: size.button_px(),
-            padding_y: size.button_py(),
-            radius: size.control_radius(),
-            text_size: size.control_text_px(),
+            padding_x,
+            padding_y,
+            radius,
+            text_size,
+            line_height,
         }
+    }
+
+    /// Returns the resolved component size.
+    pub const fn size(self) -> Size {
+        self.size
     }
 
     /// Returns the button height.
@@ -132,9 +160,14 @@ impl ButtonMetrics {
     pub const fn text_size(self) -> UiPx {
         self.text_size
     }
+
+    /// Returns the text line height.
+    pub const fn line_height(self) -> UiPx {
+        self.line_height
+    }
 }
 
-/// Resolved button state used by tests, demos, and rendering.
+/// Renderer-neutral button state used by tests, demos, and rendering.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ButtonState {
     variant: ButtonVariant,
@@ -155,14 +188,30 @@ impl ButtonState {
         selected: bool,
         tokens: ThemeTokens,
     ) -> Self {
+        Self::resolve_with_metrics(
+            variant,
+            ButtonMetrics::from_size(size),
+            disabled,
+            selected,
+            tokens,
+        )
+    }
+
+    fn resolve_with_metrics(
+        variant: ButtonVariant,
+        metrics: ButtonMetrics,
+        disabled: bool,
+        selected: bool,
+        tokens: ThemeTokens,
+    ) -> Self {
         let colors = ThemeResolver::button_colors(tokens, variant, selected);
 
         Self {
             variant,
-            size,
+            size: metrics.size(),
             disabled,
             selected,
-            metrics: ButtonMetrics::from_size(size),
+            metrics,
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
         }
@@ -221,7 +270,7 @@ pub struct Button {
     label: SharedString,
     icon: Option<SharedString>,
     variant: ButtonVariant,
-    size: Size,
+    size: Option<Size>,
     disabled: bool,
     disabled_reason: Option<SharedString>,
     selected: bool,
@@ -242,7 +291,7 @@ impl Button {
             label: label.into(),
             icon: None,
             variant: ButtonVariant::Default,
-            size: Size::Medium,
+            size: None,
             disabled: false,
             disabled_reason: None,
             selected: false,
@@ -263,7 +312,7 @@ impl Button {
             label: action.label().into(),
             icon: action.icon_label().map(SharedString::from),
             variant: ButtonVariant::Default,
-            size: Size::Medium,
+            size: None,
             disabled: action.disabled(),
             disabled_reason: action.disabled_reason().map(SharedString::from),
             selected: false,
@@ -358,11 +407,19 @@ impl Button {
         self.resolved_action.as_ref()
     }
 
-    /// Returns the resolved button state.
+    /// Returns renderer-neutral state using the built-in Theme v1 metric baseline.
     pub fn state(&self) -> ButtonState {
-        ButtonState::resolve(
+        self.state_for_size(self.size.unwrap_or_default())
+    }
+
+    fn state_for_size(&self, size: Size) -> ButtonState {
+        self.state_for_metrics(ButtonMetrics::from_size(size))
+    }
+
+    fn state_for_metrics(&self, metrics: ButtonMetrics) -> ButtonState {
+        ButtonState::resolve_with_metrics(
             self.variant,
-            self.size,
+            metrics,
             self.disabled,
             self.selected,
             self.tokens,
@@ -372,7 +429,7 @@ impl Button {
 
 impl Sizable for Button {
     fn with_size(mut self, size: Size) -> Self {
-        self.size = size;
+        self.size = Some(size);
         self
     }
 }
@@ -388,12 +445,13 @@ impl RenderOnce for Button {
             .tooltip_text
             .clone()
             .filter(|_| custom_tooltip.is_none());
-        let state = self.state();
+        let theme_context = ThemeResolver::current(window, cx);
+        let metrics = ThemeResolver::button_metrics(&theme_context, self.size);
+        let state = self.state_for_metrics(metrics);
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
-        let theme_context = ThemeResolver::current(window, cx);
         let theme = &theme_context;
         let border_color = theme.resolve(colors.border());
         let background = theme.resolve(colors.background());
@@ -439,7 +497,7 @@ impl RenderOnce for Button {
             .bg(background)
             .text_color(foreground)
             .text_size(gpui_px_from_ui(metrics.text_size()))
-            .line_height(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.line_height()))
             .focusable()
             .tab_stop(!disabled)
             .ui_semantics(&semantics)

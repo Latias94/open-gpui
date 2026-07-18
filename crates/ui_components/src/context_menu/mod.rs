@@ -30,7 +30,7 @@ use crate::overlay::{
     gpui_positioned_overlay_layer, resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
-use crate::theme::{ThemeContext, ThemeResolver};
+use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 
 pub use model::ContextMenuState;
 
@@ -447,7 +447,9 @@ fn context_menu_surface(
         .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
-        .shadow_lg()
+        .shadow(gpui_elevation_shadow(
+            ThemeResolver::overlay_surface_elevation(theme),
+        ))
         .occlude()
         .tab_group()
         .focusable()

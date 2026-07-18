@@ -10,6 +10,7 @@ use open_gpui::{
     InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Render, RenderOnce, Style,
     StyleRefinement, Styled, Window, deferred, div, point, px, size,
 };
+use open_gpui_motion::MotionPreference;
 use open_gpui_ui_components::theme::{
     DARK_THEME_ID, LIGHT_THEME_ID, ThemeColor, ThemeContext, ThemeDefinition, ThemeMode,
     ThemeRegistry, ThemeResolver, ThemeScope, ThemeSelectionError, ThemeSnapshot,
@@ -17,7 +18,7 @@ use open_gpui_ui_components::theme::{
     set_app_theme, set_window_theme,
 };
 use open_gpui_ui_components::{Button, ColorIntent, ColorState, IconButton, Popover};
-use open_gpui_ui_core::semantic;
+use open_gpui_ui_core::{Density, SizeScale, ThemeDesignScales, ThemeRadiusScale, semantic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProbePhase {
@@ -33,10 +34,91 @@ struct ThemeObservation {
     label: &'static str,
     phase: ProbePhase,
     mode: ThemeMode,
-    revision: u64,
+    source_revision: u64,
+    effective_revision: u64,
+    density: Density,
+    motion_preference: MotionPreference,
+    control_radius: [u16; 4],
 }
 
 type Observations = Rc<RefCell<Vec<ThemeObservation>>>;
+
+fn complete_theme_definition(
+    id: &str,
+    label: &str,
+    mode: ThemeMode,
+    source_revision: u64,
+) -> ThemeDefinition {
+    let snapshot = match mode {
+        ThemeMode::Light => ThemeSnapshot::light(),
+        ThemeMode::Dark => ThemeSnapshot::dark(),
+        ThemeMode::HighContrast => ThemeSnapshot::high_contrast(),
+    };
+    ThemeDefinition::from_snapshot(id, label, &snapshot).source_revision(source_revision)
+}
+
+fn complete_theme_definition_with_surface(
+    id: impl Into<String>,
+    label: impl Into<String>,
+    source_revision: u64,
+    rgb: u32,
+) -> ThemeDefinition {
+    let source = ThemeSnapshot::dark();
+    let colors = source.colors().iter().copied().map(|color| {
+        if color.token() == semantic::SURFACE && color.state() == ColorState::Default {
+            ThemeColor::new(semantic::SURFACE, ColorState::Default, rgb)
+        } else {
+            color
+        }
+    });
+    ThemeDefinition::new(id, label, source.mode(), source_revision)
+        .design_scales(source.design_scales())
+        .colors(colors)
+}
+
+fn complete_theme_context_with_surface(source_revision: u64, rgb: u32) -> ThemeContext {
+    let definition = complete_theme_definition_with_surface(
+        format!("surface-{rgb:06x}"),
+        format!("Surface {rgb:06x}"),
+        source_revision,
+        rgb,
+    );
+    let mut registry = ThemeRegistry::new();
+    let snapshot = registry
+        .register(definition)
+        .expect("complete surface canary should register")
+        .snapshot()
+        .clone();
+    ThemeContext::new(snapshot)
+}
+
+fn complete_theme_context_with_design(
+    id: &str,
+    density: Density,
+    motion_preference: MotionPreference,
+    control_radius: SizeScale,
+) -> ThemeContext {
+    let source = ThemeSnapshot::dark();
+    let defaults = source.design_scales();
+    let design = ThemeDesignScales::new(
+        defaults.typography(),
+        defaults.spacing(),
+        ThemeRadiusScale::new(control_radius),
+        defaults.elevation(),
+        density,
+        motion_preference,
+    );
+    let definition = ThemeDefinition::from_snapshot(id, id, &source)
+        .source_revision(77)
+        .design_scales(design);
+    let mut registry = ThemeRegistry::new();
+    let snapshot = registry
+        .register(definition)
+        .expect("complete design canary should register")
+        .snapshot()
+        .clone();
+    ThemeContext::new(snapshot)
+}
 
 fn record_theme(
     observations: &Observations,
@@ -48,8 +130,35 @@ fn record_theme(
         label,
         phase,
         mode: theme.mode(),
-        revision: theme.revision(),
+        source_revision: theme.source_revision(),
+        effective_revision: theme.effective_revision(),
+        density: theme.density(),
+        motion_preference: theme.motion_preference(),
+        control_radius: theme.design_scales().radius().control().raw_values(),
     });
+}
+
+fn assert_single_default_scale_observation(
+    observations: &Observations,
+    label: &'static str,
+    phase: ProbePhase,
+    mode: ThemeMode,
+    source_revision: u64,
+) {
+    let observations = observations.borrow();
+    assert_eq!(observations.len(), 1);
+    let observation = &observations[0];
+    assert_eq!(observation.label, label);
+    assert_eq!(observation.phase, phase);
+    assert_eq!(observation.mode, mode);
+    assert_eq!(observation.source_revision, source_revision);
+    assert!(observation.effective_revision > 0);
+    assert_eq!(observation.density, Density::Comfortable);
+    assert_eq!(observation.motion_preference, MotionPreference::Animated);
+    assert_eq!(
+        observation.control_radius,
+        ThemeDesignScales::default().radius().control().raw_values()
+    );
 }
 
 #[derive(IntoElement)]
@@ -310,15 +419,12 @@ fn app_window_and_explicit_override_precedence_is_isolated_between_windows(
         second_observations.borrow().is_empty(),
         "an app selection must not refresh a window with an explicit override"
     );
-    assert_eq!(
-        inherited_observations.borrow().as_slice(),
-        &[ThemeObservation {
-            label: "window",
-            phase: ProbePhase::Render,
-            mode: ThemeMode::Light,
-            revision: ThemeSnapshot::light().revision(),
-        }],
-        "only the inheriting window should rerender for an app selection"
+    assert_single_default_scale_observation(
+        &inherited_observations,
+        "window",
+        ProbePhase::Render,
+        ThemeMode::Light,
+        ThemeSnapshot::light().source_revision(),
     );
 
     cx.update(|app| set_app_theme(app, DARK_THEME_ID).expect("built-in app theme should resolve"));
@@ -389,6 +495,73 @@ fn unknown_and_noop_selections_preserve_context_without_refresh(
 }
 
 #[open_gpui::test]
+fn unselected_invalid_and_metadata_only_registration_do_not_refresh_the_window(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|app| {
+        let mut registry = ThemeRegistry::with_builtins();
+        registry
+            .register(complete_theme_definition(
+                "brand",
+                "Brand",
+                ThemeMode::Dark,
+                1,
+            ))
+            .expect("active brand should register");
+        install_theme_registry(app, registry, "brand").expect("active brand should install");
+    });
+    let observations = Observations::default();
+    let (_, cx) = cx.add_window_view({
+        let observations = observations.clone();
+        move |_, _| WindowThemeProbe { observations }
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    observations.borrow_mut().clear();
+
+    cx.update(|_, cx| {
+        register_theme(
+            cx,
+            complete_theme_definition("unused", "Unused", ThemeMode::HighContrast, 1),
+        )
+        .expect("unselected theme should register");
+    });
+    assert!(observations.borrow().is_empty());
+
+    let before = cx.update(|window, cx| ThemeResolver::current(window, cx));
+    cx.update(|_, cx| {
+        register_theme(
+            cx,
+            complete_theme_definition("brand", "Brand metadata", ThemeMode::Dark, 2),
+        )
+        .expect("metadata-only active replacement should register");
+    });
+    assert!(observations.borrow().is_empty());
+    let metadata_only = cx.update(|window, cx| ThemeResolver::current(window, cx));
+    assert_eq!(
+        metadata_only.effective_revision(),
+        before.effective_revision()
+    );
+    assert_eq!(metadata_only.source_revision(), 2);
+
+    cx.update(|_, cx| {
+        let error = register_theme(
+            cx,
+            ThemeDefinition::new("brand", "Invalid brand", ThemeMode::Dark, 3)
+                .design_scales(ThemeDesignScales::default()),
+        )
+        .expect_err("incomplete active replacement must fail");
+        assert!(matches!(
+            error,
+            open_gpui_ui_components::theme::ThemeValidationError::MissingColor { .. }
+        ));
+    });
+    assert!(observations.borrow().is_empty());
+    cx.update(|window, cx| {
+        assert_eq!(ThemeResolver::current(window, cx), metadata_only);
+    });
+}
+
+#[open_gpui::test]
 fn unknown_window_selection_is_atomic_and_clear_returns_to_app_selection(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -396,10 +569,12 @@ fn unknown_window_selection_is_atomic_and_clear_returns_to_app_selection(
     let (_, cx) = cx.add_window_view(|_, _| Empty);
 
     cx.update(|window, cx| {
+        let inherited_revision = ThemeResolver::current(window, cx).effective_revision();
         set_window_theme(window, cx, LIGHT_THEME_ID)
             .expect("built-in window selection should resolve");
         let before = ThemeResolver::current(window, cx);
         assert_eq!(before.mode(), ThemeMode::Light);
+        assert!(before.effective_revision() > inherited_revision);
 
         assert_eq!(
             set_window_theme(window, cx, "missing-theme").unwrap_err(),
@@ -409,13 +584,124 @@ fn unknown_window_selection_is_atomic_and_clear_returns_to_app_selection(
         assert_eq!(after_failure, before);
 
         clear_window_theme(window, cx);
-        assert_eq!(ThemeResolver::current(window, cx).mode(), ThemeMode::Dark);
+        let cleared = ThemeResolver::current(window, cx);
+        assert_eq!(cleared.mode(), ThemeMode::Dark);
+        assert!(cleared.effective_revision() > before.effective_revision());
+    });
+}
+
+#[open_gpui::test]
+fn repeated_clear_window_theme_is_an_exact_noop(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|app| set_app_theme(app, DARK_THEME_ID).expect("built-in app theme should resolve"));
+    let observations = Observations::default();
+    let (_, cx) = cx.add_window_view({
+        let observations = observations.clone();
+        move |_, _| WindowThemeProbe { observations }
+    });
+    cx.update(|window, cx| {
+        set_window_theme(window, cx, LIGHT_THEME_ID).expect("explicit window theme should resolve");
+        window.draw(cx).clear();
+    });
+
+    let first_clear = cx.update(|window, cx| {
+        clear_window_theme(window, cx);
+        ThemeResolver::current(window, cx)
+    });
+    observations.borrow_mut().clear();
+    cx.update(|window, cx| {
+        clear_window_theme(window, cx);
+        assert_eq!(ThemeResolver::current(window, cx), first_clear);
+    });
+
+    assert!(
+        observations.borrow().is_empty(),
+        "repeating clear on an inherited window must not refresh it"
+    );
+}
+
+#[open_gpui::test]
+fn prebuilt_registry_replacement_rebinds_selected_window_monotonically(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let mut replacement = ThemeRegistry::with_builtins();
+    replacement
+        .register(complete_theme_definition_with_surface(
+            "brand",
+            "Brand replacement",
+            2,
+            0x223344,
+        ))
+        .expect("prebuilt replacement should register");
+    cx.update(|app| {
+        register_theme(
+            app,
+            complete_theme_definition_with_surface("brand", "Brand", 1, 0x112233),
+        )
+        .expect("current brand should register");
+    });
+    let (_, cx) = cx.add_window_view(|_, _| Empty);
+    let before = cx.update(|window, cx| {
+        set_window_theme(window, cx, "brand").expect("window brand should resolve");
+        ThemeResolver::current(window, cx)
+    });
+
+    cx.update(|window, cx| {
+        install_theme_registry(cx, replacement, "brand")
+            .expect("prebuilt replacement should install");
+        let after = ThemeResolver::current(window, cx);
+        assert_eq!(after.source_revision(), 2);
+        assert_eq!(
+            after
+                .snapshot()
+                .color_rgb(semantic::SURFACE, ColorState::Default),
+            Some(0x223344)
+        );
+        assert!(after.effective_revision() > before.effective_revision());
+    });
+}
+
+#[open_gpui::test]
+fn selected_window_reads_active_replacement_in_the_same_transaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|app| {
+        register_theme(
+            app,
+            complete_theme_definition_with_surface("brand", "Brand", 1, 0x112233),
+        )
+        .expect("current brand should register");
+    });
+    let (_, cx) = cx.add_window_view(|_, _| Empty);
+    cx.update(|window, cx| {
+        set_window_theme(window, cx, "brand").expect("window brand should resolve");
+        let before = ThemeResolver::current(window, cx);
+        register_theme(
+            cx,
+            complete_theme_definition_with_surface("brand", "Brand replacement", 2, 0x334455),
+        )
+        .expect("active replacement should register");
+
+        let after = ThemeResolver::current(window, cx);
+        assert_eq!(after.source_revision(), 2);
+        assert_eq!(
+            after
+                .snapshot()
+                .color_rgb(semantic::SURFACE, ColorState::Default),
+            Some(0x334455)
+        );
+        assert!(after.effective_revision() > before.effective_revision());
     });
 }
 
 #[open_gpui::test]
 fn app_selection_is_visible_in_the_current_window_transaction(cx: &mut open_gpui::TestAppContext) {
-    let (_, cx) = cx.add_window_view(|_, _| Empty);
+    let observations = Observations::default();
+    let (_, cx) = cx.add_window_view({
+        let observations = observations.clone();
+        move |_, _| WindowThemeProbe { observations }
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    observations.borrow_mut().clear();
 
     cx.update(|window, cx| {
         assert_eq!(ThemeResolver::current(window, cx).mode(), ThemeMode::Light);
@@ -426,6 +712,15 @@ fn app_selection_is_visible_in_the_current_window_transaction(cx: &mut open_gpui
             "the effective app selection must be readable before global observers flush"
         );
     });
+    cx.run_until_parked();
+    assert_eq!(
+        observations
+            .borrow()
+            .last()
+            .expect("read-through synchronization should refresh the rendered window")
+            .mode,
+        ThemeMode::Dark
+    );
 }
 
 #[open_gpui::test]
@@ -435,7 +730,7 @@ fn a_missing_window_selection_retains_its_last_known_snapshot_until_the_id_retur
     cx.update(|app| {
         register_theme(
             app,
-            ThemeDefinition::new("brand", "Brand", ThemeMode::HighContrast, 1),
+            complete_theme_definition("brand", "Brand", ThemeMode::HighContrast, 1),
         )
         .expect("brand theme should register");
     });
@@ -444,9 +739,10 @@ fn a_missing_window_selection_retains_its_last_known_snapshot_until_the_id_retur
         let observations = observations.clone();
         move |_, _| WindowThemeProbe { observations }
     });
-    cx.update(|window, cx| {
+    let selected_before = cx.update(|window, cx| {
         set_window_theme(window, cx, "brand").expect("brand window selection should resolve");
         window.draw(cx).clear();
+        ThemeResolver::current(window, cx)
     });
     observations.borrow_mut().clear();
 
@@ -459,10 +755,7 @@ fn a_missing_window_selection_retains_its_last_known_snapshot_until_the_id_retur
         "temporarily removing a selected id must not refresh or demote its window authority"
     );
     cx.update(|window, cx| {
-        assert_eq!(
-            ThemeResolver::current(window, cx).mode(),
-            ThemeMode::HighContrast
-        );
+        assert_eq!(ThemeResolver::current(window, cx), selected_before);
     });
 
     cx.update(|_, cx| set_app_theme(cx, DARK_THEME_ID).expect("app theme should change"));
@@ -470,23 +763,23 @@ fn a_missing_window_selection_retains_its_last_known_snapshot_until_the_id_retur
         observations.borrow().is_empty(),
         "app selection changes must not affect a window retaining an explicit selection"
     );
+    cx.update(|window, cx| {
+        assert_eq!(ThemeResolver::current(window, cx), selected_before);
+    });
 
     cx.update(|_, cx| {
         register_theme(
             cx,
-            ThemeDefinition::new("brand", "Brand v2", ThemeMode::Dark, 2),
+            complete_theme_definition("brand", "Brand v2", ThemeMode::Dark, 2),
         )
         .expect("replacement brand theme should register");
     });
-    assert_eq!(
-        observations.borrow().as_slice(),
-        &[ThemeObservation {
-            label: "window",
-            phase: ProbePhase::Render,
-            mode: ThemeMode::Dark,
-            revision: 2,
-        }],
-        "the selected window should refresh exactly once when its id returns with new content"
+    assert_single_default_scale_observation(
+        &observations,
+        "window",
+        ProbePhase::Render,
+        ThemeMode::Dark,
+        2,
     );
 }
 
@@ -721,30 +1014,43 @@ impl Render for CachedScopeView {
 #[open_gpui::test]
 fn changing_a_subtree_scope_invalidates_a_cached_child_view(cx: &mut open_gpui::TestAppContext) {
     let observations = Observations::default();
+    let opening_context = complete_theme_context_with_design(
+        "cached-compact",
+        Density::Compact,
+        MotionPreference::Animated,
+        SizeScale::new(1, 2, 3, 4),
+    );
+    let changed_context = complete_theme_context_with_design(
+        "cached-spacious",
+        Density::Spacious,
+        MotionPreference::Reduced,
+        SizeScale::new(5, 6, 7, 8),
+    );
     let (view, cx) = cx.add_window_view({
         let observations = observations.clone();
         move |_, cx| CachedScopeView {
-            context: ThemeContext::dark(),
+            context: opening_context,
             child: cx.new(|_| CachedThemeChild { observations }),
         }
     });
 
     observations.borrow_mut().clear();
-    view.update(cx, |view, cx| {
-        view.context = ThemeContext::high_contrast();
+    view.update(cx, move |view, cx| {
+        view.context = changed_context;
         cx.notify();
     });
     cx.update(|window, cx| window.draw(cx).clear());
 
-    assert_eq!(
-        observations.borrow().as_slice(),
-        &[ThemeObservation {
-            label: "cached-child",
-            phase: ProbePhase::Render,
-            mode: ThemeMode::HighContrast,
-            revision: ThemeSnapshot::high_contrast().revision(),
-        }]
-    );
+    let observations = observations.borrow();
+    assert_eq!(observations.len(), 1);
+    let observation = &observations[0];
+    assert_eq!(observation.label, "cached-child");
+    assert_eq!(observation.phase, ProbePhase::Render);
+    assert_eq!(observation.mode, ThemeMode::Dark);
+    assert_eq!(observation.source_revision, 77);
+    assert_eq!(observation.density, Density::Spacious);
+    assert_eq!(observation.motion_preference, MotionPreference::Reduced);
+    assert_eq!(observation.control_radius, [5, 6, 7, 8]);
 }
 
 struct PopoverThemeScopeView {
@@ -783,6 +1089,25 @@ fn assert_only_observed_mode(observations: &Observations, mode: ThemeMode) {
             .all(|observation| observation.mode == mode),
         "expected only {mode:?}, observed {observations:?}"
     );
+}
+
+fn assert_only_observed_design(
+    observations: &Observations,
+    density: Density,
+    motion_preference: MotionPreference,
+    control_radius: [u16; 4],
+) {
+    let observations = observations.borrow();
+    assert!(!observations.is_empty());
+    let effective_revision = observations[0].effective_revision;
+    assert!(observations.iter().all(|observation| {
+        observation.mode == ThemeMode::Dark
+            && observation.source_revision == 77
+            && observation.effective_revision == effective_revision
+            && observation.density == density
+            && observation.motion_preference == motion_preference
+            && observation.control_radius == control_radius
+    }));
 }
 
 #[open_gpui::test]
@@ -824,6 +1149,74 @@ fn official_deferred_overlay_freezes_theme_for_one_open_generation(
     });
     cx.update(|window, cx| window.draw(cx).clear());
     assert_only_observed_mode(&observations, ThemeMode::HighContrast);
+}
+
+#[open_gpui::test]
+fn deferred_overlay_freezes_non_color_scales_for_one_open_generation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let opening_context = complete_theme_context_with_design(
+        "deferred-compact",
+        Density::Compact,
+        MotionPreference::Animated,
+        SizeScale::new(1, 2, 3, 4),
+    );
+    let reopened_context = complete_theme_context_with_design(
+        "deferred-spacious",
+        Density::Spacious,
+        MotionPreference::Reduced,
+        SizeScale::new(5, 6, 7, 8),
+    );
+    let observations = Observations::default();
+    let (view, cx) = cx.add_window_view({
+        let observations = observations.clone();
+        move |_, _| PopoverThemeScopeView {
+            context: opening_context,
+            open: true,
+            observations,
+        }
+    });
+
+    observations.borrow_mut().clear();
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_only_observed_design(
+        &observations,
+        Density::Compact,
+        MotionPreference::Animated,
+        [1, 2, 3, 4],
+    );
+
+    observations.borrow_mut().clear();
+    view.update(cx, move |view, cx| {
+        view.context = reopened_context;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_only_observed_design(
+        &observations,
+        Density::Compact,
+        MotionPreference::Animated,
+        [1, 2, 3, 4],
+    );
+
+    view.update(cx, |view, cx| {
+        view.open = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    observations.borrow_mut().clear();
+    view.update(cx, |view, cx| {
+        view.open = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_only_observed_design(
+        &observations,
+        Density::Spacious,
+        MotionPreference::Reduced,
+        [5, 6, 7, 8],
+    );
 }
 
 type PaletteObservations = Rc<RefCell<Vec<(ProbePhase, u32)>>>;
@@ -938,20 +1331,8 @@ fn deferred_overlay_freezes_the_complete_palette_snapshot_for_one_open_generatio
 ) {
     const OPENING_COLOR: u32 = 0x13579bff;
     const REOPENED_COLOR: u32 = 0x2468acff;
-    let opening_colors = [ThemeColor::new(
-        semantic::SURFACE,
-        ColorState::Default,
-        OPENING_COLOR >> 8,
-    )];
-    let reopened_colors = [ThemeColor::new(
-        semantic::SURFACE,
-        ColorState::Default,
-        REOPENED_COLOR >> 8,
-    )];
-    let opening_context =
-        ThemeContext::new(ThemeSnapshot::new(ThemeMode::Dark, 77, &opening_colors));
-    let reopened_context =
-        ThemeContext::new(ThemeSnapshot::new(ThemeMode::Dark, 77, &reopened_colors));
+    let opening_context = complete_theme_context_with_surface(77, OPENING_COLOR >> 8);
+    let reopened_context = complete_theme_context_with_surface(77, REOPENED_COLOR >> 8);
     let observations = PaletteObservations::default();
     let (view, cx) = cx.add_window_view({
         let observations = observations.clone();
@@ -1065,6 +1446,20 @@ impl Render for NativeTooltipScopeView {
 
 fn assert_observed_tooltip_phases(observations: &Observations, mode: ThemeMode) {
     assert_only_observed_mode(observations, mode);
+    assert_all_tooltip_phases(observations);
+}
+
+fn assert_observed_tooltip_design_phases(
+    observations: &Observations,
+    density: Density,
+    motion_preference: MotionPreference,
+    control_radius: [u16; 4],
+) {
+    assert_only_observed_design(observations, density, motion_preference, control_radius);
+    assert_all_tooltip_phases(observations);
+}
+
+fn assert_all_tooltip_phases(observations: &Observations) {
     let observations = observations.borrow();
     for phase in [
         ProbePhase::Builder,
@@ -1086,11 +1481,23 @@ fn assert_observed_tooltip_phases(observations: &Observations, mode: ThemeMode) 
 fn button_delayed_tooltip_freezes_scope_until_close_and_recaptures_on_reopen(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    let opening_context = complete_theme_context_with_design(
+        "tooltip-compact",
+        Density::Compact,
+        MotionPreference::Animated,
+        SizeScale::new(1, 2, 3, 4),
+    );
+    let reopened_context = complete_theme_context_with_design(
+        "tooltip-spacious",
+        Density::Spacious,
+        MotionPreference::Reduced,
+        SizeScale::new(5, 6, 7, 8),
+    );
     let observations = Observations::default();
     let (view, cx) = cx.add_window_view({
         let observations = observations.clone();
         move |_, _| NativeTooltipScopeView {
-            context: ThemeContext::dark(),
+            context: opening_context,
             trigger: NativeTooltipTrigger::Button,
             observations,
         }
@@ -1101,15 +1508,20 @@ fn button_delayed_tooltip_freezes_scope_until_close_and_recaptures_on_reopen(
         .debug_bounds("button:scoped-tooltip-button:root")
         .expect("scoped button should render");
     cx.simulate_mouse_move(trigger.center(), None, Default::default());
-    view.update(cx, |view, cx| {
-        view.context = ThemeContext::high_contrast();
+    view.update(cx, move |view, cx| {
+        view.context = reopened_context;
         cx.notify();
     });
     cx.update(|window, cx| window.draw(cx).clear());
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear());
-    assert_observed_tooltip_phases(&observations, ThemeMode::Dark);
+    assert_observed_tooltip_design_phases(
+        &observations,
+        Density::Compact,
+        MotionPreference::Animated,
+        [1, 2, 3, 4],
+    );
 
     cx.simulate_mouse_move(point(px(300.0), px(160.0)), None, Default::default());
     cx.run_until_parked();
@@ -1123,7 +1535,12 @@ fn button_delayed_tooltip_freezes_scope_until_close_and_recaptures_on_reopen(
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear());
-    assert_observed_tooltip_phases(&observations, ThemeMode::HighContrast);
+    assert_observed_tooltip_design_phases(
+        &observations,
+        Density::Spacious,
+        MotionPreference::Reduced,
+        [5, 6, 7, 8],
+    );
 }
 
 #[open_gpui::test]

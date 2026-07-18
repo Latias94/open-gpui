@@ -12,7 +12,7 @@ use open_gpui::{
     TextRun, UTF16Selection, Window, actions, div, fill, point, px, relative, rgba,
 };
 use open_gpui_ui_core::{
-    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeDesignScales, ThemeTokens, UiPx,
 };
 
 use crate::a11y::{
@@ -106,23 +106,51 @@ impl TextInputColors {
 /// Resolved text input metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextInputMetrics {
+    size: Size,
     height: UiPx,
     padding_x: UiPx,
     padding_y: UiPx,
     radius: UiPx,
     text_size: UiPx,
+    line_height: UiPx,
 }
 
 impl TextInputMetrics {
-    /// Resolves metrics from the shared foundation size vocabulary.
+    /// Resolves the built-in Theme v1 metric baseline for a size.
     pub const fn from_size(size: Size) -> Self {
+        let design = ThemeDesignScales::baseline();
+        Self::from_theme_values(
+            size,
+            design.spacing().control_inline().resolve(size),
+            design.spacing().control_block().resolve(size),
+            design.radius().control().resolve(size),
+            design.typography().control_text().resolve(size),
+            design.typography().control_line_height().resolve(size),
+        )
+    }
+
+    pub(crate) const fn from_theme_values(
+        size: Size,
+        padding_x: UiPx,
+        padding_y: UiPx,
+        radius: UiPx,
+        text_size: UiPx,
+        line_height: UiPx,
+    ) -> Self {
         Self {
+            size,
             height: size.input_h(),
-            padding_x: size.input_px(),
-            padding_y: size.input_py(),
-            radius: size.control_radius(),
-            text_size: size.control_text_px(),
+            padding_x,
+            padding_y,
+            radius,
+            text_size,
+            line_height,
         }
+    }
+
+    /// Returns the resolved component size.
+    pub const fn size(self) -> Size {
+        self.size
     }
 
     /// Returns the input height.
@@ -148,6 +176,11 @@ impl TextInputMetrics {
     /// Returns the text size.
     pub const fn text_size(self) -> UiPx {
         self.text_size
+    }
+
+    /// Returns the text line height.
+    pub const fn line_height(self) -> UiPx {
+        self.line_height
     }
 }
 
@@ -1040,7 +1073,7 @@ impl AccessibleTextInputHandler for TextInputController {
     }
 }
 
-/// Resolved text input state used by tests, demos, and rendering.
+/// Renderer-neutral text input state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextInputState {
     value: String,
@@ -1092,10 +1125,37 @@ impl TextInputState {
         display_mode: TextInputDisplayMode,
         tokens: ThemeTokens,
     ) -> Self {
+        Self::resolve_with_display_mode_and_metrics(
+            value,
+            placeholder,
+            TextInputMetrics::from_size(size),
+            disabled,
+            read_only,
+            invalid,
+            required,
+            controller_driven,
+            display_mode,
+            tokens,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_with_display_mode_and_metrics(
+        value: impl Into<String>,
+        placeholder: Option<impl Into<String>>,
+        metrics: TextInputMetrics,
+        disabled: bool,
+        read_only: bool,
+        invalid: bool,
+        required: bool,
+        controller_driven: bool,
+        display_mode: TextInputDisplayMode,
+        tokens: ThemeTokens,
+    ) -> Self {
         let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
         let value = value.into();
         let control = FormControlState::resolve(
-            size,
+            metrics.size(),
             disabled,
             read_only,
             invalid,
@@ -1108,7 +1168,7 @@ impl TextInputState {
             placeholder: placeholder.map(Into::into),
             control,
             display_mode,
-            metrics: TextInputMetrics::from_size(size),
+            metrics,
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
         }
@@ -1285,6 +1345,7 @@ pub struct TextInput {
     placeholder: Option<SharedString>,
     controller: Option<Entity<TextInputController>>,
     control: FormControlState,
+    explicit_size: Option<Size>,
     display_mode: TextInputDisplayMode,
     tokens: ThemeTokens,
     on_change: Option<TextInputChangeHandler>,
@@ -1301,6 +1362,7 @@ impl TextInput {
             placeholder: None,
             controller: None,
             control: FormControlState::default(),
+            explicit_size: None,
             display_mode: TextInputDisplayMode::default(),
             tokens: ThemeTokens::default(),
             on_change: None,
@@ -1383,12 +1445,20 @@ impl TextInput {
         self
     }
 
-    /// Returns the resolved text input state.
+    /// Returns renderer-neutral state using the built-in Theme v1 metric baseline.
     pub fn state(&self) -> TextInputState {
-        TextInputState::resolve_with_display_mode(
+        self.state_for_size(self.control.size())
+    }
+
+    fn state_for_size(&self, size: Size) -> TextInputState {
+        self.state_for_metrics(TextInputMetrics::from_size(size))
+    }
+
+    fn state_for_metrics(&self, metrics: TextInputMetrics) -> TextInputState {
+        TextInputState::resolve_with_display_mode_and_metrics(
             self.value.to_string(),
             self.placeholder.as_ref().map(ToString::to_string),
-            self.control.size(),
+            metrics,
             self.control.disabled(),
             self.control.read_only(),
             self.control.invalid(),
@@ -1404,6 +1474,7 @@ impl TextInput {
 impl Sizable for TextInput {
     fn with_size(mut self, size: Size) -> Self {
         self.control = self.control.with_size(size);
+        self.explicit_size = Some(size);
         self
     }
 }
@@ -1432,7 +1503,10 @@ fn resolve_text_input_character_lengths_when_active(
 
 impl RenderOnce for TextInput {
     fn render(self, window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
-        let state = self.state();
+        let theme = ThemeResolver::current(window, cx);
+        let metrics = ThemeResolver::text_input_metrics(&theme, self.explicit_size);
+        let state = self.state_for_metrics(metrics);
+        let metrics = state.metrics();
         let debug_id = self.id.to_string();
         let runtime_id = format!("text-input:{debug_id}:controller");
         let text_run_id: ElementId = (self.id.clone(), "text-run").into();
@@ -1441,10 +1515,8 @@ impl RenderOnce for TextInput {
                 global_id.accesskit_node_id()
             })
         });
-        let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
-        let theme = ThemeResolver::current(window, cx);
         let controller_is_external = self.controller.is_some();
         let controller = self.controller.clone().or_else(|| {
             self.on_change.as_ref().map(|_| {
@@ -1585,7 +1657,7 @@ impl RenderOnce for TextInput {
             .px(gpui_px_from_ui(metrics.padding_x()))
             .py(gpui_px_from_ui(metrics.padding_y()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
-            .line_height(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.line_height()))
             .text_color(text_color)
             .focusable()
             .tab_stop(state.tab_stop_enabled())

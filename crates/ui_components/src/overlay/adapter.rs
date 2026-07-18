@@ -206,7 +206,7 @@ fn themed_deferred_overlay_layer(
     let opening_theme = binding
         .opening_theme()
         .expect("an open component overlay must capture its opening theme");
-    deferred(ThemeScope::new(
+    deferred(ThemeScope::captured(
         format!("overlay-theme:{}", binding.lease().layer_id().as_str()),
         opening_theme.clone(),
         build_layer(&opening_theme),

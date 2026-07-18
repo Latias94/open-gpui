@@ -1384,8 +1384,65 @@
                     "label": "Theme",
                     "payload": {
                       "mode": "light",
-                      "revision": 1,
-                      "color_count": 28
+                      "source_revision": 1,
+                      "effective_revision": 1,
+                      "color_count": 28,
+                      "density": "comfortable",
+                      "motion_policy": "animated",
+                      "typography": {
+                        "control_text": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ],
+                        "control_line_height": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ]
+                      },
+                      "spacing": {
+                        "control_inline": [
+                          8,
+                          10,
+                          12,
+                          14
+                        ],
+                        "control_block": [
+                          4,
+                          5,
+                          6,
+                          7
+                        ]
+                      },
+                      "radius": {
+                        "control": [
+                          6,
+                          6,
+                          8,
+                          8
+                        ]
+                      },
+                      "elevation": {
+                        "overlay": [
+                          [
+                            0,
+                            10,
+                            15,
+                            -3,
+                            10
+                          ],
+                          [
+                            0,
+                            4,
+                            6,
+                            -4,
+                            10
+                          ]
+                        ]
+                      }
                     },
                     "children": [
                       {
@@ -3027,8 +3084,65 @@
                   "label": "Theme",
                   "payload": {
                     "mode": "light",
-                    "revision": 1,
-                    "color_count": 28
+                    "source_revision": 1,
+                    "effective_revision": 1,
+                    "color_count": 28,
+                    "density": "comfortable",
+                    "motion_policy": "animated",
+                    "typography": {
+                      "control_text": [
+                        12,
+                        13,
+                        13,
+                        14
+                      ],
+                      "control_line_height": [
+                        12,
+                        13,
+                        13,
+                        14
+                      ]
+                    },
+                    "spacing": {
+                      "control_inline": [
+                        8,
+                        10,
+                        12,
+                        14
+                      ],
+                      "control_block": [
+                        4,
+                        5,
+                        6,
+                        7
+                      ]
+                    },
+                    "radius": {
+                      "control": [
+                        6,
+                        6,
+                        8,
+                        8
+                      ]
+                    },
+                    "elevation": {
+                      "overlay": [
+                        [
+                          0,
+                          10,
+                          15,
+                          -3,
+                          10
+                        ],
+                        [
+                          0,
+                          4,
+                          6,
+                          -4,
+                          10
+                        ]
+                      ]
+                    }
                   },
                   "children": [
                     {
@@ -4875,8 +4989,65 @@
                     "label": "Theme",
                     "payload": {
                       "mode": "light",
-                      "revision": 1,
-                      "color_count": 28
+                      "source_revision": 1,
+                      "effective_revision": 1,
+                      "color_count": 28,
+                      "density": "comfortable",
+                      "motion_policy": "animated",
+                      "typography": {
+                        "control_text": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ],
+                        "control_line_height": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ]
+                      },
+                      "spacing": {
+                        "control_inline": [
+                          8,
+                          10,
+                          12,
+                          14
+                        ],
+                        "control_block": [
+                          4,
+                          5,
+                          6,
+                          7
+                        ]
+                      },
+                      "radius": {
+                        "control": [
+                          6,
+                          6,
+                          8,
+                          8
+                        ]
+                      },
+                      "elevation": {
+                        "overlay": [
+                          [
+                            0,
+                            10,
+                            15,
+                            -3,
+                            10
+                          ],
+                          [
+                            0,
+                            4,
+                            6,
+                            -4,
+                            10
+                          ]
+                        ]
+                      }
                     },
                     "children": [
                       {
@@ -6518,8 +6689,65 @@
                   "label": "Theme",
                   "payload": {
                     "mode": "light",
-                    "revision": 1,
-                    "color_count": 28
+                    "source_revision": 1,
+                    "effective_revision": 1,
+                    "color_count": 28,
+                    "density": "comfortable",
+                    "motion_policy": "animated",
+                    "typography": {
+                      "control_text": [
+                        12,
+                        13,
+                        13,
+                        14
+                      ],
+                      "control_line_height": [
+                        12,
+                        13,
+                        13,
+                        14
+                      ]
+                    },
+                    "spacing": {
+                      "control_inline": [
+                        8,
+                        10,
+                        12,
+                        14
+                      ],
+                      "control_block": [
+                        4,
+                        5,
+                        6,
+                        7
+                      ]
+                    },
+                    "radius": {
+                      "control": [
+                        6,
+                        6,
+                        8,
+                        8
+                      ]
+                    },
+                    "elevation": {
+                      "overlay": [
+                        [
+                          0,
+                          10,
+                          15,
+                          -3,
+                          10
+                        ],
+                        [
+                          0,
+                          4,
+                          6,
+                          -4,
+                          10
+                        ]
+                      ]
+                    }
                   },
                   "children": [
                     {
@@ -9868,8 +10096,65 @@
                       "label": "Theme",
                       "payload": {
                         "mode": "light",
-                        "revision": 1,
-                        "color_count": 28
+                        "source_revision": 1,
+                        "effective_revision": 1,
+                        "color_count": 28,
+                        "density": "comfortable",
+                        "motion_policy": "animated",
+                        "typography": {
+                          "control_text": [
+                            12,
+                            13,
+                            13,
+                            14
+                          ],
+                          "control_line_height": [
+                            12,
+                            13,
+                            13,
+                            14
+                          ]
+                        },
+                        "spacing": {
+                          "control_inline": [
+                            8,
+                            10,
+                            12,
+                            14
+                          ],
+                          "control_block": [
+                            4,
+                            5,
+                            6,
+                            7
+                          ]
+                        },
+                        "radius": {
+                          "control": [
+                            6,
+                            6,
+                            8,
+                            8
+                          ]
+                        },
+                        "elevation": {
+                          "overlay": [
+                            [
+                              0,
+                              10,
+                              15,
+                              -3,
+                              10
+                            ],
+                            [
+                              0,
+                              4,
+                              6,
+                              -4,
+                              10
+                            ]
+                          ]
+                        }
                       },
                       "children": [
                         {
@@ -10184,8 +10469,65 @@
                       "label": "Theme",
                       "payload": {
                         "mode": "light",
-                        "revision": 1,
-                        "color_count": 28
+                        "source_revision": 1,
+                        "effective_revision": 1,
+                        "color_count": 28,
+                        "density": "comfortable",
+                        "motion_policy": "animated",
+                        "typography": {
+                          "control_text": [
+                            12,
+                            13,
+                            13,
+                            14
+                          ],
+                          "control_line_height": [
+                            12,
+                            13,
+                            13,
+                            14
+                          ]
+                        },
+                        "spacing": {
+                          "control_inline": [
+                            8,
+                            10,
+                            12,
+                            14
+                          ],
+                          "control_block": [
+                            4,
+                            5,
+                            6,
+                            7
+                          ]
+                        },
+                        "radius": {
+                          "control": [
+                            6,
+                            6,
+                            8,
+                            8
+                          ]
+                        },
+                        "elevation": {
+                          "overlay": [
+                            [
+                              0,
+                              10,
+                              15,
+                              -3,
+                              10
+                            ],
+                            [
+                              0,
+                              4,
+                              6,
+                              -4,
+                              10
+                            ]
+                          ]
+                        }
                       },
                       "children": [
                         {
@@ -13524,8 +13866,65 @@
                     "label": "Theme",
                     "payload": {
                       "mode": "light",
-                      "revision": 1,
-                      "color_count": 28
+                      "source_revision": 1,
+                      "effective_revision": 1,
+                      "color_count": 28,
+                      "density": "comfortable",
+                      "motion_policy": "animated",
+                      "typography": {
+                        "control_text": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ],
+                        "control_line_height": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ]
+                      },
+                      "spacing": {
+                        "control_inline": [
+                          8,
+                          10,
+                          12,
+                          14
+                        ],
+                        "control_block": [
+                          4,
+                          5,
+                          6,
+                          7
+                        ]
+                      },
+                      "radius": {
+                        "control": [
+                          6,
+                          6,
+                          8,
+                          8
+                        ]
+                      },
+                      "elevation": {
+                        "overlay": [
+                          [
+                            0,
+                            10,
+                            15,
+                            -3,
+                            10
+                          ],
+                          [
+                            0,
+                            4,
+                            6,
+                            -4,
+                            10
+                          ]
+                        ]
+                      }
                     },
                     "children": [
                       {
@@ -13827,8 +14226,65 @@
                     "label": "Theme",
                     "payload": {
                       "mode": "light",
-                      "revision": 1,
-                      "color_count": 28
+                      "source_revision": 1,
+                      "effective_revision": 1,
+                      "color_count": 28,
+                      "density": "comfortable",
+                      "motion_policy": "animated",
+                      "typography": {
+                        "control_text": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ],
+                        "control_line_height": [
+                          12,
+                          13,
+                          13,
+                          14
+                        ]
+                      },
+                      "spacing": {
+                        "control_inline": [
+                          8,
+                          10,
+                          12,
+                          14
+                        ],
+                        "control_block": [
+                          4,
+                          5,
+                          6,
+                          7
+                        ]
+                      },
+                      "radius": {
+                        "control": [
+                          6,
+                          6,
+                          8,
+                          8
+                        ]
+                      },
+                      "elevation": {
+                        "overlay": [
+                          [
+                            0,
+                            10,
+                            15,
+                            -3,
+                            10
+                          ],
+                          [
+                            0,
+                            4,
+                            6,
+                            -4,
+                            10
+                          ]
+                        ]
+                      }
                     },
                     "children": [
                       {

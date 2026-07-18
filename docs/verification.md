@@ -879,22 +879,30 @@ cargo run -p xtask -- scan-theme-schema
 ```
 
 That gate keeps app/window/subtree precedence, exact-window refresh, cached child invalidation,
-early-return and panic-safe scope restoration, complete-palette deferred opening-generation capture,
-delayed native tooltip capture, Gallery sibling scopes, window-effective initial DevTools capture,
-runtime `ThemeContext` rendering, code-built `ThemeDefinition` registration, and the JSON loader
-facade working: `THEME_JSON_SCHEMA_VERSION`, `theme_json_schema`,
-`theme_definition_from_json_str`, `theme_definition_from_json_file`, `register_theme_json_str`,
-and `register_theme_json_file`. Production component render paths resolve color intents from
+early-return and panic-safe scope restoration, complete-payload deferred opening-generation
+capture, delayed native tooltip capture, Gallery sibling scopes, window-effective initial DevTools
+capture, runtime `ThemeContext` rendering, complete code-built `ThemeDefinition` registration, and
+the JSON loader facade working: `THEME_JSON_SCHEMA_VERSION`, `theme_json_schema`,
+`theme_json_string`, `theme_definition_from_json_str`, `theme_definition_from_json_file`,
+`register_theme_json_str`, and `register_theme_json_file`. Production component render paths resolve
+color intents from
 `ThemeResolver::current(window, cx)` or an explicit snapshot. The app-only resolver and direct
 default-light `ThemeResolver::resolve` path are absent. Direct GPUI tooltip attachment uses
 `Tooltip::scoped`; official components capture delayed builders automatically. Focus-ring painting
 follows the same rule: production render paths use `focus_ring_shadow_with_theme(...)` with an
 explicit render-time theme context.
+Button and TextInput consume the shared typography, spacing, radius, and density recipes; official
+overlays and Tooltip consume elevation; Splitter and VirtualizedList consume strict motion policy.
+Tests cover explicit-size precedence, reduced-motion safety, source-versus-effective revision,
+metadata-only no-ops, complete schema round-trip, atomic invalid replacement, non-color cached-child
+refresh, and opening-generation density/motion capture. The committed schema is generated, while
+`scan-theme-drift` enforces two real production recipe consumers for every public design token.
 The ownership and detached-render boundary are recorded in
 [Theme scope resolution and deferred capture](knowledge/engineering/decisions/theme-scope-resolution.md).
 Loader failures are structured as `ThemeLoadError` / `ThemeFileField` for unsupported schema
-versions, missing identity fields, unsupported token or state names, duplicate token/state pairs,
-and invalid RGB values.
+versions, missing identity or nested design facts, unsupported mode/density/motion/token/state
+names, invalid elevation values, duplicate or incomplete token/state coverage, and invalid RGB
+values. The old color-only shape and `fallback_mode` are rejection cases, not fallback paths.
 
 The foundation component family gate covers the shipped disclosure, numeric, navigation, display,
 action, and feedback additions: Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link,

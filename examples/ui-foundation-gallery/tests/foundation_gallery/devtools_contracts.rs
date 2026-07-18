@@ -3,6 +3,9 @@ use open_gpui_devtools::{
     DevtoolsArtifactJsonlSink, DevtoolsArtifactSink, DevtoolsDiffKind, DevtoolsDiffStatus,
     DevtoolsSessionFrame, SnapshotEnvelope,
 };
+use open_gpui_motion::MotionPreference;
+use open_gpui_ui_components::theme::{ThemeContext, ThemeDefinition, ThemeRegistry, ThemeSnapshot};
+use open_gpui_ui_core::ThemeDesignScales;
 
 fn assert_devtools_canaries_absent(serialized: &str) {
     for &canary in pages::components::FORM_DEVTOOLS_DOGFOOD_CANARIES
@@ -473,12 +476,31 @@ fn devtools_gallery_initial_frame_uses_the_window_effective_theme(
     cx: &mut open_gpui::TestAppContext,
 ) {
     cx.update(init_text_input);
-    let (shell, cx) = cx.add_window_view(|window, cx| {
-        open_gpui_ui_components::theme::override_window_theme(
-            window,
-            cx,
-            open_gpui_ui_components::theme::ThemeContext::dark(),
-        );
+    let source = ThemeSnapshot::dark();
+    let defaults = source.design_scales();
+    let design = ThemeDesignScales::new(
+        defaults.typography(),
+        defaults.spacing(),
+        defaults.radius(),
+        defaults.elevation(),
+        Density::Compact,
+        MotionPreference::Reduced,
+    );
+    let mut registry = ThemeRegistry::new();
+    let snapshot = registry
+        .register(
+            ThemeDefinition::from_snapshot("gallery-window-theme", "Gallery window theme", &source)
+                .source_revision(901)
+                .design_scales(design),
+        )
+        .expect("complete Gallery window theme")
+        .snapshot()
+        .clone();
+    let window_theme = ThemeContext::new(snapshot);
+    let expected_effective_revision = window_theme.effective_revision();
+
+    let (shell, cx) = cx.add_window_view(move |window, cx| {
+        open_gpui_ui_components::theme::override_window_theme(window, cx, window_theme);
         GalleryShell::with_selected_page(GalleryPage::Devtools, window, cx)
     });
 
@@ -497,6 +519,14 @@ fn devtools_gallery_initial_frame_uses_the_window_effective_theme(
         "dark",
         "the initial Gallery DevTools frame must project the window-effective theme"
     );
+    let payload = theme.tree.nodes[0].payload.as_ref().unwrap();
+    assert_eq!(payload["source_revision"], 901);
+    assert!(
+        payload["effective_revision"].as_u64().unwrap() > expected_effective_revision,
+        "installing the context as a window override must allocate a newer authority revision"
+    );
+    assert_eq!(payload["density"], "compact");
+    assert_eq!(payload["motion_policy"], "reduced");
 }
 
 fn assert_fixture_matches(name: &str, actual: &str) {

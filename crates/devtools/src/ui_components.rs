@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use open_gpui_ui_components::{
-    ThemeSnapshot, component_contract::component_contract_entry,
-    gpui_adapter::WindowOverlaySnapshot,
+    ThemeContext, component_contract::component_contract_entry, gpui_adapter::WindowOverlaySnapshot,
 };
 use open_gpui_ui_core::{Role, SemanticDescriptor};
 use serde::Serialize;
@@ -14,15 +13,35 @@ use crate::{
     adapters::snapshot_node_with_payload,
 };
 
-/// Converts a component theme snapshot into a DevTools tree.
-pub fn theme_probe_snapshot(snapshot: ThemeSnapshot<'_>) -> SnapshotProbeSnapshot {
+/// Converts one effective complete Theme v1 context into a DevTools tree.
+pub fn theme_probe_snapshot(context: &ThemeContext) -> SnapshotProbeSnapshot {
+    let snapshot = context.snapshot();
+    let design = snapshot.design_scales();
+    let elevation = design.elevation().overlay().map(|layer| layer.raw_values());
     let mut root = snapshot_node_with_payload(
         ["theme"],
         "Theme",
         serde_json::json!({
             "mode": snapshot.mode().as_str(),
-            "revision": snapshot.revision(),
+            "source_revision": snapshot.source_revision(),
+            "effective_revision": context.effective_revision(),
             "color_count": snapshot.colors().len(),
+            "density": design.density().as_str(),
+            "motion_policy": design.motion().as_str(),
+            "typography": {
+                "control_text": design.typography().control_text().raw_values(),
+                "control_line_height": design.typography().control_line_height().raw_values(),
+            },
+            "spacing": {
+                "control_inline": design.spacing().control_inline().raw_values(),
+                "control_block": design.spacing().control_block().raw_values(),
+            },
+            "radius": {
+                "control": design.radius().control().raw_values(),
+            },
+            "elevation": {
+                "overlay": elevation,
+            },
         }),
     );
 

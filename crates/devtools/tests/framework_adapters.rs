@@ -35,13 +35,34 @@ impl open_gpui::Render for WindowOverlayProjectionProbe {
 #[cfg(feature = "ui-components")]
 #[test]
 fn framework_adapters_convert_theme_snapshots() {
-    use open_gpui_ui_components::ThemeSnapshot;
+    use open_gpui_ui_components::ThemeContext;
 
-    let snapshot = ui_components::theme_probe_snapshot(ThemeSnapshot::dark());
-    let serialized = serde_json::to_string(&snapshot.tree()).unwrap();
+    let snapshot = ui_components::theme_probe_snapshot(&ThemeContext::dark());
+    let tree = snapshot.tree();
+    let payload = tree.nodes[0].payload.as_ref().expect("theme root payload");
+    let serialized = serde_json::to_string(tree).unwrap();
 
-    assert!(serialized.contains("dark"));
-    assert!(serialized.contains("color_count"));
+    assert_eq!(payload["mode"], "dark");
+    assert!(payload["source_revision"].as_u64().is_some());
+    assert!(payload["effective_revision"].as_u64().is_some());
+    assert_eq!(payload["density"], "comfortable");
+    assert_eq!(payload["motion_policy"], "animated");
+    assert_eq!(
+        payload["typography"]["control_text"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        payload["spacing"]["control_inline"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(payload["radius"]["control"].as_array().unwrap().len(), 4);
+    assert_eq!(payload["elevation"]["overlay"].as_array().unwrap().len(), 2);
     assert!(serialized.contains("semantic.surface"));
     assert!(serialized.contains("semantic.focus_ring"));
 }

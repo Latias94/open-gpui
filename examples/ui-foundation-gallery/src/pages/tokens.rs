@@ -1,7 +1,8 @@
 //! Token foundation page metadata.
 
-use open_gpui_ui_components::{ColorState, ThemeMode, ThemeSnapshot};
-use open_gpui_ui_core::{ThemeTokens, TokenKey, semantic};
+use open_gpui_motion::MotionPreference;
+use open_gpui_ui_components::{ColorState, ThemeContext, ThemeMode};
+use open_gpui_ui_core::{Density, ThemeTokens, TokenKey, semantic};
 
 /// Page title.
 pub const TITLE: &str = "Tokens";
@@ -42,13 +43,8 @@ impl TokenSample {
     }
 }
 
-/// Returns semantic token samples in the same order as `ThemeTokens`.
-pub fn token_samples(tokens: ThemeTokens) -> [TokenSample; 12] {
-    token_samples_for_theme(tokens, ThemeSnapshot::light())
-}
-
-/// Returns semantic token samples resolved by a theme snapshot.
-pub fn token_samples_for_theme(tokens: ThemeTokens, theme: ThemeSnapshot<'_>) -> [TokenSample; 12] {
+/// Returns semantic token samples resolved by a complete theme context.
+pub fn token_samples_for_theme(tokens: ThemeTokens, theme: &ThemeContext) -> [TokenSample; 12] {
     [
         TokenSample::new(
             "Surface",
@@ -106,8 +102,18 @@ pub fn token_samples_for_theme(tokens: ThemeTokens, theme: ThemeSnapshot<'_>) ->
 pub struct ThemeModeSample {
     /// Theme mode represented by this sample.
     pub mode: ThemeMode,
-    /// Snapshot revision used for cache invalidation.
-    pub revision: u64,
+    /// Revision supplied by the theme source as metadata.
+    pub source_revision: u64,
+    /// Runtime-owned revision used for effective-content invalidation.
+    pub effective_revision: u64,
+    /// Default control density supplied by the theme.
+    pub density: Density,
+    /// Motion safety policy supplied by the theme.
+    pub motion_policy: MotionPreference,
+    /// Control text-size scale in extra-small through large order.
+    pub control_text: [u16; 4],
+    /// Control radius scale in extra-small through large order.
+    pub control_radius: [u16; 4],
     /// Resolved surface color.
     pub surface_rgb: u32,
     /// Resolved text color.
@@ -119,14 +125,21 @@ pub struct ThemeModeSample {
 }
 
 impl ThemeModeSample {
-    fn new(tokens: ThemeTokens, theme: ThemeSnapshot<'_>) -> Self {
+    fn new(tokens: ThemeTokens, theme: &ThemeContext) -> Self {
+        let design = theme.design_scales();
         Self {
             mode: theme.mode(),
-            revision: theme.revision(),
+            source_revision: theme.source_revision(),
+            effective_revision: theme.effective_revision(),
+            density: theme.density(),
+            motion_policy: theme.motion_preference(),
+            control_text: design.typography().control_text().raw_values(),
+            control_radius: design.radius().control().raw_values(),
             surface_rgb: preview_rgb(theme, tokens.surface),
             text_rgb: preview_rgb(theme, tokens.text),
             accent_rgb: preview_rgb(theme, tokens.accent),
             focus_ring_rgb: theme
+                .snapshot()
                 .color_rgb(tokens.focus_ring, ColorState::FocusVisible)
                 .unwrap_or_else(|| preview_rgb(theme, tokens.focus_ring)),
         }
@@ -135,15 +148,19 @@ impl ThemeModeSample {
 
 /// Returns light, dark, and high-contrast theme metadata.
 pub fn theme_mode_samples(tokens: ThemeTokens) -> [ThemeModeSample; 3] {
+    let light = ThemeContext::light();
+    let dark = ThemeContext::dark();
+    let high_contrast = ThemeContext::high_contrast();
     [
-        ThemeModeSample::new(tokens, ThemeSnapshot::light()),
-        ThemeModeSample::new(tokens, ThemeSnapshot::dark()),
-        ThemeModeSample::new(tokens, ThemeSnapshot::high_contrast()),
+        ThemeModeSample::new(tokens, &light),
+        ThemeModeSample::new(tokens, &dark),
+        ThemeModeSample::new(tokens, &high_contrast),
     ]
 }
 
-fn preview_rgb(theme: ThemeSnapshot<'_>, token: TokenKey) -> u32 {
+fn preview_rgb(theme: &ThemeContext, token: TokenKey) -> u32 {
     theme
+        .snapshot()
         .color_rgb(token, ColorState::Default)
         .unwrap_or(0xff00ff)
 }

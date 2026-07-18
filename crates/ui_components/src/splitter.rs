@@ -2,6 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::gpui_px_from_ui;
+use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, AnyView, App, Context, CursorStyle, DefiniteLength, DragMoveEvent, ElementId,
@@ -100,6 +101,7 @@ impl SplitterRuntime {
             .iter()
             .map(SplitterPanelState::fraction)
             .collect::<Vec<_>>();
+        let motion = committed_layout_motion_plan(model);
 
         if self.panel_ids.is_empty() {
             self.sync_immediate(panel_ids, target_fractions);
@@ -115,6 +117,10 @@ impl SplitterRuntime {
             && transition.panel_ids == panel_ids
             && fractions_equal(&transition.to_fractions, &target_fractions)
         {
+            if motion.is_immediate() {
+                self.finish_motion(state, panel_ids, target_fractions);
+                return MotionFrameDemand::Idle;
+            }
             let complete = self.sample_transition(now);
             if complete {
                 self.last_state = Some(state.clone());
@@ -142,14 +148,8 @@ impl SplitterRuntime {
             self.last_state = Some(state.clone());
             return MotionFrameDemand::Idle;
         }
-        let motion = committed_layout_motion_plan(model);
         if motion.is_immediate() {
-            self.state_fractions = target_fractions.clone();
-            self.panel_fractions = target_fractions;
-            self.transition = None;
-            self.layout_transition = None;
-            self.frame_host.reset(MotionFrameResetReason::Finish);
-            self.last_state = Some(state.clone());
+            self.finish_motion(state, panel_ids, target_fractions);
             return MotionFrameDemand::Idle;
         }
         self.frame_host.reset(MotionFrameResetReason::Retarget);
@@ -179,6 +179,22 @@ impl SplitterRuntime {
         self.layout_transition = None;
         self.frame_host
             .reset(MotionFrameResetReason::MotionIdentityChanged);
+    }
+
+    fn finish_motion(
+        &mut self,
+        state: &SplitterState,
+        panel_ids: Vec<String>,
+        panel_fractions: Vec<f32>,
+    ) {
+        self.panel_ids = panel_ids;
+        self.state_fractions = panel_fractions.clone();
+        self.panel_fractions = panel_fractions;
+        self.drag_start = None;
+        self.transition = None;
+        self.layout_transition = None;
+        self.frame_host.reset(MotionFrameResetReason::Finish);
+        self.last_state = Some(state.clone());
     }
 
     fn sync_drag_state(&mut self, state: &SplitterState) {
@@ -231,6 +247,12 @@ impl SplitterRuntime {
         now: Instant,
         model: MotionModel,
     ) -> MotionFrameDemand {
+        let motion = committed_layout_motion_plan(model);
+        if motion.is_immediate() {
+            self.finish_motion(state, panel_ids, target_fractions);
+            return MotionFrameDemand::Idle;
+        }
+
         if let Some(transition) = self.layout_transition.as_ref()
             && transition.target_state == *state
         {
@@ -247,13 +269,6 @@ impl SplitterRuntime {
             .map(|state| state.with_panel_fractions(&self.panel_fractions))
             .unwrap_or_else(|| state.clone());
         let intent = transition_intent(&from_state, state);
-        let motion = committed_layout_motion_plan(model);
-        if motion.is_immediate() {
-            self.sync_immediate(panel_ids, target_fractions);
-            self.last_state = Some(state.clone());
-            return MotionFrameDemand::Idle;
-        }
-
         let transition = SplitterLayoutTransition::between(
             intent,
             SplitterLayoutScene::from_state(&from_state, transition_scene_bounds()),
@@ -559,7 +574,7 @@ pub struct Splitter {
     orientation: Orientation,
     size: Size,
     disabled: bool,
-    motion_preference: MotionPreference,
+    motion_preference: Option<MotionPreference>,
     panels: Vec<SplitterPanel>,
 }
 
@@ -574,7 +589,7 @@ impl Splitter {
             orientation: Orientation::Horizontal,
             size: Size::Medium,
             disabled: false,
-            motion_preference: MotionPreference::Animated,
+            motion_preference: None,
             panels: Vec::new(),
         }
     }
@@ -601,9 +616,11 @@ impl Splitter {
         self
     }
 
-    /// Applies the motion preference for programmatic layout changes.
+    /// Requests a motion preference for programmatic layout changes.
+    ///
+    /// Reduced motion from either this request or the active theme remains authoritative.
     pub fn motion_preference(mut self, motion_preference: MotionPreference) -> Self {
-        self.motion_preference = motion_preference;
+        self.motion_preference = Some(motion_preference);
         self
     }
 
@@ -635,7 +652,10 @@ impl Sizable for Splitter {
 impl RenderOnce for Splitter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base_state = self.state();
-        let motion_model = MotionPreset::committed_layout(self.motion_preference).resolve_model();
+        let theme = ThemeResolver::current(window, cx);
+        let motion_preference =
+            ThemeResolver::splitter_motion_preference(&theme, self.motion_preference);
+        let motion_model = MotionPreset::committed_layout(motion_preference).resolve_model();
         let now = Instant::now();
         let panel_views = self
             .panels
@@ -1229,6 +1249,35 @@ mod tests {
     }
 
     #[test]
+    fn runtime_reduced_motion_finishes_an_in_flight_fraction_transition() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let animated = MotionPreset::committed_layout(MotionPreference::Animated).resolve_model();
+        let reduced = MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model();
+        let mut runtime = SplitterRuntime::default();
+
+        let _ = runtime.sync_at_with_model(&from, start, animated);
+        assert!(
+            runtime
+                .sync_at_with_model(&to, start, animated)
+                .should_request_frame()
+        );
+        assert!(
+            !runtime
+                .sync_at_with_model(&to, start + Duration::from_millis(45), reduced)
+                .should_request_frame()
+        );
+
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
+        assert!(runtime.transition.is_none());
+        assert_eq!(
+            runtime.frame_host.last_reset_reason(),
+            Some(MotionFrameResetReason::Finish)
+        );
+    }
+
+    #[test]
     fn runtime_panel_identity_changes_create_layout_transition() {
         let start = Instant::now();
         let from = state(0.3, 0.7);
@@ -1325,6 +1374,45 @@ mod tests {
         assert!(fractions_equal(&runtime.panel_fractions, &[0.2, 0.3, 0.5]));
         assert!(runtime.transition.is_none());
         assert!(runtime.layout_transition.is_none());
+    }
+
+    #[test]
+    fn runtime_reduced_motion_finishes_an_in_flight_layout_transition() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let replaced = SplitterState::resolve(
+            "runtime-motion",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.2),
+                SplitterPanelDescriptor::new("center", 0.3),
+                SplitterPanelDescriptor::new("right", 0.5),
+            ],
+        );
+        let animated = MotionPreset::committed_layout(MotionPreference::Animated).resolve_model();
+        let reduced = MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model();
+        let mut runtime = SplitterRuntime::default();
+
+        let _ = runtime.sync_at_with_model(&from, start, animated);
+        assert!(
+            runtime
+                .sync_at_with_model(&replaced, start + Duration::from_millis(16), animated)
+                .should_request_frame()
+        );
+        assert!(
+            !runtime
+                .sync_at_with_model(&replaced, start + Duration::from_millis(45), reduced)
+                .should_request_frame()
+        );
+
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.2, 0.3, 0.5]));
+        assert!(runtime.layout_transition.is_none());
+        assert_eq!(
+            runtime.frame_host.last_reset_reason(),
+            Some(MotionFrameResetReason::Finish)
+        );
     }
 
     #[test]

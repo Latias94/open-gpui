@@ -30,6 +30,9 @@ pub use crate::{
         inset_rect, outer_bounds_with_window_margin, prefer_visual_bounds, rect,
         resolve_outside_press,
     },
-    sizing::{Density, Sizable, Size},
-    tokens::{ThemeTokens, TokenKey, semantic},
+    sizing::{Density, Sizable, Size, SizeScale},
+    tokens::{
+        ThemeDesignScales, ThemeElevationLayer, ThemeElevationScale, ThemeRadiusScale,
+        ThemeSpacingScale, ThemeTokens, ThemeTypographyScale, TokenKey, semantic,
+    },
 };

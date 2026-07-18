@@ -69,9 +69,9 @@ R7. Derive one accessibility semantic projection from each component's existing 
 
 R8. Replace public physical-click callbacks on official semantic controls with semantic activation or value-change callbacks. Activation source and domain payload must be typed; raw pointer detail remains available only through an explicitly named escape hatch where a real consumer needs it.
 
-R9. The replacement theme v1 must retain a complete color scale. Typography, spacing, radius, elevation, density, and motion-policy are candidate public scales; each token enters schema/snapshot public contract only when at least two real recipes consume it. Unproven categories remain local and are recorded as intentionally deferred rather than padded to satisfy the plan.
+R9. The replacement theme v1 must retain a complete color scale. Typography, spacing, radius, elevation, density, and motion-policy are candidate public scales; each token enters schema/snapshot public contract only when at least two distinct production component recipes consume it. Multiple call sites in one component, tests, Gallery, and documentation do not count as independent consumers. Unproven categories remain local and are recorded as intentionally deferred rather than padded to satisfy the plan.
 
-R10. Resolve theme context with precedence `subtree override > window selection/override > app selection > built-in fallback`. Runtime-owned effective revisions must be monotonic for effective changes; invalid loads must be atomic.
+R10. Resolve theme context with precedence `subtree override > window selection/override > app selection > built-in fallback`. Serialized `revision` is source metadata only. Runtime-owned effective revisions are unforgeable and monotonic for effective content or authority-selection changes; metadata-only reloads and exact no-ops do not bump. Invalid loads must be atomic.
 
 R11. Deferred overlays opened from a themed subtree must retain the effective opening theme, including density and motion policy.
 
@@ -152,6 +152,8 @@ KTD11. **Public API cleanup is evidence-led.** Table's engine and `ActionDescrip
 KTD12. **Breaking means clean replacement.** No deprecated aliases are retained for old semantic callbacks, color-only theme models/schema, overlay forwarding helpers, or evidence tables. The project is unreleased: the expanded theme contract deletes and replaces the old format in place and remains version `v1`; there is no compatibility loader, dual model, or `v2` naming.
 
 KTD13. **TanStack Table is a semantic reference, not an implementation dependency.** The repository-local `repo-ref/tanstack-table` reference clone (currently `@tanstack/table-core` `9.0.0-beta.31` at `5af79a877fa80f63703c6dc21861acc9d18baecf`) anchors row-model ordering, stable row/column identity, client/manual stage ownership, and pinning-region semantics. Open GPUI retains its Rust engine, GPUI adapter, native keyboard/accessibility policy, and separate virtualizer; this plan does not adopt TanStack v9 atoms/plugins, add a runtime dependency, or pursue full API parity. Row pinning addresses exact authoritative row identities by default; pinning every source instance with one business row ID is an explicitly named bulk target, never implicit string coercion. Occurrence identity is exact only inside its current resolved source snapshot, while retained state across reorder requires a caller-owned explicit instance ID. Caller target order owns order within each pinned region, each bulk target expands in current model order, top targets are resolved first, and a logical row already claimed by top is excluded from bottom. Open GPUI intentionally diverges from TanStack's default index/string identity, stringified group keys, overlap tolerance, and core-row fallback for filtered pinned rows; typed grouping, duplicate diagnostics, top-wins partitioning, filter-aware pinning, and independent Virtualizer ownership remain local contracts.
+
+KTD14. **Complete theme scales are immutable values, not another registry.** Theme v1 reuses renderer-neutral `Density` and `MotionPreference` vocabulary and carries the admitted design scales directly in the immutable snapshot/context. It does not add a parallel scale registry or string lookup layer. Explicit component `Size` outranks theme density; adaptive device density remains a host recommendation rather than an implicit recipe input. Reduced motion is a safety floor: either theme policy or an explicit component request may reduce motion, while no component request may relax a reduced theme. Motion execution remains owned by `open-gpui-motion`.
 
 ### High-Level Technical Design
 
@@ -769,8 +771,10 @@ The complete Theme v1 replaces the old color-only payload and schema with an imm
 **Behavioral work**
 
 - Add typed typography, spacing, radius, elevation, density, and motion-policy scales beside color only where each public token has at least two real recipe consumers.
+- Carry admitted scales as one immutable `ThemeDesignScales` value in every snapshot/context; do not introduce a second registry beside `ThemeRegistry`.
 - Keep structural sizes local to component metrics and motion execution in `open-gpui-motion`.
-- Allocate monotonic effective revisions for changed registration, replacement, selection, and overrides; identical effective reloads do not bump.
+- Treat serialized `revision` as source metadata. Allocate monotonic runtime effective revisions for changed registration, replacement, app/window/subtree selection, and overrides; callers cannot supply effective revisions, and identical effective or metadata-only reloads do not bump.
+- Resolve component size as `explicit Size > theme density default`; adaptive density remains a host recommendation. Merge motion using the strictest preference so reduced motion cannot be relaxed by a component override.
 - Parse invalid or unknown content atomically with structured diagnostics and no active-state mutation.
 - Delete the old color-only definition/loader/schema shape and replace it directly; old serialized input is unsupported and no compatibility loader remains.
 - Migrate U7's app/window/subtree/deferred channel to the complete v1 payload without changing scope precedence.
@@ -783,12 +787,17 @@ The complete Theme v1 replaces the old color-only payload and schema with an imm
 - Old color-only fixtures fail against the replacement schema/loader, while new complete v1 fixtures round-trip; no fallback silently accepts the deleted shape.
 - Invalid types, missing required facts, duplicate/unknown tokens, and failed replacement leave registry/selection unchanged.
 - Same source revision with changed content bumps effective revision; identical effective content does not.
+- Metadata-only reloads preserve effective revision; selecting a different id with identical payload still bumps because authority selection changed. Repeated selection and override no-ops do not bump.
 - Compact density and reduced-motion policy reach at least two representative recipes without changing semantic output.
+- Explicit component size wins over theme density. Theme reduced motion plus an explicit animated request remains reduced, and either source may request reduction.
+- A non-color-only scope change invalidates a cached child; deferred overlays and delayed tooltips freeze density and motion for one opening generation and recapture only after close/reopen.
+- Unselected registration, invalid active replacement, and metadata-only active replacement do not refresh unaffected windows.
 - Every U7 window/subtree/deferred scope test passes unchanged with the complete v1 payload.
 
 **Deletion/replacement**
 
 - Delete color-only in-memory authority and production-only fallback paths superseded by the complete replacement v1.
+- Delete `fallback_mode`, partial color filling, `ThemeRegistrationDiagnostics`, caller-supplied effective revisions, and the old color-only fixtures/schema without aliases or compatibility parsing.
 - Remove stable cross-family magic metrics only when recipes consume the replacement token.
 - Delete the old color-only schema/model, obsolete fixtures, and any compatibility parsing branch.
 - Do not move motion execution out of `open-gpui-motion`.

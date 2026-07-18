@@ -22,7 +22,9 @@ use crate::overlay::{
     OverlayLayerRegistration, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
     gpui_overlay_state, gpui_relative_overlay_layer,
 };
-use crate::theme::{ThemeContext, ThemeResolver, ThemeScope, scoped_theme_view_builder};
+use crate::theme::{
+    ThemeContext, ThemeResolver, ThemeScope, gpui_elevation_shadow, scoped_theme_view_builder,
+};
 
 /// Open affordance for a tooltip trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -630,7 +632,7 @@ impl RenderOnce for Tooltip {
                 let opening_theme = overlay_binding
                     .opening_theme()
                     .expect("an open tooltip must capture its opening theme");
-                ThemeScope::new(
+                ThemeScope::captured(
                     format!(
                         "overlay-theme:{}",
                         overlay_binding.lease().layer_id().as_str()
@@ -713,7 +715,9 @@ fn tooltip_surface_element(
         .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
-        .shadow_lg()
+        .shadow(gpui_elevation_shadow(ThemeResolver::tooltip_elevation(
+            theme,
+        )))
         .ui_semantics(&semantics)
         .children(children)
 }

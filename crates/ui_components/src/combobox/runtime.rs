@@ -26,7 +26,7 @@ use crate::scroll_area::ScrollArea;
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
-use crate::theme::{ThemeContext, ThemeResolver};
+use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 
 use super::descriptor::{ComboboxGroup, ComboboxOption};
 use super::model::{
@@ -811,7 +811,9 @@ fn combobox_content_element(
             .border_color(theme.resolve(colors.popup_border()))
             .bg(theme.resolve(colors.popup_background()))
             .text_color(theme.resolve(colors.popup_foreground()))
-            .shadow_lg()
+            .shadow(gpui_elevation_shadow(
+                ThemeResolver::overlay_surface_elevation(theme),
+            ))
             .occlude()
             .ui_semantics(&content_semantics)
             .child(

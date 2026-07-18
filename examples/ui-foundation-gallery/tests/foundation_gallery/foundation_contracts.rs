@@ -134,7 +134,8 @@ fn productization_checkpoint_keeps_extraction_deferred_and_boundary_refs_availab
 #[test]
 fn token_page_samples_follow_theme_token_order() {
     let tokens = ThemeTokens::default();
-    let samples = pages::tokens::token_samples(tokens);
+    let light = open_gpui_ui_components::theme::ThemeContext::light();
+    let samples = pages::tokens::token_samples_for_theme(tokens, &light);
 
     assert_eq!(samples.len(), 12);
     assert_eq!(samples[0].key, semantic::SURFACE);
@@ -142,6 +143,19 @@ fn token_page_samples_follow_theme_token_order() {
     assert_eq!(samples[7].key, semantic::FOCUS_RING);
     assert_eq!(samples[11].key, semantic::MODAL_OVERLAY);
     assert!(pages::tokens::matches_semantic_registry(tokens));
+
+    let dark = open_gpui_ui_components::theme::ThemeContext::dark();
+    let dark_samples = pages::tokens::token_samples_for_theme(tokens, &dark);
+    assert_ne!(dark_samples[0].preview_rgb, samples[0].preview_rgb);
+    assert_eq!(
+        dark_samples[0].preview_rgb,
+        dark.snapshot()
+            .color_rgb(
+                semantic::SURFACE,
+                open_gpui_ui_components::ColorState::Default,
+            )
+            .expect("the complete dark theme should define the surface token")
+    );
 }
 
 #[test]
@@ -152,8 +166,21 @@ fn token_page_exposes_runtime_theme_mode_metadata() {
     assert_eq!(samples[0].mode, ThemeMode::Light);
     assert_eq!(samples[1].mode, ThemeMode::Dark);
     assert_eq!(samples[2].mode, ThemeMode::HighContrast);
-    assert!(samples[0].revision < samples[1].revision);
-    assert!(samples[1].revision < samples[2].revision);
+    assert!(samples[0].source_revision < samples[1].source_revision);
+    assert!(samples[1].source_revision < samples[2].source_revision);
+    let effective_revisions = [
+        samples[0].effective_revision,
+        samples[1].effective_revision,
+        samples[2].effective_revision,
+    ];
+    assert!(effective_revisions.iter().all(|revision| *revision > 0));
+    assert_ne!(effective_revisions[0], effective_revisions[1]);
+    assert_ne!(effective_revisions[0], effective_revisions[2]);
+    assert_ne!(effective_revisions[1], effective_revisions[2]);
+    assert_eq!(samples[0].density.as_str(), "comfortable");
+    assert_eq!(samples[0].motion_policy.as_str(), "animated");
+    assert_eq!(samples[0].control_text.len(), 4);
+    assert_eq!(samples[0].control_radius.len(), 4);
     assert_ne!(samples[0].surface_rgb, samples[1].surface_rgb);
     assert_ne!(samples[1].focus_ring_rgb, samples[2].focus_ring_rgb);
     assert!(pages::tokens::SIGNALS.contains(&"ThemeScope::new(stable_id, context, child)"));

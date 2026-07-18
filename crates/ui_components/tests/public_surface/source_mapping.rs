@@ -252,3 +252,31 @@ fn component_source_mapping_expands_split_component_directories() {
         "split component directory mapping should include adjacent public contract files"
     );
 }
+
+#[test]
+fn complete_theme_scale_source_mappings_reach_the_ui_core_owner() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let expected_sources = ["theme.rs", "../../ui_core/src/tokens.rs"];
+
+    for contract in [
+        "ThemeDesignScales",
+        "ThemeTypographyScale",
+        "ThemeSpacingScale",
+        "ThemeRadiusScale",
+        "ThemeElevationScale",
+        "ThemeElevationLayer",
+    ] {
+        assert_eq!(component_source_inputs(contract), expected_sources);
+        for source in expected_sources {
+            assert!(
+                source_dir.join(source).is_file(),
+                "theme contract `{contract}` source owner `{source}` should exist"
+            );
+        }
+    }
+
+    let serializer = component_contract_entry("theme_json_string")
+        .expect("the complete Theme v1 serializer should have a canonical contract row");
+    assert_eq!(serializer.source_inputs, ["theme/schema.rs"]);
+    assert!(source_dir.join(serializer.source_home).is_file());
+}

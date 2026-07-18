@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use open_gpui::{Rgba, rgb};
-use open_gpui_ui_core::TokenKey;
+use open_gpui_motion::MotionPreference;
+use open_gpui_ui_core::{Density, ThemeDesignScales, TokenKey};
 
 use crate::color::{ColorIntent, ColorState};
 
@@ -56,41 +59,72 @@ impl ThemeColor {
     }
 }
 
-/// Immutable runtime view of a component theme table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ThemeSnapshot<'a> {
+/// Immutable owned Theme v1 payload before runtime authority selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeSnapshot {
     mode: ThemeMode,
-    revision: u64,
-    colors: &'a [ThemeColor],
+    source_revision: u64,
+    colors: Arc<[ThemeColor]>,
+    design_scales: ThemeDesignScales,
 }
 
-impl<'a> ThemeSnapshot<'a> {
-    /// Creates a theme snapshot from a mode, revision, and color table.
-    pub const fn new(mode: ThemeMode, revision: u64, colors: &'a [ThemeColor]) -> Self {
+impl ThemeSnapshot {
+    /// Creates a complete owned Theme v1 payload.
+    pub(super) fn new(
+        mode: ThemeMode,
+        source_revision: u64,
+        colors: impl Into<Arc<[ThemeColor]>>,
+        design_scales: ThemeDesignScales,
+    ) -> Self {
         Self {
             mode,
-            revision,
-            colors,
+            source_revision,
+            colors: colors.into(),
+            design_scales,
         }
     }
 
     /// Returns the color mode for this snapshot.
-    pub const fn mode(self) -> ThemeMode {
+    pub const fn mode(&self) -> ThemeMode {
         self.mode
     }
 
-    /// Returns the revision used by callers to invalidate cached resolutions.
-    pub const fn revision(self) -> u64 {
-        self.revision
+    /// Returns source-file revision metadata.
+    pub const fn source_revision(&self) -> u64 {
+        self.source_revision
     }
 
     /// Returns the raw color table.
-    pub const fn colors(self) -> &'a [ThemeColor] {
-        self.colors
+    pub fn colors(&self) -> &[ThemeColor] {
+        &self.colors
+    }
+
+    /// Returns the complete non-color design scales.
+    pub const fn design_scales(&self) -> ThemeDesignScales {
+        self.design_scales
+    }
+
+    /// Returns the theme density default.
+    pub const fn density(&self) -> Density {
+        self.design_scales.density()
+    }
+
+    /// Returns the theme motion policy.
+    pub const fn motion_preference(&self) -> MotionPreference {
+        self.design_scales.motion()
+    }
+
+    /// Returns whether two payloads have identical effective visual and behavior content.
+    ///
+    /// Source revision is metadata and therefore intentionally excluded.
+    pub fn has_same_effective_content(&self, other: &Self) -> bool {
+        self.mode == other.mode
+            && self.colors == other.colors
+            && self.design_scales == other.design_scales
     }
 
     /// Looks up an RGB color for a token and state.
-    pub fn color_rgb(self, token: TokenKey, state: ColorState) -> Option<u32> {
+    pub fn color_rgb(&self, token: TokenKey, state: ColorState) -> Option<u32> {
         self.colors
             .iter()
             .find(|entry| entry.token == token && entry.state == state)
@@ -104,13 +138,13 @@ impl<'a> ThemeSnapshot<'a> {
     }
 
     /// Resolves a color intent to an RGB value, falling back to the intent RGB when needed.
-    pub fn resolve_rgb(self, intent: ColorIntent) -> u32 {
+    pub fn resolve_rgb(&self, intent: ColorIntent) -> u32 {
         self.color_rgb(intent.token(), intent.state())
             .unwrap_or_else(|| intent.fallback_rgb())
     }
 
     /// Resolves a color intent to a concrete GPUI color.
-    pub fn resolve(self, intent: ColorIntent) -> Rgba {
+    pub fn resolve(&self, intent: ColorIntent) -> Rgba {
         rgb(self.resolve_rgb(intent))
     }
 }

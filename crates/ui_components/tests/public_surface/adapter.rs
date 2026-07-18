@@ -140,11 +140,13 @@ fn production_render_paths_do_not_use_default_light_focus_ring_helper() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let source = uncommented_lines(&source);
-        let is_theme_runtime = source_file.ends_with(std::path::Path::new("theme/runtime.rs"));
+        let is_theme_authority = ["theme/runtime.rs", "theme/registry.rs"]
+            .into_iter()
+            .any(|path| source_file.ends_with(std::path::Path::new(path)));
 
         for token in ["focus_ring_shadow(", "ThemeContext::light()"] {
-            let is_builtin_fallback = token == "ThemeContext::light()" && is_theme_runtime;
-            if source.contains(token) && !is_builtin_fallback {
+            let is_builtin_authority = token == "ThemeContext::light()" && is_theme_authority;
+            if source.contains(token) && !is_builtin_authority {
                 offenders.push(format!("{file_name}: {token}"));
             }
         }

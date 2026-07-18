@@ -22,7 +22,7 @@ pub(crate) fn component_button_state_row(state: ButtonState) -> impl IntoElement
             }
         ))
         .child(format!(
-            "h {} px {}",
+            "baseline h {} px {}",
             format_px(state.metrics().height()),
             format_px(state.metrics().padding_x())
         ))

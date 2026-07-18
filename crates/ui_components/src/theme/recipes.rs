@@ -29,6 +29,12 @@ const THEME_RECIPE_CATALOG: &[&str] = &[
     "textarea_colors",
     "tooltip_colors",
     "virtualized_list_colors",
+    "button_metrics",
+    "text_input_metrics",
+    "overlay_surface_elevation",
+    "tooltip_elevation",
+    "splitter_motion_preference",
+    "virtualized_list_motion_preference",
 ];
 
 #[path = "recipes/action.rs"]
@@ -37,6 +43,8 @@ mod action;
 mod choice;
 #[path = "recipes/data.rs"]
 mod data;
+#[path = "recipes/design.rs"]
+mod design;
 #[path = "recipes/display.rs"]
 mod display;
 #[path = "recipes/form.rs"]

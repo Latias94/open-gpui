@@ -1,15 +1,20 @@
 use std::{
     cell::RefCell,
     rc::Rc,
-    sync::{Arc, LazyLock},
+    sync::{
+        LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use open_gpui::{App, Entity, Global, Rgba, Subscription, Window};
+use open_gpui_motion::MotionPreference;
+use open_gpui_ui_core::{Density, ThemeDesignScales};
 
 use crate::color::ColorIntent;
 
 use super::registry::{ThemeDefinition, ThemeRegistry, ThemeValidationError};
-use super::snapshot::{ThemeColor, ThemeMode, ThemeSnapshot};
+use super::snapshot::{ThemeMode, ThemeSnapshot};
 
 /// Stable id for the built-in light theme.
 pub const LIGHT_THEME_ID: &str = "light";
@@ -22,6 +27,18 @@ pub const HIGH_CONTRAST_THEME_ID: &str = "high-contrast";
 
 /// The built-in fallback used when an application has no installed theme registry.
 pub const DEFAULT_THEME_ID: &str = LIGHT_THEME_ID;
+
+static NEXT_EFFECTIVE_REVISION: AtomicU64 = AtomicU64::new(1);
+
+fn allocate_effective_revision() -> u64 {
+    let revision = NEXT_EFFECTIVE_REVISION.fetch_add(1, Ordering::Relaxed);
+    assert_ne!(
+        revision,
+        u64::MAX,
+        "theme effective revision space exhausted"
+    );
+    revision
+}
 
 /// Failure returned when selecting a registered theme.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,15 +56,14 @@ impl ThemeSelectionError {
     }
 }
 
-/// Owned render-time view over an immutable theme snapshot.
+/// Owned render-time view over one complete immutable Theme v1 snapshot.
 ///
-/// The context owns an atomically shared color table so render and deferred paths can retain the
-/// exact effective snapshot without borrowing the application registry.
+/// Source revision remains metadata on the snapshot. Effective revision is allocated only by this
+/// runtime authority and is preserved by clones and detached opening-generation capture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeContext {
-    mode: ThemeMode,
-    revision: u64,
-    colors: Arc<[ThemeColor]>,
+    effective_revision: u64,
+    snapshot: ThemeSnapshot,
 }
 
 static LIGHT_THEME_CONTEXT: LazyLock<ThemeContext> =
@@ -58,12 +74,13 @@ static HIGH_CONTRAST_THEME_CONTEXT: LazyLock<ThemeContext> =
     LazyLock::new(|| ThemeContext::new(ThemeSnapshot::high_contrast()));
 
 impl ThemeContext {
-    /// Creates an owned context from an immutable theme snapshot.
-    pub fn new(snapshot: ThemeSnapshot<'_>) -> Self {
+    /// Creates a runtime context from a complete immutable snapshot.
+    ///
+    /// The caller supplies source metadata and effective content, never the runtime revision.
+    pub fn new(snapshot: ThemeSnapshot) -> Self {
         Self {
-            mode: snapshot.mode(),
-            revision: snapshot.revision(),
-            colors: snapshot.colors().to_vec().into(),
+            effective_revision: allocate_effective_revision(),
+            snapshot,
         }
     }
 
@@ -82,29 +99,73 @@ impl ThemeContext {
         LazyLock::force(&HIGH_CONTRAST_THEME_CONTEXT).clone()
     }
 
-    /// Returns an immutable snapshot over this owned context.
-    pub fn snapshot(&self) -> ThemeSnapshot<'_> {
-        ThemeSnapshot::new(self.mode, self.revision, &self.colors)
+    /// Returns the complete immutable source snapshot.
+    pub const fn snapshot(&self) -> &ThemeSnapshot {
+        &self.snapshot
     }
 
     /// Returns the active theme mode.
     pub const fn mode(&self) -> ThemeMode {
-        self.mode
+        self.snapshot.mode()
     }
 
-    /// Returns the active theme revision.
-    pub const fn revision(&self) -> u64 {
-        self.revision
+    /// Returns source-file revision metadata.
+    pub const fn source_revision(&self) -> u64 {
+        self.snapshot.source_revision()
+    }
+
+    /// Returns the runtime-owned effective revision.
+    pub const fn effective_revision(&self) -> u64 {
+        self.effective_revision
+    }
+
+    /// Returns the complete non-color design scales.
+    pub const fn design_scales(&self) -> ThemeDesignScales {
+        self.snapshot.design_scales()
+    }
+
+    /// Returns the theme density default.
+    pub const fn density(&self) -> Density {
+        self.snapshot.density()
+    }
+
+    /// Returns the theme motion policy.
+    pub const fn motion_preference(&self) -> MotionPreference {
+        self.snapshot.motion_preference()
     }
 
     /// Resolves a component color intent with this context.
     pub fn resolve(&self, intent: ColorIntent) -> Rgba {
-        self.snapshot().resolve(intent)
+        self.snapshot.resolve(intent)
+    }
+
+    pub(super) fn has_same_effective_content(&self, other: &Self) -> bool {
+        self.snapshot.has_same_effective_content(&other.snapshot)
+    }
+
+    pub(super) fn has_same_effective_identity(&self, other: &Self) -> bool {
+        self.effective_revision == other.effective_revision
+            && self.has_same_effective_content(other)
+    }
+
+    pub(super) fn rebound(&self) -> Self {
+        Self::new(self.snapshot.clone())
+    }
+
+    pub(super) fn with_snapshot_preserving_effective_revision(
+        &self,
+        snapshot: ThemeSnapshot,
+    ) -> Self {
+        debug_assert!(self.snapshot.has_same_effective_content(&snapshot));
+        Self {
+            effective_revision: self.effective_revision,
+            snapshot,
+        }
     }
 }
 
-impl From<ThemeSnapshot<'_>> for ThemeContext {
-    fn from(snapshot: ThemeSnapshot<'_>) -> Self {
+impl From<ThemeSnapshot> for ThemeContext {
+    fn from(snapshot: ThemeSnapshot) -> Self {
         Self::new(snapshot)
     }
 }
@@ -115,7 +176,7 @@ impl Default for ThemeContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct AppThemeState {
     registry: ThemeRegistry,
     selected_id: String,
@@ -131,8 +192,8 @@ impl AppThemeState {
     ) -> Result<Self, ThemeSelectionError> {
         let selected_id = selected_id.into();
         let selected_context = registry
-            .snapshot(&selected_id)
-            .map(ThemeContext::new)
+            .context(&selected_id)
+            .map(ThemeContext::rebound)
             .ok_or_else(|| ThemeSelectionError::UnknownThemeId(selected_id.clone()))?;
         Ok(Self {
             registry,
@@ -143,8 +204,8 @@ impl AppThemeState {
 
     fn context_for(&self, theme_id: &str) -> Result<ThemeContext, ThemeSelectionError> {
         self.registry
-            .snapshot(theme_id)
-            .map(ThemeContext::new)
+            .context(theme_id)
+            .cloned()
             .ok_or_else(|| ThemeSelectionError::UnknownThemeId(theme_id.to_owned()))
     }
 }
@@ -166,6 +227,7 @@ enum WindowThemeAuthority {
 struct WindowThemeState {
     authority: WindowThemeAuthority,
     base_context: ThemeContext,
+    inherited_app_revision: u64,
     scope_stack: Rc<RefCell<Vec<ThemeContext>>>,
     _app_theme_subscription: Subscription,
 }
@@ -182,16 +244,16 @@ impl WindowThemeState {
                 if authority == WindowThemeAuthority::Override {
                     return;
                 }
-                let previous = state.read(cx).base_context.clone();
-                let next = resolve_base_context(&authority, &previous, cx);
-                let changed = replace_window_theme_base(&state, authority, next, cx);
+                let (_, changed) = synchronize_window_theme_base(&state, cx);
                 if changed {
                     window.refresh();
                 }
             });
+        let base_context = app_theme_context(cx);
         Self {
             authority: WindowThemeAuthority::InheritApp,
-            base_context: app_theme_context(cx),
+            inherited_app_revision: base_context.effective_revision(),
+            base_context,
             scope_stack: Rc::default(),
             _app_theme_subscription: app_theme_subscription,
         }
@@ -206,35 +268,102 @@ fn replace_window_theme_base(
     state: &Entity<WindowThemeState>,
     authority: WindowThemeAuthority,
     context: ThemeContext,
+    inherited_app_revision: Option<u64>,
     cx: &mut App,
 ) -> bool {
-    let changed = {
+    let (should_update, should_refresh) = {
         let state = state.read(cx);
-        state.authority != authority || state.base_context != context
+        (
+            state.authority != authority || state.base_context != context,
+            state.authority != authority
+                || !state.base_context.has_same_effective_identity(&context),
+        )
     };
-    if changed {
+    if should_update {
         state.update(cx, |state, _| {
             state.authority = authority;
             state.base_context = context;
+            if let Some(inherited_app_revision) = inherited_app_revision {
+                state.inherited_app_revision = inherited_app_revision;
+            }
         });
     }
-    changed
+    should_refresh
 }
 
 fn resolve_base_context(
     authority: &WindowThemeAuthority,
     previous: &ThemeContext,
+    inherited_app_revision: u64,
     cx: &App,
-) -> ThemeContext {
+) -> (ThemeContext, Option<u64>) {
     match authority {
-        WindowThemeAuthority::InheritApp => app_theme_context(cx),
-        WindowThemeAuthority::Selected(theme_id) => {
-            registered_theme_context(cx, theme_id).unwrap_or_else(|_| previous.clone())
+        WindowThemeAuthority::InheritApp => {
+            let (context, app_revision) =
+                resolve_inherited_context(previous, inherited_app_revision, cx);
+            (context, Some(app_revision))
         }
+        WindowThemeAuthority::Selected(theme_id) => registered_theme_context(cx, theme_id)
+            .map(|registered| {
+                if previous.has_same_effective_content(&registered) {
+                    previous
+                        .with_snapshot_preserving_effective_revision(registered.snapshot().clone())
+                } else {
+                    registered.rebound()
+                }
+            })
+            .map(|context| (context, None))
+            .unwrap_or_else(|_| (previous.clone(), None)),
         WindowThemeAuthority::Override => {
             unreachable!("an explicit override keeps its owned context")
         }
     }
+}
+
+fn resolve_inherited_context(
+    previous: &ThemeContext,
+    inherited_app_revision: u64,
+    cx: &App,
+) -> (ThemeContext, u64) {
+    let app_context = app_theme_context(cx);
+    let app_revision = app_context.effective_revision();
+    let context = if app_revision == inherited_app_revision {
+        if previous.has_same_effective_content(&app_context) {
+            previous.with_snapshot_preserving_effective_revision(app_context.snapshot().clone())
+        } else {
+            app_context.rebound()
+        }
+    } else {
+        app_context
+    };
+    (context, app_revision)
+}
+
+fn synchronize_window_theme_base(
+    state: &Entity<WindowThemeState>,
+    cx: &mut App,
+) -> (ThemeContext, bool) {
+    let (authority, previous, inherited_app_revision) = {
+        let state = state.read(cx);
+        (
+            state.authority.clone(),
+            state.base_context.clone(),
+            state.inherited_app_revision,
+        )
+    };
+    if authority == WindowThemeAuthority::Override {
+        return (previous, false);
+    }
+    let (context, next_inherited_app_revision) =
+        resolve_base_context(&authority, &previous, inherited_app_revision, cx);
+    let changed = replace_window_theme_base(
+        state,
+        authority,
+        context.clone(),
+        next_inherited_app_revision,
+        cx,
+    );
+    (context, changed)
 }
 
 fn builtin_theme_context(theme_id: &str) -> Option<ThemeContext> {
@@ -261,7 +390,29 @@ pub fn install_theme_registry(
     registry: ThemeRegistry,
     app_theme_id: impl Into<String>,
 ) -> Result<(), ThemeSelectionError> {
-    let next = AppThemeState::new(registry, app_theme_id)?;
+    let app_theme_id = app_theme_id.into();
+    let registered = registry
+        .context(&app_theme_id)
+        .cloned()
+        .ok_or_else(|| ThemeSelectionError::UnknownThemeId(app_theme_id.clone()))?;
+    let selected_context = match cx.try_global::<AppThemeState>() {
+        Some(previous)
+            if previous.selected_id == app_theme_id
+                && previous
+                    .selected_context
+                    .has_same_effective_content(&registered) =>
+        {
+            previous
+                .selected_context
+                .with_snapshot_preserving_effective_revision(registered.snapshot().clone())
+        }
+        _ => registered.rebound(),
+    };
+    let next = AppThemeState {
+        registry,
+        selected_id: app_theme_id,
+        selected_context,
+    };
     if cx.try_global::<AppThemeState>() != Some(&next) {
         cx.set_global(next);
     }
@@ -277,19 +428,25 @@ pub fn register_theme(
         .try_global::<AppThemeState>()
         .cloned()
         .unwrap_or_default();
-    let context = {
+    let (registered_id, entry_context) = {
         let entry = next.registry.register(definition)?;
-        ThemeContext::new(entry.snapshot())
+        (entry.id().to_owned(), entry.context().clone())
     };
-    next.selected_context = next
-        .registry
-        .snapshot(&next.selected_id)
-        .map(ThemeContext::new)
-        .expect("the selected application theme must remain registered");
+    if next.selected_id == registered_id {
+        next.selected_context = if next
+            .selected_context
+            .has_same_effective_content(&entry_context)
+        {
+            next.selected_context
+                .with_snapshot_preserving_effective_revision(entry_context.snapshot().clone())
+        } else {
+            entry_context.clone()
+        };
+    }
     if cx.try_global::<AppThemeState>() != Some(&next) {
         cx.set_global(next);
     }
-    Ok(context)
+    Ok(entry_context)
 }
 
 /// Returns the installed application registry, if one exists.
@@ -332,7 +489,7 @@ pub fn set_app_theme(cx: &mut App, theme_id: impl Into<String>) -> Result<(), Th
         if state.selected_id == theme_id {
             return Ok(());
         }
-        let selected_context = state.context_for(&theme_id)?;
+        let selected_context = state.context_for(&theme_id)?.rebound();
         let state = cx.global_mut::<AppThemeState>();
         state.selected_id = theme_id;
         state.selected_context = selected_context;
@@ -357,12 +514,27 @@ pub fn set_window_theme(
     theme_id: impl Into<String>,
 ) -> Result<(), ThemeSelectionError> {
     let theme_id = theme_id.into();
-    let context = registered_theme_context(cx, &theme_id)?;
+    let registered = registered_theme_context(cx, &theme_id)?;
     let state = window_theme_state(window, cx);
+    let context = {
+        let state = state.read(cx);
+        match &state.authority {
+            WindowThemeAuthority::Selected(selected_id)
+                if selected_id == &theme_id
+                    && state.base_context.has_same_effective_content(&registered) =>
+            {
+                state
+                    .base_context
+                    .with_snapshot_preserving_effective_revision(registered.snapshot().clone())
+            }
+            _ => registered.rebound(),
+        }
+    };
     let changed = replace_window_theme_base(
         &state,
         WindowThemeAuthority::Selected(theme_id),
         context,
+        None,
         cx,
     );
     if changed {
@@ -374,7 +546,20 @@ pub fn set_window_theme(
 /// Applies an explicit immutable theme override to one window.
 pub fn override_window_theme(window: &mut Window, cx: &mut App, context: ThemeContext) {
     let state = window_theme_state(window, cx);
-    let changed = replace_window_theme_base(&state, WindowThemeAuthority::Override, context, cx);
+    let context = {
+        let state = state.read(cx);
+        if state.authority == WindowThemeAuthority::Override
+            && state.base_context.has_same_effective_content(&context)
+        {
+            state
+                .base_context
+                .with_snapshot_preserving_effective_revision(context.snapshot().clone())
+        } else {
+            context.rebound()
+        }
+    };
+    let changed =
+        replace_window_theme_base(&state, WindowThemeAuthority::Override, context, None, cx);
     if changed {
         window.refresh();
     }
@@ -382,9 +567,29 @@ pub fn override_window_theme(window: &mut Window, cx: &mut App, context: ThemeCo
 
 /// Clears a window selection or override so the window inherits the application theme.
 pub fn clear_window_theme(window: &mut Window, cx: &mut App) {
-    let context = app_theme_context(cx);
     let state = window_theme_state(window, cx);
-    let changed = replace_window_theme_base(&state, WindowThemeAuthority::InheritApp, context, cx);
+    let (authority, previous, previous_app_revision) = {
+        let state = state.read(cx);
+        (
+            state.authority.clone(),
+            state.base_context.clone(),
+            state.inherited_app_revision,
+        )
+    };
+    let (context, inherited_app_revision) = if authority == WindowThemeAuthority::InheritApp {
+        resolve_inherited_context(&previous, previous_app_revision, cx)
+    } else {
+        let app_context = app_theme_context(cx);
+        let app_revision = app_context.effective_revision();
+        (app_context.rebound(), app_revision)
+    };
+    let changed = replace_window_theme_base(
+        &state,
+        WindowThemeAuthority::InheritApp,
+        context,
+        Some(inherited_app_revision),
+        cx,
+    );
     if changed {
         window.refresh();
     }
@@ -392,16 +597,17 @@ pub fn clear_window_theme(window: &mut Window, cx: &mut App) {
 
 pub(crate) fn current_theme_context(window: &mut Window, cx: &mut App) -> ThemeContext {
     let state = window_theme_state(window, cx);
-    let state = state.read(cx);
-    if let Some(context) = state.scope_stack.borrow().last().cloned() {
+    if let Some(context) = state.read(cx).scope_stack.borrow().last().cloned() {
         return context;
     }
-    match state.authority {
-        WindowThemeAuthority::InheritApp => app_theme_context(cx),
-        WindowThemeAuthority::Selected(_) | WindowThemeAuthority::Override => {
-            state.base_context.clone()
-        }
+    if state.read(cx).authority == WindowThemeAuthority::Override {
+        return state.read(cx).base_context.clone();
     }
+    let (context, changed) = synchronize_window_theme_base(&state, cx);
+    if changed {
+        window.refresh();
+    }
+    context
 }
 
 pub(crate) fn theme_scope_stack(

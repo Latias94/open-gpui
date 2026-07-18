@@ -589,7 +589,10 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         match snapshot.selected_page {
-            GalleryPage::Tokens => self.render_tokens_page(snapshot).into_any_element(),
+            GalleryPage::Tokens => {
+                let theme = ThemeResolver::current(window, cx);
+                self.render_tokens_page(snapshot, &theme).into_any_element()
+            }
 
             GalleryPage::SizingDensity => self.render_sizing_page(snapshot).into_any_element(),
 
@@ -704,7 +707,11 @@ impl GalleryShell {
             })
     }
 
-    fn render_tokens_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
+    fn render_tokens_page(
+        &self,
+        snapshot: GalleryShellSnapshot,
+        theme: &ThemeContext,
+    ) -> impl IntoElement {
         let registry_status = if pages::tokens::matches_semantic_registry(snapshot.tokens) {
             "semantic registry aligned"
         } else {
@@ -824,12 +831,17 @@ impl GalleryShell {
                                                 .child(sample.mode.as_str()),
                                         ),
                                 )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0x5a6472))
-                                        .child(format!("rev {}", sample.revision)),
-                                )
+                                .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                                    "source {} / effective {}",
+                                    sample.source_revision, sample.effective_revision
+                                )))
+                                .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                                    "{} / {} / text {:?} / radius {:?}",
+                                    sample.density.as_str(),
+                                    sample.motion_policy.as_str(),
+                                    sample.control_text,
+                                    sample.control_radius
+                                )))
                                 .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
                                     "surface {:06x} text {:06x} accent {:06x} focus {:06x}",
                                     sample.surface_rgb,
@@ -842,7 +854,7 @@ impl GalleryShell {
             )
             .child(
                 div().grid().grid_cols(3).gap_3().children(
-                    pages::tokens::token_samples(snapshot.tokens)
+                    pages::tokens::token_samples_for_theme(snapshot.tokens, theme)
                         .into_iter()
                         .map(|sample| {
                             div()

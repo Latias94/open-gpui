@@ -125,6 +125,40 @@ the adoption gate for a public generic inherited-context API.
 See [Theme scope resolution and deferred capture](../knowledge/engineering/decisions/theme-scope-resolution.md)
 for the render-timing prototype and rejected generic-context decision.
 
+### Complete Theme V1 Replacement
+
+Theme v1 is no longer a color-only definition. `ThemeSnapshot` owns a complete color table plus
+typed typography, spacing, radius, elevation, density, and motion-policy scales. `ThemeContext`
+adds the runtime-owned effective revision used for invalidation. Serialized `revision` remains
+source metadata and cannot force or suppress runtime refreshes.
+
+Code-built definitions must now supply the complete payload. The most direct migration for a
+derived theme starts from a complete snapshot:
+
+```rust
+use open_gpui_ui_components::theme::{ThemeDefinition, ThemeSnapshot};
+
+let base = ThemeSnapshot::dark();
+let definition = ThemeDefinition::from_snapshot("editor-dark", "Editor dark", &base);
+```
+
+Use `ThemeDefinition::design_scales(...)` and `.colors(...)` when replacing those complete values.
+Registration rejects missing, duplicate, or unsupported color entries and missing design scales
+before it mutates the registry. Metadata-only reloads preserve the effective revision; changed
+effective content and changed app/window/subtree selection allocate a new monotonic revision.
+
+Theme JSON remains schema version 1 but its shape is intentionally replaced in place. Files must
+contain `design.typography`, `design.spacing`, `design.radius`, `design.elevation`,
+`design.density`, and `design.motion_policy`, as well as the complete color table. Regenerate or
+serialize complete files with `theme_json_string`. The old `fallback_mode`, partial-color fill,
+`ThemeRegistrationDiagnostics`, caller-supplied runtime revision, and color-only loader are deleted
+without aliases or compatibility parsing.
+
+Component sizing now resolves as explicit `Size` first, then the theme density default. Theme and
+component motion preferences merge to the stricter value: either side can request reduced motion,
+and an explicit animated request cannot override a reduced theme. Adaptive device density remains
+an application-shell recommendation rather than an implicit theme override.
+
 ## Semantic Activation Authority
 
 Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests

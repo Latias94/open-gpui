@@ -571,12 +571,32 @@ Sidebar, and Toolbar capture automatically. A caller attaching a UI Components t
 directly through GPUI interactivity must wrap it with `Tooltip::scoped(context, builder)` so both
 builder execution and the returned view retain the same opening context.
 
-`ThemeSnapshot` is an immutable table view with a `ThemeMode`, `revision`, and color entries.
-Components do not read registry globals directly; resolved component state stays renderer-neutral,
-and the GPUI adapter consumes an owned context at the render edge. U8 replaces this color-only
-payload with complete Theme v1 scales without changing U7's precedence or scope channel.
+`ThemeSnapshot` is the complete immutable Theme v1 value. It owns `ThemeMode`, source revision
+metadata, the complete `ThemeColor` table, and one `ThemeDesignScales` value. `ThemeContext` wraps
+that snapshot with a runtime-owned effective revision. Source revision describes the file or
+definition that supplied the value; it is never used as the render cache authority. Effective
+revision changes monotonically when effective content or selection authority changes and cannot be
+supplied by callers. Clones and detached opening-generation captures preserve it.
 
-`ThemeColor` entries pair semantic tokens with `ColorState` values.
+`ThemeDesignScales` contains typed `ThemeTypographyScale`, `ThemeSpacingScale`,
+`ThemeRadiusScale`, and `ThemeElevationScale` values plus `Density` and `MotionPreference`.
+`ThemeElevationLayer` is renderer-neutral and stores logical offsets, blur, spread, and opacity.
+Every public design token has two production recipe consumers: Button and TextInput share control
+typography, spacing, radius, and density resolution; official overlay surfaces and Tooltip share
+elevation; Splitter and VirtualizedList share the strict motion-policy merge. Explicit component
+`Size` wins over the theme density default. Reduced motion is a safety floor, so either the theme
+or component may request reduction and an explicit animated request cannot relax a reduced theme.
+Structural component dimensions and motion execution remain outside the theme value.
+
+Public `Button::state()` and `TextInput::state()` calls have no Window from which to resolve a
+scope, so their metrics use the built-in Theme v1 baseline for deterministic authored-state tests
+and Gallery metadata. Production rendering resolves the effective `ThemeContext` first, injects
+the resulting recipe metrics into that same state shape, and renders only from those state metrics;
+it does not maintain a parallel render-only metric authority.
+
+`ThemeColor` entries pair semantic tokens with `ColorState` values. Components do not read
+registry globals directly; renderer-neutral authored state remains separate from render-time theme
+resolution, and the GPUI adapter consumes an owned `ThemeContext` at the render edge.
 
 `ThemeRegistry` owns built-in and user-loaded definitions. Private app theme state owns the
 installed registry plus app fallback selection; `Window::use_window_state` owns each window's
@@ -587,37 +607,54 @@ equal selections do not update window state or refresh unaffected windows. A reg
 that omits a window-selected id retains that window's last-known immutable context until the id is
 registered again or the caller explicitly clears the selection. The registry preloads
 light, dark, and high-contrast entries, validates `ThemeDefinition` identity fields, replaces
-entries by stable id, and stores owned color tables behind `ThemeRegistryEntry`.
-`ThemeRegistrationDiagnostics`
-records which built-in mode supplied fallback colors and how many entries were filled from that
-fallback. Missing optional token/state colors are completed from a built-in snapshot; missing id,
-label, mode, or revision fail validation with `ThemeValidationError`. Consumers can still resolve
-a registered definition to an owned `ThemeContext`, take its immutable `ThemeSnapshot`, and pass
-that snapshot to `ThemeResolver::resolve_with` for an explicit non-runtime lookup.
+entries by stable id, and stores complete owned contexts behind `ThemeRegistryEntry`. A definition
+must provide id, label, mode, source revision, design scales, and every supported token/state color
+exactly once. Missing, duplicate, or unsupported color entries fail validation before mutation;
+there is no built-in color fill, registration diagnostic, or partial production fallback. An
+identical or metadata-only replacement preserves the existing effective revision. Changed content
+allocates a new one, and selecting a different id allocates a new one even when its payload is
+identical because the authority changed. Consumers can resolve a registered definition to an owned
+`ThemeContext`, borrow its immutable `ThemeSnapshot`, and pass that snapshot to
+`ThemeResolver::resolve_with` for an explicit non-runtime color lookup. Programmatic definition
+failures are reported as `ThemeValidationError` before the registry is mutated.
 
 Portable theme files are JSON and versioned by `THEME_JSON_SCHEMA_VERSION`. The public loader
 surface is the explicit theme-owner API under `open_gpui_ui_components::theme`:
 `theme_json_schema`, `theme_definition_from_json_str`, `theme_definition_from_json_file`,
-`register_theme_json_str`, and `register_theme_json_file`.
+`register_theme_json_str`, `register_theme_json_file`, and `theme_json_string`.
 The reviewable schema artifact for version 1 lives at
 `docs/schemas/open-gpui-theme-v1.schema.json`; regenerate it with
 `cargo run -p open-gpui-ui-components --example export_theme_schema --quiet` when
 `theme_json_schema()` changes, then run `cargo run -p xtask -- scan-theme-schema`.
-Those facades validate schema version, identity fields, `ThemeMode`, duplicate token/state pairs,
-supported semantic token names, supported `ColorState` names, and six-digit RGB values before a
-definition reaches `ThemeRegistry::register`. Loader failures are structured as `ThemeLoadError`
-with `ThemeFileField` for missing top-level or per-color fields, so applications can show messages
-without parsing error strings. The schema covers the current resolver vocabulary: semantic surface,
-text, accent, destructive, overlay, modal overlay, and focus-ring tokens plus default, hover,
-selected, disabled, read-only, invalid, required, placeholder, message, focus-visible, overlay,
-and modal-overlay states. A pressed state is intentionally absent until the resolver grows a real
-`ColorState` for it.
+Those facades strictly validate schema version, identity fields, complete nested design scales,
+`ThemeMode`, `Density`, `MotionPreference`, exactly two valid elevation layers, duplicate and
+complete token/state coverage, supported names, and six-digit RGB values before a definition
+reaches `ThemeRegistry::register`. Loader failures are structured as `ThemeLoadError` with
+`ThemeFileField` for missing top-level, nested design, size-scale, elevation, or color fields, so
+applications can show messages without parsing error strings. The generated JSON Schema defines
+the portable wire shape; loader and registry validation additionally enforce semantic token/state
+completeness and cross-entry uniqueness that JSON Schema cannot express directly. Enum literals
+and RGB strings are canonical: surrounding whitespace and `0x` prefixes are rejected rather than
+normalized. The old color-only document,
+`fallback_mode`, and partial-palette parsing are unsupported; this is an in-place breaking
+replacement under schema version 1, not a parallel v2 or compatibility loader. A pressed state is
+intentionally absent until the resolver grows a real `ColorState` for it.
 
 Schema vocabulary audit target:
 
-- Top-level fields: `schema_version`, `id`, `label`, `mode`, `revision`, `fallback_mode`, `colors`.
+- Top-level fields: `schema_version`, `id`, `label`, `mode`, `revision`, `colors`, `design`.
 - Color entry fields: `token`, `state`, `rgb`.
+- Design fields: `typography`, `spacing`, `radius`, `elevation`, `density`, `motion_policy`.
+- Typography fields: `control_text`, `control_line_height`.
+- Spacing fields: `control_inline`, `control_block`.
+- Radius fields: `control`.
+- Size-scale fields: `xsmall`, `small`, `medium`, `large`.
+- Elevation fields: `overlay`.
+- Elevation-layer fields: `offset_x`, `offset_y`, `blur_radius`, `spread_radius`,
+  `opacity_percent`.
 - Modes: `light`, `dark`, `high-contrast`.
+- Densities: `compact`, `comfortable`, `spacious`.
+- Motion policies: `animated`, `reduced`.
 - Tokens: `semantic.surface`, `semantic.surface_muted`, `semantic.border`, `semantic.text`,
   `semantic.text_muted`, `semantic.accent`, `semantic.accent_foreground`, `semantic.focus_ring`,
   `semantic.destructive`, `semantic.destructive_foreground`, `semantic.overlay`,
@@ -625,14 +662,16 @@ Schema vocabulary audit target:
 - States: `default`, `hover`, `selected`, `disabled`, `read-only`, `invalid`, `required`,
   `placeholder`, `message`, `focus-visible`, `overlay`, `modal-overlay`.
 
-Theme module ownership is intentionally split: `theme/snapshot.rs` owns immutable snapshot data,
-`theme/registry.rs` owns explicit registration and fallback diagnostics, `theme/resolver.rs` owns
-intent-to-color resolution, `theme/schema.rs` owns the JSON schema and loader facade,
-`theme/palette.rs` owns the built-in token tables, and `theme/recipes.rs` owns component color
-recipes. Component files should call
-`ThemeResolver::*_colors` but should not add local `impl ThemeResolver` blocks. The
-`scan-theme-drift` xtask gate checks recipe catalog coverage and built-in palette token/state
-shape, so missing recipe or token additions fail before visual drift reaches gallery tests.
+Theme module ownership is intentionally split: `theme/snapshot.rs` owns complete immutable values,
+`theme/registry.rs` owns atomic validation and registration, `theme/runtime.rs` owns effective
+revision allocation and app/window authority, `theme/resolver.rs` owns intent-to-color resolution,
+`theme/schema.rs` owns the strict JSON schema and loader facade, `theme/palette.rs` owns complete
+built-ins, and `theme/recipes/` owns color and design recipes. Component files call cataloged
+`ThemeResolver` recipes but do not add local `impl ThemeResolver` blocks. The `scan-theme-drift`
+xtask gate checks recipe catalog coverage, built-in palette shape, complete built-in design
+payloads, and the two-production-recipe rule for every public design token. The
+`scan-theme-schema` gate checks generated artifact equality and exact documented vocabulary, so a
+schema, recipe, or token change cannot silently drift from its consumers or documentation.
 Table composition recipes follow the same rule: `TableToolbarState` exposes `TableToolbarColors`
 from the shared theme recipe rather than hand-assembling toolbar text intents in the table module.
 

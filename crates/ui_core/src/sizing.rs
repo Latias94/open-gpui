@@ -158,6 +158,46 @@ impl Size {
     }
 }
 
+/// One logical-pixel value for every shared component size.
+///
+/// Theme design scales use this type for semantic metrics that vary with an explicitly requested
+/// component size. Structural component dimensions remain owned by their component recipes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SizeScale {
+    xsmall: u16,
+    small: u16,
+    medium: u16,
+    large: u16,
+}
+
+impl SizeScale {
+    /// Creates a scale in extra-small, small, medium, and large order.
+    pub const fn new(xsmall: u16, small: u16, medium: u16, large: u16) -> Self {
+        Self {
+            xsmall,
+            small,
+            medium,
+            large,
+        }
+    }
+
+    /// Resolves the logical-pixel value for a component size.
+    pub const fn resolve(self, size: Size) -> UiPx {
+        let value = match size {
+            Size::XSmall => self.xsmall,
+            Size::Small => self.small,
+            Size::Medium => self.medium,
+            Size::Large => self.large,
+        };
+        ui_px(value as f32)
+    }
+
+    /// Returns raw values in extra-small, small, medium, and large order.
+    pub const fn raw_values(self) -> [u16; 4] {
+        [self.xsmall, self.small, self.medium, self.large]
+    }
+}
+
 /// Broad density vocabulary for application shells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Density {
@@ -244,6 +284,15 @@ mod tests {
         assert_eq!(Size::Medium.input_h(), ui_px(32.0));
         assert_eq!(Size::Large.icon_button_size(), ui_px(36.0));
         assert_eq!(Size::Medium.icon_size(), ui_px(15.0));
+    }
+
+    #[test]
+    fn size_scale_resolves_typed_values_without_renderer_state() {
+        let scale = SizeScale::new(4, 6, 8, 10);
+
+        assert_eq!(scale.resolve(Size::XSmall), ui_px(4.0));
+        assert_eq!(scale.resolve(Size::Large), ui_px(10.0));
+        assert_eq!(scale.raw_values(), [4, 6, 8, 10]);
     }
 
     #[test]
