@@ -1,12 +1,14 @@
 use crate::drop_target::DockResolvedDropTarget;
 use crate::{
-    DockNodeId, DockPolicy, DockSpaceId, DockViewportIdentity,
+    DockNodeId, DockPolicy, DockSpaceId, DockViewportHostGeometry, DockViewportIdentity,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropResolution, DockDropTargetValidator, DockEdgePlanResolver},
     geometry::DockDropGuideStyle,
     viewport_registry::DockViewportWindowBoundsFrame,
 };
-use open_gpui::{Bounds, Pixels, Point, Size, WindowId, point};
+#[cfg(test)]
+use open_gpui::point;
+use open_gpui::{Bounds, Pixels, Point, Size, WindowId};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +55,7 @@ pub(crate) struct DockViewportHostSceneSnapshot {
     pub(crate) space: DockSpaceId,
     pub(crate) window_id: WindowId,
     pub(crate) current_bounds: DockViewportWindowBoundsFrame,
-    pub(crate) host_bounds: Bounds<Pixels>,
+    pub(crate) host_geometry: DockViewportHostGeometry,
     generation: u64,
     scene: DockHostDropScene,
 }
@@ -63,21 +65,21 @@ impl DockViewportHostSceneSnapshot {
         space: DockSpaceId,
         window_id: WindowId,
         current_bounds: DockViewportWindowBoundsFrame,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
         drop_guide_style: DockDropGuideStyle,
     ) -> Self {
-        let window_position = point(
-            host_bounds.origin.x + host_position.x,
-            host_bounds.origin.y + host_position.y,
-        );
+        let host_geometry = host_geometry.into();
+        let layout_position = host_geometry
+            .host_to_layout(host_position)
+            .expect("finite host-local positions must remain representable in layout space");
         Self {
             space,
             window_id,
             current_bounds,
-            host_bounds,
+            host_geometry,
             generation: 0,
-            scene: DockHostDropScene::new(window_position).with_drop_guide_style(drop_guide_style),
+            scene: DockHostDropScene::new(layout_position).with_drop_guide_style(drop_guide_style),
         }
     }
 
@@ -85,7 +87,7 @@ impl DockViewportHostSceneSnapshot {
         space: DockSpaceId,
         window_id: WindowId,
         current_bounds: DockViewportWindowBoundsFrame,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
         drop_guide_style: DockDropGuideStyle,
         initial_facts: impl IntoIterator<Item = DockHostDropSceneFact>,
@@ -94,7 +96,7 @@ impl DockViewportHostSceneSnapshot {
             space,
             window_id,
             current_bounds,
-            host_bounds,
+            host_geometry,
             host_position,
             drop_guide_style,
         );
@@ -108,7 +110,7 @@ impl DockViewportHostSceneSnapshot {
         self.space == other.space
             && self.window_id == other.window_id
             && self.current_bounds == other.current_bounds
-            && self.host_bounds == other.host_bounds
+            && self.host_geometry == other.host_geometry
             && self.scene == other.scene
     }
 
@@ -135,6 +137,11 @@ impl DockViewportHostSceneSnapshot {
             .map(|leaf| leaf.bounds)
     }
 
+    fn leaf_displayed_bounds_for_tabs(&self, tabs: DockNodeId) -> Option<Bounds<Pixels>> {
+        let bounds = self.leaf_bounds_for_tabs(tabs)?;
+        self.host_geometry.layout_to_window_bounds(bounds)
+    }
+
     fn tab_bar_bounds_for_tabs(&self, tabs: DockNodeId) -> Option<Bounds<Pixels>> {
         self.scene
             .tab_bars
@@ -158,9 +165,11 @@ impl DockViewportHostSceneSnapshot {
     #[cfg(test)]
     pub(crate) fn global_screen_position(&self) -> Option<Point<Pixels>> {
         let screen_bounds = self.current_bounds.global_screen_bounds()?;
+        let host_position = self.host_geometry.layout_to_host(self.scene.position)?;
+        let window_position = self.host_geometry.host_to_window(host_position)?;
         Some(point(
-            screen_bounds.origin.x + self.scene.position.x,
-            screen_bounds.origin.y + self.scene.position.y,
+            screen_bounds.origin.x + window_position.x,
+            screen_bounds.origin.y + window_position.y,
         ))
     }
 }
@@ -264,6 +273,19 @@ impl DockViewportHostSceneRegistry {
             return None;
         }
         snapshot.leaf_bounds_for_tabs(tabs)
+    }
+
+    pub(crate) fn leaf_displayed_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        snapshot.leaf_displayed_bounds_for_tabs(tabs)
     }
 
     pub(crate) fn tab_bar_bounds_for_tabs(
@@ -371,10 +393,7 @@ impl DockViewportHostSceneRegistry {
         let frame = snapshot.frame();
         let drop_guide_style = snapshot.scene.drop_guide_style();
         let mut scene = snapshot.scene.clone().excluding_nodes(excluded_nodes);
-        scene.position = point(
-            snapshot.host_bounds.origin.x + host_position.x,
-            snapshot.host_bounds.origin.y + host_position.y,
-        );
+        scene.position = snapshot.host_geometry.host_to_layout(host_position)?;
         scene = scene.with_payload_size(payload_size);
         let resolution = scene
             .resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)
@@ -407,6 +426,22 @@ impl DockViewportHostSceneRegistry {
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) {
         self.scenes.remove(space);
+    }
+
+    pub(crate) fn discard_frame_for_viewport(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        if self
+            .scenes
+            .get(space)
+            .is_none_or(|snapshot| snapshot.window_id != window_id)
+        {
+            return false;
+        }
+        self.scenes.remove(space);
+        true
     }
 
     pub(crate) fn unregister_window(&mut self, window_id: WindowId) {

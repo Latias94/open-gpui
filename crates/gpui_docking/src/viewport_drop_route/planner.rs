@@ -304,7 +304,7 @@ impl DockViewportAdapter {
                 return None;
             }
         };
-        let Some(host_bounds) = snapshot.host_bounds else {
+        let Some(host_geometry) = snapshot.host_geometry else {
             return None;
         };
         if request.coordinate_space() != DockViewportPointerCoordinateSpace::EventReceiverLocal
@@ -315,7 +315,7 @@ impl DockViewportAdapter {
         Some(DockEventReceiverLocalSceneRouteContext {
             receiver_window,
             facts_generation,
-            host_bounds,
+            host_geometry,
             global_screen_bounds: snapshot.global_screen_bounds(),
         })
     }

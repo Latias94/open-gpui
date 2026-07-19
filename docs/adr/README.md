@@ -28,3 +28,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0018: Open GPUI Motion Crate Boundary](0018-open-gpui-motion-crate-boundary.md)
 - [ADR 0019: Open GPUI DevTools Headless Diagnostics](0019-open-gpui-devtools-headless-diagnostics.md)
 - [ADR 0020: Open GPUI DevTools Artifact Pipeline](0020-open-gpui-devtools-artifact-pipeline.md)
+- [ADR 0021: Open GPUI Interactive Subtree Transform Authority](0021-open-gpui-interactive-subtree-transform-authority.md)

@@ -43,6 +43,7 @@ mod macos_build {
             "PointF".into(),
             "Hsla".into(),
             "ContentMask".into(),
+            "PrimitiveTransform".into(),
             "Uniforms".into(),
             "AtlasTile".into(),
             "PathRasterizationInputIndex".into(),
@@ -61,7 +62,6 @@ mod macos_build {
             "PathSprite".into(),
             "SurfaceInputIndex".into(),
             "SurfaceBounds".into(),
-            "TransformationMatrix".into(),
         ]);
         config.no_includes = true;
         config.enumeration.prefix_with_name = true;

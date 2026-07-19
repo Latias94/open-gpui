@@ -1,7 +1,7 @@
 use crate::{
-    DockCentralRegion, DockController, DockGraph, DockHost, DockNode, DockNodeId, DockPanel,
-    DockPanelDescriptor, DockSpaceId, DockViewportRuntimeHandle, DockWorkspace, DropZone,
-    SplitAxis,
+    DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockItemId,
+    DockNode, DockNodeId, DockPanel, DockPanelDescriptor, DockSpaceId, DockViewportRuntimeHandle,
+    DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     divider_hit_map::{DockDividerHitMap, DockDividerHitTarget},
     drag::DockDragPayload,
@@ -12,11 +12,128 @@ use crate::{
     transition_geometry::DockVisualAffordanceTransitionKind,
 };
 use open_gpui::{
-    AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
-    px, size,
+    AnyView, AppContext as _, Context, Entity, Focusable, InteractiveElement, IntoElement,
+    Modifiers, MouseButton, ParentElement, Render, Styled, SubtreeTransform, SubtreeTransformExt,
+    SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window, div, point, px, size,
 };
 use slotmap::Key;
 use std::time::Duration;
+
+struct OccludedDockHostFixture {
+    host: Entity<DockHost>,
+}
+
+impl Render for OccludedDockHostFixture {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .relative()
+            .size_full()
+            .child(AnyView::from(self.host.clone()))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .size_full()
+                    .occlude(),
+            )
+    }
+}
+
+struct IndependentDockHostsFixture {
+    first: Entity<DockHost>,
+    second: Entity<DockHost>,
+}
+
+struct ConditionalDockHostFixture {
+    host: Entity<DockHost>,
+    show_host: bool,
+    transform: Option<SubtreeTransform>,
+}
+
+impl Render for ConditionalDockHostFixture {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let mut content = div().size_full();
+        if self.show_host {
+            content = content.child(AnyView::from(self.host.clone()));
+        }
+        match self.transform {
+            Some(transform) => content.with_subtree_transform(transform).into_any_element(),
+            None => content.into_any_element(),
+        }
+    }
+}
+
+impl Render for IndependentDockHostsFixture {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .size_full()
+            .child(
+                div()
+                    .w(px(320.0))
+                    .h_full()
+                    .child(AnyView::from(self.first.clone())),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .child(AnyView::from(self.second.clone())),
+            )
+    }
+}
+
+fn floating_host_for_space(
+    cx: &mut TestAppContext,
+    space: &str,
+    root_item: &str,
+    floating_item: &str,
+    root_label: &'static str,
+    floating_label: &'static str,
+) -> (Entity<DockHost>, DockNodeId) {
+    let space = DockSpaceId::from(space);
+    let root_item = DockItemId::from(root_item);
+    let floating_item = DockItemId::from(floating_item);
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![root_item.clone()],
+        selected: Some(root_item.clone()),
+    });
+    graph.set_root(space.clone(), root);
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![floating_item.clone()],
+        selected: Some(floating_item.clone()),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space.clone())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(20.0, 24.0, 240.0, 160.0),
+        });
+
+    let mut workspace = DockWorkspace::new(space.clone(), graph);
+    workspace.register_panel_view(root_item, "Root", test_view(cx, root_label));
+    workspace.register_panel_view(floating_item, "Floating", test_view(cx, floating_label));
+    workspace.policy_mut().set_allow_floating(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let host = cx.new(|cx| DockHost::from_controller(controller, space, runtime, cx));
+    (host, floating)
+}
+
+fn retained_host_for_workspace(
+    cx: &mut TestAppContext,
+    workspace: DockWorkspace,
+) -> Entity<DockHost> {
+    let space = workspace.space().clone();
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    cx.new(|cx| DockHost::from_controller(controller, space, runtime, cx))
+}
 
 #[open_gpui::test]
 fn stale_floating_drag_begin_does_not_leave_transient_drag(cx: &mut TestAppContext) {
@@ -38,6 +155,606 @@ fn stale_floating_drag_begin_does_not_leave_transient_drag(cx: &mut TestAppConte
 
     assert!(!began);
     assert!(cx.read_entity(&host, |host, _| host.floating_drag().is_none()));
+}
+
+#[open_gpui::test]
+fn rejected_single_tabs_floating_drag_does_not_leave_payload_state(cx: &mut TestAppContext) {
+    let (graph, _root, floating) = floating_overlay_graph();
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(320.0), px(220.0)));
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("single-tabs floating handle should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    assert!(visual.update(|_, cx| cx.active_drag_value::<DockDragPayload>().is_none()));
+    host.read_with(&visual, |host, _| {
+        assert!(host.floating_drag().is_none());
+        let payload = DockDragPayload::new_floating(space(), floating, "Panel A".to_string());
+        assert!(host.active_payload_drag_session(&payload).is_none());
+    });
+}
+
+#[open_gpui::test]
+fn rejected_single_tabs_geometry_does_not_leave_payload_or_capture(cx: &mut TestAppContext) {
+    let (graph, _root, floating) = floating_overlay_graph();
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let host = retained_host_for_workspace(cx, workspace);
+    let window_host = host.clone();
+    let transform = SubtreeTransform::try_new(
+        size(0.01, 0.01),
+        point(px(0.0), px(0.0)),
+        SubtreeTransformOrigin::TOP_LEFT,
+    )
+    .expect("small test transform should remain representable");
+    let window = cx.open_window(size(px(320.0), px(240.0)), move |_, _| {
+        ConditionalDockHostFixture {
+            host: window_host,
+            show_host: true,
+            transform: Some(transform),
+        }
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("transformed floating handle should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(px(f32::MAX), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    assert!(visual.update(|window, cx| {
+        window.captured_pointer().is_none() && cx.active_drag_value::<DockDragPayload>().is_none()
+    }));
+    host.read_with(&visual, |host, _| {
+        assert!(host.floating_drag().is_none());
+        let payload = DockDragPayload::new_floating(space(), floating, "Panel A".to_string());
+        assert!(host.active_payload_drag_session(&payload).is_none());
+    });
+}
+
+#[open_gpui::test]
+fn top_floating_content_occludes_a_lower_floating_title_bar(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(space(), root);
+    let lower_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let lower = graph.insert_node(DockNode::Floating { child: lower_tabs });
+    let upper_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let upper = graph.insert_node(DockNode::Floating { child: upper_tabs });
+    graph.floating_containers_mut(space()).extend([
+        DockFloatingContainer {
+            node: lower,
+            bounds: floating_bounds(20.0, 100.0, 220.0, 140.0),
+        },
+        DockFloatingContainer {
+            node: upper,
+            bounds: floating_bounds(40.0, 20.0, 220.0, 240.0),
+        },
+    ]);
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_floating(true);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(320.0), px(280.0)));
+    let lower_handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: lower },
+    )
+    .expect("lower floating handle should be emitted");
+    let upper_surface = selector_for(&visual, &host, DockDebugRegion::Floating { node: upper })
+        .expect("upper floating surface should be emitted");
+    let start = debug_bounds(&mut visual, &lower_handle).center();
+    assert!(debug_bounds(&mut visual, &upper_surface).contains(&start));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    let active_payload = visual.update(|_, cx| cx.active_drag_value::<DockDragPayload>().cloned());
+    assert!(
+        active_payload.is_none(),
+        "upper floating content must block the lower handle, but started {active_payload:?}"
+    );
+    host.read_with(&visual, |host, _| {
+        assert!(host.floating_drag().is_none());
+    });
+    visual.simulate_mouse_up(start, MouseButton::Left, Modifiers::none());
+}
+
+#[open_gpui::test]
+fn floating_drag_update_preserves_the_captured_grab_offset(cx: &mut TestAppContext) {
+    let (graph, _root, floating) = floating_overlay_graph();
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (_window, host, _visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(320.0), px(220.0)));
+    let initial_bounds = floating_bounds(10.0, 20.0, 220.0, 140.0);
+    let start_position = point(px(35.0), px(32.0));
+    let current_position = point(px(105.0), px(92.0));
+    let expected_bounds = floating_bounds(80.0, 80.0, 220.0, 140.0);
+
+    let updated_bounds = cx.update_entity(&host, |host, cx| {
+        host.begin_floating_drag_from_render(space(), floating, start_position, initial_bounds, cx);
+        host.update_floating_drag_from_render(current_position, cx)
+            .expect("active floating drag should produce canonical bounds")
+    });
+
+    assert_eq!(updated_bounds, expected_bounds);
+    cx.read_entity(&controller, |controller, _| {
+        let bounds = controller
+            .graph()
+            .floating_containers(&space())
+            .iter()
+            .find(|container| container.node == floating)
+            .map(|container| container.bounds)
+            .expect("floating container should remain in the graph");
+        assert_eq!(bounds, expected_bounds);
+    });
+}
+
+#[open_gpui::test]
+fn occluding_overlay_blocks_raw_composite_floating_drag_acquisition(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(space(), root);
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(20.0, 24.0, 260.0, 160.0),
+        });
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_floating(true);
+    let dock_space = workspace.space().clone();
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let host =
+        cx.new(|cx| DockHost::from_controller(controller.clone(), dock_space, runtime.clone(), cx));
+    let window_host = host.clone();
+    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| {
+        OccludedDockHostFixture { host: window_host }
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("composite floating handle selector should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    host.read_with(&visual, |host, _| {
+        assert!(
+            host.floating_drag().is_none(),
+            "a composite floating handle behind a blocking hitbox must not acquire the mouse down"
+        );
+    });
+    visual.simulate_mouse_up(start, MouseButton::Left, Modifiers::none());
+}
+
+#[open_gpui::test]
+fn window_deactivation_cancels_a_captured_composite_floating_drag(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(space(), root);
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(20.0, 24.0, 260.0, 160.0),
+        });
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_floating(true);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(360.0), px(240.0)));
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("composite floating handle should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    assert!(visual.update(|window, _| window.captured_pointer().is_some()));
+    host.read_with(&visual, |host, _| {
+        assert!(host.floating_drag().is_some());
+    });
+
+    visual.deactivate_window();
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.update(|window, _| window.captured_pointer().is_none()));
+    host.read_with(&visual, |host, _| {
+        assert!(
+            host.floating_drag().is_none(),
+            "PointerCancel must clear Dock's internal floating drag"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn window_deactivation_cancels_a_single_tabs_floating_payload_drag(cx: &mut TestAppContext) {
+    let (graph, _root, floating) = floating_overlay_graph();
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(360.0), px(240.0)));
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("single-tabs floating handle should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+    let threshold = point(start.x + px(24.0), start.y);
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(threshold.x + px(2.0), threshold.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let payload = visual.update(|_, cx| {
+        cx.active_drag_value::<DockDragPayload>()
+            .cloned()
+            .expect("single-tabs floating drag should establish a payload")
+    });
+    cx.update_entity(&host, |host, _| {
+        if !host.interaction().outside_release_poll_running() {
+            let session = host
+                .active_payload_drag_session(&payload)
+                .expect("payload runtime session should be active");
+            assert!(
+                host.interaction_mut()
+                    .begin_outside_release_poll_with_session(&payload, Some(session))
+                    .is_some()
+            );
+        }
+    });
+    host.read_with(&visual, |host, _| {
+        assert!(host.floating_drag().is_some());
+        assert!(host.interaction().outside_release_poll_running());
+    });
+
+    visual.deactivate_window();
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.update(|window, cx| {
+        window.captured_pointer().is_none() && cx.active_drag_value::<DockDragPayload>().is_none()
+    }));
+    host.read_with(&visual, |host, _| {
+        assert!(
+            host.floating_drag().is_none(),
+            "PointerCancel must clear the floating state paired with the GPUI drag"
+        );
+        assert!(host.interaction().drop_preview().is_none());
+        assert!(!host.interaction().outside_release_poll_running());
+    });
+}
+
+#[open_gpui::test]
+fn host_subtree_removal_cancels_a_captured_single_tabs_payload_drag(cx: &mut TestAppContext) {
+    let (graph, _root, floating) = floating_overlay_graph();
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let host = retained_host_for_workspace(cx, workspace);
+    let window_host = host.clone();
+    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| {
+        ConditionalDockHostFixture {
+            host: window_host,
+            show_host: true,
+            transform: None,
+        }
+    });
+    let fixture = window
+        .root(cx)
+        .expect("window should expose the conditional host fixture");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("single-tabs floating handle should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let payload = visual.update(|window, cx| {
+        assert!(window.captured_pointer().is_some());
+        cx.active_drag_value::<DockDragPayload>()
+            .cloned()
+            .expect("single-tabs drag should establish a payload")
+    });
+    cx.update_entity(&host, |host, _| {
+        let session = host
+            .active_payload_drag_session(&payload)
+            .expect("payload runtime session should be active");
+        assert!(
+            host.interaction_mut()
+                .begin_outside_release_poll_with_session(&payload, Some(session))
+                .is_some()
+        );
+    });
+
+    cx.update_entity(&fixture, |fixture, cx| {
+        fixture.show_host = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.update(|window, cx| {
+        window.captured_pointer().is_none() && cx.active_drag_value::<DockDragPayload>().is_none()
+    }));
+    host.read_with(&visual, |host, _| {
+        assert!(host.active_payload_drag_session(&payload).is_none());
+        assert!(host.floating_drag().is_none());
+        assert!(!host.interaction().outside_release_poll_running());
+    });
+}
+
+#[open_gpui::test]
+fn host_subtree_removal_cancels_a_captured_tab_item_payload_drag(cx: &mut TestAppContext) {
+    let (graph, tabs) = tabs_graph(&["a", "b"]);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let host = retained_host_for_workspace(cx, workspace);
+    let window_host = host.clone();
+    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| {
+        ConditionalDockHostFixture {
+            host: window_host,
+            show_host: true,
+            transform: None,
+        }
+    });
+    let fixture = window
+        .root(cx)
+        .expect("window should expose the conditional host fixture");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let source = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab should be emitted");
+    let start = debug_bounds(&mut visual, &source).center();
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let payload = visual.update(|window, cx| {
+        assert!(window.captured_pointer().is_some());
+        cx.active_drag_value::<DockDragPayload>()
+            .cloned()
+            .expect("tab drag should establish a payload")
+    });
+    host.read_with(&visual, |host, _| {
+        assert!(host.active_payload_drag_session(&payload).is_some());
+    });
+
+    cx.update_entity(&fixture, |fixture, cx| {
+        fixture.show_host = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.update(|window, cx| {
+        window.captured_pointer().is_none() && cx.active_drag_value::<DockDragPayload>().is_none()
+    }));
+    host.read_with(&visual, |host, _| {
+        assert!(host.active_payload_drag_session(&payload).is_none());
+    });
+}
+
+#[open_gpui::test]
+fn pointer_cancel_reaches_the_payload_owner_with_multiple_dock_hosts(cx: &mut TestAppContext) {
+    let (non_owner, _non_owner_floating) = floating_host_for_space(
+        cx,
+        "non-owner",
+        "non-owner-root",
+        "non-owner-floating",
+        "Non-owner root",
+        "Non-owner floating",
+    );
+    let (owner, owner_floating) = floating_host_for_space(
+        cx,
+        "owner",
+        "owner-root",
+        "owner-floating",
+        "Owner root",
+        "Owner floating",
+    );
+    let window_non_owner = non_owner.clone();
+    let window_owner = owner.clone();
+    let window = cx.open_window(size(px(640.0), px(240.0)), move |_, _| {
+        IndependentDockHostsFixture {
+            first: window_non_owner,
+            second: window_owner,
+        }
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let handle = selector_for(
+        &visual,
+        &owner,
+        DockDebugRegion::FloatingHandle {
+            node: owner_floating,
+        },
+    )
+    .expect("owner floating handle should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+    let threshold = point(start.x + px(24.0), start.y);
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(threshold.x + px(2.0), threshold.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let payload = visual.update(|_, cx| {
+        cx.active_drag_value::<DockDragPayload>()
+            .cloned()
+            .expect("owner should establish a Dock payload drag")
+    });
+    cx.update_entity(&owner, |host, _| {
+        if !host.interaction().outside_release_poll_running() {
+            let session = host
+                .active_payload_drag_session(&payload)
+                .expect("owner payload runtime session should be active");
+            assert!(
+                host.interaction_mut()
+                    .begin_outside_release_poll_with_session(&payload, Some(session))
+                    .is_some()
+            );
+        }
+    });
+    owner.read_with(&visual, |host, _| {
+        assert!(host.active_payload_drag_session(&payload).is_some());
+        assert!(host.interaction().outside_release_poll_running());
+    });
+
+    visual.deactivate_window();
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.update(|_, cx| cx.active_drag_value::<DockDragPayload>().is_none()));
+    owner.read_with(&visual, |host, _| {
+        assert!(host.active_payload_drag_session(&payload).is_none());
+        assert!(host.floating_drag().is_none());
+        assert!(!host.interaction().outside_release_poll_running());
+    });
 }
 
 #[open_gpui::test]
@@ -93,6 +810,184 @@ fn horizontal_splitter_drag_updates_width_fractions(cx: &mut TestAppContext) {
     host.read_with(&visual, |host, _| {
         assert!(host.splitter_drag().is_none());
     });
+}
+
+#[open_gpui::test]
+fn floating_splitter_wins_over_an_overlapped_root_splitter(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let root_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let root_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![root_left, root_right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root_split);
+
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("d")],
+        selected: Some(item("d")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(50.0, 24.0, 300.0, 180.0),
+        });
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+            ("d", "Panel D", "D"),
+        ],
+    );
+    workspace.policy_mut().set_allow_floating(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
+    let floating_handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitterHandle {
+            split: floating_split,
+            index: 0,
+        },
+    )
+    .expect("floating splitter handle should be emitted");
+    let start = debug_bounds(&mut visual, &floating_handle).center();
+    let end = point(start.x + px(30.0), start.y);
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Split {
+            fractions: root_fractions,
+            ..
+        } = controller
+            .graph()
+            .node(root_split)
+            .expect("root split should remain")
+        else {
+            panic!("root should remain split");
+        };
+        let DockNode::Split {
+            fractions: floating_fractions,
+            ..
+        } = controller
+            .graph()
+            .node(floating_split)
+            .expect("floating split should remain")
+        else {
+            panic!("floating child should remain split");
+        };
+        assert_eq!(root_fractions, &vec![0.5, 0.5]);
+        assert!(
+            floating_fractions[0] > 0.5 && floating_fractions[1] < 0.5,
+            "only the topmost floating splitter should resize"
+        );
+    });
+    host.read_with(&visual, |host, _| {
+        assert!(host.splitter_drag().is_none());
+    });
+}
+
+#[open_gpui::test]
+fn window_deactivation_cancels_a_captured_splitter_drag(cx: &mut TestAppContext) {
+    let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitterHandle { split, index: 0 },
+    )
+    .expect("splitter handle should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    assert!(visual.update(|window, _| window.captured_pointer().is_some()));
+    host.read_with(&visual, |host, _| {
+        assert!(host.splitter_drag().is_some());
+    });
+
+    visual.deactivate_window();
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.update(|window, _| window.captured_pointer().is_none()));
+    host.read_with(&visual, |host, _| {
+        assert!(
+            host.splitter_drag().is_none(),
+            "PointerCancel must clear Dock's internal splitter drag"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn occluding_overlay_blocks_raw_splitter_drag_acquisition(cx: &mut TestAppContext) {
+    let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let dock_space = workspace.space().clone();
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let host =
+        cx.new(|cx| DockHost::from_controller(controller.clone(), dock_space, runtime.clone(), cx));
+    let window_host = host.clone();
+    let window = cx.open_window(size(px(400.0), px(240.0)), move |_, _| {
+        OccludedDockHostFixture { host: window_host }
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitterHandle { split, index: 0 },
+    )
+    .expect("splitter handle selector should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    host.read_with(&visual, |host, _| {
+        assert!(
+            host.splitter_drag().is_none(),
+            "a splitter behind a blocking hitbox must not acquire the mouse down"
+        );
+    });
+    visual.simulate_mouse_up(start, MouseButton::Left, Modifiers::none());
 }
 
 #[open_gpui::test]

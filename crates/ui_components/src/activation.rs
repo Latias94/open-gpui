@@ -6,7 +6,7 @@ use std::rc::Weak;
 
 use open_gpui::{
     App, ClickEvent, ElementId, Entity, FocusHandle, KeyDownEvent, KeyUpEvent, MouseButton,
-    MouseDownEvent, StatefulInteractiveElement, Window, WindowId,
+    StatefulInteractiveElement, Window, WindowId,
 };
 use open_gpui_ui_core::AccessibleAction;
 
@@ -351,13 +351,14 @@ impl ActivationBinding {
             element
                 .on_mouse_down(
                     MouseButton::Left,
-                    move |_: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+                    move |_, window: &mut Window, cx: &mut App| {
                         pointer_down_runtime.read(cx).arm_pointer(
                             pointer_down.dispatcher.enabled() && !window.default_prevented(),
                         );
                     },
                 )
                 .on_click(move |event, window, cx| {
+                    let event = event.window_event();
                     if !matches!(event, ClickEvent::Mouse(_)) || !event.standard_click() {
                         return;
                     }

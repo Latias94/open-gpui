@@ -52,7 +52,7 @@
 
 use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, Window,
+    Keystroke, ModifiersChangedEvent, Window, geometry::SubtreeTransformValidity,
 };
 use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
@@ -89,6 +89,7 @@ pub(crate) struct DispatchNode {
     pub focus_id: Option<FocusId>,
     view_id: Option<EntityId>,
     parent: Option<DispatchNodeId>,
+    validity: Option<SubtreeTransformValidity>,
 }
 
 pub(crate) struct ReusedSubtree {
@@ -164,12 +165,16 @@ impl DispatchTree {
         self.nodes.len()
     }
 
-    pub fn push_node(&mut self) -> DispatchNodeId {
+    pub fn push_node_scoped(
+        &mut self,
+        validity: Option<SubtreeTransformValidity>,
+    ) -> DispatchNodeId {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
 
         self.nodes.push(DispatchNode {
             parent,
+            validity,
             ..Default::default()
         });
         self.node_stack.push(node_id);
@@ -244,8 +249,9 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source: &mut DispatchNode) {
-        self.push_node();
+    fn move_node(&mut self, source: &mut DispatchNode, validity: Option<SubtreeTransformValidity>) {
+        let validity = SubtreeTransformValidity::replayed_under(source.validity.as_ref(), validity);
+        self.push_node_scoped(validity);
         if let Some(context) = source.context.clone() {
             self.set_key_context(context);
         }
@@ -267,6 +273,7 @@ impl DispatchTree {
         old_range: Range<usize>,
         source: &mut Self,
         focus: Option<FocusId>,
+        validity: Option<SubtreeTransformValidity>,
     ) -> ReusedSubtree {
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
 
@@ -293,7 +300,7 @@ impl DispatchTree {
             if source_node.focus_id.is_some() && source_node.focus_id == focus {
                 contains_focus = true;
             }
-            self.move_node(source_node);
+            self.move_node(source_node, validity.clone());
         }
 
         while !source_stack.is_empty() {
@@ -319,6 +326,32 @@ impl DispatchTree {
             }
         }
         self.nodes.truncate(index);
+    }
+
+    pub fn suppress_invalid_nodes(&mut self) {
+        for (index, node) in self.nodes.iter_mut().enumerate() {
+            if node
+                .validity
+                .as_ref()
+                .is_none_or(SubtreeTransformValidity::is_valid)
+            {
+                continue;
+            }
+            let node_id = DispatchNodeId(index);
+            if let Some(focus_id) = node.focus_id
+                && self.focusable_node_ids.get(&focus_id) == Some(&node_id)
+            {
+                self.focusable_node_ids.remove(&focus_id);
+            }
+            if let Some(view_id) = node.view_id
+                && self.view_node_ids.get(&view_id) == Some(&node_id)
+            {
+                self.view_node_ids.remove(&view_id);
+            }
+            node.key_listeners.clear();
+            node.action_listeners.clear();
+            node.modifiers_changed_listeners.clear();
+        }
     }
 
     pub fn on_key_event(&mut self, listener: KeyListener) {
@@ -754,7 +787,7 @@ mod tests {
         assert_eq!(result.bindings.len(), 1);
         assert!(!result.pending_has_binding);
 
-        let node_id = tree.push_node();
+        let node_id = tree.push_node_scoped(None);
         tree.set_key_context(KeyContext::parse("ContextB").unwrap());
         tree.pop_node();
 

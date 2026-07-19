@@ -40,6 +40,7 @@ pub mod label;
 pub mod link;
 pub mod listbox;
 pub mod menu;
+mod motion_adapter;
 pub mod number_input;
 mod overlay;
 pub mod popover;
@@ -88,6 +89,7 @@ pub mod gpui_adapter {
     pub use crate::field::adapter::{FieldControl, FieldControlSemantics};
     pub use crate::focus::focus_ring_shadow_with_theme;
     pub use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui};
+    pub use crate::motion_adapter::subtree_transform_from_motion_projection;
     pub use crate::overlay::{
         DEFAULT_OVERLAY_SAFE_MARGIN, FocusScopeRuntimeError, FocusTargetRegistration,
         GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState, OverlayFocusMode,

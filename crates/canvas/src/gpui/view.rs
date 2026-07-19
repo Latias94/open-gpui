@@ -2,7 +2,10 @@ use super::frame::{CanvasPreparedPaintFrame, CanvasSceneLayerPhase, prepaint_can
 use super::input::{CanvasEditorInputHandler, register_canvas_editor_input};
 use super::model::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme};
 use super::painter::{paint_canvas_frame, paint_canvas_scene_phase};
-use open_gpui::{Bounds, Canvas, Context, Entity, FocusHandle, Pixels, Window, canvas};
+use open_gpui::{
+    Bounds, Canvas, Context, Entity, FocusHandle, Hitbox, HitboxBehavior, Pixels, Window, canvas,
+};
+use std::{cell::RefCell, rc::Rc};
 
 pub fn canvas_view(
     model: CanvasPaintModel,
@@ -52,12 +55,20 @@ where
     T: 'static,
 {
     let prepaint_model = model.clone();
+    let input_hitbox = Rc::new(RefCell::new(None::<Hitbox>));
+    let prepaint_input_hitbox = input_hitbox.clone();
     canvas(
         move |bounds, window, _| {
+            *prepaint_input_hitbox.borrow_mut() =
+                Some(window.insert_hitbox(bounds, HitboxBehavior::Normal));
             prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
         },
         move |bounds, frame, window, cx| {
-            register_canvas_editor_input(entity, focus_handle, bounds, handler, window);
+            let hitbox = input_hitbox
+                .borrow_mut()
+                .take()
+                .expect("canvas editor input hitbox must be prepared before paint");
+            register_canvas_editor_input(entity, focus_handle, hitbox, handler, window);
             paint_canvas_frame(bounds, &model, &frame, theme, window, cx);
         },
     )
@@ -77,12 +88,20 @@ where
     T: 'static,
 {
     let prepaint_model = model.clone();
+    let input_hitbox = Rc::new(RefCell::new(None::<Hitbox>));
+    let prepaint_input_hitbox = input_hitbox.clone();
     canvas(
         move |bounds, window, _| {
+            *prepaint_input_hitbox.borrow_mut() =
+                Some(window.insert_hitbox(bounds, HitboxBehavior::Normal));
             prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
         },
         move |bounds, frame, window, cx| {
-            register_canvas_editor_input(entity.clone(), focus_handle, bounds, handler, window);
+            let hitbox = input_hitbox
+                .borrow_mut()
+                .take()
+                .expect("canvas editor input hitbox must be prepared before paint");
+            register_canvas_editor_input(entity.clone(), focus_handle, hitbox, handler, window);
             entity.update(cx, |target, cx| {
                 on_frame(target, window, bounds, &frame, cx)
             });
@@ -107,12 +126,20 @@ where
 {
     let phases = phases.into();
     let prepaint_model = model.clone();
+    let input_hitbox = Rc::new(RefCell::new(None::<Hitbox>));
+    let prepaint_input_hitbox = input_hitbox.clone();
     canvas(
         move |bounds, window, _| {
+            *prepaint_input_hitbox.borrow_mut() =
+                Some(window.insert_hitbox(bounds, HitboxBehavior::Normal));
             prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
         },
         move |bounds, frame, window, cx| {
-            register_canvas_editor_input(entity.clone(), focus_handle, bounds, handler, window);
+            let hitbox = input_hitbox
+                .borrow_mut()
+                .take()
+                .expect("canvas editor input hitbox must be prepared before paint");
+            register_canvas_editor_input(entity.clone(), focus_handle, hitbox, handler, window);
             entity.update(cx, |target, cx| {
                 on_frame(target, window, bounds, &frame, cx)
             });

@@ -9,7 +9,9 @@ use open_gpui_refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::ops::Range;
+use std::rc::Rc;
 use std::{
     cmp::{self, PartialOrd},
     fmt::{self, Display},
@@ -3725,6 +3727,610 @@ pub const fn px(pixels: f32) -> Pixels {
     Pixels(pixels)
 }
 
+/// A checked, layout-neutral transform for an interactive element subtree.
+///
+/// The transform accepts only positive axis-aligned scale and translation. For a child-local point
+/// `point`, projection is `origin + scale * (point - origin) + translation`. Layout measurement and
+/// sibling placement remain unchanged; the element wrapper applies this value after layout.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SubtreeTransform {
+    scale: Size<f32>,
+    translation: Point<Pixels>,
+    origin: SubtreeTransformOrigin,
+}
+
+/// A post-layout origin for [`SubtreeTransform`].
+///
+/// The finite anchor is multiplied by the child bounds size, then the logical-pixel offset is
+/// added. Anchors outside `0..=1` are supported for effects whose origin lies outside the child.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SubtreeTransformOrigin {
+    anchor: Point<f32>,
+    offset: Point<Pixels>,
+}
+
+impl SubtreeTransformOrigin {
+    /// The child's top-left corner.
+    pub const TOP_LEFT: Self = Self {
+        anchor: Point { x: 0.0, y: 0.0 },
+        offset: Point {
+            x: Pixels::ZERO,
+            y: Pixels::ZERO,
+        },
+    };
+
+    /// The center of the child's post-layout bounds.
+    pub const CENTER: Self = Self {
+        anchor: Point { x: 0.5, y: 0.5 },
+        offset: Point {
+            x: Pixels::ZERO,
+            y: Pixels::ZERO,
+        },
+    };
+
+    /// Creates an origin from a size-relative anchor and logical-pixel offset.
+    pub fn try_new(
+        anchor: Point<f32>,
+        offset: Point<Pixels>,
+    ) -> Result<Self, SubtreeTransformError> {
+        let origin = Self { anchor, offset };
+        origin.validate()?;
+        Ok(origin)
+    }
+
+    /// Creates a top-left-relative logical-pixel origin after validating the offset.
+    pub fn try_pixels(offset: Point<Pixels>) -> Result<Self, SubtreeTransformError> {
+        Self::try_new(Point { x: 0.0, y: 0.0 }, offset)
+    }
+
+    fn validate(self) -> Result<(), SubtreeTransformError> {
+        if !self.anchor.x.is_finite() || !self.anchor.y.is_finite() || !point_is_finite(self.offset)
+        {
+            return Err(SubtreeTransformError::NonFiniteOrigin);
+        }
+        Ok(())
+    }
+
+    fn resolve(self, child_size: Size<Pixels>) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.validate()?;
+        Ok(point(
+            checked_mul_add(self.anchor.x, child_size.width, self.offset.x)?,
+            checked_mul_add(self.anchor.y, child_size.height, self.offset.y)?,
+        ))
+    }
+}
+
+/// Why a subtree transform cannot be represented by GPUI's finite `f32` scene contract.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum SubtreeTransformError {
+    /// Both scale components must be finite positive normal values with a finite reciprocal.
+    #[error("subtree transform scale must be finite, positive, normal, and invertible")]
+    InvalidScale,
+    /// Translation must contain only finite logical-pixel values.
+    #[error("subtree transform translation must be finite")]
+    NonFiniteTranslation,
+    /// Origin must contain only finite logical-pixel values.
+    #[error("subtree transform origin must be finite")]
+    NonFiniteOrigin,
+    /// A projection, inverse, or composition exceeded the finite `f32` scene representation.
+    #[error("subtree transform result is not representable")]
+    UnrepresentableResult,
+}
+
+impl Default for SubtreeTransform {
+    fn default() -> Self {
+        Self::identity()
+    }
+}
+
+impl SubtreeTransform {
+    /// The identity subtree transform.
+    pub const IDENTITY: Self = Self {
+        scale: Size {
+            width: 1.0,
+            height: 1.0,
+        },
+        translation: Point {
+            x: Pixels::ZERO,
+            y: Pixels::ZERO,
+        },
+        origin: SubtreeTransformOrigin::TOP_LEFT,
+    };
+
+    /// Returns the identity transform.
+    pub const fn identity() -> Self {
+        Self::IDENTITY
+    }
+
+    /// Creates a checked transform in child-local logical-pixel coordinates.
+    pub fn try_new(
+        scale: Size<f32>,
+        translation: Point<Pixels>,
+        origin: SubtreeTransformOrigin,
+    ) -> Result<Self, SubtreeTransformError> {
+        validate_subtree_scale(scale)?;
+        if !point_is_finite(translation) {
+            return Err(SubtreeTransformError::NonFiniteTranslation);
+        }
+        origin.validate()?;
+
+        Ok(Self {
+            scale,
+            translation,
+            origin,
+        })
+    }
+
+    /// Creates a checked axis-aligned scale about the child's post-layout center.
+    pub fn try_scale(scale: Size<f32>) -> Result<Self, SubtreeTransformError> {
+        Self::try_new(scale, Point::default(), SubtreeTransformOrigin::CENTER)
+    }
+
+    /// Creates a checked uniform scale about the child's post-layout center.
+    pub fn try_uniform_scale(scale: f32) -> Result<Self, SubtreeTransformError> {
+        Self::try_scale(Size::new(scale, scale))
+    }
+
+    /// Creates a checked layout-neutral translation.
+    pub fn try_translation(translation: Point<Pixels>) -> Result<Self, SubtreeTransformError> {
+        Self::try_new(
+            Size::new(1.0, 1.0),
+            translation,
+            SubtreeTransformOrigin::TOP_LEFT,
+        )
+    }
+
+    /// Returns whether this value is exactly the identity mapping.
+    pub fn is_identity(self) -> bool {
+        self.scale == Size::new(1.0, 1.0) && self.translation == Point::default()
+    }
+}
+
+/// The canonical absolute mapping shared by frame journals, input, accessibility, and rendering.
+///
+/// Public transform syntax retains a child-local origin for ergonomics. Once layout is known, GPUI
+/// normalizes it to `projected = scale * source + offset` so equivalent syntax compares identically
+/// and every channel composes the same mapping.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ResolvedSubtreeTransform {
+    scale: Size<f32>,
+    offset: Point<Pixels>,
+    inverse_scale: Size<f32>,
+}
+
+/// An immutable post-layout geometry snapshot for an element.
+///
+/// Layout bounds remain in GPUI's untransformed window-layout coordinates. Displayed bounds and
+/// projection helpers include every committed ancestor [`SubtreeTransform`]. The resolved mapping
+/// is intentionally opaque so applications cannot bypass GPUI's checked transform authority.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ElementGeometry {
+    layout_bounds: Bounds<Pixels>,
+    displayed_bounds: Bounds<Pixels>,
+    transform: ResolvedSubtreeTransform,
+}
+
+impl ElementGeometry {
+    pub(crate) const fn from_resolved(
+        layout_bounds: Bounds<Pixels>,
+        displayed_bounds: Bounds<Pixels>,
+        transform: ResolvedSubtreeTransform,
+    ) -> Self {
+        Self {
+            layout_bounds,
+            displayed_bounds,
+            transform,
+        }
+    }
+
+    /// Returns the untransformed post-layout bounds in window-layout coordinates.
+    pub const fn layout_bounds(self) -> Bounds<Pixels> {
+        self.layout_bounds
+    }
+
+    /// Returns the axis-aligned bounds displayed in window coordinates.
+    pub const fn displayed_bounds(self) -> Bounds<Pixels> {
+        self.displayed_bounds
+    }
+
+    /// Returns the element-local bounds whose origin is zero.
+    pub fn local_bounds(self) -> Bounds<Pixels> {
+        Bounds::new(Point::default(), self.layout_bounds.size)
+    }
+
+    /// Projects element-local bounds into displayed window coordinates.
+    pub fn local_to_window_bounds(
+        self,
+        bounds: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, SubtreeTransformError> {
+        let layout_bounds = Bounds::new(
+            checked_point_sum(self.layout_bounds.origin, bounds.origin)?,
+            bounds.size,
+        );
+        self.layout_to_window_bounds(layout_bounds)
+    }
+
+    /// Inverse-projects displayed window bounds into element-local coordinates.
+    pub fn window_to_local_bounds(
+        self,
+        bounds: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, SubtreeTransformError> {
+        let layout_bounds = self.window_to_layout_bounds(bounds)?;
+        Ok(Bounds::new(
+            checked_point_difference(layout_bounds.origin, self.layout_bounds.origin)?,
+            layout_bounds.size,
+        ))
+    }
+
+    /// Projects an element-local point into displayed window coordinates.
+    pub fn local_to_window_point(
+        self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.layout_to_window_point(self.local_to_layout_point(point)?)
+    }
+
+    /// Inverse-projects a displayed window point into element-local coordinates.
+    pub fn window_to_local_point(
+        self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.layout_to_local_point(self.window_to_layout_point(point)?)
+    }
+
+    /// Converts an element-local point into absolute window-layout coordinates.
+    pub fn local_to_layout_point(
+        self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        checked_point_sum(self.layout_bounds.origin, point)
+    }
+
+    /// Converts an absolute window-layout point into element-local coordinates.
+    pub fn layout_to_local_point(
+        self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        checked_point_difference(point, self.layout_bounds.origin)
+    }
+
+    /// Projects an absolute window-layout point into displayed window coordinates.
+    pub fn layout_to_window_point(
+        self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.transform.try_project_point(point)
+    }
+
+    /// Projects absolute window-layout bounds into displayed window coordinates.
+    pub fn layout_to_window_bounds(
+        self,
+        bounds: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, SubtreeTransformError> {
+        self.transform.try_project_bounds(bounds)
+    }
+
+    /// Inverse-projects a displayed window point into absolute window-layout coordinates.
+    pub fn window_to_layout_point(
+        self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.transform.try_inverse_project_point(point)
+    }
+
+    /// Inverse-projects displayed window bounds into absolute window-layout coordinates.
+    pub fn window_to_layout_bounds(
+        self,
+        bounds: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, SubtreeTransformError> {
+        self.transform.try_inverse_project_bounds(bounds)
+    }
+
+    /// Projects a local vector into displayed window coordinates.
+    pub fn local_to_window_vector(
+        self,
+        vector: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.transform.try_project_vector(vector)
+    }
+
+    /// Inverse-projects a displayed window vector into local coordinates.
+    pub fn window_to_local_vector(
+        self,
+        vector: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.transform.try_inverse_project_vector(vector)
+    }
+
+    /// Creates an identity geometry snapshot for test adapters.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn identity_for_test(layout_bounds: Bounds<Pixels>) -> Self {
+        Self::from_resolved(
+            layout_bounds,
+            layout_bounds,
+            ResolvedSubtreeTransform::IDENTITY,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SubtreeTransformValidity(Rc<SubtreeTransformValidityState>);
+
+#[derive(Debug)]
+struct SubtreeTransformValidityState {
+    parent: Option<SubtreeTransformValidity>,
+    failure: Cell<Option<SubtreeTransformError>>,
+    diagnostic_emitted: Cell<bool>,
+}
+
+impl SubtreeTransformValidity {
+    pub(crate) fn new(parent: Option<Self>) -> Self {
+        Self(Rc::new(SubtreeTransformValidityState {
+            parent,
+            failure: Cell::new(None),
+            diagnostic_emitted: Cell::new(false),
+        }))
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        self.0.failure.get().is_none()
+            && self
+                .0
+                .parent
+                .as_ref()
+                .is_none_or(SubtreeTransformValidity::is_valid)
+    }
+
+    pub(crate) fn invalidate(&self, error: SubtreeTransformError) {
+        if self.0.failure.get().is_none() {
+            self.0.failure.set(Some(error));
+        }
+    }
+
+    pub(crate) fn failure(&self) -> Option<SubtreeTransformError> {
+        self.0.failure.get()
+    }
+
+    fn effective_failure(&self) -> Option<SubtreeTransformError> {
+        self.failure().or_else(|| {
+            self.0
+                .parent
+                .as_ref()
+                .and_then(SubtreeTransformValidity::effective_failure)
+        })
+    }
+
+    /// Rebinds a completed journal entry beneath the current replay scope without reviving an
+    /// entry that was suppressed by a nested transform in the recorded frame.
+    pub(crate) fn replayed_under(recorded: Option<&Self>, parent: Option<Self>) -> Option<Self> {
+        let Some(recorded) = recorded else {
+            return parent;
+        };
+        let replayed = Self::new(parent);
+        if let Some(error) = recorded.effective_failure() {
+            replayed.invalidate(error);
+        }
+        Some(replayed)
+    }
+
+    pub(crate) fn take_unreported_failure(&self) -> Option<SubtreeTransformError> {
+        let failure = self.failure()?;
+        if self.0.diagnostic_emitted.replace(true) {
+            None
+        } else {
+            Some(failure)
+        }
+    }
+}
+
+impl Default for ResolvedSubtreeTransform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+impl ResolvedSubtreeTransform {
+    pub(crate) const IDENTITY: Self = Self {
+        scale: Size {
+            width: 1.0,
+            height: 1.0,
+        },
+        offset: Point {
+            x: Pixels::ZERO,
+            y: Pixels::ZERO,
+        },
+        inverse_scale: Size {
+            width: 1.0,
+            height: 1.0,
+        },
+    };
+
+    pub(crate) fn try_from_local(
+        parent: Self,
+        local: SubtreeTransform,
+        child_bounds: Bounds<Pixels>,
+    ) -> Result<Self, SubtreeTransformError> {
+        let relative_origin = local.origin.resolve(child_bounds.size)?;
+        let absolute_origin = checked_point_sum(child_bounds.origin, relative_origin)?;
+        let local_offset = point(
+            checked_origin_offset(local.scale.width, absolute_origin.x, local.translation.x)?,
+            checked_origin_offset(local.scale.height, absolute_origin.y, local.translation.y)?,
+        );
+        let scale = size(
+            checked_scale_product(parent.scale.width, local.scale.width)?,
+            checked_scale_product(parent.scale.height, local.scale.height)?,
+        );
+        let offset = point(
+            checked_mul_add(parent.scale.width, local_offset.x, parent.offset.x)?,
+            checked_mul_add(parent.scale.height, local_offset.y, parent.offset.y)?,
+        );
+
+        Ok(Self {
+            scale,
+            offset,
+            inverse_scale: size(scale.width.recip(), scale.height.recip()),
+        })
+    }
+
+    pub(crate) const fn scale(self) -> Size<f32> {
+        self.scale
+    }
+
+    pub(crate) const fn offset(self) -> Point<Pixels> {
+        self.offset
+    }
+
+    pub(crate) fn try_project_point(
+        self,
+        source: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        Ok(point(
+            checked_mul_add(self.scale.width, source.x, self.offset.x)?,
+            checked_mul_add(self.scale.height, source.y, self.offset.y)?,
+        ))
+    }
+
+    pub(crate) fn try_project_vector(
+        self,
+        source: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        Ok(point(
+            checked_scale(self.scale.width, source.x)?,
+            checked_scale(self.scale.height, source.y)?,
+        ))
+    }
+
+    pub(crate) fn try_project_bounds(
+        self,
+        source: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, SubtreeTransformError> {
+        let origin = self.try_project_point(source.origin)?;
+        let size = self.try_project_vector(point(source.size.width, source.size.height))?;
+        Ok(Bounds::new(origin, Size::new(size.x, size.y)))
+    }
+
+    pub(crate) fn try_inverse_project_point(
+        self,
+        projected: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        Ok(point(
+            checked_inverse_with_scale(self.inverse_scale.width, projected.x, self.offset.x)?,
+            checked_inverse_with_scale(self.inverse_scale.height, projected.y, self.offset.y)?,
+        ))
+    }
+
+    pub(crate) fn try_inverse_project_vector(
+        self,
+        projected: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        Ok(point(
+            checked_scale(self.inverse_scale.width, projected.x)?,
+            checked_scale(self.inverse_scale.height, projected.y)?,
+        ))
+    }
+
+    pub(crate) fn try_inverse_project_bounds(
+        self,
+        projected: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, SubtreeTransformError> {
+        let origin = self.try_inverse_project_point(projected.origin)?;
+        let size =
+            self.try_inverse_project_vector(point(projected.size.width, projected.size.height))?;
+        Ok(Bounds::new(origin, Size::new(size.x, size.y)))
+    }
+}
+
+fn validate_subtree_scale(scale: Size<f32>) -> Result<(), SubtreeTransformError> {
+    if valid_scale_component(scale.width) && valid_scale_component(scale.height) {
+        Ok(())
+    } else {
+        Err(SubtreeTransformError::InvalidScale)
+    }
+}
+
+fn valid_scale_component(value: f32) -> bool {
+    value.is_normal() && value > 0.0 && value.recip().is_finite()
+}
+
+fn point_is_finite(value: Point<Pixels>) -> bool {
+    value.x.0.is_finite() && value.y.0.is_finite()
+}
+
+fn checked_point_sum(
+    left: Point<Pixels>,
+    right: Point<Pixels>,
+) -> Result<Point<Pixels>, SubtreeTransformError> {
+    Ok(point(
+        finite_pixels(left.x.0 + right.x.0)?,
+        finite_pixels(left.y.0 + right.y.0)?,
+    ))
+}
+
+fn checked_point_difference(
+    left: Point<Pixels>,
+    right: Point<Pixels>,
+) -> Result<Point<Pixels>, SubtreeTransformError> {
+    Ok(point(
+        finite_pixels(left.x.0 - right.x.0)?,
+        finite_pixels(left.y.0 - right.y.0)?,
+    ))
+}
+
+fn checked_scale_product(left: f32, right: f32) -> Result<f32, SubtreeTransformError> {
+    let result = left * right;
+    if valid_scale_component(result) {
+        Ok(result)
+    } else {
+        Err(SubtreeTransformError::UnrepresentableResult)
+    }
+}
+
+fn checked_origin_offset(
+    scale: f32,
+    origin: Pixels,
+    translation: Pixels,
+) -> Result<Pixels, SubtreeTransformError> {
+    let result = scale.mul_add(-origin.0, origin.0) + translation.0;
+    finite_pixels(result)
+}
+
+fn checked_mul_add(
+    scale: f32,
+    source: Pixels,
+    offset: Pixels,
+) -> Result<Pixels, SubtreeTransformError> {
+    if scale != 0.0 && source.0 != 0.0 && scale * source.0 == 0.0 {
+        return Err(SubtreeTransformError::UnrepresentableResult);
+    }
+    finite_pixels(scale.mul_add(source.0, offset.0))
+}
+
+fn checked_scale(scale: f32, source: Pixels) -> Result<Pixels, SubtreeTransformError> {
+    let result = scale * source.0;
+    if source.0 != 0.0 && result == 0.0 {
+        return Err(SubtreeTransformError::UnrepresentableResult);
+    }
+    finite_pixels(result)
+}
+
+fn checked_inverse_with_scale(
+    inverse_scale: f32,
+    projected: Pixels,
+    offset: Pixels,
+) -> Result<Pixels, SubtreeTransformError> {
+    let difference = finite_pixels(projected.0 - offset.0)?;
+    checked_scale(inverse_scale, difference)
+}
+
+fn finite_pixels(value: f32) -> Result<Pixels, SubtreeTransformError> {
+    if value.is_finite() {
+        Ok(Pixels(value))
+    } else {
+        Err(SubtreeTransformError::UnrepresentableResult)
+    }
+}
+
 /// Returns a `Length` representing an automatic length.
 ///
 /// The `auto` length is often used in layout calculations where the length should be determined
@@ -3992,5 +4598,361 @@ mod tests {
 
         // Test Case 3: Bounds intersecting with themselves
         assert!(bounds1.intersects(&bounds1));
+    }
+
+    #[test]
+    fn subtree_transform_projects_about_explicit_origin_and_round_trips() {
+        let transform = SubtreeTransform::try_new(
+            size(2.0, 3.0),
+            point(px(5.0), px(-7.0)),
+            SubtreeTransformOrigin::try_pixels(point(px(10.0), px(20.0))).unwrap(),
+        )
+        .expect("finite positive transform");
+        let source = point(px(12.0), px(23.0));
+        let resolved = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            transform,
+            Bounds::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.try_project_point(source).unwrap(),
+            point(px(19.0), px(22.0))
+        );
+        assert_eq!(
+            resolved
+                .try_inverse_project_point(point(px(19.0), px(22.0)))
+                .unwrap(),
+            source
+        );
+        assert_eq!(
+            resolved
+                .try_project_vector(point(px(2.0), px(3.0)))
+                .unwrap(),
+            point(px(4.0), px(9.0))
+        );
+        assert_eq!(
+            resolved
+                .try_inverse_project_vector(point(px(4.0), px(9.0)))
+                .unwrap(),
+            point(px(2.0), px(3.0))
+        );
+        assert_eq!(
+            resolved
+                .try_project_bounds(Bounds::new(source, size(px(4.0), px(5.0))))
+                .unwrap(),
+            Bounds::new(point(px(19.0), px(22.0)), size(px(8.0), px(15.0)))
+        );
+        assert_eq!(
+            resolved
+                .try_inverse_project_bounds(Bounds::new(
+                    point(px(19.0), px(22.0)),
+                    size(px(8.0), px(15.0)),
+                ))
+                .unwrap(),
+            Bounds::new(source, size(px(4.0), px(5.0)))
+        );
+    }
+
+    #[test]
+    fn subtree_transform_identity_and_parent_child_composition_are_exact() {
+        let identity = SubtreeTransform::identity();
+        let source = point(px(3.0), px(-4.0));
+        assert!(identity.is_identity());
+        assert!(
+            SubtreeTransform::try_new(
+                size(1.0, 1.0),
+                Point::default(),
+                SubtreeTransformOrigin::try_pixels(point(px(100.0), px(-250.0))).unwrap(),
+            )
+            .unwrap()
+            .is_identity()
+        );
+        let identity = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            identity,
+            Bounds::default(),
+        )
+        .unwrap();
+        assert_eq!(identity.try_project_point(source).unwrap(), source);
+
+        let parent = SubtreeTransform::try_new(
+            size(2.0, 3.0),
+            point(px(10.0), px(20.0)),
+            SubtreeTransformOrigin::TOP_LEFT,
+        )
+        .unwrap();
+        let child = SubtreeTransform::try_new(
+            size(0.5, 4.0),
+            point(px(-2.0), px(3.0)),
+            SubtreeTransformOrigin::TOP_LEFT,
+        )
+        .unwrap();
+        let parent_resolved = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            parent,
+            Bounds::default(),
+        )
+        .unwrap();
+        let child_resolved =
+            ResolvedSubtreeTransform::try_from_local(parent_resolved, child, Bounds::default())
+                .unwrap();
+        let child_only = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            child,
+            Bounds::default(),
+        )
+        .unwrap();
+        let expected = parent_resolved
+            .try_project_point(child_only.try_project_point(source).unwrap())
+            .unwrap();
+
+        assert_eq!(child_resolved.try_project_point(source).unwrap(), expected);
+        let reverse =
+            ResolvedSubtreeTransform::try_from_local(child_only, parent, Bounds::default())
+                .unwrap();
+        assert_ne!(
+            child_resolved.try_project_point(source).unwrap(),
+            reverse.try_project_point(source).unwrap()
+        );
+    }
+
+    #[test]
+    fn subtree_transform_rejects_invalid_inputs_and_unrepresentable_results() {
+        let zero = Point::default();
+        for invalid_scale in [
+            size(0.0, 1.0),
+            size(-1.0, 1.0),
+            size(f32::NAN, 1.0),
+            size(f32::INFINITY, 1.0),
+            size(f32::from_bits(1), 1.0),
+        ] {
+            assert!(
+                SubtreeTransform::try_new(invalid_scale, zero, SubtreeTransformOrigin::TOP_LEFT)
+                    .is_err()
+            );
+        }
+        for invalid_translation in [
+            point(px(f32::INFINITY), Pixels::ZERO),
+            point(Pixels::ZERO, px(f32::NEG_INFINITY)),
+            point(px(f32::NAN), Pixels::ZERO),
+            point(Pixels::ZERO, px(f32::NAN)),
+        ] {
+            assert!(
+                SubtreeTransform::try_new(
+                    size(1.0, 1.0),
+                    invalid_translation,
+                    SubtreeTransformOrigin::TOP_LEFT,
+                )
+                .is_err()
+            );
+        }
+        for invalid_origin in [
+            point(px(f32::INFINITY), Pixels::ZERO),
+            point(Pixels::ZERO, px(f32::NEG_INFINITY)),
+            point(px(f32::NAN), Pixels::ZERO),
+            point(Pixels::ZERO, px(f32::NAN)),
+        ] {
+            assert_eq!(
+                SubtreeTransformOrigin::try_pixels(invalid_origin),
+                Err(SubtreeTransformError::NonFiniteOrigin),
+            );
+        }
+
+        let overflowing = SubtreeTransform::try_new(
+            size(f32::MAX, 1.0),
+            Point::default(),
+            SubtreeTransformOrigin::TOP_LEFT,
+        )
+        .unwrap();
+        let overflowing = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            overflowing,
+            Bounds::default(),
+        )
+        .unwrap();
+        assert!(
+            overflowing
+                .try_project_point(point(px(2.0), Pixels::ZERO))
+                .is_err()
+        );
+        assert!(
+            ResolvedSubtreeTransform::try_from_local(
+                overflowing,
+                SubtreeTransform::try_new(
+                    size(2.0, 1.0),
+                    Point::default(),
+                    SubtreeTransformOrigin::TOP_LEFT,
+                )
+                .unwrap(),
+                Bounds::default(),
+            )
+            .is_err()
+        );
+
+        let small = f32::MIN_POSITIVE;
+        let underflowing = SubtreeTransform::try_new(
+            size(small, 1.0),
+            Point::default(),
+            SubtreeTransformOrigin::TOP_LEFT,
+        )
+        .unwrap();
+        let underflowing_resolved = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            underflowing,
+            Bounds::default(),
+        )
+        .unwrap();
+        assert!(
+            ResolvedSubtreeTransform::try_from_local(
+                underflowing_resolved,
+                underflowing,
+                Bounds::default(),
+            )
+            .is_err()
+        );
+        assert!(
+            underflowing_resolved
+                .try_inverse_project_point(point(px(f32::MAX), Pixels::ZERO))
+                .is_err()
+        );
+        assert!(
+            underflowing_resolved
+                .try_project_point(point(px(f32::from_bits(1)), Pixels::ZERO))
+                .is_err(),
+            "a nonzero projection contribution must not silently underflow to zero"
+        );
+    }
+
+    #[test]
+    fn resolved_subtree_transform_uses_child_bounds_origin_and_composes_parent_first() {
+        let parent = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            SubtreeTransform::try_new(
+                size(2.0, 3.0),
+                point(px(10.0), px(20.0)),
+                SubtreeTransformOrigin::TOP_LEFT,
+            )
+            .unwrap(),
+            Bounds::new(point(px(100.0), px(200.0)), Size::default()),
+        )
+        .unwrap();
+        let child = ResolvedSubtreeTransform::try_from_local(
+            parent,
+            SubtreeTransform::try_new(
+                size(0.5, 4.0),
+                point(px(-2.0), px(3.0)),
+                SubtreeTransformOrigin::try_pixels(point(px(10.0), px(20.0))).unwrap(),
+            )
+            .unwrap(),
+            Bounds::new(point(px(120.0), px(230.0)), Size::default()),
+        )
+        .unwrap();
+        let source = point(px(132.0), px(253.0));
+
+        let child_local = point(
+            px(130.0 + 0.5 * (source.x.0 - 130.0) - 2.0),
+            px(250.0 + 4.0 * (source.y.0 - 250.0) + 3.0),
+        );
+        let expected = point(
+            px(100.0 + 2.0 * (child_local.x.0 - 100.0) + 10.0),
+            px(200.0 + 3.0 * (child_local.y.0 - 200.0) + 20.0),
+        );
+
+        assert_eq!(child.try_project_point(source).unwrap(), expected);
+        assert_eq!(child.try_inverse_project_point(expected).unwrap(), source);
+        assert_eq!(
+            child.try_project_vector(point(px(4.0), px(5.0))).unwrap(),
+            point(px(4.0), px(60.0))
+        );
+    }
+
+    #[test]
+    fn subtree_transform_origin_resolves_from_post_layout_size() {
+        let bounds = Bounds::new(point(px(100.0), px(200.0)), size(px(40.0), px(20.0)));
+        let centered = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            SubtreeTransform::try_scale(size(2.0, 0.5)).unwrap(),
+            bounds,
+        )
+        .unwrap();
+
+        assert_eq!(
+            centered
+                .try_project_point(point(px(120.0), px(210.0)))
+                .unwrap(),
+            point(px(120.0), px(210.0))
+        );
+        assert_eq!(
+            centered
+                .try_project_point(point(px(100.0), px(200.0)))
+                .unwrap(),
+            point(px(80.0), px(205.0))
+        );
+
+        let offset_center =
+            SubtreeTransformOrigin::try_new(point(0.5, 0.5), point(px(5.0), px(-2.0))).unwrap();
+        let offset = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            SubtreeTransform::try_new(size(2.0, 2.0), Point::default(), offset_center).unwrap(),
+            bounds,
+        )
+        .unwrap();
+        assert_eq!(
+            offset
+                .try_project_point(point(px(125.0), px(208.0)))
+                .unwrap(),
+            point(px(125.0), px(208.0))
+        );
+    }
+
+    #[test]
+    fn resolved_subtree_transform_canonicalizes_equivalent_origin_syntax() {
+        let with_origin = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            SubtreeTransform::try_new(
+                size(2.0, 3.0),
+                point(px(5.0), px(-7.0)),
+                SubtreeTransformOrigin::try_pixels(point(px(10.0), px(20.0))).unwrap(),
+            )
+            .unwrap(),
+            Bounds::default(),
+        )
+        .unwrap();
+        let normalized = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            SubtreeTransform::try_new(
+                size(2.0, 3.0),
+                point(px(-5.0), px(-47.0)),
+                SubtreeTransformOrigin::TOP_LEFT,
+            )
+            .unwrap(),
+            Bounds::default(),
+        )
+        .unwrap();
+
+        assert_eq!(with_origin, normalized);
+        assert!(
+            ResolvedSubtreeTransform::try_from_local(
+                ResolvedSubtreeTransform::IDENTITY,
+                SubtreeTransform::IDENTITY,
+                Bounds::new(point(px(f32::MAX), Pixels::ZERO), Size::default()),
+            )
+            .is_ok()
+        );
+        assert!(
+            ResolvedSubtreeTransform::try_from_local(
+                ResolvedSubtreeTransform::IDENTITY,
+                SubtreeTransform::try_new(
+                    size(f32::MAX, 1.0),
+                    Point::default(),
+                    SubtreeTransformOrigin::try_pixels(point(px(1.0), Pixels::ZERO)).unwrap(),
+                )
+                .unwrap(),
+                Bounds::new(point(px(f32::MAX), Pixels::ZERO), Size::default()),
+            )
+            .is_err()
+        );
     }
 }

@@ -172,7 +172,8 @@ pub(crate) struct DockPayloadDropRelease {
     event_receiver_local_scene_proof: Option<DockViewportHostSceneFrame>,
     /// Host space that observed the release; runtime routing may choose a different target.
     host_space: DockSpaceId,
-    release_position: Point<Pixels>,
+    local_layout_position: Option<Point<Pixels>>,
+    window_position: Point<Pixels>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -202,10 +203,27 @@ impl DockPayloadDropRelease {
         Self::hovered_host_with_session(payload, host_space, release_position, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn hovered_host_with_session(
         payload: DockDragPayload,
         host_space: DockSpaceId,
         release_position: Point<Pixels>,
+        drag_session: Option<DockRuntimeDragSession>,
+    ) -> Self {
+        Self::hovered_host_with_positions(
+            payload,
+            host_space,
+            release_position,
+            release_position,
+            drag_session,
+        )
+    }
+
+    pub(crate) fn hovered_host_with_positions(
+        payload: DockDragPayload,
+        host_space: DockSpaceId,
+        local_layout_position: Point<Pixels>,
+        window_position: Point<Pixels>,
         drag_session: Option<DockRuntimeDragSession>,
     ) -> Self {
         Self {
@@ -215,7 +233,8 @@ impl DockPayloadDropRelease {
             origin: DockPayloadDropReleaseOrigin::HoveredHost,
             event_receiver_local_scene_proof: None,
             host_space,
-            release_position,
+            local_layout_position: Some(local_layout_position),
+            window_position,
         }
     }
 
@@ -241,7 +260,8 @@ impl DockPayloadDropRelease {
             origin: DockPayloadDropReleaseOrigin::SourceOnly,
             event_receiver_local_scene_proof: None,
             host_space,
-            release_position,
+            local_layout_position: None,
+            window_position: release_position,
         }
     }
 
@@ -271,7 +291,11 @@ impl DockPayloadDropRelease {
     }
 
     pub(crate) fn release_position(&self) -> Point<Pixels> {
-        self.release_position
+        self.window_position
+    }
+
+    pub(crate) fn local_layout_position(&self) -> Option<Point<Pixels>> {
+        self.local_layout_position
     }
 
     pub(crate) fn with_tear_off_geometry(
@@ -559,6 +583,10 @@ impl DockInteractionRuntime {
             .is_some_and(|drag| drag.axis_count() > 1)
     }
 
+    pub(crate) fn splitter_drag_active(&self) -> bool {
+        self.splitter_drag.is_some()
+    }
+
     pub(crate) fn finish_splitter_drag(&mut self) -> bool {
         self.splitter_drag.take().is_some()
     }
@@ -597,6 +625,10 @@ impl DockInteractionRuntime {
             floating: drag.floating,
             bounds,
         })
+    }
+
+    pub(crate) fn floating_drag_active(&self) -> bool {
+        self.floating_drag.is_some()
     }
 
     pub(crate) fn finish_floating_drag(&mut self) -> bool {
@@ -684,7 +716,7 @@ impl DockInteractionRuntime {
             return None;
         }
         let target = self.drop.take_release_target_at(
-            release.release_position(),
+            release.local_layout_position()?,
             policy,
             target_validator,
             edge_plan_resolver,

@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, Axis, ClickEvent, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    Pixels, StatefulInteractiveElement, Styled, div, px, rgb,
+    AnyElement, Axis, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels,
+    StatefulInteractiveElement, Styled, div, px, rgb,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, TableColumnRegion, TableRowRegion, UiPx,
@@ -182,7 +182,8 @@ fn render_table_row(context: TableRowRenderContext) -> impl IntoElement {
         )
         .on_click({
             let context = context.clone();
-            move |event: &ClickEvent, window, cx| {
+            move |event, window, cx| {
+                let event = event.window_event();
                 if !event.standard_click() || window.default_prevented() {
                     return;
                 }

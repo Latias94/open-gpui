@@ -25,6 +25,8 @@ runtime.
   depending on a GPUI window, browser scheduler, or renderer, including explicit reset reasons when
   an adapter starts a new local motion epoch.
 - Neutral logical-pixel geometry plus projection, reveal, and clip helpers for final-size content.
+- Fallible `MotionProjectionTransformSample` values for scale/translation projection without a
+  dependency on GPUI or a renderer.
 
 Adapters keep authority over rendering, input, focus, accessibility, frame scheduling, and clock
 sampling. A Splitter, docking host, canvas, or application passes explicit elapsed time into motion
@@ -64,6 +66,13 @@ cargo run -p open-gpui-docking-native
 
 Both examples keep frame scheduling in their GPUI adapters. `open-gpui-motion` only publishes
 deterministic samples and frame demand.
+
+For an interactive GPUI subtree, sample `MotionProjection::try_transform_sample` and convert it in
+a crate that depends on both Motion and GPUI. The first-party UI Components adapter is
+`gpui_adapter::subtree_transform_from_motion_projection`. Motion does not construct
+`open_gpui::SubtreeTransform`, and invalid or unrepresentable projection geometry returns
+`MotionProjectionError` instead of silently becoming identity. Final and reduced-motion samples
+resolve to the exact final endpoint.
 
 ## Boundaries
 

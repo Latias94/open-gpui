@@ -3,8 +3,8 @@ use bytemuck::{Pod, Zeroable};
 use log::warn;
 use open_gpui::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size,
+    SubpixelSprite, Underline, get_gamma_correction_ratios,
 };
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -83,7 +83,16 @@ struct PathRasterizationVertex {
     xy_position: Point<ScaledPixels>,
     st_position: Point<f32>,
     color: Background,
-    bounds: Bounds<ScaledPixels>,
+    local_bounds: Bounds<ScaledPixels>,
+    content_mask: Bounds<ScaledPixels>,
+    transform: PrimitiveTransform,
+}
+
+fn projected_path_visible_bounds(path: &Path<ScaledPixels>) -> Option<Bounds<ScaledPixels>> {
+    path.renderer_transform()
+        .try_project_bounds(path.bounds)
+        .ok()
+        .map(|bounds| bounds.intersect(&path.content_mask.bounds))
 }
 
 pub struct WgpuSurfaceConfig {
@@ -1555,18 +1564,24 @@ impl WgpuRenderer {
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
         let first_path = &paths[0];
+        let projected_bounds = paths
+            .iter()
+            .filter_map(projected_path_visible_bounds)
+            .collect::<Vec<_>>();
+        if projected_bounds.is_empty() {
+            return true;
+        }
+
         let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
         {
-            paths
-                .iter()
-                .map(|p| PathSprite {
-                    bounds: p.clipped_bounds(),
-                })
+            projected_bounds
+                .into_iter()
+                .map(|bounds| PathSprite { bounds })
                 .collect()
         } else {
-            let mut bounds = first_path.clipped_bounds();
-            for path in paths.iter().skip(1) {
-                bounds = bounds.union(&path.clipped_bounds());
+            let mut bounds = projected_bounds[0];
+            for path_bounds in projected_bounds.iter().skip(1) {
+                bounds = bounds.union(path_bounds);
             }
             vec![PathSprite { bounds }]
         };
@@ -1595,12 +1610,16 @@ impl WgpuRenderer {
     ) -> bool {
         let mut vertices = Vec::new();
         for path in paths {
-            let bounds = path.clipped_bounds();
+            if projected_path_visible_bounds(path).is_none() {
+                continue;
+            }
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
                 xy_position: v.xy_position,
                 st_position: v.st_position,
                 color: path.color,
-                bounds,
+                local_bounds: path.bounds,
+                content_mask: path.content_mask.bounds,
+                transform: path.renderer_transform(),
             }));
         }
 
@@ -1923,6 +1942,67 @@ impl RenderingParameters {
             grayscale_enhanced_contrast,
             subpixel_enhanced_contrast,
         }
+    }
+}
+
+#[cfg(test)]
+mod abi_layout_tests {
+    use super::*;
+    use std::mem::{align_of, offset_of, size_of};
+
+    #[test]
+    fn primitive_transform_has_wgsl_storage_layout() {
+        assert_eq!(align_of::<PrimitiveTransform>(), align_of::<f32>());
+        assert_eq!(size_of::<PrimitiveTransform>(), 4 * size_of::<f32>());
+        assert_eq!(
+            PrimitiveTransform::IDENTITY.components(),
+            [1.0, 1.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn transformed_primitive_fields_are_terminal_in_wgsl_storage_abi() {
+        assert_eq!(size_of::<Quad>(), 176);
+        assert_eq!(size_of::<Shadow>(), 128);
+        assert_eq!(size_of::<Underline>(), 80);
+        assert_eq!(size_of::<MonochromeSprite>(), 104);
+        assert_eq!(size_of::<SubpixelSprite>(), 104);
+        assert_eq!(size_of::<PolychromeSprite>(), 104);
+        for array_stride in [
+            size_of::<Quad>(),
+            size_of::<Shadow>(),
+            size_of::<Underline>(),
+            size_of::<MonochromeSprite>(),
+            size_of::<SubpixelSprite>(),
+            size_of::<PolychromeSprite>(),
+        ] {
+            assert_eq!(array_stride % 8, 0);
+        }
+    }
+
+    #[test]
+    fn path_rasterization_vertex_is_contiguous_with_wgsl_array_stride() {
+        assert_eq!(align_of::<PathRasterizationVertex>(), align_of::<f32>());
+        assert_eq!(offset_of!(PathRasterizationVertex, xy_position), 0);
+        assert_eq!(offset_of!(PathRasterizationVertex, st_position), 8);
+        assert_eq!(offset_of!(PathRasterizationVertex, color), 16);
+        assert_eq!(
+            offset_of!(PathRasterizationVertex, local_bounds),
+            16 + size_of::<Background>()
+        );
+        assert_eq!(
+            offset_of!(PathRasterizationVertex, content_mask),
+            offset_of!(PathRasterizationVertex, local_bounds) + size_of::<Bounds<ScaledPixels>>()
+        );
+        assert_eq!(
+            offset_of!(PathRasterizationVertex, transform),
+            offset_of!(PathRasterizationVertex, content_mask) + size_of::<Bounds<ScaledPixels>>()
+        );
+        assert_eq!(
+            size_of::<PathRasterizationVertex>(),
+            offset_of!(PathRasterizationVertex, transform) + size_of::<PrimitiveTransform>()
+        );
+        assert_eq!(size_of::<PathRasterizationVertex>() % 8, 0);
     }
 }
 

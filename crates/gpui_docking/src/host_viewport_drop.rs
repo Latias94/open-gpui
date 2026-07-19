@@ -1,18 +1,18 @@
 use crate::viewport_registry::DockViewportWindowBoundsFrame;
 use crate::{
     DockHost, DockViewportDropPayload, DockViewportDropReleasePoint, DockViewportDropRouteRequest,
-    DockViewportPlatformSignals, DockViewportWindowFacts,
+    DockViewportHostGeometry, DockViewportPlatformSignals, DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
-use open_gpui::{Bounds, Context, Pixels, Point, Window};
+use open_gpui::{Context, Pixels, Point, Window};
 
 impl DockHost {
     pub(crate) fn publish_viewport_host_scene_interaction(
         &mut self,
-        host_bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
+        window_position: Point<Pixels>,
         window: &Window,
         cx: &Context<Self>,
     ) {
@@ -26,12 +26,17 @@ impl DockHost {
             return;
         }
 
+        let host_geometry = host_geometry.into();
+        let Some(host_position) = host_geometry.window_to_host(window_position) else {
+            self.interaction_mut().set_viewport_host_scene_frame(None);
+            return;
+        };
         let registration = runtime.begin_viewport_host_scene_frame(
             space,
             window_id,
             DockViewportWindowFacts::from_window(window, cx),
-            host_bounds,
-            host_local_point(host_bounds, position),
+            host_geometry,
+            host_position,
             drop_guide_style,
         );
         self.interaction_mut()
@@ -184,13 +189,6 @@ fn suggested_window_bounds_for_host_release(
             geometry,
         )
     })
-}
-
-fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Point<Pixels> {
-    Point::new(
-        position.x - host_bounds.origin.x,
-        position.y - host_bounds.origin.y,
-    )
 }
 
 #[cfg(test)]

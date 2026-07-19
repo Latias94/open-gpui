@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use open_gpui::{
-    Animation, AnimationExt as _, App, AssetSource, Bounds, Context, SharedString, Transformation,
-    Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, percentage, prelude::*, px,
-    size, svg,
+    Animation, AnimationExt as _, App, AssetSource, Bounds, Context, SharedString,
+    SubtreeTransform, SubtreeTransformExt as _, SubtreeTransformOrigin, Window, WindowBounds,
+    WindowOptions, bounce, div, ease_in_out, point, prelude::*, px, size, svg,
 };
 use open_gpui_platform::application;
 
@@ -79,9 +79,19 @@ impl Render for AnimationExample {
                                             .repeat()
                                             .with_easing(bounce(ease_in_out)),
                                         |svg, delta| {
-                                            svg.with_transformation(Transformation::rotate(
-                                                percentage(delta),
-                                            ))
+                                            let scale = 0.85 + delta * 0.3;
+                                            svg.with_subtree_transform(
+                                                SubtreeTransform::try_new(
+                                                    size(scale, scale),
+                                                    point(px(0.0), px(0.0)),
+                                                    SubtreeTransformOrigin::try_pixels(point(
+                                                        px(40.0),
+                                                        px(40.0),
+                                                    ))
+                                                    .expect("animation origin must be finite"),
+                                                )
+                                                .expect("animation scale remains representable"),
+                                            )
                                         },
                                     ),
                             ),

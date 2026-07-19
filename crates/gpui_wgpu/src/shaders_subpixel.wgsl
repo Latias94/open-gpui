@@ -7,7 +7,7 @@ struct SubpixelSprite {
     content_mask: Bounds,
     color: Hsla,
     tile: AtlasTile,
-    transformation: TransformationMatrix,
+    transform: PrimitiveTransform,
 }
 @group(1) @binding(0) var<storage, read> b_subpixel_sprites: array<SubpixelSprite>;
 
@@ -27,12 +27,14 @@ struct SubpixelSpriteFragmentOutput {
 fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> SubpixelSpriteOutput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = b_subpixel_sprites[instance_id];
+    let local_position = unit_vertex * sprite.bounds.size + sprite.bounds.origin;
+    let window_position = apply_primitive_transform(local_position, sprite.transform);
 
     var out = SubpixelSpriteOutput();
-    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    out.position = to_device_position_impl(window_position);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    out.clip_distances = distance_from_clip_rect_impl(window_position, sprite.content_mask);
     return out;
 }
 

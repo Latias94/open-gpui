@@ -313,7 +313,12 @@ mod tests {
         assert_eq!(snapshot.window, window);
         assert_eq!(snapshot.display_id, display_id);
         assert_eq!(snapshot.window_bounds, Some(window_bounds));
-        assert_eq!(snapshot.host_bounds, Some(host_bounds));
+        assert_eq!(
+            snapshot
+                .host_geometry
+                .map(crate::DockViewportHostGeometry::layout_bounds),
+            Some(host_bounds)
+        );
         assert!(snapshot.is_route_ready());
     }
 

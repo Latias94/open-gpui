@@ -1,21 +1,35 @@
 use crate::{CanvasEvent, CanvasKey, CanvasKeyModifiers, PointerButton};
 use open_gpui::{
-    Bounds, Context, DispatchPhase, Entity, FocusHandle, KeyDownEvent, Keystroke, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    Window, px,
+    Bounds, Context, DispatchPhase, ElementGeometry, Entity, FocusHandle, Hitbox, KeyDownEvent,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollDelta, ScrollWheelEvent, Window, px,
 };
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+enum CanvasInputGeometry {
+    WindowBounds(Bounds<Pixels>),
+    Element(ElementGeometry),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasInputMapper {
-    bounds: Bounds<Pixels>,
+    geometry: CanvasInputGeometry,
     line_height: Pixels,
 }
 
 impl CanvasInputMapper {
     pub fn new(bounds: Bounds<Pixels>) -> Self {
         Self {
-            bounds,
+            geometry: CanvasInputGeometry::WindowBounds(bounds),
+            line_height: px(16.0),
+        }
+    }
+
+    /// Creates a mapper from GPUI's resolved geometry for an element in a transformed subtree.
+    pub fn from_element_geometry(geometry: ElementGeometry) -> Self {
+        Self {
+            geometry: CanvasInputGeometry::Element(geometry),
             line_height: px(16.0),
         }
     }
@@ -53,9 +67,16 @@ impl CanvasInputMapper {
             return None;
         }
 
-        Some(CanvasEvent::Wheel {
-            delta: event.delta.pixel_delta(self.line_height),
-        })
+        let delta = match event.delta {
+            ScrollDelta::Lines(lines) => ScrollDelta::Lines(lines).pixel_delta(self.line_height),
+            ScrollDelta::Pixels(delta) => match self.geometry {
+                CanvasInputGeometry::WindowBounds(_) => delta,
+                CanvasInputGeometry::Element(geometry) => {
+                    geometry.window_to_local_vector(delta).ok()?
+                }
+            },
+        };
+        Some(CanvasEvent::Wheel { delta })
     }
 
     pub fn key_down_event(event: &KeyDownEvent) -> CanvasEvent {
@@ -76,9 +97,21 @@ impl CanvasInputMapper {
     }
 
     pub fn local_position(&self, position: Point<Pixels>) -> Option<Point<Pixels>> {
-        self.bounds
-            .contains(&position)
-            .then(|| position - self.bounds.origin)
+        let displayed_bounds = match self.geometry {
+            CanvasInputGeometry::WindowBounds(bounds) => bounds,
+            CanvasInputGeometry::Element(geometry) => geometry.displayed_bounds(),
+        };
+        if !displayed_bounds.contains(&position) {
+            return None;
+        }
+        self.unbounded_local_position(position)
+    }
+
+    fn unbounded_local_position(&self, position: Point<Pixels>) -> Option<Point<Pixels>> {
+        match self.geometry {
+            CanvasInputGeometry::WindowBounds(bounds) => Some(position - bounds.origin),
+            CanvasInputGeometry::Element(geometry) => geometry.window_to_local_point(position).ok(),
+        }
     }
 }
 
@@ -92,6 +125,13 @@ impl CanvasEditorInputMapper {
     pub fn new(bounds: Bounds<Pixels>) -> Self {
         Self {
             mapper: CanvasInputMapper::new(bounds),
+            pointer_interacting: false,
+        }
+    }
+
+    pub fn from_element_geometry(geometry: ElementGeometry) -> Self {
+        Self {
+            mapper: CanvasInputMapper::from_element_geometry(geometry),
             pointer_interacting: false,
         }
     }
@@ -113,7 +153,7 @@ impl CanvasEditorInputMapper {
     pub fn mouse_move(&self, event: &MouseMoveEvent) -> Option<CanvasEvent> {
         if self.pointer_interacting {
             return Some(CanvasEvent::PointerMove {
-                position: event.position - self.mapper.bounds.origin,
+                position: self.mapper.unbounded_local_position(event.position)?,
                 modifiers: CanvasInputMapper::modifiers(event.modifiers),
             });
         }
@@ -123,8 +163,9 @@ impl CanvasEditorInputMapper {
 
     pub fn mouse_up(&self, event: &MouseUpEvent) -> Option<CanvasEvent> {
         if self.pointer_interacting {
+            let position = self.mapper.unbounded_local_position(event.position)?;
             return pointer_button(event.button).map(|button| CanvasEvent::PointerUp {
-                position: event.position - self.mapper.bounds.origin,
+                position,
                 button,
                 modifiers: CanvasInputMapper::modifiers(event.modifiers),
             });
@@ -179,19 +220,20 @@ impl<T> CanvasEditorInputHandler<T> {
 pub fn register_canvas_editor_input<T>(
     entity: Entity<T>,
     focus_handle: FocusHandle,
-    bounds: Bounds<Pixels>,
+    hitbox: Hitbox,
     handler: CanvasEditorInputHandler<T>,
     window: &mut Window,
 ) where
     T: 'static,
 {
-    let mapper = CanvasEditorInputMapper::new(bounds);
+    let mapper = CanvasEditorInputMapper::from_element_geometry(hitbox.geometry());
 
     window.on_mouse_event({
         let entity = entity.clone();
         let handler = handler.clone();
+        let hitbox = hitbox.clone();
         move |event: &MouseDownEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble {
+            if phase != DispatchPhase::Bubble || !hitbox.is_mouse_event_target(window) {
                 return;
             }
 
@@ -207,7 +249,8 @@ pub fn register_canvas_editor_input<T>(
     window.on_mouse_event({
         let entity = entity.clone();
         let handler = handler.clone();
-        move |event: &MouseMoveEvent, phase, _, cx| {
+        let hitbox = hitbox.clone();
+        move |event: &MouseMoveEvent, phase, window, cx| {
             entity.update(cx, |target, cx| {
                 let pointer_interacting = handler.pointer_interacting(target);
                 if pointer_interacting {
@@ -223,6 +266,7 @@ pub fn register_canvas_editor_input<T>(
                 }
 
                 if phase == DispatchPhase::Bubble
+                    && hitbox.is_mouse_event_target(window)
                     && let Some(event) = mapper.mouse_move(event)
                 {
                     handler.dispatch_event(target, event, cx);
@@ -234,7 +278,8 @@ pub fn register_canvas_editor_input<T>(
     window.on_mouse_event({
         let entity = entity.clone();
         let handler = handler.clone();
-        move |event: &MouseUpEvent, phase, _, cx| {
+        let hitbox = hitbox.clone();
+        move |event: &MouseUpEvent, phase, window, cx| {
             entity.update(cx, |target, cx| {
                 let pointer_interacting = handler.pointer_interacting(target);
                 if pointer_interacting {
@@ -250,6 +295,7 @@ pub fn register_canvas_editor_input<T>(
                 }
 
                 if phase == DispatchPhase::Bubble
+                    && hitbox.is_mouse_event_target(window)
                     && let Some(event) = mapper.mouse_up(event)
                 {
                     handler.dispatch_event(target, event, cx);
@@ -261,8 +307,8 @@ pub fn register_canvas_editor_input<T>(
     window.on_mouse_event({
         let entity = entity.clone();
         let handler = handler.clone();
-        move |event: &ScrollWheelEvent, phase, _, cx| {
-            if phase != DispatchPhase::Bubble {
+        move |event: &ScrollWheelEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble || !hitbox.should_handle_scroll(window) {
                 return;
             }
 

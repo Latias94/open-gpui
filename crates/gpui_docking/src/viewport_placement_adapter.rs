@@ -26,7 +26,9 @@ impl DockViewportAdapter {
                         window_bounds: snapshot
                             .window_bounds
                             .map(DockViewportWindowBounds::from_window_bounds),
-                        host_bounds: snapshot.host_bounds.map(DockLayoutRect::from_bounds),
+                        host_bounds: snapshot
+                            .host_geometry
+                            .map(|geometry| DockLayoutRect::from_bounds(geometry.layout_bounds())),
                     })
                 })
                 .collect(),

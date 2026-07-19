@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-    Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    App, ElementId, FocusHandle, InteractiveElement, IntoElement, ParentElement, Pixels,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, FocusTargetAvailability,
@@ -1014,7 +1014,7 @@ impl RenderOnce for AlertDialog {
                             let overlay_binding = overlay_binding.clone();
                             this.cursor_pointer()
                                 .hover(move |style| style.bg(trigger_hover_background))
-                                .on_click(move |_event: &ClickEvent, window, cx| {
+                                .on_click(move |_event, window, cx| {
                                     cx.stop_propagation();
                                     window_overlay_runtime
                                         .request_open_change(
@@ -1223,7 +1223,7 @@ fn alert_dialog_cancel_button(
         .when(!cancel.disabled(), |this| {
             this.cursor_pointer()
                 .hover(move |style| style.bg(cancel_hover_background))
-                .on_click(move |_event: &ClickEvent, window, cx| {
+                .on_click(move |_event, window, cx| {
                     cx.stop_propagation();
                     let on_cancel = on_cancel.clone();
                     window_overlay_runtime
@@ -1298,7 +1298,7 @@ fn alert_dialog_action_button(
         .when(!action.disabled(), |this| {
             this.cursor_pointer()
                 .hover(move |style| style.bg(action_hover_background))
-                .on_click(move |_event: &ClickEvent, window, cx| {
+                .on_click(move |_event, window, cx| {
                     cx.stop_propagation();
                     let on_action = on_action.clone();
                     window_overlay_runtime

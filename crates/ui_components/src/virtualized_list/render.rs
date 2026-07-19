@@ -2,8 +2,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    AnyElement, App, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement, Pixels,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::{AccessibleAction, SemanticDescriptor, Size, UiPx};
 
@@ -278,7 +278,8 @@ fn render_virtualized_list_row(
             let activation = activation.clone();
             let activate_on_click =
                 list_state.selection_mode() == VirtualizedListSelectionMode::Single;
-            this.on_click(move |event: &ClickEvent, window, cx| {
+            this.on_click(move |event, window, cx| {
+                let event = event.window_event();
                 cx.stop_propagation();
                 window.prevent_default();
                 let shift_range = event.modifiers().shift

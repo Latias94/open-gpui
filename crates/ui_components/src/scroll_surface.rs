@@ -1,6 +1,6 @@
 use open_gpui::{
     ScrollHandle, ScrollViewportChangeSource, ScrollViewportProgrammaticSource, ScrollWheelEvent,
-    Window, point, px,
+    TargetedEvent, Window, point, px,
 };
 use open_gpui_ui_core::{UiPx, VirtualizerItemGeometry};
 
@@ -219,10 +219,13 @@ pub(crate) fn reveal_fixed_row(
 
 pub(crate) fn handle_vertical_wheel_scroll(
     scroll_handle: &ScrollHandle,
-    event: &ScrollWheelEvent,
+    event: &TargetedEvent<ScrollWheelEvent>,
     window: &mut Window,
 ) -> bool {
-    let delta = event.delta.pixel_delta(px(16.0));
+    let Ok(delta) = event.target_local_delta() else {
+        return false;
+    };
+    let delta = delta.pixel_delta(px(16.0));
     if delta.y.abs() <= delta.x.abs() {
         return false;
     }

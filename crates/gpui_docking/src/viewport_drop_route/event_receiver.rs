@@ -1,4 +1,6 @@
-use crate::{DockSpaceId, DockViewportDropRoute, DockViewportRouteSelectionSource};
+use crate::{
+    DockSpaceId, DockViewportDropRoute, DockViewportHostGeometry, DockViewportRouteSelectionSource,
+};
 use open_gpui::{AnyWindowHandle, Bounds, Pixels, Point, WindowId};
 
 /// Hovered-window-local drop facts selected by a trusted hovered-window signal.
@@ -19,7 +21,7 @@ pub(super) enum DockEventReceiverLocalSceneRouteContextMode {
 pub(super) struct DockEventReceiverLocalSceneRouteContext {
     pub(super) receiver_window: WindowId,
     pub(super) facts_generation: u64,
-    pub(super) host_bounds: Bounds<Pixels>,
+    pub(super) host_geometry: DockViewportHostGeometry,
     pub(super) global_screen_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -28,13 +30,7 @@ impl DockEventReceiverLocalSceneRouteContext {
         &self,
         window_position: Point<Pixels>,
     ) -> Option<Point<Pixels>> {
-        if !self.host_bounds.contains(&window_position) {
-            return None;
-        }
-        Some(open_gpui::point(
-            window_position.x - self.host_bounds.origin.x,
-            window_position.y - self.host_bounds.origin.y,
-        ))
+        self.host_geometry.window_to_host(window_position)
     }
 
     pub(super) fn local_route(&self, host_position: Point<Pixels>) -> DockViewportDropRoute {

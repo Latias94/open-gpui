@@ -19,7 +19,10 @@ use crate::{
     viewport_activation::{
         DockViewportActivationApplyOutcome, apply_viewport_activation_transaction,
     },
-    viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
+    viewport_drop_scene::{
+        DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
+        DockViewportHostSceneSnapshot,
+    },
     viewport_platform_sync::{
         record_pointer_input_sync_request as record_pointer_input_sync_request_for_runtime,
         sync_render_passthrough_pointer_input as sync_render_passthrough_pointer_input_for_runtime,

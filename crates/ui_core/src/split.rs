@@ -2,8 +2,9 @@
 
 use crate::{Orientation, Size, UiPx, UiRect, ui_point, ui_px, ui_rect, ui_size};
 use open_gpui_motion::{
-    MotionEdge, MotionPreference, MotionProjection, MotionProjectionClip, MotionRect,
-    advanced::MotionSpec, motion_point, motion_px, motion_rect, motion_size, reveal_rect_from_edge,
+    MotionEdge, MotionPreference, MotionProjection, MotionProjectionClip, MotionProjectionError,
+    MotionRect, advanced::MotionSpec, motion_point, motion_px, motion_rect, motion_size,
+    reveal_rect_from_edge,
 };
 use std::collections::HashMap;
 
@@ -1186,14 +1187,15 @@ impl SplitterPanelTransitionSample {
                 | SplitterPanelTransitionKind::Expanding,
                 Some(from),
                 Some(to),
-            ) => Some(MotionProjectionClip::from_projection_with_preference(
-                MotionProjection::between(
-                    motion_rect_from_ui_rect(from),
-                    motion_rect_from_ui_rect(to),
-                ),
+            ) => splitter_resize_clip(
+                transition.kind,
+                from,
+                to,
+                scene_bounds,
+                orientation,
                 progress,
                 preference,
-            )),
+            ),
             _ => None,
         };
         Self {
@@ -1216,6 +1218,46 @@ impl SplitterPanelTransitionSample {
     /// Returns the sampled clip for panels that need transition rendering.
     pub const fn clip(&self) -> Option<MotionProjectionClip> {
         self.clip
+    }
+}
+
+fn splitter_resize_clip(
+    kind: SplitterPanelTransitionKind,
+    from: UiRect,
+    to: UiRect,
+    scene_bounds: UiRect,
+    orientation: Orientation,
+    progress: f32,
+    preference: MotionPreference,
+) -> Option<MotionProjectionClip> {
+    match MotionProjectionClip::from_projection_with_preference(
+        MotionProjection::between(motion_rect_from_ui_rect(from), motion_rect_from_ui_rect(to)),
+        progress,
+        preference,
+    ) {
+        Ok(clip) => Some(clip),
+        Err(MotionProjectionError::NonPositiveExtent) => match kind {
+            // A zero-size collapsed panel has no invertible target geometry. Preserve the
+            // collapse/expand contract with an edge reveal instead of manufacturing a scale.
+            SplitterPanelTransitionKind::Collapsing => Some(splitter_leave_clip(
+                from,
+                scene_bounds,
+                orientation,
+                progress,
+                preference,
+            )),
+            SplitterPanelTransitionKind::Expanding => Some(splitter_enter_clip(
+                to,
+                scene_bounds,
+                orientation,
+                progress,
+                preference,
+            )),
+            _ => None,
+        },
+        // Invalid renderer-neutral geometry degrades to the committed layout. It must never
+        // panic or inject a non-finite clip into the element tree.
+        Err(_) => None,
     }
 }
 
@@ -2570,6 +2612,75 @@ mod tests {
         assert_eq!(nav_expand.kind(), SplitterPanelTransitionKind::Expanding);
         assert!(nav_expand.collapsed_from());
         assert!(!nav_expand.collapsed_to());
+    }
+
+    #[test]
+    fn zero_fraction_collapse_uses_reveal_semantics_without_projection_panic() {
+        let expanded = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("nav", 0.3)
+                    .collapsible(true)
+                    .min_fraction(0.0),
+                SplitterPanelDescriptor::new("main", 0.7).min_fraction(0.0),
+            ],
+        );
+        let collapsed = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("nav", 0.3)
+                    .collapsible(true)
+                    .collapsed(true)
+                    .min_fraction(0.0),
+                SplitterPanelDescriptor::new("main", 0.7).min_fraction(0.0),
+            ],
+        );
+        let expanded_scene = SplitterLayoutScene::from_state(&expanded, rect(412.0, 200.0));
+        let collapsed_scene = SplitterLayoutScene::from_state(&collapsed, rect(412.0, 200.0));
+        let collapse = SplitterLayoutTransition::between(
+            SplitterTransitionIntent::Collapse,
+            expanded_scene.clone(),
+            collapsed_scene.clone(),
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        );
+
+        let mid = collapse
+            .sample(0.5)
+            .panel("nav")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("zero-size collapse should retain a reveal clip");
+        assert!(mid.visible_bounds().size.width.as_f32() > 0.0);
+        let end = collapse
+            .sample(1.0)
+            .panel("nav")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("zero-size collapse should finish with a reveal clip");
+        assert_eq!(end.visible_bounds().size.width.as_f32(), 0.0);
+
+        let expand = SplitterLayoutTransition::between(
+            SplitterTransitionIntent::Expand,
+            collapsed_scene,
+            expanded_scene,
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        );
+        let start = expand
+            .sample(0.0)
+            .panel("nav")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("zero-size expansion should retain a reveal clip");
+        assert_eq!(start.visible_bounds().size.width.as_f32(), 0.0);
+        let end = expand
+            .sample(1.0)
+            .panel("nav")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("zero-size expansion should finish with a reveal clip");
+        assert!(end.visible_bounds().size.width.as_f32() > 0.0);
     }
 
     #[test]

@@ -4,8 +4,8 @@ use futures::FutureExt;
 use open_gpui::{
     App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
     ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
-    RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
+    RetainAllImageCache, SharedString, TargetedEvent, TitlebarOptions, Window, WindowBounds,
+    WindowOptions, actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
 };
 #[cfg(not(target_family = "wasm"))]
 use open_gpui_reqwest_client::ReqwestClient;
@@ -21,7 +21,12 @@ struct ImageGallery {
 }
 
 impl ImageGallery {
-    fn on_next_image(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_next_image(
+        &mut self,
+        _: &TargetedEvent<ClickEvent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.image_cache
             .update(cx, |image_cache, cx| image_cache.clear(window, cx));
 

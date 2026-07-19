@@ -229,6 +229,11 @@ struct LayoutItemsResponse {
     item_layouts: VecDeque<ItemLayout>,
 }
 
+struct PendingAutoscroll {
+    scroll_top: ListOffset,
+    intent: crate::window::AutoscrollIntent,
+}
+
 struct ItemLayout {
     index: usize,
     element: AnyElement,
@@ -1196,89 +1201,94 @@ impl StateInner {
         &mut self,
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
-        autoscroll: bool,
         render_item: &mut RenderItemFn,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<LayoutItemsResponse, ListOffset> {
-        window.transact(|window| {
-            match self.measuring_behavior {
-                ListMeasuringBehavior::Measure(has_measured) if !has_measured => {
-                    self.layout_all_items(bounds.size.width, render_item, window, cx);
-                }
-                _ => {}
+    ) -> (LayoutItemsResponse, Option<PendingAutoscroll>) {
+        match self.measuring_behavior {
+            ListMeasuringBehavior::Measure(has_measured) if !has_measured => {
+                self.layout_all_items(bounds.size.width, render_item, window, cx);
             }
+            _ => {}
+        }
 
-            let mut layout_response = self.layout_items(
-                Some(bounds.size.width),
-                bounds.size.height,
-                &padding,
-                render_item,
-                window,
-                cx,
-            );
+        let mut layout_response = self.layout_items(
+            Some(bounds.size.width),
+            bounds.size.height,
+            &padding,
+            render_item,
+            window,
+            cx,
+        );
+        let mut pending_autoscroll = None;
 
-            // Avoid honoring autoscroll requests from elements other than our children.
-            window.take_autoscroll();
+        // Avoid honoring autoscroll requests from elements other than our children.
+        window.take_autoscroll();
 
-            // Only paint the visible items, if there is actually any space for them (taking padding into account)
-            if bounds.size.height > padding.top + padding.bottom {
-                let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
-                item_origin.y -= layout_response.scroll_top.offset_in_item;
-                for item in &mut layout_response.item_layouts {
-                    window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                        item.element.prepaint_at(item_origin, window, cx);
-                    });
+        // Only paint the visible items, if there is actually any space for them (taking padding into account)
+        if bounds.size.height > padding.top + padding.bottom {
+            let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
+            item_origin.y -= layout_response.scroll_top.offset_in_item;
+            for item in &mut layout_response.item_layouts {
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    item.element.prepaint_at(item_origin, window, cx);
+                });
 
-                    if let Some(autoscroll_bounds) = window.take_autoscroll()
-                        && autoscroll
-                    {
-                        if autoscroll_bounds.top() < bounds.top() {
-                            return Err(ListOffset {
-                                item_ix: item.index,
-                                offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                if let Some(intent) = window.take_autoscroll()
+                    && pending_autoscroll.is_none()
+                {
+                    let autoscroll_bounds = intent.bounds();
+                    let scroll_top = if autoscroll_bounds.top() < bounds.top() {
+                        Some(ListOffset {
+                            item_ix: item.index,
+                            offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                        })
+                    } else if autoscroll_bounds.bottom() > bounds.bottom() {
+                        let mut cursor = self.items.cursor::<Count>(());
+                        cursor.seek(&Count(item.index), Bias::Right);
+                        let mut height = bounds.size.height - padding.top - padding.bottom;
+
+                        // Account for the height of the element down until the autoscroll bottom.
+                        height -= autoscroll_bounds.bottom() - item_origin.y;
+
+                        // Keep decreasing the scroll top until we fill all the available space.
+                        while height > Pixels::ZERO {
+                            cursor.prev();
+                            let Some(item) = cursor.item() else { break };
+
+                            let size = item.size().unwrap_or_else(|| {
+                                let mut item = render_item(cursor.start().0, window, cx);
+                                let item_available_size =
+                                    size(bounds.size.width.into(), AvailableSpace::MinContent);
+                                item.layout_as_root(item_available_size, window, cx)
                             });
-                        } else if autoscroll_bounds.bottom() > bounds.bottom() {
-                            let mut cursor = self.items.cursor::<Count>(());
-                            cursor.seek(&Count(item.index), Bias::Right);
-                            let mut height = bounds.size.height - padding.top - padding.bottom;
-
-                            // Account for the height of the element down until the autoscroll bottom.
-                            height -= autoscroll_bounds.bottom() - item_origin.y;
-
-                            // Keep decreasing the scroll top until we fill all the available space.
-                            while height > Pixels::ZERO {
-                                cursor.prev();
-                                let Some(item) = cursor.item() else { break };
-
-                                let size = item.size().unwrap_or_else(|| {
-                                    let mut item = render_item(cursor.start().0, window, cx);
-                                    let item_available_size =
-                                        size(bounds.size.width.into(), AvailableSpace::MinContent);
-                                    item.layout_as_root(item_available_size, window, cx)
-                                });
-                                height -= size.height;
-                            }
-
-                            return Err(ListOffset {
-                                item_ix: cursor.start().0,
-                                offset_in_item: if height < Pixels::ZERO {
-                                    -height
-                                } else {
-                                    Pixels::ZERO
-                                },
-                            });
+                            height -= size.height;
                         }
+
+                        Some(ListOffset {
+                            item_ix: cursor.start().0,
+                            offset_in_item: if height < Pixels::ZERO {
+                                -height
+                            } else {
+                                Pixels::ZERO
+                            },
+                        })
+                    } else {
+                        None
+                    };
+
+                    if let Some(scroll_top) = scroll_top {
+                        pending_autoscroll = Some(PendingAutoscroll { scroll_top, intent });
                     }
-
-                    item_origin.y += item.size.height;
                 }
-            } else {
-                layout_response.item_layouts.clear();
-            }
 
-            Ok(layout_response)
-        })
+                item_origin.y += item.size.height;
+            }
+        } else {
+            layout_response.item_layouts.clear();
+        }
+
+        (layout_response, pending_autoscroll)
     }
 
     // Scrollbar support
@@ -1344,7 +1354,7 @@ impl std::fmt::Debug for ListItem {
 
 /// An offset into the list's items, in terms of the item index and the number
 /// of pixels off the top left of the item.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ListOffset {
     /// The index of an item in the list
     pub item_ix: usize,
@@ -1447,6 +1457,7 @@ impl Element for List {
         window: &mut Window,
         cx: &mut App,
     ) -> ListPrepaintState {
+        let list_state = self.state.clone();
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
@@ -1475,16 +1486,18 @@ impl Element for List {
         let padding = style
             .padding
             .to_pixels(bounds.size.into(), window.rem_size());
-        let layout =
-            match state.prepaint_items(bounds, padding, true, &mut self.render_item, window, cx) {
-                Ok(layout) => layout,
-                Err(autoscroll_request) => {
-                    state.logical_scroll_top = Some(autoscroll_request);
-                    state
-                        .prepaint_items(bounds, padding, false, &mut self.render_item, window, cx)
-                        .unwrap()
+        let (layout, pending_autoscroll) =
+            state.prepaint_items(bounds, padding, &mut self.render_item, window, cx);
+
+        if let Some(PendingAutoscroll { scroll_top, intent }) = pending_autoscroll {
+            window.record_autoscroll_commit(intent, move |_, window, _| {
+                let state = &mut *list_state.0.borrow_mut();
+                if state.logical_scroll_top != Some(scroll_top) {
+                    state.logical_scroll_top = Some(scroll_top);
+                    window.refresh();
                 }
-            };
+            });
+        }
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
@@ -1636,10 +1649,82 @@ mod test {
     use std::rc::Rc;
 
     use crate::{
-        AppContext, Context, Element, FollowMode, InteractiveElement, IntoElement, ListState,
-        ParentElement, Render, Styled, TestAppContext, Window, div, list, point, px, size,
+        AppContext, Bounds, Context, Element, FollowMode, InteractiveElement, IntoElement,
+        ListOffset, ListState, ParentElement, Point, Render, Styled, SubtreeTransform,
+        SubtreeTransformExt, TestAppContext, Window, canvas, div, fill, list, point, px, red, size,
         util::FluentBuilder,
     };
+
+    struct AutoscrollValidityView {
+        state: ListState,
+        fail_during_paint: bool,
+    }
+
+    impl Render for AutoscrollValidityView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let fail_during_paint = self.fail_during_paint;
+            list(self.state.clone(), move |index, _, _| {
+                let item = canvas(
+                    move |bounds, window, _| {
+                        if index == 1 {
+                            window.request_autoscroll(bounds);
+                        }
+                    },
+                    move |_, _, window, _| {
+                        if index == 1 && fail_during_paint {
+                            window.paint_quad(fill(
+                                Bounds::new(point(px(f32::MAX), px(0.0)), size(px(10.0), px(10.0))),
+                                red(),
+                            ));
+                        }
+                    },
+                )
+                .h(px(10.0))
+                .w_full();
+
+                if index == 1 {
+                    item.with_subtree_transform(
+                        SubtreeTransform::try_uniform_scale(2.0).expect("valid transform"),
+                    )
+                    .into_any_element()
+                } else {
+                    item.into_any_element()
+                }
+            })
+            .w(px(100.0))
+            .h(px(20.0))
+        }
+    }
+
+    #[open_gpui::test]
+    fn autoscroll_commits_only_when_its_transformed_source_survives_paint(cx: &mut TestAppContext) {
+        let initial = ListOffset::default();
+        let valid_state = ListState::new(4, crate::ListAlignment::Top, px(10.0));
+        valid_state.scroll_to(initial);
+        let rendered_valid_state = valid_state.clone();
+        cx.add_empty_window()
+            .draw(Point::default(), size(px(100.0), px(20.0)), move |_, cx| {
+                cx.new(move |_| AutoscrollValidityView {
+                    state: rendered_valid_state,
+                    fail_during_paint: false,
+                })
+                .into_any_element()
+            });
+        assert_ne!(valid_state.logical_scroll_top(), initial);
+
+        let failed_state = ListState::new(4, crate::ListAlignment::Top, px(10.0));
+        failed_state.scroll_to(initial);
+        let rendered_failed_state = failed_state.clone();
+        cx.add_empty_window()
+            .draw(Point::default(), size(px(100.0), px(20.0)), move |_, cx| {
+                cx.new(move |_| AutoscrollValidityView {
+                    state: rendered_failed_state,
+                    fail_during_paint: true,
+                })
+                .into_any_element()
+            });
+        assert_eq!(failed_state.logical_scroll_top(), initial);
+    }
 
     #[open_gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {

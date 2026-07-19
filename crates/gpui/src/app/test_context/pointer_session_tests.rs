@@ -473,7 +473,7 @@ impl Render for ActionWindowRemovalProbe {
                     window_id: window.window_handle().window_id(),
                     value: Arc::new("drag"),
                     view: cx.new(|_| Empty).into(),
-                    cursor_offset: point(px(0.0), px(0.0)),
+                    window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
                 });
@@ -937,7 +937,7 @@ fn pointer_capture_requires_a_pressed_button_and_rejects_competing_owners(cx: &m
             window_id: window.window_handle().window_id(),
             value: Arc::new("drag"),
             view: cx.new(|_| Empty).into(),
-            cursor_offset: point(px(0.0), px(0.0)),
+            window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
         });
@@ -1029,7 +1029,7 @@ fn pointer_cancellation_is_unpreventable_and_clears_the_entire_session(cx: &mut 
             window_id: window.window_handle().window_id(),
             value: Arc::new("drag"),
             view: cx.new(|_| Empty).into(),
-            cursor_offset: point(px(0.0), px(0.0)),
+            window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
         });
@@ -1098,7 +1098,7 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
             window_id: window.window_handle().window_id(),
             value: Arc::new("drag"),
             view: cx.new(|_| Empty).into(),
-            cursor_offset: point(px(0.0), px(0.0)),
+            window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
         });
@@ -1388,7 +1388,7 @@ fn remove_window_from_input_callback_cancels_after_dispatch_before_removal(
                     window_id: window.window_handle().window_id(),
                     value: Arc::new("drag"),
                     view: cx.new(|_| Empty).into(),
-                    cursor_offset: point(px(0.0), px(0.0)),
+                    window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
                 });
@@ -1830,7 +1830,7 @@ fn removing_an_unrelated_window_preserves_the_drag_owned_by_another_window(
             window_id: second.window_id(),
             value: Arc::new("second-window-drag"),
             view: app.new(|_| Empty).into(),
-            cursor_offset: point(px(0.0), px(0.0)),
+            window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
         });
@@ -2046,7 +2046,7 @@ fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut Te
                         renders: preview_renders,
                     })
                     .into(),
-                cursor_offset: point(px(0.0), px(0.0)),
+                window_preview_offset: point(px(0.0), px(0.0)),
                 cursor_style: None,
                 button: MouseButton::Left,
             });

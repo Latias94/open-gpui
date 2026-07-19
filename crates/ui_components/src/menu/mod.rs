@@ -15,8 +15,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, AnyView, App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, AnyView, App, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
+    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
@@ -606,7 +606,7 @@ fn menu_item_element(
                                 );
                             }
                         })
-                        .on_click(move |_event: &ClickEvent, window, cx| {
+                        .on_click(move |_event, window, cx| {
                             cx.stop_propagation();
                             if let Some(submenu_navigation) = submenu_navigation.clone() {
                                 runtime.update(cx, |runtime, _| {
@@ -1310,7 +1310,7 @@ impl RenderOnce for Menu {
                             let root_binding = root_binding.clone();
                             this.cursor_pointer()
                                 .hover(move |style| style.bg(trigger_hover_background))
-                                .on_click(move |_event: &ClickEvent, window, cx| {
+                                .on_click(move |_event, window, cx| {
                                     cx.stop_propagation();
                                     window_overlay_runtime
                                         .request_open_change(

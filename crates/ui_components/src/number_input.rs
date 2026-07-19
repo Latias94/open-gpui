@@ -11,7 +11,7 @@ use crate::text_input::{TextInputColors, TextInputMetrics};
 use crate::theme::{ThemeContext, ThemeResolver};
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
+    App, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
@@ -590,7 +590,7 @@ fn number_step_button(
         .when_some(
             on_change.filter(|_| state.input_enabled()),
             move |this, on_change| {
-                this.on_click(move |_: &ClickEvent, window, cx| {
+                this.on_click(move |_, window, cx| {
                     if let Some(change) = state.step_change(action)
                         && change.changed()
                     {

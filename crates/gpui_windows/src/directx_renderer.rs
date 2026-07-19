@@ -91,7 +91,7 @@ struct DirectXRenderPipelines {
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
     subpixel_sprites: PipelineState<SubpixelSprite>,
-    poly_sprites: PipelineState<PolychromeSprite>,
+    poly_sprites: PipelineState<DirectXPolychromeSprite>,
 }
 
 struct DirectXGlobalElements {
@@ -537,10 +537,15 @@ impl DirectXRenderer {
         }
 
         if !scene.polychrome_sprites.is_empty() {
+            let sprites = scene
+                .polychrome_sprites
+                .iter()
+                .map(DirectXPolychromeSprite::from)
+                .collect::<Vec<_>>();
             self.pipelines.poly_sprites.update_buffer(
                 &devices.device,
                 &devices.device_context,
-                &scene.polychrome_sprites,
+                &sprites,
             )?;
         }
 
@@ -619,7 +624,9 @@ impl DirectXRenderer {
                 xy_position: v.xy_position,
                 st_position: v.st_position,
                 color: path.color,
-                bounds: path.clipped_bounds(),
+                bounds: path.bounds,
+                content_mask: path.content_mask,
+                transform: path.renderer_transform(),
             }));
         }
 
@@ -668,17 +675,22 @@ impl DirectXRenderer {
         // disjoint, so we can copy each path's bounds individually. If this
         // batch combines different draw orders, we perform a single copy
         // for a minimal spanning rect.
-        let sprites = if paths.last().unwrap().order == first_path.order {
+        let sprites = if paths
+            .last()
+            .is_some_and(|last_path| last_path.order == first_path.order)
+        {
             paths
                 .iter()
-                .map(|path| PathSprite {
-                    bounds: path.clipped_bounds(),
+                .map(|path| {
+                    Ok(PathSprite {
+                        bounds: path_visual_bounds(path)?,
+                    })
                 })
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>>>()?
         } else {
-            let mut bounds = first_path.clipped_bounds();
+            let mut bounds = path_visual_bounds(first_path)?;
             for path in paths.iter().skip(1) {
-                bounds = bounds.union(&path.clipped_bounds());
+                bounds = bounds.union(&path_visual_bounds(path)?);
             }
             vec![PathSprite { bounds }]
         };
@@ -1248,12 +1260,112 @@ struct PathRasterizationSprite {
     st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
+    content_mask: ContentMask<ScaledPixels>,
+    transform: PrimitiveTransform,
 }
 
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct DirectXPolychromeSprite {
+    order: DrawOrder,
+    pad: u32,
+    grayscale: u32,
+    opacity: f32,
+    bounds: Bounds<ScaledPixels>,
+    content_mask: ContentMask<ScaledPixels>,
+    corner_radii: Corners<ScaledPixels>,
+    tile: AtlasTile,
+    transform: PrimitiveTransform,
+}
+
+impl From<&PolychromeSprite> for DirectXPolychromeSprite {
+    fn from(sprite: &PolychromeSprite) -> Self {
+        // HLSL booleans occupy a full 32-bit slot; never upload Rust's one-byte bool plus padding.
+        Self {
+            order: sprite.order,
+            pad: sprite.pad,
+            grayscale: u32::from(sprite.grayscale),
+            opacity: sprite.opacity,
+            bounds: sprite.bounds,
+            content_mask: sprite.content_mask,
+            corner_radii: sprite.corner_radii,
+            tile: sprite.tile,
+            transform: sprite.renderer_transform(),
+        }
+    }
+}
+
+fn path_visual_bounds(path: &Path<ScaledPixels>) -> Result<Bounds<ScaledPixels>> {
+    Ok(path
+        .renderer_transform()
+        .try_project_bounds(path.bounds)?
+        .intersect(&path.content_mask.bounds))
+}
+
+#[cfg(test)]
+mod primitive_abi_tests {
+    use std::mem::{offset_of, size_of};
+
+    use super::*;
+
+    #[test]
+    fn primitive_transform_is_a_four_scalar_tail_in_every_directx_batch() {
+        assert_eq!(size_of::<PrimitiveTransform>(), 16);
+        assert_eq!(
+            PrimitiveTransform::IDENTITY.components(),
+            [1.0, 1.0, 0.0, 0.0]
+        );
+
+        assert_eq!(size_of::<Quad>(), 176);
+        assert_eq!(size_of::<Shadow>(), 128);
+        assert_eq!(size_of::<Underline>(), 80);
+        assert_eq!(size_of::<MonochromeSprite>(), 104);
+        assert_eq!(size_of::<SubpixelSprite>(), 104);
+        assert_transform_tail::<DirectXPolychromeSprite>(
+            offset_of!(DirectXPolychromeSprite, transform),
+            96,
+            112,
+        );
+        assert_transform_tail::<PathRasterizationSprite>(
+            offset_of!(PathRasterizationSprite, transform),
+            120,
+            136,
+        );
+        assert_eq!(offset_of!(PathRasterizationSprite, color), 16);
+        assert_eq!(offset_of!(PathRasterizationSprite, bounds), 88);
+        assert_eq!(offset_of!(PathRasterizationSprite, content_mask), 104);
+        // The copy pass samples the window-space intermediate and must not transform again.
+        assert_eq!(size_of::<PathSprite>(), 16);
+    }
+
+    #[test]
+    fn polychrome_upload_uses_an_explicit_u32_grayscale_slot() {
+        assert_eq!(offset_of!(DirectXPolychromeSprite, grayscale), 8);
+        assert_eq!(offset_of!(DirectXPolychromeSprite, opacity), 12);
+        assert_eq!(offset_of!(DirectXPolychromeSprite, bounds), 16);
+        assert_eq!(offset_of!(DirectXPolychromeSprite, content_mask), 32);
+        assert_eq!(offset_of!(DirectXPolychromeSprite, corner_radii), 48);
+        assert_eq!(offset_of!(DirectXPolychromeSprite, tile), 64);
+    }
+
+    fn assert_transform_tail<T>(
+        actual_offset: usize,
+        expected_offset: usize,
+        expected_size: usize,
+    ) {
+        assert_eq!(actual_offset, expected_offset);
+        assert_eq!(size_of::<T>(), expected_size);
+        assert_eq!(
+            actual_offset + size_of::<PrimitiveTransform>(),
+            expected_size
+        );
+    }
 }
 
 impl Drop for DirectXRenderer {

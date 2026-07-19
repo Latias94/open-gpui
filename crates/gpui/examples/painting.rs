@@ -1,9 +1,9 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use open_gpui::{
-    Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
-    Point, Render, StrokeOptions, Window, WindowOptions, canvas, div, linear_color_stop,
-    linear_gradient, point, prelude::*, px, quad, rgb, size,
+    Background, Bounds, ColorSpace, Context, MouseDownEvent, MouseMoveEvent, Path, PathBuilder,
+    PathStyle, Pixels, Point, Render, StrokeOptions, TargetedEvent, Window, WindowOptions, canvas,
+    div, linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
 use open_gpui_platform::application;
 
@@ -406,20 +406,25 @@ impl Render for PaintingViewer {
                     )
                     .on_mouse_down(
                         open_gpui::MouseButton::Left,
-                        cx.listener(|this, ev: &MouseDownEvent, _, _| {
+                        cx.listener(|this, ev: &TargetedEvent<MouseDownEvent>, _, _| {
+                            let Ok(position) = ev.target_layout_position() else {
+                                return;
+                            };
                             this._painting = true;
-                            this.start = ev.position;
-                            let path = vec![ev.position];
+                            this.start = position;
+                            let path = vec![position];
                             this.lines.push(path);
                         }),
                     )
-                    .on_mouse_move(cx.listener(|this, ev: &open_gpui::MouseMoveEvent, _, cx| {
+                    .on_mouse_move(cx.listener(|this, ev: &TargetedEvent<MouseMoveEvent>, _, cx| {
                         if !this._painting {
                             return;
                         }
 
-                        let is_shifted = ev.modifiers.shift;
-                        let mut pos = ev.position;
+                        let Ok(mut pos) = ev.target_layout_position() else {
+                            return;
+                        };
+                        let is_shifted = ev.window_event().modifiers.shift;
                         // When holding shift, draw a straight line
                         if is_shifted {
                             let dx = pos.x - this.start.x;

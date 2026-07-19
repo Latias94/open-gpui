@@ -11,8 +11,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div,
+    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
@@ -798,23 +798,21 @@ impl RenderOnce for Command {
                             .when(!disabled, |this| {
                                 let window_overlay_runtime = window_overlay_runtime.clone();
                                 let overlay_binding = overlay_binding.clone();
-                                this.cursor_pointer().on_click(
-                                    move |_event: &ClickEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        window.prevent_default();
-                                        window_overlay_runtime
-                                            .request_open_change(
-                                                &overlay_binding,
-                                                !open,
-                                                DismissReason::Trigger,
-                                                window,
-                                                cx,
-                                            )
-                                            .expect(
-                                                "Command trigger should own its overlay registration",
-                                            );
-                                    },
-                                )
+                                this.cursor_pointer().on_click(move |_event, window, cx| {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    window_overlay_runtime
+                                        .request_open_change(
+                                            &overlay_binding,
+                                            !open,
+                                            DismissReason::Trigger,
+                                            window,
+                                            cx,
+                                        )
+                                        .expect(
+                                            "Command trigger should own its overlay registration",
+                                        );
+                                })
                             })
                             .child(trigger_label),
                     ),
@@ -847,27 +845,29 @@ impl RenderOnce for Command {
                     this.child(gpui_full_window_overlay_layer(
                         &overlay_adapter,
                         &overlay_binding,
-                        |opening_theme| command_dialog_layer_element(
-                            content_id,
-                            input_id,
-                            listbox_id,
-                            debug_id,
-                            state,
-                            scroll_handle,
-                            viewport_extent,
-                            scroll_offset,
-                            window_overlay_runtime.clone(),
-                            overlay_binding.clone(),
-                            viewport,
-                            input_controller,
-                            runtime,
-                            on_query_change,
-                            on_select,
-                            on_selected_values_change,
-                            tokens,
-                            opening_theme,
-                        )
-                        .into_any_element(),
+                        |opening_theme| {
+                            command_dialog_layer_element(
+                                content_id,
+                                input_id,
+                                listbox_id,
+                                debug_id,
+                                state,
+                                scroll_handle,
+                                viewport_extent,
+                                scroll_offset,
+                                window_overlay_runtime.clone(),
+                                overlay_binding.clone(),
+                                viewport,
+                                input_controller,
+                                runtime,
+                                on_query_change,
+                                on_select,
+                                on_selected_values_change,
+                                tokens,
+                                opening_theme,
+                            )
+                            .into_any_element()
+                        },
                     ))
                 },
             )

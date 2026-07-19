@@ -8,9 +8,9 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, IntoElement, KeyDownEvent, MouseButton, ParentElement,
-    Pixels, Point, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px,
+    AnyElement, App, ElementId, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
+    Point, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    px,
 };
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
@@ -319,7 +319,7 @@ impl RenderOnce for ContextMenu {
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 cx.stop_propagation();
                 window.prevent_default();
-                let anchor_point = event.position;
+                let anchor_point = event.window_event().position;
                 open_runtime.update(cx, |runtime, cx| {
                     runtime.prepare_open_at(anchor_point);
                     cx.notify();
@@ -731,7 +731,7 @@ fn context_menu_branch_elements(
                     .when(!disabled, |this| {
                         this.cursor_pointer()
                             .hover(move |style| style.bg(item_hover_background))
-                            .on_click(move |_event: &ClickEvent, window, cx| {
+                            .on_click(move |_event, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(submenu_navigation) = submenu_navigation.clone() {
                                     click_runtime.update(cx, |runtime, cx| {

@@ -1,15 +1,16 @@
 #[cfg(test)]
 use crate::drop_runtime::DockHostDropScene;
 use crate::{
-    DockNodeId, DockSpaceId, DockViewportWindowFacts,
+    DockNodeId, DockSpaceId,
     drop_runtime::DockHostDropSceneFact,
-    geometry::DockDropGuideStyle,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
         DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
     },
 };
-use open_gpui::{Bounds, Pixels, Point, WindowId};
+#[cfg(test)]
+use open_gpui::Point;
+use open_gpui::{Bounds, Pixels, WindowId};
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportFrameCoordinator {
     host_scenes: DockViewportHostSceneRegistry,
@@ -20,26 +21,11 @@ impl DockViewportFrameCoordinator {
         &self.host_scenes
     }
 
-    pub(crate) fn register_host_scene_with_facts(
+    pub(crate) fn register_host_scene_snapshot(
         &mut self,
-        space: DockSpaceId,
-        window_id: WindowId,
-        window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
-        host_position: Point<Pixels>,
-        drop_guide_style: DockDropGuideStyle,
-        initial_facts: Vec<DockHostDropSceneFact>,
+        snapshot: DockViewportHostSceneSnapshot,
     ) -> DockViewportHostSceneRegistration {
-        self.host_scenes
-            .register(DockViewportHostSceneSnapshot::new_with_facts(
-                space,
-                window_id,
-                window_facts.current_bounds,
-                host_bounds,
-                host_position,
-                drop_guide_style,
-                initial_facts,
-            ))
+        self.host_scenes.register(snapshot)
     }
 
     #[cfg(test)]
@@ -68,6 +54,16 @@ impl DockViewportFrameCoordinator {
     ) -> Option<Bounds<Pixels>> {
         self.host_scenes
             .leaf_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn leaf_displayed_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.host_scenes
+            .leaf_displayed_bounds_for_tabs(space, window_id, tabs)
     }
 
     pub(crate) fn tab_bar_bounds_for_tabs(
@@ -107,6 +103,15 @@ impl DockViewportFrameCoordinator {
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) {
         self.host_scenes.unregister_space(space);
+    }
+
+    pub(crate) fn discard_frame_for_viewport(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        self.host_scenes
+            .discard_frame_for_viewport(space, window_id)
     }
 
     pub(crate) fn unregister_window_scene(&mut self, window_id: WindowId) {

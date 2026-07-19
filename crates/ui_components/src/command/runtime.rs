@@ -2,9 +2,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, Entity, FontWeight, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window,
-    div, px, rgba,
+    AnyElement, App, ElementId, Entity, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window, div, px, rgba,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, Sizable, ThemeTokens, UiPx, ui_px,
@@ -913,7 +912,7 @@ fn render_command_result_row(
                 .when(!disabled, |this| {
                     this.cursor_pointer()
                         .hover(move |style| style.bg(row_hover_background))
-                        .on_click(move |_event: &ClickEvent, window, cx| {
+                        .on_click(move |_event, window, cx| {
                             cx.stop_propagation();
                             window.prevent_default();
                             let Some(selection) = selection.clone() else {

@@ -1,8 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use open_gpui::{
-    App, Bounds, Context, Half, Hsla, Pixels, Point, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
+    App, Bounds, Context, DropEvent, Half, Hsla, Pixels, Point, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
 use open_gpui_platform::application;
 
@@ -99,8 +99,8 @@ impl Render for DragDrop {
                             .cursor_move()
                             .hover(|this| this.bg(color.opacity(0.2)))
                             .child(format!("Item ({})", ix))
-                            .on_drag(drag_info, |info: &DragInfo, position, _, _, cx| {
-                                cx.new(|_| info.position(position))
+                            .on_drag(drag_info, |info: &DragInfo, geometry, _, cx| {
+                                cx.new(|_| info.position(geometry.window_preview_offset()))
                             })
                     })),
             )
@@ -119,8 +119,8 @@ impl Render for DragDrop {
                             .unwrap_or(open_gpui::black()),
                     )
                     .when_some(self.drop_on, |this, info| this.bg(info.color.opacity(0.5)))
-                    .on_drop(cx.listener(|this, info: &DragInfo, _, _| {
-                        this.drop_on = Some(*info);
+                    .on_drop(cx.listener(|this, event: &DropEvent<DragInfo>, _, _| {
+                        this.drop_on = Some(*event.value());
                     }))
                     .child("Drop items here"),
             )

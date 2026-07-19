@@ -25,6 +25,36 @@ Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates
 
 For higher-level controls, use `open-gpui-ui-components`. For deterministic UI motion primitives, use `open-gpui-motion`. For retained dock spaces, use `open-gpui-docking`.
 
+## Interactive Subtree Geometry
+
+Use `SubtreeTransform` when axis-aligned scale or translation must apply consistently to an
+interactive subtree. The transform runs after layout, so measurement, flex/grid placement, scroll
+extent, and sibling flow do not change:
+
+```rust
+use open_gpui::{
+    SubtreeTransform, SubtreeTransformExt as _, SubtreeTransformOrigin, div, point, px, size,
+};
+
+let transform = SubtreeTransform::try_new(
+    size(1.2, 0.9),
+    point(px(8.0), px(-4.0)),
+    SubtreeTransformOrigin::CENTER,
+)
+.expect("finite positive transform");
+
+let content = div().child("Interactive content").with_subtree_transform(transform);
+```
+
+The supported public contract is finite positive normal axis scale, finite logical-pixel translation, and
+a post-layout origin. Rotation, skew, arbitrary affine matrices, and 3D are intentionally absent.
+Use `TargetedEvent` helpers for target-local input coordinates and `ElementGeometry` or
+`measured_element` for committed layout/displayed geometry. Raw platform event positions remain in
+window coordinates.
+
+See [ADR 0021](../../docs/adr/0021-open-gpui-interactive-subtree-transform-authority.md) for the
+cross-channel and numeric-failure contract.
+
 ### Dependencies
 
 Open GPUI has various system dependencies that it needs in order to work.

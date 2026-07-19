@@ -9,6 +9,7 @@ use open_gpui_ui_core::{Orientation, SplitterHandleLayout, SplitterHitMap, Split
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockDividerHitMap {
     targets: Vec<DockDividerHitTarget>,
+    floating_surfaces: Vec<DockDividerFloatingSurface>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +32,19 @@ pub(crate) struct DockDividerHandleHitTarget {
     pub(crate) after: DockNodeId,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) extent: Pixels,
+    pub(crate) surface: DockDividerSurface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockDividerSurface {
+    Root,
+    Floating(DockNodeId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockDividerFloatingSurface {
+    surface: DockDividerSurface,
+    bounds: Bounds<Pixels>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,43 +76,39 @@ struct DockCoreHandleTarget {
 
 impl DockDividerHitMap {
     pub(crate) fn from_scene(scene: &DockPresentationScene) -> Self {
-        let handles = scene
-            .splitters
+        let floating_surfaces = scene
+            .floating_containers
             .iter()
-            .map(handle_target)
-            .collect::<Vec<_>>();
-        let core_handles = handles
-            .iter()
-            .copied()
-            .map(core_handle_target_for_dock_target)
-            .collect::<Vec<_>>();
-        let core_hit_map =
-            SplitterHitMap::from_handles(core_handles.iter().map(|handle| handle.core.clone()));
-        let targets = core_hit_map
-            .targets()
-            .iter()
-            .filter_map(|target| match target {
-                SplitterHitTarget::Handle(handle) => {
-                    handle_target_for_core(handle, &core_handles).map(DockDividerHitTarget::Single)
-                }
-                SplitterHitTarget::Junction(junction) => {
-                    let horizontal = handle_target_for_core(junction.horizontal(), &core_handles)?;
-                    let vertical = handle_target_for_core(junction.vertical(), &core_handles)?;
-                    Some(DockDividerHitTarget::Corner(DockDividerCornerHitTarget {
-                        horizontal,
-                        vertical,
-                        bounds: bounds_from_ui_rect(junction.bounds()),
-                    }))
-                }
+            .map(|floating| DockDividerFloatingSurface {
+                surface: DockDividerSurface::Floating(floating.node),
+                bounds: floating.bounds,
             })
-            .collect();
-        Self { targets }
+            .collect::<Vec<_>>();
+        let mut surfaces = Vec::with_capacity(floating_surfaces.len() + 1);
+        surfaces.push(DockDividerSurface::Root);
+        surfaces.extend(floating_surfaces.iter().map(|floating| floating.surface));
+
+        let mut targets = Vec::new();
+        for surface in surfaces {
+            let handles = scene
+                .splitters
+                .iter()
+                .filter(|splitter| surface_for_splitter(splitter) == surface)
+                .map(handle_target)
+                .collect::<Vec<_>>();
+            targets.extend(targets_for_surface(&handles));
+        }
+
+        Self {
+            targets,
+            floating_surfaces,
+        }
     }
 
     pub(crate) fn hit(&self, position: Point<Pixels>) -> Option<&DockDividerHitTarget> {
-        self.targets.iter().find(|target| match target {
-            DockDividerHitTarget::Corner(corner) => corner.bounds.contains(&position),
-            DockDividerHitTarget::Single(handle) => handle.bounds.contains(&position),
+        let surface = self.surface_at(position);
+        self.targets.iter().find(|target| {
+            target_surface(target) == surface && target_bounds(target).contains(&position)
         })
     }
 
@@ -111,10 +121,15 @@ impl DockDividerHitMap {
         self.targets
             .iter()
             .filter_map(|target| match target {
-                DockDividerHitTarget::Corner(corner) => Some(DockDividerCornerAffordance {
-                    corner: *corner,
-                    state: corner_affordance_state(*corner, hover_position, dragging, enabled),
-                }),
+                DockDividerHitTarget::Corner(corner)
+                    if self.is_unoccluded(corner.horizontal.surface, corner.bounds) =>
+                {
+                    Some(DockDividerCornerAffordance {
+                        corner: *corner,
+                        state: corner_affordance_state(*corner, hover_position, dragging, enabled),
+                    })
+                }
+                DockDividerHitTarget::Corner(_) => None,
                 DockDividerHitTarget::Single(_) => None,
             })
             .collect()
@@ -123,6 +138,79 @@ impl DockDividerHitMap {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn targets(&self) -> &[DockDividerHitTarget] {
         &self.targets
+    }
+
+    fn surface_at(&self, position: Point<Pixels>) -> DockDividerSurface {
+        self.floating_surfaces
+            .iter()
+            .rev()
+            .find(|floating| floating.bounds.contains(&position))
+            .map(|floating| floating.surface)
+            .unwrap_or(DockDividerSurface::Root)
+    }
+
+    fn is_unoccluded(&self, surface: DockDividerSurface, bounds: Bounds<Pixels>) -> bool {
+        let first_occluding_surface = match surface {
+            DockDividerSurface::Root => 0,
+            DockDividerSurface::Floating(node) => self
+                .floating_surfaces
+                .iter()
+                .position(|floating| floating.surface == DockDividerSurface::Floating(node))
+                .map(|index| index + 1)
+                .unwrap_or(0),
+        };
+        !self.floating_surfaces[first_occluding_surface..]
+            .iter()
+            .any(|floating| floating.bounds.intersects(&bounds))
+    }
+}
+
+fn targets_for_surface(handles: &[DockDividerHandleHitTarget]) -> Vec<DockDividerHitTarget> {
+    let core_handles = handles
+        .iter()
+        .copied()
+        .map(core_handle_target_for_dock_target)
+        .collect::<Vec<_>>();
+    let core_hit_map =
+        SplitterHitMap::from_handles(core_handles.iter().map(|handle| handle.core.clone()));
+    core_hit_map
+        .targets()
+        .iter()
+        .filter_map(|target| match target {
+            SplitterHitTarget::Handle(handle) => {
+                handle_target_for_core(handle, &core_handles).map(DockDividerHitTarget::Single)
+            }
+            SplitterHitTarget::Junction(junction) => {
+                let horizontal = handle_target_for_core(junction.horizontal(), &core_handles)?;
+                let vertical = handle_target_for_core(junction.vertical(), &core_handles)?;
+                Some(DockDividerHitTarget::Corner(DockDividerCornerHitTarget {
+                    horizontal,
+                    vertical,
+                    bounds: bounds_from_ui_rect(junction.bounds()),
+                }))
+            }
+        })
+        .collect()
+}
+
+fn surface_for_splitter(splitter: &DockPresentationSplitter) -> DockDividerSurface {
+    splitter
+        .floating
+        .map(DockDividerSurface::Floating)
+        .unwrap_or(DockDividerSurface::Root)
+}
+
+fn target_surface(target: &DockDividerHitTarget) -> DockDividerSurface {
+    match target {
+        DockDividerHitTarget::Single(handle) => handle.surface,
+        DockDividerHitTarget::Corner(corner) => corner.horizontal.surface,
+    }
+}
+
+fn target_bounds(target: &DockDividerHitTarget) -> Bounds<Pixels> {
+    match target {
+        DockDividerHitTarget::Single(handle) => handle.bounds,
+        DockDividerHitTarget::Corner(corner) => corner.bounds,
     }
 }
 
@@ -144,6 +232,7 @@ fn handle_target(splitter: &DockPresentationSplitter) -> DockDividerHandleHitTar
         after: splitter.after,
         bounds: splitter.bounds,
         extent: splitter.extent,
+        surface: surface_for_splitter(splitter),
     }
 }
 

@@ -1333,6 +1333,41 @@ Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.
 
+## Interactive Subtree Transform Gate
+
+Changes to `SubtreeTransform`, `ElementGeometry`, targeted input, frame-journal geometry, scene
+primitives, renderer conversion, or Motion projection must run the focused U12 gate before broad
+workspace verification:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo fmt --all -- --check
+cargo nextest run --locked -p open-gpui --lib transform --no-fail-fast
+cargo nextest run --locked -p open-gpui --lib measured tooltip --no-fail-fast
+cargo nextest run --locked -p open-gpui --test presentation_surface --no-fail-fast
+cargo nextest run --locked -p open-gpui-motion --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components motion_adapter --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery presentation --no-fail-fast
+cargo check --locked -p open-gpui-wgpu -p open-gpui-windows --tests
+git diff --check
+```
+
+The GPUI tests cover checked numeric construction, nested composition, every scene primitive,
+transactional late failure, hit testing, explicit local/window event coordinates, pixel and line
+wheel semantics, pointer capture rebinding, drag/drop, IME, final AccessKit bounds, deferred and
+portal behavior, cache replay, tooltip lifecycle, committed measurement, and displayed debug
+geometry. `presentation_surface` also rejects the removed `Transformation`,
+`TransformationMatrix`, and `with_transformation` names and guards the opaque renderer ABI.
+
+The Gallery `presentation` smoke uses nested non-uniform transforms with a real Button, delayed
+Tooltip owner, TextInput, ScrollArea, drag/drop target, accessibility group, Motion projection, and
+committed geometry readout. Static labels or a quad-only sample are not sufficient evidence.
+
+Native CI remains responsible for each renderer on its owning platform. WGPU, DirectX, and Metal
+must compile the shared primitive and run their ABI/conversion tests; capable runners additionally
+run the designated transformed-pixel and clip smoke. A Windows local run cannot replace Metal or
+Linux/native backend evidence.
+
 Run the full component and gallery package gates only after broad contract-table, theme, or gallery
 changes:
 
@@ -1771,6 +1806,11 @@ Current docking multi-viewport capability states:
   display-ambiguous backends should fail closed or degrade to local-only routing until the platform
   backend can publish stronger facts. Automated owners: `host_viewport_route_tests` and
   `viewport_lifecycle_record_reports_window_local_coordinate_status`.
+- Docking policy scenes, divider hit maps, floating-model deltas, and local drop facts remain in
+  absolute layout coordinates. Cross-window routing, global-screen conversion, and tear-off source
+  bounds remain in window/display coordinates. The viewport snapshot retains GPUI's opaque
+  committed `ElementGeometry` to convert between them; a transform-only frame advances route facts
+  so a proof captured under old displayed geometry cannot authorize a later release.
 - Viewport flags are capability-gated platform sync requests. No-input can be applied when a
   backend advertises native pointer-input routing; no-focus-on-appearing, no-focus-on-click, alpha,
   topmost, and no-taskbar use `PlatformViewportFlagCapabilities` and are recorded as unsupported

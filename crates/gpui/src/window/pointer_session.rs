@@ -237,12 +237,18 @@ impl Window {
         if !self.pressed_mouse_buttons.contains(button) {
             return Err(PointerCaptureError::ButtonNotPressed { button });
         }
-        if !self
+        let bound_hitbox = self
             .rendered_frame
             .pointer_capture_bindings
             .iter()
-            .any(|(id, _)| *id == handle.id)
-        {
+            .find_map(|(id, hitbox)| (*id == handle.id).then_some(*hitbox))
+            .filter(|hitbox| {
+                self.rendered_frame
+                    .hitboxes
+                    .iter()
+                    .any(|candidate| candidate.id == *hitbox && candidate.is_active())
+            });
+        if bound_hitbox.is_none() {
             return Err(PointerCaptureError::HandleNotBound { handle: *handle });
         }
         if let Some(captured) = self.captured_pointer {
@@ -339,10 +345,16 @@ impl Window {
 
     pub(super) fn captured_pointer_hitbox(&self) -> Option<HitboxId> {
         let captured = self.captured_pointer?.handle.id;
-        self.rendered_frame
+        let hitbox = self
+            .rendered_frame
             .pointer_capture_bindings
             .iter()
-            .find_map(|(id, hitbox)| (*id == captured).then_some(*hitbox))
+            .find_map(|(id, hitbox)| (*id == captured).then_some(*hitbox))?;
+        self.rendered_frame
+            .hitboxes
+            .iter()
+            .any(|candidate| candidate.id == hitbox && candidate.is_active())
+            .then_some(hitbox)
     }
 
     /// Binds a stable pointer capture handle to a hitbox in the frame being built.

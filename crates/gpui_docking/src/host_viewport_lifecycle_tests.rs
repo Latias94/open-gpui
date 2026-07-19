@@ -27,6 +27,7 @@ mod runtime_suite {
             DockViewportActivationBackendFocusRecordEffect,
             DockViewportActivationPendingBackendFocusEffect, apply_viewport_activation_transaction,
         },
+        viewport_drop_scene::DockViewportHostSceneSnapshot,
         viewport_registry::{
             DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportStaleReason,
         },
@@ -2556,6 +2557,7 @@ mod handle_suite {
             DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession,
         },
         viewport_activation::apply_viewport_activation_transaction,
+        viewport_drop_scene::DockViewportHostSceneSnapshot,
         viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
     };
     use open_gpui::{
@@ -2931,21 +2933,21 @@ mod handle_suite {
 
         let preparation = source_window
             .update(cx, |_, window, cx| {
-                runtime.prepare_rendered_viewport_host_scene_frame(
+                let snapshot = DockViewportHostSceneSnapshot::new_with_facts(
                     source_space.clone(),
-                    window,
-                    cx,
+                    window.window_handle().window_id(),
+                    DockViewportWindowFacts::from_window(window, cx).current_bounds,
                     floating_bounds(0.0, 0.0, 360.0, 220.0),
                     target_center_host_position(),
                     crate::DockDropGuideStyle::default(),
-                    false,
                     Vec::new(),
-                )
+                );
+                runtime.commit_rendered_viewport_host_scene_snapshot(snapshot, window, cx, false)
             })
-            .expect("source render prepaint should run");
+            .expect("source render commit should run");
         assert!(
             preparation.changed,
-            "render prepaint sync should report runtime changes when it clears stale routed previews"
+            "render commit sync should report runtime changes when it clears stale routed previews"
         );
 
         assert!(!runtime.viewport_route_ready(&target_space));
@@ -2957,7 +2959,7 @@ mod handle_suite {
             runtime
                 .routed_drop_preview_for(&target_space, target_opened.window().window_id())
                 .is_none(),
-            "render prepaint sync should clear previews targeting a now-unroutable viewport"
+            "render commit sync should clear previews targeting a now-unroutable viewport"
         );
     }
 

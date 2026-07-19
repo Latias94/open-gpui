@@ -1592,6 +1592,9 @@ mod accessibility_tests;
 mod pointer_session_tests;
 
 #[cfg(test)]
+mod transform_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         AnyDrag, AnyView, AppContext as _, Context, CursorStyle, Empty, Entity, FocusHandle,
@@ -1697,6 +1700,14 @@ mod tests {
         discarded_resources: Rc<Cell<usize>>,
     }
 
+    struct PrepaintRefreshRoot {
+        child: Entity<PrepaintRefreshProbe>,
+    }
+
+    struct PrepaintRefreshProbe {
+        renders: Rc<Cell<usize>>,
+    }
+
     struct PrepaintResourceDropProbe(Rc<Cell<usize>>);
 
     impl Drop for PrepaintResourceDropProbe {
@@ -1739,6 +1750,25 @@ mod tests {
                     window.record_prepaint_commit(move |revision, _| {
                         commits.borrow_mut().push(revision);
                     });
+                },
+                |_, _, _, _| {},
+            )
+            .size_full()
+        }
+    }
+
+    impl Render for PrepaintRefreshRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            AnyView::from(self.child.clone()).cached(StyleRefinement::default().size_full())
+        }
+    }
+
+    impl Render for PrepaintRefreshProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            canvas(
+                |_, window, _| {
+                    window.record_prepaint_window_commit(|_, window, _| window.refresh());
                 },
                 |_, _, _, _| {},
             )
@@ -1794,6 +1824,31 @@ mod tests {
                     }
                 })
         }
+    }
+
+    #[open_gpui::test]
+    fn prepaint_window_commit_can_schedule_a_followup_frame(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let (_view, cx) = cx.add_window_view({
+            let renders = renders.clone();
+            move |_, cx| PrepaintRefreshRoot {
+                child: cx.new(|_| PrepaintRefreshProbe { renders }),
+            }
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+            assert!(
+                window.refresh_pending_for_test(),
+                "a commit-side refresh must schedule the frame that publishes its state"
+            );
+        });
+        let renders_before_followup = renders.get();
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(
+            renders.get() > renders_before_followup,
+            "a commit-side refresh must bypass cached journals on the followup frame"
+        );
     }
 
     #[open_gpui::test]
@@ -2112,7 +2167,7 @@ mod tests {
                         window_id: window.window_handle().window_id(),
                         value: Arc::new("drag"),
                         view: drag_view,
-                        cursor_offset: point(px(0.0), px(0.0)),
+                        window_preview_offset: point(px(0.0), px(0.0)),
                         cursor_style: None,
                         button: MouseButton::Left,
                     });
@@ -2685,7 +2740,7 @@ mod tests {
                 window_id: hovered.window_id(),
                 value: Arc::new("drag"),
                 view: app.new(|_| Empty).into(),
-                cursor_offset: point(px(0.0), px(0.0)),
+                window_preview_offset: point(px(0.0), px(0.0)),
                 cursor_style: Some(CursorStyle::ClosedHand),
                 button: MouseButton::Left,
             });

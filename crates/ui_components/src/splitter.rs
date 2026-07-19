@@ -475,7 +475,7 @@ fn transition_scene_bounds() -> UiRect {
 
 #[derive(Debug, Clone)]
 struct SplitterDragStart {
-    origin: Point<Pixels>,
+    origin_layout: Point<Pixels>,
     origin_fractions: Vec<f32>,
     axis_length: Pixels,
 }
@@ -722,7 +722,7 @@ impl RenderOnce for Splitter {
             .when(is_vertical, |this| this.flex_col())
             .when(!is_vertical, |this| this.flex_row())
             .on_drag_move(move |event: &DragMoveEvent<SplitterDrag>, window, cx| {
-                let drag = event.drag(cx).clone();
+                let drag = event.drag().clone();
                 if drag.group_id != drag_state.group_id() {
                     return;
                 }
@@ -730,10 +730,14 @@ impl RenderOnce for Splitter {
                 runtime_for_drag.update(cx, |runtime, _| {
                     runtime.sync_drag_state(&drag_state);
 
+                    let Ok(layout_position) = event.target_layout_position() else {
+                        return;
+                    };
+
                     let axis_length = if is_vertical {
-                        event.bounds.size.height
+                        event.layout_bounds().size.height
                     } else {
-                        event.bounds.size.width
+                        event.layout_bounds().size.width
                     };
                     if axis_length.as_f32() <= EPSILON {
                         return;
@@ -741,7 +745,7 @@ impl RenderOnce for Splitter {
 
                     if runtime.drag_start.is_none() {
                         runtime.drag_start = Some(SplitterDragStart {
-                            origin: event.event.position,
+                            origin_layout: layout_position,
                             origin_fractions: runtime.panel_fractions.clone(),
                             axis_length,
                         });
@@ -756,9 +760,9 @@ impl RenderOnce for Splitter {
                     }
 
                     let delta_px = if is_vertical {
-                        event.event.position.y - start.origin.y
+                        layout_position.y - start.origin_layout.y
                     } else {
-                        event.event.position.x - start.origin.x
+                        layout_position.x - start.origin_layout.x
                     };
                     let delta_fraction = delta_px.as_f32() / start.axis_length.as_f32();
                     let origin_state = drag_state.with_panel_fractions(&start.origin_fractions);
@@ -1027,7 +1031,7 @@ fn render_handle(
                     group_id,
                     handle_index,
                 },
-                move |_, _, _, _, cx| {
+                move |_, _, _, cx| {
                     cx.stop_propagation();
                     drag_runtime.update(cx, |runtime, _| {
                         runtime.sync_drag_state(&drag_state);

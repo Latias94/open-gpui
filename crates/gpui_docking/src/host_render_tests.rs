@@ -18,14 +18,66 @@ use crate::{
     },
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Entity, Focusable, Modifiers, MouseButton,
-    RequestFrameOptions, TestAppContext, VisualTestContext, px, size,
+    AnyView, AnyWindowHandle, AppContext as _, Bounds, Context, Entity, Focusable, IntoElement,
+    Modifiers, MouseButton, ParentElement, Render, RequestFrameOptions, Styled, SubtreeTransform,
+    SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window, canvas,
+    div, fill, point, px, red, size,
 };
 use open_gpui_motion::{
     MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
 };
 use slotmap::Key;
 use std::time::Duration;
+
+struct TransformedDockHostFixture {
+    host: Entity<DockHost>,
+    show_host: bool,
+    alternate_transform: bool,
+    fail_late: bool,
+    cache_probe_revision: u64,
+}
+
+impl TransformedDockHostFixture {
+    fn transform(&self) -> SubtreeTransform {
+        let (scale, translation) = if self.alternate_transform {
+            (size(0.85, 1.35), point(px(72.0), px(12.0)))
+        } else {
+            (size(1.25, 0.8), point(px(24.0), px(30.0)))
+        };
+        SubtreeTransform::try_new(scale, translation, SubtreeTransformOrigin::TOP_LEFT)
+            .expect("DockHost fixture transforms should remain representable")
+    }
+}
+
+impl Render for TransformedDockHostFixture {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let mut transformed = div().w(px(420.0)).h(px(260.0));
+        if self.show_host {
+            transformed = transformed.child(
+                AnyView::from(self.host.clone())
+                    .cached(open_gpui::StyleRefinement::default().size_full()),
+            );
+        }
+        if self.fail_late {
+            transformed = transformed.child(
+                canvas(
+                    |_, _, _| {},
+                    |_, _, window, _| {
+                        window.paint_quad(fill(
+                            Bounds::new(point(px(f32::MAX), px(0.0)), size(px(10.0), px(10.0))),
+                            red(),
+                        ));
+                    },
+                )
+                .absolute()
+                .size_full(),
+            );
+        }
+        div()
+            .size_full()
+            .child(transformed.with_subtree_transform(self.transform()))
+    }
+}
 
 fn linear_continuity_transition(duration: Duration) -> MotionTransition {
     MotionTransition::duration(
@@ -74,6 +126,223 @@ fn single_tabs_render_selected_panel_and_all_tab_labels(cx: &mut TestAppContext)
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_none(),
         "inactive panel should not be mounted"
     );
+}
+
+#[open_gpui::test]
+fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
+    cx: &mut TestAppContext,
+) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let dock_space = workspace.space().clone();
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let host = cx.new(|cx| DockHost::from_controller(controller, dock_space, runtime.clone(), cx));
+    let window_host = host.clone();
+    let window = cx.open_window(size(px(700.0), px(420.0)), move |_, _| {
+        TransformedDockHostFixture {
+            host: window_host,
+            show_host: true,
+            alternate_transform: false,
+            fail_late: false,
+            cache_probe_revision: 0,
+        }
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, cx| window.draw(cx).clear());
+
+    let window_id = window.window_id();
+    let tabs_selector = selector_for(&visual, &host, DockDebugRegion::Tabs { node: root })
+        .expect("transformed tabs should publish a debug selector");
+    let host_selector = selector_for(&visual, &host, DockDebugRegion::Host)
+        .expect("transformed host should publish a debug selector");
+    let first_tabs_displayed = debug_bounds(&mut visual, &tabs_selector);
+    let first_host_displayed = debug_bounds(&mut visual, &host_selector);
+    let (first_tabs_layout, first_runtime_displayed, first_generation, host_local_center) = host
+        .update(cx, |host, _| {
+            let runtime = host.viewport_runtime();
+            let tabs_layout = runtime
+                .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
+                .expect("transformed host should retain layout-space leaf facts");
+            let tabs_displayed = runtime
+                .rendered_leaf_displayed_bounds_for_tabs(host.space(), Some(window_id), root)
+                .expect("transformed host should project leaf facts into window space");
+            let runtime = runtime.borrow();
+            let generation = runtime
+                .adapter()
+                .snapshot_facts_generation(host.space(), window_id)
+                .expect("transformed host should publish route facts");
+            let local_center = runtime
+                .adapter()
+                .window_to_host(host.space(), first_host_displayed.center())
+                .expect("displayed host center should inverse-project into host-local space");
+            (tabs_layout, tabs_displayed, generation, local_center)
+        });
+
+    assert_bounds_close(
+        first_runtime_displayed,
+        first_tabs_displayed,
+        "first transformed leaf window bounds",
+    );
+    assert_ne!(
+        first_tabs_layout, first_runtime_displayed,
+        "non-uniform host transform must not overwrite layout-space facts"
+    );
+    assert_point_close(host_local_center, point(px(210.0), px(130.0)));
+
+    window
+        .update(cx, |fixture, _window, cx| {
+            fixture.alternate_transform = true;
+            cx.notify();
+        })
+        .expect("transformed DockHost fixture window should remain live");
+    cx.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear());
+
+    let second_tabs_displayed = debug_bounds(&mut visual, &tabs_selector);
+    let (second_tabs_layout, second_runtime_displayed, second_generation) =
+        host.update(cx, |host, _| {
+            let runtime = host.viewport_runtime();
+            let tabs_layout = runtime
+                .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
+                .expect("transform-only frame should retain layout-space leaf facts");
+            let tabs_displayed = runtime
+                .rendered_leaf_displayed_bounds_for_tabs(host.space(), Some(window_id), root)
+                .expect("transform-only frame should refresh displayed leaf facts");
+            let generation = runtime
+                .borrow()
+                .adapter()
+                .snapshot_facts_generation(host.space(), window_id)
+                .expect("transform-only frame should publish route facts");
+            (tabs_layout, tabs_displayed, generation)
+        });
+
+    assert_eq!(first_tabs_layout, second_tabs_layout);
+    assert_ne!(first_tabs_displayed, second_tabs_displayed);
+    assert_bounds_close(
+        second_runtime_displayed,
+        second_tabs_displayed,
+        "second transformed leaf window bounds",
+    );
+    assert_ne!(
+        first_generation, second_generation,
+        "transform-only frames must invalidate stale route facts"
+    );
+
+    visual.simulate_mouse_move(point(px(f32::MAX), px(f32::MAX)), None, Modifiers::none());
+    host.update(cx, |_, cx| cx.notify());
+    visual.update(|window, cx| window.draw(cx).clear());
+    host.update(cx, |host, _| {
+        assert!(
+            host.viewport_runtime()
+                .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
+                .is_none(),
+            "an early inverse-projection failure must retract the previous route scene"
+        );
+        assert!(host.interaction().viewport_host_scene_frame().is_none());
+        assert!(host.last_presentation_scene().is_none());
+    });
+
+    visual.simulate_mouse_move(second_runtime_displayed.center(), None, Modifiers::none());
+    host.update(cx, |_, cx| cx.notify());
+    visual.update(|window, cx| window.draw(cx).clear());
+    host.update(cx, |host, _| {
+        assert!(
+            host.viewport_runtime()
+                .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
+                .is_some(),
+            "the next valid frame must republish route geometry"
+        );
+        assert!(host.interaction().viewport_host_scene_frame().is_some());
+        assert!(host.last_presentation_scene().is_some());
+    });
+
+    window
+        .update(cx, |fixture, _window, cx| {
+            fixture.show_host = false;
+            cx.notify();
+        })
+        .expect("transformed DockHost fixture window should remain live");
+    cx.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear());
+    host.update(cx, |host, _| {
+        assert!(
+            host.viewport_runtime()
+                .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
+                .is_none(),
+            "removing the host subtree must expire its previous route publication"
+        );
+        assert!(host.interaction().viewport_host_scene_frame().is_none());
+        assert!(host.last_presentation_scene().is_none());
+    });
+
+    window
+        .update(cx, |fixture, _window, cx| {
+            fixture.show_host = true;
+            cx.notify();
+        })
+        .expect("transformed DockHost fixture window should remain live");
+    cx.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear());
+    host.update(cx, |host, _| {
+        assert!(
+            host.viewport_runtime()
+                .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
+                .is_some(),
+            "restoring the host subtree must publish a fresh route scene"
+        );
+    });
+
+    window
+        .update(cx, |fixture, _window, cx| {
+            fixture.cache_probe_revision += 1;
+            cx.notify();
+        })
+        .expect("cached DockHost fixture window should remain live");
+    cx.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear());
+    host.update(cx, |host, _| {
+        let runtime = host.viewport_runtime();
+        assert_eq!(
+            runtime
+                .borrow()
+                .adapter()
+                .snapshot_facts_generation(host.space(), window_id),
+            Some(second_generation),
+            "cached journal replay must preserve the committed route generation"
+        );
+        assert!(host.interaction().viewport_host_scene_frame().is_some());
+        assert!(host.last_presentation_scene().is_some());
+    });
+
+    window
+        .update(cx, |fixture, _window, cx| {
+            fixture.fail_late = true;
+            cx.notify();
+        })
+        .expect("transformed DockHost fixture window should remain live");
+    cx.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear());
+
+    host.update(cx, |host, _| {
+        let runtime = host.viewport_runtime();
+        assert!(
+            runtime
+                .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
+                .is_none(),
+            "a paint-invalid transformed frame must retract the previous route scene"
+        );
+        assert!(
+            host.interaction().viewport_host_scene_frame().is_none(),
+            "a paint-invalid transformed frame must retract the event-receiver proof"
+        );
+        assert!(
+            host.last_presentation_scene().is_none(),
+            "a paint-invalid transformed frame must retract its presentation scene"
+        );
+    });
 }
 
 #[open_gpui::test]

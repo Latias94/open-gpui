@@ -417,7 +417,8 @@ fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<Do
                         motion_rect_from_bounds(to),
                     ),
                     progress,
-                ),
+                )
+                .expect("dock layout transitions require finite positive pane bounds"),
             ))
         }
         DockPaneTransitionKind::Unchanged => None,
@@ -515,7 +516,8 @@ fn projected_visual_bounds(
 ) -> Bounds<Pixels> {
     bounds_from_motion_rect(
         MotionProjection::between(motion_rect_from_bounds(from), motion_rect_from_bounds(to))
-            .visual_bounds(progress),
+            .visual_bounds(progress)
+            .expect("dock layout transitions require finite positive pane bounds"),
     )
 }
 

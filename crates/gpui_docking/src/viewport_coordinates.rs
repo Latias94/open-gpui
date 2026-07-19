@@ -1,8 +1,8 @@
 use crate::{
-    DockSpaceId, DockViewportAdapter, DockViewportWindowFacts,
+    DockSpaceId, DockViewportAdapter, DockViewportHostGeometry, DockViewportWindowFacts,
     viewport_registry::{DockViewportInputMask, DockViewportStaleReason},
 };
-use open_gpui::{AnyWindowHandle, AppContext, Bounds, Pixels, Point, WindowId, point};
+use open_gpui::{AnyWindowHandle, AppContext, Pixels, Point, WindowId, point};
 
 impl DockViewportAdapter {
     /// Collects all registered platform viewport windows containing a screen point.
@@ -68,12 +68,12 @@ impl DockViewportAdapter {
         &mut self,
         space: &DockSpaceId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
     ) -> bool {
         let Some(snapshot) = self.snapshot_mut(space) else {
             return false;
         };
-        snapshot.update_route_facts(window_facts, host_bounds)
+        snapshot.update_route_facts(window_facts, host_geometry)
     }
 
     /// Refreshes live input-mask facts while avoiding a window that is already in the
@@ -198,15 +198,7 @@ impl DockViewportAdapter {
         if !snapshot.is_route_ready() {
             return None;
         }
-        let host_bounds = snapshot.host_bounds?;
-        if !host_bounds.contains(&position) {
-            return None;
-        }
-
-        Some(point(
-            position.x - host_bounds.origin.x,
-            position.y - host_bounds.origin.y,
-        ))
+        snapshot.host_geometry?.window_to_host(position)
     }
 
     /// Converts a global screen point into host-local coordinates.
@@ -235,7 +227,8 @@ impl DockViewportAdapter {
 #[cfg(test)]
 mod tests {
     use crate::{
-        DockViewportAdapter, DockViewportHit, DockViewportTargetContext, DockViewportWindowFacts,
+        DockViewportAdapter, DockViewportHit, DockViewportHostGeometry, DockViewportTargetContext,
+        DockViewportWindowFacts,
         host_test_support::test_view,
         viewport_registry::{
             DockViewportLifecycleState, DockViewportRouteUnavailableReason, DockViewportStaleReason,
@@ -736,7 +729,12 @@ mod tests {
         assert_eq!(snapshot.display_id, next_display);
         assert_eq!(snapshot.window_bounds, Some(next_window_bounds));
         assert_eq!(snapshot.global_screen_bounds(), Some(next_screen_bounds));
-        assert_eq!(snapshot.host_bounds, Some(next_host_bounds));
+        assert_eq!(
+            snapshot
+                .host_geometry
+                .map(DockViewportHostGeometry::layout_bounds),
+            Some(next_host_bounds)
+        );
     }
 
     #[test]

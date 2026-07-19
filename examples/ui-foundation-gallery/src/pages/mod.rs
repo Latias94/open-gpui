@@ -5,6 +5,7 @@ pub mod components;
 pub mod devtools;
 pub mod focus_a11y;
 pub mod overlay;
+pub mod presentation;
 pub mod sizing;
 pub mod tokens;
 
@@ -21,6 +22,8 @@ pub enum GalleryPage {
     FocusAccessibility,
     /// Overlay geometry vocabulary.
     Overlay,
+    /// Interactive subtree presentation and coordinate-space vocabulary.
+    Presentation,
     /// First concrete component consumers.
     Components,
     /// Read-only local devtools inspector.
@@ -36,6 +39,7 @@ impl GalleryPage {
             "adaptive" => Some(Self::Adaptive),
             "focus-a11y" => Some(Self::FocusAccessibility),
             "overlay" => Some(Self::Overlay),
+            "presentation" => Some(Self::Presentation),
             "components" => Some(Self::Components),
             "devtools" => Some(Self::Devtools),
             _ => None,
@@ -50,6 +54,7 @@ impl GalleryPage {
             Self::Adaptive => "adaptive",
             Self::FocusAccessibility => "focus-a11y",
             Self::Overlay => "overlay",
+            Self::Presentation => "presentation",
             Self::Components => "components",
             Self::Devtools => "devtools",
         }
@@ -63,6 +68,7 @@ impl GalleryPage {
             Self::Adaptive => adaptive::TITLE,
             Self::FocusAccessibility => focus_a11y::TITLE,
             Self::Overlay => overlay::TITLE,
+            Self::Presentation => presentation::TITLE,
             Self::Components => components::TITLE,
             Self::Devtools => devtools::TITLE,
         }
@@ -76,6 +82,7 @@ impl GalleryPage {
             Self::Adaptive => adaptive::SUMMARY,
             Self::FocusAccessibility => focus_a11y::SUMMARY,
             Self::Overlay => overlay::SUMMARY,
+            Self::Presentation => presentation::SUMMARY,
             Self::Components => components::SUMMARY,
             Self::Devtools => devtools::SUMMARY,
         }
@@ -89,6 +96,7 @@ impl GalleryPage {
             Self::Adaptive => adaptive::SIGNALS,
             Self::FocusAccessibility => focus_a11y::SIGNALS,
             Self::Overlay => overlay::SIGNALS,
+            Self::Presentation => presentation::SIGNALS,
             Self::Components => components::SIGNALS,
             Self::Devtools => devtools::SIGNALS,
         }
@@ -121,12 +129,13 @@ impl GalleryPageSpec {
 }
 
 /// The canonical foundation section order.
-pub const GALLERY_SECTIONS: [GalleryPageSpec; 7] = [
+pub const GALLERY_SECTIONS: [GalleryPageSpec; 8] = [
     GalleryPageSpec::new(GalleryPage::Tokens),
     GalleryPageSpec::new(GalleryPage::SizingDensity),
     GalleryPageSpec::new(GalleryPage::Adaptive),
     GalleryPageSpec::new(GalleryPage::FocusAccessibility),
     GalleryPageSpec::new(GalleryPage::Overlay),
+    GalleryPageSpec::new(GalleryPage::Presentation),
     GalleryPageSpec::new(GalleryPage::Components),
     GalleryPageSpec::new(GalleryPage::Devtools),
 ];

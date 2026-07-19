@@ -5,6 +5,7 @@ use crate::{
     drop_scene_fact,
     geometry::DockDropGuideStyle,
     host_interaction_outcome::DockHostInteractionOutcome,
+    host_render_actions::DockRenderedPointerPosition,
     workspace_move_validation::dock_target_validator,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Size, Window};
@@ -51,10 +52,11 @@ impl DockHost {
         &mut self,
         payload: &DockDragPayload,
         fact: DockHostDropSceneFact,
-        position: Point<Pixels>,
+        position: impl Into<DockRenderedPointerPosition>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
+        let position = position.into();
         let (policy, payload_classes, drop_guide_style, graph) =
             self.with_workspace(cx, |workspace| {
                 (
@@ -75,7 +77,7 @@ impl DockHost {
         let payload_size = self.active_payload_drag_size(payload);
         let scene_outcome = DockHostInteractionOutcome::from_session_changed(
             self.push_drop_scene_fact_interaction(
-                position,
+                position.layout,
                 payload_size,
                 drop_guide_style,
                 excluded_nodes,
@@ -86,8 +88,12 @@ impl DockHost {
                 Some(&edge_plan_resolver),
             ),
         );
-        let route_outcome =
-            self.update_viewport_drop_route_preview_interaction(payload, position, window, cx);
+        let route_outcome = self.update_viewport_drop_route_preview_interaction(
+            payload,
+            position.window,
+            window,
+            cx,
+        );
 
         scene_outcome.merge(route_outcome)
     }
@@ -97,7 +103,7 @@ impl DockHost {
         payload: &DockDragPayload,
         root: DockNodeId,
         bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
+        position: impl Into<DockRenderedPointerPosition>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
@@ -108,7 +114,7 @@ impl DockHost {
     pub(crate) fn update_empty_space_drop_scene_interaction(
         &mut self,
         payload: &DockDragPayload,
-        position: Point<Pixels>,
+        position: impl Into<DockRenderedPointerPosition>,
         bounds: Bounds<Pixels>,
         is_central: bool,
         window: &Window,

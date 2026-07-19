@@ -172,6 +172,7 @@ mod viewport_drop_route;
 mod viewport_drop_scene;
 mod viewport_focus;
 mod viewport_frame_coordinator;
+mod viewport_host_geometry;
 mod viewport_identity;
 mod viewport_open;
 mod viewport_payload_drag;
@@ -343,6 +344,7 @@ pub(crate) use viewport_focus::{
     DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusCoordinator,
 };
 pub(crate) use viewport_frame_coordinator::*;
+pub(crate) use viewport_host_geometry::*;
 pub(crate) use viewport_identity::*;
 pub(crate) use viewport_open::{DockViewportOpenOutcome, DockViewportOpenStatus};
 pub(crate) use viewport_payload_drag::*;

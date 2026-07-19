@@ -2,6 +2,7 @@ use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
     Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
     Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity,
+    geometry::ResolvedSubtreeTransform,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -23,6 +24,7 @@ struct ViewCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
+    subtree_transform: ResolvedSubtreeTransform,
 }
 
 /// A dynamically-typed handle to a view, which can be downcast to a [Entity] for a specific type.
@@ -151,11 +153,13 @@ impl Element for AnyView {
                 |element_state, window| {
                     let content_mask = window.content_mask();
                     let text_style = window.text_style();
+                    let subtree_transform = window.subtree_transform();
 
                     if let Some(mut element_state) = element_state
                         && element_state.cache_key.bounds == bounds
                         && element_state.cache_key.content_mask == content_mask
                         && element_state.cache_key.text_style == text_style
+                        && element_state.cache_key.subtree_transform == subtree_transform
                         && !window.dirty_views.contains(&self.entity_id())
                         && !window.refreshing
                     {
@@ -191,6 +195,7 @@ impl Element for AnyView {
                                 bounds,
                                 content_mask,
                                 text_style,
+                                subtree_transform,
                             },
                         },
                     )

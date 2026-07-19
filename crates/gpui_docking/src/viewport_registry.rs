@@ -1,5 +1,4 @@
-use crate::DockSpaceId;
-use crate::DockViewportIdentity;
+use crate::{DockSpaceId, DockViewportHostGeometry, DockViewportIdentity};
 use open_gpui::{AnyWindowHandle, App, Bounds, DisplayId, Pixels, Window, WindowBounds, WindowId};
 use std::collections::{BTreeMap, HashMap};
 
@@ -139,8 +138,8 @@ pub(crate) struct DockViewportCoordinateSnapshot {
     pub(crate) current_bounds: Bounds<Pixels>,
     /// Coordinate space backing `current_bounds`.
     pub(crate) coordinate_space: DockViewportCoordinateSpace,
-    /// Current dock host bounds in window-local coordinates.
-    pub(crate) host_bounds: Bounds<Pixels>,
+    /// Current dock host mapping between layout, host-local, and window coordinates.
+    pub(crate) host_geometry: DockViewportHostGeometry,
     /// Route-facts generation that owns these coordinate facts.
     pub(crate) facts_generation: u64,
 }
@@ -298,8 +297,8 @@ pub(crate) struct DockViewportSnapshot {
     pub(crate) window_bounds: Option<WindowBounds>,
     /// Last known current window rectangle with its backend coordinate frame.
     pub(crate) current_bounds: Option<DockViewportWindowBoundsFrame>,
-    /// Last known dock host bounds in window-local coordinates.
-    pub(crate) host_bounds: Option<Bounds<Pixels>>,
+    /// Last known committed dock host geometry.
+    pub(crate) host_geometry: Option<DockViewportHostGeometry>,
     /// Last known platform input mask.
     pub(crate) input_mask: DockViewportInputMask,
     platform_requests: DockViewportPlatformRequests,
@@ -314,7 +313,7 @@ impl DockViewportSnapshot {
             display_id: None,
             window_bounds: None,
             current_bounds: None,
-            host_bounds: None,
+            host_geometry: None,
             input_mask: DockViewportInputMask::Minimized,
             platform_requests: DockViewportPlatformRequests::default(),
             lifecycle: DockViewportLifecycleMachine::default(),
@@ -379,13 +378,13 @@ impl DockViewportSnapshot {
     pub(crate) fn coordinate_snapshot(&self) -> Option<DockViewportCoordinateSnapshot> {
         let window_bounds = self.window_bounds?;
         let current_bounds = self.current_bounds?;
-        let host_bounds = self.host_bounds?;
+        let host_geometry = self.host_geometry?;
         Some(DockViewportCoordinateSnapshot {
             display_id: self.display_id,
             window_bounds,
             current_bounds: current_bounds.bounds(),
             coordinate_space: current_bounds.coordinate_space(),
-            host_bounds,
+            host_geometry,
             facts_generation: self.facts_generation(),
         })
     }
@@ -398,18 +397,18 @@ impl DockViewportSnapshot {
     pub(crate) fn update_route_facts(
         &mut self,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
     ) -> bool {
+        let host_geometry = Some(host_geometry.into());
         let display_id = window_facts.display_id;
         let window_bounds = Some(window_facts.window_bounds);
         let current_bounds = Some(window_facts.current_bounds);
-        let host_bounds = Some(host_bounds);
         let input_mask = window_facts.input_mask;
         if self.lifecycle.is_route_ready()
             && self.display_id == display_id
             && self.window_bounds == window_bounds
             && self.current_bounds == current_bounds
-            && self.host_bounds == host_bounds
+            && self.host_geometry == host_geometry
         {
             let changed = self.input_mask != input_mask || self.platform_requests.resize_requested;
             self.input_mask = input_mask;
@@ -420,7 +419,7 @@ impl DockViewportSnapshot {
         self.display_id = display_id;
         self.window_bounds = window_bounds;
         self.current_bounds = current_bounds;
-        self.host_bounds = host_bounds;
+        self.host_geometry = host_geometry;
         self.input_mask = input_mask;
         self.platform_requests.resize_requested = false;
         self.lifecycle.mark_route_ready();
@@ -452,7 +451,7 @@ impl DockViewportSnapshot {
         window_facts: DockViewportWindowFacts,
     ) -> bool {
         if !self.lifecycle.is_route_ready()
-            || self.host_bounds.is_none()
+            || self.host_geometry.is_none()
             || self.input_mask.is_minimized()
             || window_facts.input_mask.is_minimized()
         {
@@ -540,7 +539,9 @@ impl DockViewportSnapshot {
     }
 
     fn has_missing_route_facts(&self) -> bool {
-        self.window_bounds.is_none() || self.current_bounds.is_none() || self.host_bounds.is_none()
+        self.window_bounds.is_none()
+            || self.current_bounds.is_none()
+            || self.host_geometry.is_none()
     }
 }
 

@@ -8,6 +8,19 @@ pub fn deferred(child: impl IntoElement) -> Deferred {
     Deferred {
         child: Some(child.into_any_element()),
         priority: 0,
+        window_space: false,
+    }
+}
+
+/// Builds a deferred element that deliberately resets inherited geometry to window space.
+///
+/// The caller is responsible for supplying a window-space anchor. Theme and presentation
+/// inheritance are not reset by this boundary.
+pub fn window_portal(child: impl IntoElement) -> Deferred {
+    Deferred {
+        child: Some(child.into_any_element()),
+        priority: 0,
+        window_space: true,
     }
 }
 
@@ -16,6 +29,7 @@ pub fn deferred(child: impl IntoElement) -> Deferred {
 pub struct Deferred {
     child: Option<AnyElement>,
     priority: usize,
+    window_space: bool,
 }
 
 impl Deferred {
@@ -62,7 +76,13 @@ impl Element for Deferred {
     ) {
         let child = self.child.take().unwrap();
         let element_offset = window.element_offset();
-        window.defer_draw(child, element_offset, self.priority, None)
+        if self.window_space {
+            if let Ok(window_offset) = window.try_project_subtree_point(element_offset) {
+                window.defer_draw_in_window_space(child, window_offset, self.priority, None)
+            }
+        } else {
+            window.defer_draw(child, element_offset, self.priority, None)
+        }
     }
 
     fn paint(

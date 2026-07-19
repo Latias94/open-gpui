@@ -88,7 +88,7 @@
 //! [`NodeId`]: accesskit::NodeId
 //! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
-use crate::{App, Bounds, FocusId, Pixels, Window};
+use crate::{App, Bounds, FocusId, Pixels, Window, geometry::SubtreeTransformValidity};
 use accesskit::{Action, NodeId, TreeUpdate};
 use open_gpui_collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -206,9 +206,14 @@ pub(crate) struct A11y {
     active_this_frame: bool,
     activation_generation_this_frame: u64,
     pub(crate) nodes: A11yNodeBuilder,
-    candidate_focus_ids: Vec<(NodeId, FocusId)>,
-    candidate_node_bounds: Vec<(NodeId, Bounds<Pixels>)>,
-    candidate_action_listeners: Vec<(NodeId, Action, A11yActionListener)>,
+    candidate_focus_ids: Vec<(NodeId, FocusId, Option<SubtreeTransformValidity>)>,
+    candidate_node_bounds: Vec<(NodeId, Bounds<Pixels>, Option<SubtreeTransformValidity>)>,
+    candidate_action_listeners: Vec<(
+        NodeId,
+        Action,
+        A11yActionListener,
+        Option<SubtreeTransformValidity>,
+    )>,
     published: Option<PublishedA11yDispatch>,
     next_published_revision: u64,
 }
@@ -280,7 +285,13 @@ impl A11y {
 
         published.focus_ids.clear();
         published.focus_ids.reserve(self.candidate_focus_ids.len());
-        for (id, focus_id) in self.candidate_focus_ids.drain(..) {
+        for (id, focus_id, validity) in self.candidate_focus_ids.drain(..) {
+            if validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+            {
+                continue;
+            }
             if published.action_masks.contains_key(&id) {
                 published.focus_ids.insert(id, focus_id);
             }
@@ -290,7 +301,13 @@ impl A11y {
         published
             .node_bounds
             .reserve(self.candidate_node_bounds.len());
-        for (id, bounds) in self.candidate_node_bounds.drain(..) {
+        for (id, bounds, validity) in self.candidate_node_bounds.drain(..) {
+            if validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+            {
+                continue;
+            }
             if published.action_masks.contains_key(&id) {
                 published.node_bounds.insert(id, bounds);
             }
@@ -300,7 +317,13 @@ impl A11y {
         published
             .action_listeners
             .reserve(self.candidate_action_listeners.len());
-        for (id, action, listener) in self.candidate_action_listeners.drain(..) {
+        for (id, action, listener, validity) in self.candidate_action_listeners.drain(..) {
+            if validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+            {
+                continue;
+            }
             if published
                 .action_masks
                 .get(&id)
@@ -321,11 +344,13 @@ impl A11y {
     }
 
     pub(crate) fn record_focus_id(&mut self, node_id: NodeId, focus_id: FocusId) {
-        self.candidate_focus_ids.push((node_id, focus_id));
+        self.candidate_focus_ids
+            .push((node_id, focus_id, self.nodes.current_transform_validity()));
     }
 
     pub(crate) fn record_node_bounds(&mut self, node_id: NodeId, bounds: Bounds<Pixels>) {
-        self.candidate_node_bounds.push((node_id, bounds));
+        self.candidate_node_bounds
+            .push((node_id, bounds, self.nodes.current_transform_validity()));
     }
 
     pub(crate) fn record_action_listener(
@@ -334,8 +359,12 @@ impl A11y {
         action: Action,
         listener: A11yActionListener,
     ) {
-        self.candidate_action_listeners
-            .push((node_id, action, listener));
+        self.candidate_action_listeners.push((
+            node_id,
+            action,
+            listener,
+            self.nodes.current_transform_validity(),
+        ));
     }
 
     pub(crate) fn accepts_action(
@@ -431,21 +460,21 @@ impl A11y {
     pub(crate) fn has_candidate_focus_id(&self, node_id: NodeId) -> bool {
         self.candidate_focus_ids
             .iter()
-            .any(|(candidate, _)| *candidate == node_id)
+            .any(|(candidate, _, _)| *candidate == node_id)
     }
 
     #[cfg(test)]
     pub(crate) fn has_candidate_node_bounds(&self, node_id: NodeId) -> bool {
         self.candidate_node_bounds
             .iter()
-            .any(|(candidate, _)| *candidate == node_id)
+            .any(|(candidate, _, _)| *candidate == node_id)
     }
 
     #[cfg(test)]
     pub(crate) fn has_candidate_action_listener(&self, node_id: NodeId) -> bool {
         self.candidate_action_listeners
             .iter()
-            .any(|(candidate, _, _)| *candidate == node_id)
+            .any(|(candidate, _, _, _)| *candidate == node_id)
     }
 }
 
@@ -468,15 +497,22 @@ pub(crate) fn requested_generation(state: &AtomicU64) -> u64 {
 pub(crate) struct A11yNodeBuilder {
     ids_stack: SmallVec<[NodeId; 16]>,
     nodes_stack: SmallVec<[accesskit::Node; 16]>,
+    node_validity_stack: SmallVec<[Option<SubtreeTransformValidity>; 16]>,
     /// This is the exact type required by accesskit, so we can't just make it a
     /// `HashMap<NodeId, Node>` to remove the need for `seen_ids`
-    all_nodes: Vec<(NodeId, accesskit::Node)>,
+    all_nodes: Vec<(NodeId, accesskit::Node, Option<SubtreeTransformValidity>)>,
     seen_ids: FxHashSet<NodeId>,
     scope_stack: Rc<RefCell<SmallVec<[AccessibilityTreeScope; 8]>>>,
     hidden_depth: Rc<Cell<usize>>,
-    memberships: Vec<(NodeId, AccessibilityTreeScope)>,
-    modal_restricted: bool,
+    transform_validity_stack: Rc<RefCell<SmallVec<[Option<SubtreeTransformValidity>; 8]>>>,
+    memberships: Vec<(
+        NodeId,
+        AccessibilityTreeScope,
+        Option<SubtreeTransformValidity>,
+    )>,
+    modal_restrictions: Vec<Option<SubtreeTransformValidity>>,
     focus: NodeId,
+    focus_validity: Option<SubtreeTransformValidity>,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
 }
@@ -488,9 +524,11 @@ struct A11yNodeBuilderCheckpoint {
     all_nodes_len: usize,
     scope_depth: usize,
     hidden_depth: usize,
+    transform_validity_depth: usize,
     memberships_len: usize,
-    modal_restricted: bool,
+    modal_restrictions_len: usize,
     focus: NodeId,
+    focus_validity: Option<SubtreeTransformValidity>,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
 }
@@ -503,6 +541,11 @@ pub(crate) struct AccessibilityTreeScopeGuard {
 pub(crate) struct AccessibilityHiddenSubtreeGuard {
     depth: Rc<Cell<usize>>,
     previous_depth: usize,
+}
+
+pub(crate) struct AccessibilityTransformValidityGuard {
+    stack: Rc<RefCell<SmallVec<[Option<SubtreeTransformValidity>; 8]>>>,
+    depth: usize,
 }
 
 impl Drop for AccessibilityTreeScopeGuard {
@@ -528,18 +571,29 @@ impl Drop for AccessibilityHiddenSubtreeGuard {
     }
 }
 
+impl Drop for AccessibilityTransformValidityGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        debug_assert_eq!(stack.len(), self.depth + 1);
+        stack.truncate(self.depth);
+    }
+}
+
 impl A11yNodeBuilder {
     fn new() -> Self {
         Self {
             ids_stack: SmallVec::new(),
             nodes_stack: SmallVec::new(),
+            node_validity_stack: SmallVec::new(),
             all_nodes: Vec::new(),
             seen_ids: FxHashSet::default(),
             scope_stack: Rc::new(RefCell::new(SmallVec::new())),
             hidden_depth: Rc::new(Cell::new(0)),
+            transform_validity_stack: Rc::new(RefCell::new(SmallVec::new())),
             memberships: Vec::new(),
-            modal_restricted: false,
+            modal_restrictions: Vec::new(),
             focus: ROOT_NODE_ID,
+            focus_validity: None,
             #[cfg(debug_assertions)]
             has_set_focus: false,
         }
@@ -556,9 +610,11 @@ impl A11yNodeBuilder {
             all_nodes_len: self.all_nodes.len(),
             scope_depth: self.scope_stack.borrow().len(),
             hidden_depth: self.hidden_depth.get(),
+            transform_validity_depth: self.transform_validity_stack.borrow().len(),
             memberships_len: self.memberships.len(),
-            modal_restricted: self.modal_restricted,
+            modal_restrictions_len: self.modal_restrictions.len(),
             focus: self.focus,
+            focus_validity: self.focus_validity.clone(),
             #[cfg(debug_assertions)]
             has_set_focus: self.has_set_focus,
         }
@@ -578,15 +634,18 @@ impl A11yNodeBuilder {
             "an accessibility transaction consumed a node that predates its checkpoint"
         );
 
-        for (id, _) in &self.memberships[checkpoint.memberships_len..] {
+        for (id, _, _) in &self.memberships[checkpoint.memberships_len..] {
             self.seen_ids.remove(id);
         }
         self.all_nodes.truncate(checkpoint.all_nodes_len);
         self.memberships.truncate(checkpoint.memberships_len);
+        self.modal_restrictions
+            .truncate(checkpoint.modal_restrictions_len);
 
         if stack_prefix_is_intact {
             self.ids_stack.truncate(checkpoint.stack_depth);
             self.nodes_stack.truncate(checkpoint.stack_depth);
+            self.node_validity_stack.truncate(checkpoint.stack_depth);
             if let Some(top) = self.nodes_stack.last_mut() {
                 debug_assert!(top.children().len() >= checkpoint.top_children_len);
                 if top.children().len() > checkpoint.top_children_len {
@@ -606,8 +665,11 @@ impl A11yNodeBuilder {
         );
         scope_stack.truncate(checkpoint.scope_depth);
         self.hidden_depth.set(checkpoint.hidden_depth);
-        self.modal_restricted = checkpoint.modal_restricted;
+        self.transform_validity_stack
+            .borrow_mut()
+            .truncate(checkpoint.transform_validity_depth);
         self.focus = checkpoint.focus;
+        self.focus_validity = checkpoint.focus_validity;
         #[cfg(debug_assertions)]
         {
             self.has_set_focus = checkpoint.has_set_focus;
@@ -645,7 +707,9 @@ impl A11yNodeBuilder {
         }
         self.ids_stack.push(id);
         self.nodes_stack.push(node);
-        self.memberships.push((id, scope));
+        let validity = self.current_transform_validity();
+        self.node_validity_stack.push(validity.clone());
+        self.memberships.push((id, scope, validity));
         true
     }
 
@@ -654,8 +718,12 @@ impl A11yNodeBuilder {
     pub(crate) fn pop(&mut self) {
         debug_assert!(self.ids_stack.len() > 1, "pop would remove the root node");
 
-        if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {
-            self.all_nodes.push((id, node));
+        if let (Some(id), Some(node), Some(validity)) = (
+            self.ids_stack.pop(),
+            self.nodes_stack.pop(),
+            self.node_validity_stack.pop(),
+        ) {
+            self.all_nodes.push((id, node, validity));
         }
     }
 
@@ -664,11 +732,13 @@ impl A11yNodeBuilder {
         self.all_nodes.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
+        self.node_validity_stack.clear();
         self.seen_ids.clear();
         self.scope_stack.borrow_mut().clear();
         self.hidden_depth.set(0);
+        self.transform_validity_stack.borrow_mut().clear();
         self.memberships.clear();
-        self.modal_restricted = false;
+        self.modal_restrictions.clear();
         #[cfg(debug_assertions)]
         {
             self.has_set_focus = false;
@@ -677,7 +747,9 @@ impl A11yNodeBuilder {
 
         self.ids_stack.push(ROOT_NODE_ID);
         self.nodes_stack.push(root_node);
+        self.node_validity_stack.push(None);
         self.focus = ROOT_NODE_ID;
+        self.focus_validity = None;
     }
 
     pub(crate) fn enter_scope(
@@ -690,7 +762,8 @@ impl A11yNodeBuilder {
                 AccessibilityTreeScope::ModalRoot | AccessibilityTreeScope::ModalDescendant
             )
         {
-            self.modal_restricted = true;
+            self.modal_restrictions
+                .push(self.current_transform_validity());
         }
 
         let depth = self.scope_stack.borrow().len();
@@ -708,6 +781,26 @@ impl A11yNodeBuilder {
             depth: self.hidden_depth.clone(),
             previous_depth,
         }
+    }
+
+    pub(crate) fn enter_transform_validity(
+        &mut self,
+        validity: Option<SubtreeTransformValidity>,
+    ) -> AccessibilityTransformValidityGuard {
+        let depth = self.transform_validity_stack.borrow().len();
+        self.transform_validity_stack.borrow_mut().push(validity);
+        AccessibilityTransformValidityGuard {
+            stack: self.transform_validity_stack.clone(),
+            depth,
+        }
+    }
+
+    pub(crate) fn current_transform_validity(&self) -> Option<SubtreeTransformValidity> {
+        self.transform_validity_stack
+            .borrow()
+            .last()
+            .cloned()
+            .flatten()
     }
 
     fn is_hidden_subtree(&self) -> bool {
@@ -740,6 +833,7 @@ impl A11yNodeBuilder {
             self.has_set_focus = true;
         }
         self.focus = id;
+        self.focus_validity = self.current_transform_validity();
     }
 
     fn finalize(&mut self) -> TreeUpdate {
@@ -766,22 +860,57 @@ impl A11yNodeBuilder {
 
         // Pop remaining nodes (should just be the root).
         while !self.ids_stack.is_empty() {
-            if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {
-                self.all_nodes.push((id, node));
+            if let (Some(id), Some(node), Some(validity)) = (
+                self.ids_stack.pop(),
+                self.nodes_stack.pop(),
+                self.node_validity_stack.pop(),
+            ) {
+                self.all_nodes.push((id, node, validity));
             }
         }
 
-        let nodes = std::mem::take(&mut self.all_nodes);
-        let modal_restricted = std::mem::take(&mut self.modal_restricted);
+        let nodes = std::mem::take(&mut self.all_nodes)
+            .into_iter()
+            .filter_map(|(id, node, validity)| {
+                validity
+                    .as_ref()
+                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .then_some((id, node))
+            })
+            .collect();
         let update = TreeUpdate {
             nodes,
             tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
             tree_id: accesskit::TreeId::ROOT,
-            focus: self.focus,
+            focus: if self
+                .focus_validity
+                .as_ref()
+                .is_none_or(SubtreeTransformValidity::is_valid)
+            {
+                self.focus
+            } else {
+                ROOT_NODE_ID
+            },
         };
 
-        let update = Self::filter_published_tree(update, &self.memberships, modal_restricted);
+        let memberships = self
+            .memberships
+            .iter()
+            .filter_map(|(id, scope, validity)| {
+                validity
+                    .as_ref()
+                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .then_some((*id, *scope))
+            })
+            .collect::<Vec<_>>();
+        let modal_restricted = self.modal_restrictions.iter().any(|validity| {
+            validity
+                .as_ref()
+                .is_none_or(SubtreeTransformValidity::is_valid)
+        });
+        let update = Self::filter_published_tree(update, &memberships, modal_restricted);
         self.memberships.clear();
+        self.modal_restrictions.clear();
         Self::repair_tree_update(update)
     }
 
@@ -790,10 +919,6 @@ impl A11yNodeBuilder {
         memberships: &[(NodeId, AccessibilityTreeScope)],
         modal_restricted: bool,
     ) -> TreeUpdate {
-        if !modal_restricted && !update.nodes.iter().any(|(_, node)| node.is_hidden()) {
-            return update;
-        }
-
         let root = update
             .tree
             .as_ref()
@@ -825,6 +950,10 @@ impl A11yNodeBuilder {
                     stack.extend(children.iter().copied());
                 }
             }
+        }
+
+        if !modal_restricted && hidden.is_empty() {
+            return update;
         }
 
         let retained: FxHashSet<NodeId> = update

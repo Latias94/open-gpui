@@ -1,4 +1,5 @@
 use super::*;
+use crate::DockViewportHostGeometry;
 
 impl DockViewportRuntimeHandle {
     #[cfg(test)]
@@ -7,14 +8,14 @@ impl DockViewportRuntimeHandle {
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
     ) -> bool {
         self.runtime.borrow_mut().begin_viewport_host_scene(
             space,
             window_id,
             window_facts,
-            host_bounds,
+            host_geometry,
             host_position,
         )
     }
@@ -37,7 +38,7 @@ impl DockViewportRuntimeHandle {
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
     ) -> Option<DockViewportHostSceneRegistration> {
@@ -45,7 +46,7 @@ impl DockViewportRuntimeHandle {
             space,
             window_id,
             window_facts,
-            host_bounds,
+            host_geometry,
             host_position,
             drop_guide_style,
             Vec::new(),
@@ -57,7 +58,7 @@ impl DockViewportRuntimeHandle {
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
         initial_facts: Vec<DockHostDropSceneFact>,
@@ -68,24 +69,21 @@ impl DockViewportRuntimeHandle {
                 space,
                 window_id,
                 window_facts,
-                host_bounds,
+                host_geometry,
                 host_position,
                 drop_guide_style,
                 initial_facts,
             )
     }
 
-    pub(crate) fn prepare_rendered_viewport_host_scene_frame(
+    pub(crate) fn commit_rendered_viewport_host_scene_snapshot(
         &self,
-        space: DockSpaceId,
+        snapshot: DockViewportHostSceneSnapshot,
         window: &mut Window,
         cx: &mut App,
-        host_bounds: Bounds<Pixels>,
-        host_position: Point<Pixels>,
-        drop_guide_style: crate::DockDropGuideStyle,
         passthrough_pointer_input: bool,
-        initial_facts: Vec<DockHostDropSceneFact>,
     ) -> DockViewportRenderedHostScenePreparation {
+        let space = snapshot.space.clone();
         let window_id = window.window_handle().window_id();
         let backend_focus_changed = self.reconcile_backend_window_focus(cx);
         let viewport_frame_changed = self.reconcile_viewport_frame_except_window(window_id, cx);
@@ -98,15 +96,16 @@ impl DockViewportRuntimeHandle {
         let registration_update = self
             .register_rendered_host_viewport_with_cleanup(space.clone(), window.window_handle());
         let registration_changed = refresh_runtime_update(registration_update, cx);
-        let registration = self.begin_viewport_host_scene_frame_with_facts(
-            space.clone(),
-            window_id,
-            DockViewportWindowFacts::from_window(window, cx),
-            host_bounds,
-            host_position,
-            drop_guide_style,
-            initial_facts,
-        );
+        let (registration, route_preview_update) = {
+            let mut runtime = self.runtime.borrow_mut();
+            let registration = runtime.commit_viewport_host_scene_snapshot(
+                snapshot,
+                DockViewportWindowFacts::from_window(window, cx),
+            );
+            let route_preview_update = runtime.clear_preview_for_unready_window_route(window_id);
+            (registration, route_preview_update)
+        };
+        let route_preview_changed = refresh_runtime_update(route_preview_update, cx);
         let (host_scene_changed, frame) = registration
             .map(|registration| (registration.changed, Some(registration.frame)))
             .unwrap_or((false, None));
@@ -115,6 +114,7 @@ impl DockViewportRuntimeHandle {
                 || viewport_frame_changed
                 || pointer_sync_changed
                 || registration_changed
+                || route_preview_changed
                 || host_scene_changed,
             frame,
         }
@@ -128,6 +128,16 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .register_rendered_host_viewport_with_cleanup(space, window)
+    }
+
+    pub(crate) fn discard_rendered_viewport_host_scene_frame(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .discard_viewport_host_scene_frame(space, window_id)
     }
 
     pub(crate) fn reconcile_viewport_frame<C: open_gpui::AppContext>(&self, cx: &mut C) -> bool {
@@ -178,6 +188,17 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow()
             .rendered_leaf_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn rendered_leaf_displayed_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.runtime
+            .borrow()
+            .rendered_leaf_displayed_bounds_for_tabs(space, window_id, tabs)
     }
 
     pub(crate) fn rendered_tab_bar_bounds_for_tabs(

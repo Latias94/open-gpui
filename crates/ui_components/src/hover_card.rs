@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, Entity, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Task, Window, div,
+    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Task, Window, div,
 };
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent,
@@ -926,7 +926,7 @@ impl RenderOnce for HoverCard {
                                 .when(opens_manually, |this| {
                                     let window_overlay_runtime = window_overlay_runtime.clone();
                                     let runtime = runtime.clone();
-                                    this.on_click(move |_event: &ClickEvent, window, cx| {
+                                    this.on_click(move |_event, window, cx| {
                                         cx.stop_propagation();
                                         let next_open = !runtime.read(cx).open;
                                         request_hover_card_open_change(

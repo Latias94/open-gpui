@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, Entity, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
+    App, ElementId, Entity, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
@@ -673,24 +673,20 @@ impl RenderOnce for Combobox {
                                     let input_controller = input_controller.clone();
                                     let window_overlay_runtime = window_overlay_runtime.clone();
                                     let overlay_binding = overlay_binding.clone();
-                                    this.cursor_pointer().on_click(
-                                        move |_event: &ClickEvent, window, cx| {
-                                            cx.stop_propagation();
-                                            window.prevent_default();
-                                            input_controller.focus_handle(cx).focus(window, cx);
-                                            window_overlay_runtime
-                                                .request_open_change(
-                                                    &overlay_binding,
-                                                    !open,
-                                                    DismissReason::Trigger,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .expect(
-                                                    "Combobox toggle should own its registration",
-                                                );
-                                        },
-                                    )
+                                    this.cursor_pointer().on_click(move |_event, window, cx| {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        input_controller.focus_handle(cx).focus(window, cx);
+                                        window_overlay_runtime
+                                            .request_open_change(
+                                                &overlay_binding,
+                                                !open,
+                                                DismissReason::Trigger,
+                                                window,
+                                                cx,
+                                            )
+                                            .expect("Combobox toggle should own its registration");
+                                    })
                                 })
                                 .child(if open { "^" } else { "v" }),
                         ),

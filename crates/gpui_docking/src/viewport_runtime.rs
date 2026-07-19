@@ -14,23 +14,27 @@ use crate::{
     DockViewportAdapter, DockViewportBackendFocusState, DockViewportCloseCoordinator,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCommittedTearOffMove,
     DockViewportDropActionOutcome, DockViewportDropRouteOutcome, DockViewportFocusCoordinator,
-    DockViewportFocusRequest, DockViewportFrameCoordinator, DockViewportIdentity,
-    DockViewportPayloadDragBegin, DockViewportPayloadDragState, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
-    DockViewportPlatformFocusRestorePolicy, DockViewportPlatformSyncRecord,
-    DockViewportRegisterOutcome, DockViewportRestoreReadiness, DockViewportRoutedDropPreviewState,
-    DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportRuntimeUpdate,
-    DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
-    DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffPending, DockViewportTearOffPlacement, DockViewportTearOffPlacementPolicy,
-    DockViewportTearOffRequest, DockViewportTearOffSourceStatus, DockViewportWindowEffects,
-    DockViewportWindowFacts, DockViewportWindowOwnership, DockViewportWindowRetirement,
+    DockViewportFocusRequest, DockViewportFrameCoordinator, DockViewportHostGeometry,
+    DockViewportIdentity, DockViewportPayloadDragBegin, DockViewportPayloadDragState,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
+    DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportRestoreReadiness,
+    DockViewportRoutedDropPreviewState, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
+    DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportTearOffCompleted, DockViewportTearOffKey, DockViewportTearOffMachine,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffPlacement,
+    DockViewportTearOffPlacementPolicy, DockViewportTearOffRequest,
+    DockViewportTearOffSourceStatus, DockViewportWindowEffects, DockViewportWindowFacts,
+    DockViewportWindowOwnership, DockViewportWindowRetirement,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     extend_unique_windows,
     interaction::DockRuntimeDragSession,
-    viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
+    viewport_drop_scene::{
+        DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
+        DockViewportHostSceneSnapshot,
+    },
     viewport_registry::DockViewportPlatformRequests,
     viewport_window_lifecycle::{
         DockViewportCloseRecoveryActivation, DockViewportClosedWindowRefresh,
@@ -553,10 +557,10 @@ impl DockViewportRuntime {
         &mut self,
         space: &DockSpaceId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
     ) -> bool {
         self.adapter
-            .update_snapshot(space, window_facts, host_bounds)
+            .update_snapshot(space, window_facts, host_geometry)
     }
 
     pub(crate) fn platform_requests_for_space(
@@ -652,7 +656,7 @@ impl DockViewportRuntime {
         update
     }
 
-    fn clear_preview_for_unready_window_route(
+    pub(crate) fn clear_preview_for_unready_window_route(
         &mut self,
         window_id: WindowId,
     ) -> DockViewportRuntimeUpdate {
@@ -669,14 +673,14 @@ impl DockViewportRuntime {
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
     ) -> bool {
         self.begin_viewport_host_scene_frame(
             space,
             window_id,
             window_facts,
-            host_bounds,
+            host_geometry,
             host_position,
             crate::DockDropGuideStyle::default(),
         )
@@ -689,7 +693,7 @@ impl DockViewportRuntime {
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
     ) -> Option<DockViewportHostSceneRegistration> {
@@ -697,7 +701,7 @@ impl DockViewportRuntime {
             space,
             window_id,
             window_facts,
-            host_bounds,
+            host_geometry,
             host_position,
             drop_guide_style,
             Vec::new(),
@@ -709,12 +713,31 @@ impl DockViewportRuntime {
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
-        host_bounds: Bounds<Pixels>,
+        host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
         initial_facts: Vec<DockHostDropSceneFact>,
     ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
+        let snapshot = DockViewportHostSceneSnapshot::new_with_facts(
+            space,
+            window_id,
+            window_facts.current_bounds,
+            host_geometry,
+            host_position,
+            drop_guide_style,
+            initial_facts,
+        );
+        self.commit_viewport_host_scene_snapshot(snapshot, window_facts)
+    }
+
+    pub(crate) fn commit_viewport_host_scene_snapshot(
+        &mut self,
+        snapshot: DockViewportHostSceneSnapshot,
+        window_facts: DockViewportWindowFacts,
+    ) -> Option<DockViewportHostSceneRegistration> {
+        let space = snapshot.space.clone();
+        let window_id = snapshot.window_id;
         let window = self.adapter.window_for_space(&space)?;
         let current_identity = DockViewportIdentity::new(space.clone(), window.window_id());
         if !current_identity.matches(&space, window_id) {
@@ -725,18 +748,22 @@ impl DockViewportRuntime {
         } else {
             false
         };
-        let changed = self.update_viewport_snapshot(&space, window_facts, host_bounds);
-        let mut registration = self.frame_coordinator.register_host_scene_with_facts(
-            space,
-            window_id,
-            window_facts,
-            host_bounds,
-            host_position,
-            drop_guide_style,
-            initial_facts,
-        );
+        let host_geometry = snapshot.host_geometry;
+        let changed = self.update_viewport_snapshot(&space, window_facts, host_geometry);
+        let mut registration = self
+            .frame_coordinator
+            .register_host_scene_snapshot(snapshot);
         registration.changed |= changed || close_cancelled;
         Some(registration)
+    }
+
+    pub(crate) fn discard_viewport_host_scene_frame(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        self.frame_coordinator
+            .discard_frame_for_viewport(space, window_id)
     }
 
     #[cfg(test)]
@@ -765,6 +792,16 @@ impl DockViewportRuntime {
     ) -> Option<Bounds<Pixels>> {
         self.frame_coordinator
             .leaf_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn rendered_leaf_displayed_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.frame_coordinator
+            .leaf_displayed_bounds_for_tabs(space, window_id, tabs)
     }
 
     pub(crate) fn rendered_tab_bar_bounds_for_tabs(

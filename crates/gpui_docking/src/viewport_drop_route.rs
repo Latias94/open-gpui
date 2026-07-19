@@ -85,8 +85,8 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockPolicy, DockPolicyError, DockViewportRouteSelectionSource, DockViewportTargetHit,
-        DockViewportWindowFacts,
+        DockPolicy, DockPolicyError, DockViewportHostGeometry, DockViewportRouteSelectionSource,
+        DockViewportTargetHit, DockViewportWindowFacts,
         interaction::DockPayloadDropReleaseOrigin,
         viewport_drop_scene::DockViewportHostSceneFrame,
         viewport_registry::{DockViewportInputMask, DockViewportWindowBoundsFrame},
@@ -155,6 +155,58 @@ mod tests {
                 facts_generation: 1,
                 source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
             }
+        );
+    }
+
+    #[test]
+    fn trusted_hovered_window_rejects_host_points_clipped_by_the_committed_content_mask() {
+        let main = space("main");
+        let window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, main.clone(), window);
+        adapter.update_snapshot(
+            &main,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            DockViewportHostGeometry::identity_with_content_mask_for_test(
+                bounds(0.0, 0.0, 320.0, 240.0),
+                bounds(0.0, 0.0, 100.0, 240.0),
+            ),
+        );
+
+        let inside = adapter.resolve_payload_drop_route_with_context(
+            main.clone(),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(150.0), px(120.0)),
+            None,
+            &DockPolicy::default(),
+            DockViewportTargetContext::new().with_trusted_hovered_window(window),
+        );
+        assert_eq!(
+            inside,
+            DockViewportDropRoute::Local {
+                host_position: point(px(50.0), px(20.0)),
+                window_id: window.window_id(),
+                facts_generation: 1,
+                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            }
+        );
+
+        let clipped = adapter.resolve_payload_drop_route_with_context(
+            main,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(250.0), px(120.0)),
+            None,
+            &DockPolicy::default(),
+            DockViewportTargetContext::new().with_trusted_hovered_window(window),
+        );
+        assert_eq!(
+            clipped,
+            DockViewportDropRoute::Unavailable,
+            "a platform-selected window must not route through the clipped part of its dock host"
         );
     }
 

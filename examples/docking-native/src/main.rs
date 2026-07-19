@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use open_gpui::{
     App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Pixels, Render, Styled, Window, WindowBounds, WindowOptions, div, point, prelude::*, px, rgb,
-    size,
+    Pixels, Render, Styled, TargetedEvent, Window, WindowBounds, WindowOptions, div, point,
+    prelude::*, px, rgb, size,
 };
 use open_gpui_devtools::{
     DevtoolsArtifact, DevtoolsArtifactMetadata, DevtoolsArtifactRecord,
@@ -604,7 +604,7 @@ impl Render for RuntimeStatusPanel {
 
 fn control_button(
     label: &str,
-    listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    listener: impl Fn(&TargetedEvent<ClickEvent>, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     control_button_with_id(format!("runtime-control:{label}"), label, listener)
 }
@@ -612,7 +612,7 @@ fn control_button(
 fn control_button_with_id(
     id: impl Into<String>,
     label: &str,
-    listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    listener: impl Fn(&TargetedEvent<ClickEvent>, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let id = id.into();
     let debug_id = id.clone();

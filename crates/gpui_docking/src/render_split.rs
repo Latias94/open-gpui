@@ -3,7 +3,7 @@ use crate::{
     accessibility_scene::{DockAccessibilityScene, gpui_accessible_action_from_ui},
     debug::DockDebugRegion,
     host_render_session::DockHostRenderSession,
-    render::DockViewportHostSceneFrameSlot,
+    render::DockViewportHostSceneCandidateSlot,
     split_geometry::{dock_split_handle_center_shares, resolve_dock_split_shares},
 };
 use open_gpui::{
@@ -40,7 +40,7 @@ impl DockHost {
         &mut self,
         input: DockRenderSplitInput,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {

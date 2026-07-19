@@ -32,7 +32,10 @@ pub use motion::{MotionDuration, MotionEasing, MotionPreference};
 pub use policy::{
     MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyIssue, MotionPolicyReport,
 };
-pub use projection::{MotionProjection, MotionProjectionClip};
+pub use projection::{
+    MotionProjection, MotionProjectionClip, MotionProjectionError, MotionProjectionScale,
+    MotionProjectionTransformSample,
+};
 pub use runtime::{
     MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot, lerp_rect,
     motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,

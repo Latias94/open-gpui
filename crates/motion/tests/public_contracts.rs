@@ -2,7 +2,7 @@ use open_gpui_motion::{
     MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameDriver,
     MotionFrameReason, MotionFrameResetReason, MotionIntent, MotionPolicyContext, MotionPreference,
     MotionProgressSequence, MotionProgressSequenceStepState, MotionProjection,
-    MotionProjectionClip, MotionRunState, MotionTransition,
+    MotionProjectionClip, MotionProjectionError, MotionRunState, MotionTransition,
     advanced::{
         MotionExecutionPlan, MotionModel, MotionPolicyInput, MotionProgressExecution,
         MotionScalarController, MotionSpec,
@@ -54,12 +54,117 @@ fn reduced_projection_clip_publishes_final_semantic_bounds_immediately() {
         MotionProjection::between(source, target),
         0.0,
         MotionPreference::Reduced,
-    );
+    )
+    .unwrap();
 
     assert_eq!(clip.content_bounds(), target);
     assert_eq!(clip.visible_bounds(), target);
     assert_eq!(clip.occlusion_bounds(), target);
     assert_eq!(clip.progress(), 1.0);
+}
+
+#[test]
+fn transform_projection_sample_is_public_fallible_and_renderer_neutral() {
+    let source = motion_rect(
+        motion_point(motion_px(10.0), motion_px(20.0)),
+        motion_size(motion_px(100.0), motion_px(50.0)),
+    );
+    let target = motion_rect(
+        motion_point(motion_px(30.0), motion_px(60.0)),
+        motion_size(motion_px(200.0), motion_px(100.0)),
+    );
+
+    let sample = MotionProjection::between(source, target)
+        .try_transform_sample(0.0)
+        .unwrap();
+    assert_eq!(sample.target_bounds(), target);
+    assert_eq!(
+        sample.translation(),
+        motion_point(motion_px(-20.0), motion_px(-40.0))
+    );
+    assert_eq!(sample.scale().x(), 0.5);
+    assert_eq!(sample.scale().y(), 0.5);
+
+    let invalid = MotionProjection::between(
+        motion_rect(
+            motion_point(motion_px(0.0), motion_px(0.0)),
+            motion_size(motion_px(0.0), motion_px(50.0)),
+        ),
+        target,
+    );
+    assert_eq!(
+        invalid.try_transform_sample(0.0),
+        Err(MotionProjectionError::NonPositiveExtent)
+    );
+}
+
+#[test]
+fn elapsed_progress_drives_projection_sample_and_reduced_motion_finishes_immediately() {
+    let transition = MotionTransition::duration(
+        MotionIntent::CommittedLayout,
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(100)),
+        MotionEasing::Linear,
+    );
+    let progress = transition.progress_run(Duration::ZERO);
+    let projection = MotionProjection::between(
+        motion_rect(
+            motion_point(motion_px(10.0), motion_px(20.0)),
+            motion_size(motion_px(100.0), motion_px(50.0)),
+        ),
+        motion_rect(
+            motion_point(motion_px(30.0), motion_px(60.0)),
+            motion_size(motion_px(200.0), motion_px(100.0)),
+        ),
+    );
+
+    let midpoint = progress.sample_elapsed(Duration::from_millis(50));
+    let sample = projection
+        .try_transform_sample(midpoint.progress())
+        .unwrap();
+    assert_eq!(sample.progress(), 0.5);
+    assert_eq!(
+        sample.translation(),
+        motion_point(motion_px(-10.0), motion_px(-20.0))
+    );
+    assert_eq!(sample.scale().x(), 0.75);
+    assert_eq!(sample.scale().y(), 0.75);
+
+    let reduced = projection
+        .try_transform_sample_with_preference(0.0, MotionPreference::Reduced)
+        .unwrap();
+    assert_eq!(reduced.progress(), 1.0);
+    assert_eq!(
+        reduced.translation(),
+        motion_point(motion_px(0.0), motion_px(0.0))
+    );
+    assert_eq!(reduced.scale().x(), 1.0);
+    assert_eq!(reduced.scale().y(), 1.0);
+}
+
+#[test]
+fn large_valid_projection_reaches_exact_final_and_reduced_identity() {
+    let projection = MotionProjection::between(
+        motion_rect(
+            motion_point(motion_px(0.0), motion_px(0.0)),
+            motion_size(motion_px(1.0e20), motion_px(1.0e20)),
+        ),
+        motion_rect(
+            motion_point(motion_px(0.0), motion_px(0.0)),
+            motion_size(motion_px(1.0), motion_px(1.0)),
+        ),
+    );
+
+    let final_sample = projection.try_transform_sample(1.0).unwrap();
+    assert_eq!(final_sample.scale().x(), 1.0);
+    assert_eq!(final_sample.scale().y(), 1.0);
+
+    let reduced_sample = projection
+        .try_transform_sample_with_preference(0.0, MotionPreference::Reduced)
+        .unwrap();
+    assert_eq!(reduced_sample.progress(), 1.0);
+    assert_eq!(reduced_sample.scale().x(), 1.0);
+    assert_eq!(reduced_sample.scale().y(), 1.0);
 }
 
 #[test]

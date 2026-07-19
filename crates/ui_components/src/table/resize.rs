@@ -86,43 +86,49 @@ pub(super) fn render_table_resize_handle(
             window.prevent_default();
             cx.stop_propagation();
         })
-        .on_drag(
-            drag_for_drag,
-            move |drag, cursor_offset, bounds, window, cx| {
-                if drag.table_id != drag_table_id {
-                    return cx.new(|_| Empty);
-                }
+        .on_drag(drag_for_drag, move |drag, geometry, window, cx| {
+            if drag.table_id != drag_table_id {
+                return cx.new(|_| Empty);
+            }
 
-                let start_x = ui_px_from_gpui(bounds.origin.x + cursor_offset.x);
-                drag_runtime.update(cx, |runtime, _| {
-                    runtime.column_resize = TableColumnResizeState::begin(
-                        drag.column_id.clone(),
-                        start_x,
-                        drag.start_width,
-                        drag.column_widths_start.clone(),
-                    );
-                });
-                window.prevent_default();
-                cx.stop_propagation();
-                cx.new(|_| Empty)
-            },
-        )
+            let Ok(start_position) = geometry.target_layout_position() else {
+                return cx.new(|_| Empty);
+            };
+            let start_x = ui_px_from_gpui(start_position.x);
+            drag_runtime.update(cx, |runtime, _| {
+                runtime.column_resize = TableColumnResizeState::begin(
+                    drag.column_id.clone(),
+                    start_x,
+                    drag.start_width,
+                    drag.column_widths_start.clone(),
+                );
+            });
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.new(|_| Empty)
+        })
         .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+            let Ok(position) = event.target_layout_position() else {
+                return;
+            };
             finish_table_column_resize(
                 &mouse_up_runtime,
                 &mouse_up_config,
                 &drag_for_mouse_up,
-                ui_px_from_gpui(event.position.x),
+                ui_px_from_gpui(position.x),
                 window,
                 cx,
             );
         })
         .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
+            let Ok(position) = event.target_layout_position() else {
+                return;
+            };
             finish_table_column_resize(
                 &mouse_up_out_runtime,
                 &mouse_up_out_config,
                 &drag_for_mouse_up_out,
-                ui_px_from_gpui(event.position.x),
+                ui_px_from_gpui(position.x),
                 window,
                 cx,
             );
@@ -192,7 +198,8 @@ pub(super) fn render_table_column_order_drop_zone(
 
             style.bg(rgba(0x1f7a662e))
         })
-        .on_drop(move |drag: &TableColumnOrderDrag, window, cx| {
+        .on_drop(move |event, window, cx| {
+            let drag: &TableColumnOrderDrag = event.value();
             if drag.table_id != table_for_drop
                 || drag.region != target_region
                 || drag.column_id == target_for_drop
@@ -224,12 +231,15 @@ pub(super) fn handle_table_column_resize_drag(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let drag = event.drag(cx).clone();
+    let drag = event.drag().clone();
     if drag.table_id != config.table_id {
         return;
     }
 
-    let client_x = ui_px_from_gpui(event.event.position.x);
+    let Ok(position) = event.target_layout_position() else {
+        return;
+    };
+    let client_x = ui_px_from_gpui(position.x);
     let mut committed_change = None;
     runtime.update(cx, |runtime, _| {
         if runtime.column_resize.active_column().is_none() {

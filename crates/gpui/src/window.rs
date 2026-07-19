@@ -9,20 +9,24 @@ use crate::{
     Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic, AvailableSpace,
     Background, BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode,
     CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree,
-    DisplayId, Edges, Entity, EntityId, EventEmitter, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PointerCancelEvent, PointerCancelReason, PolychromeSprite, Priority, PromptButton, PromptLevel,
-    Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay,
-    ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels,
-    Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet,
-    Subscription, SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task,
-    TextRenderingMode, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler,
-    px, rems, size, transparent_black,
+    DisplayId, Edges, ElementGeometry, Entity, EntityId, EventEmitter, FontId, Global,
+    GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PointerCancelEvent, PointerCancelReason, PolychromeSprite, Primitive,
+    PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SubtreeTransform,
+    SubtreeTransformError, SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem,
+    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    point,
+    prelude::*,
+    profiler, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -69,7 +73,8 @@ mod prompts;
 use self::a11y::A11y;
 pub use self::a11y::AccessibilityTreeScope;
 pub(crate) use self::frame_journal::{
-    DeferredDraw, Frame, PaintIndex, PrepaintStateIndex, TooltipRequest,
+    DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintStateIndex,
+    TooltipRequest,
 };
 use self::frame_pump::{FrameThrottleFacts, PresentFacts, frame_should_wait};
 pub(crate) use self::invalidator::WindowInvalidator;
@@ -528,6 +533,7 @@ pub(crate) type AnyPointerCancelListener =
 pub(crate) struct CursorStyleRequest {
     pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
+    validity: Option<SubtreeTransformValidity>,
 }
 
 #[derive(Default, Eq, PartialEq)]
@@ -552,6 +558,32 @@ pub enum WindowControlArea {
 /// An identifier for a [Hitbox] which also includes [HitboxBehavior].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
+
+static NEXT_PREPAINT_PUBLICATION_ID: AtomicU64 = AtomicU64::new(1);
+
+/// A stable identity for one cross-frame publication produced during prepaint.
+///
+/// Reuse the same ID for one logical publication on every frame. GPUI commits a valid current
+/// frame, discards an invalid one, and also invokes the previous frame's discard callback when the
+/// publication is absent from the next frame. The absence rule retracts state when a subtree is
+/// removed, skipped by an invalid ancestor transform, or rolled back by [`Window::transact`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct PrepaintPublicationId(u64);
+
+impl PrepaintPublicationId {
+    /// Allocates a process-unique publication identity.
+    pub fn new() -> Self {
+        let id = NEXT_PREPAINT_PUBLICATION_ID.fetch_add(1, SeqCst);
+        assert_ne!(id, u64::MAX, "prepaint publication ID space exhausted");
+        Self(id)
+    }
+}
+
+impl Default for PrepaintPublicationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(any(test, feature = "test-support"))]
 impl HitboxId {
@@ -620,20 +652,109 @@ impl HitboxId {
 
 /// A rectangular region that potentially blocks hitboxes inserted prior.
 /// See [Window::insert_hitbox] for more details.
-#[derive(Clone, Debug, Deref)]
+#[derive(Clone, Debug)]
 pub struct Hitbox {
     /// A unique identifier for the hitbox.
     pub id: HitboxId,
-    /// The bounds of the hitbox.
-    #[deref]
-    pub bounds: Bounds<Pixels>,
-    /// The content mask when the hitbox was inserted.
-    pub content_mask: ContentMask<Pixels>,
-    /// Flags that specify hitbox behavior.
-    pub behavior: HitboxBehavior,
+    geometry: ElementGeometry,
+    validity: Option<SubtreeTransformValidity>,
+    content_mask: ContentMask<Pixels>,
+    behavior: HitboxBehavior,
 }
 
 impl Hitbox {
+    /// Returns the untransformed post-layout bounds in window layout coordinates.
+    pub fn layout_bounds(&self) -> Bounds<Pixels> {
+        self.geometry.layout_bounds()
+    }
+
+    /// Returns the axis-aligned bounds displayed in window coordinates.
+    pub fn displayed_bounds(&self) -> Bounds<Pixels> {
+        self.geometry.displayed_bounds()
+    }
+
+    /// Returns this hitbox's immutable layout and displayed geometry snapshot.
+    pub fn geometry(&self) -> ElementGeometry {
+        self.geometry
+    }
+
+    /// Returns the window-space content mask captured with this hitbox.
+    pub fn displayed_content_mask(&self) -> ContentMask<Pixels> {
+        self.content_mask
+    }
+
+    /// Returns how this hitbox participates in occlusion routing.
+    pub fn behavior(&self) -> HitboxBehavior {
+        self.behavior
+    }
+
+    /// Returns whether this geometry still belongs to a transform scope that survived the frame.
+    pub fn is_active(&self) -> bool {
+        self.validity
+            .as_ref()
+            .is_none_or(SubtreeTransformValidity::is_valid)
+    }
+
+    fn retag_validity(&mut self, validity: Option<SubtreeTransformValidity>) {
+        self.validity = SubtreeTransformValidity::replayed_under(self.validity.as_ref(), validity);
+    }
+
+    /// Projects a point relative to this hitbox into displayed window coordinates.
+    pub fn local_to_window_point(
+        &self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.geometry.local_to_window_point(point)
+    }
+
+    /// Inverse-projects a displayed window point relative to this hitbox.
+    pub fn window_to_local_point(
+        &self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.geometry.window_to_local_point(point)
+    }
+
+    /// Projects an absolute layout point into displayed window coordinates.
+    pub fn layout_to_window_point(
+        &self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.geometry.layout_to_window_point(point)
+    }
+
+    /// Inverse-projects a displayed window point into absolute layout coordinates.
+    pub fn window_to_layout_point(
+        &self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.geometry.window_to_layout_point(point)
+    }
+
+    /// Projects a vector from layout coordinates into displayed window coordinates.
+    pub fn local_to_window_vector(
+        &self,
+        vector: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.geometry.local_to_window_vector(vector)
+    }
+
+    /// Inverse-projects a displayed window vector into layout coordinates.
+    pub fn window_to_local_vector(
+        &self,
+        vector: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.geometry.window_to_local_vector(vector)
+    }
+
+    /// Returns whether a displayed window point lies inside this hitbox and its content mask.
+    pub fn contains_window_point(&self, point: Point<Pixels>) -> bool {
+        self.geometry
+            .displayed_bounds()
+            .intersect(&self.content_mask.bounds)
+            .contains(&point)
+    }
+
     /// Checks if the hitbox is physically hovered. Returns `false` during keyboard input modality
     /// so that keyboard navigation suppresses hover highlights. Use this for visual hover, cursors,
     /// tooltips, and drag-over state; mouse-button handlers should use
@@ -665,6 +786,122 @@ impl Hitbox {
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
     pub fn should_handle_scroll(&self, window: &Window) -> bool {
         self.id.should_handle_scroll(window)
+    }
+}
+
+/// A window-space input event paired with the hitbox geometry of its current target.
+///
+/// Use the explicit projection helpers for target-local geometry; the raw event remains in window
+/// coordinates and is available only through [`Self::window_event`].
+pub struct TargetedEvent<E> {
+    event: E,
+    hitbox: Hitbox,
+}
+
+impl<E: Clone> TargetedEvent<E> {
+    pub(crate) fn new(event: &E, hitbox: &Hitbox) -> Self {
+        Self {
+            event: event.clone(),
+            hitbox: hitbox.clone(),
+        }
+    }
+}
+
+impl<E> TargetedEvent<E> {
+    /// Returns the unchanged window-space platform event.
+    pub fn window_event(&self) -> &E {
+        &self.event
+    }
+
+    /// Returns the current committed target hitbox.
+    pub fn hitbox(&self) -> &Hitbox {
+        &self.hitbox
+    }
+
+    /// Returns target-local bounds with a zero origin and the untransformed layout size.
+    pub fn target_local_bounds(&self) -> Bounds<Pixels> {
+        Bounds::new(Point::default(), self.hitbox.layout_bounds().size)
+    }
+
+    /// Inverse-projects a window-space point relative to the target's layout origin.
+    pub fn target_local_point(
+        &self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.hitbox.window_to_local_point(point)
+    }
+
+    /// Inverse-projects a window-space point into absolute layout coordinates.
+    pub fn target_layout_point(
+        &self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.hitbox.window_to_layout_point(point)
+    }
+
+    /// Inverse-projects a window-space vector into target-local layout units.
+    pub fn target_local_vector(
+        &self,
+        vector: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.hitbox.window_to_local_vector(vector)
+    }
+}
+
+macro_rules! impl_targeted_event_position {
+    ($($event:ty),+ $(,)?) => {
+        $(
+            impl TargetedEvent<$event> {
+                /// Returns the pointer position relative to the target's layout origin.
+                pub fn target_local_position(
+                    &self,
+                ) -> Result<Point<Pixels>, SubtreeTransformError> {
+                    self.target_local_point(self.event.position)
+                }
+
+                /// Returns the pointer position in absolute target layout coordinates.
+                pub fn target_layout_position(
+                    &self,
+                ) -> Result<Point<Pixels>, SubtreeTransformError> {
+                    self.target_layout_point(self.event.position)
+                }
+            }
+        )+
+    };
+}
+
+impl_targeted_event_position!(
+    crate::MouseDownEvent,
+    crate::MouseUpEvent,
+    crate::MouseMoveEvent,
+    crate::MousePressureEvent,
+    crate::ScrollWheelEvent,
+    crate::PinchEvent,
+);
+
+impl TargetedEvent<crate::ClickEvent> {
+    /// Returns the click position relative to the target's layout origin.
+    pub fn target_local_position(&self) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.target_local_point(self.event.position())
+    }
+
+    /// Returns the click position in absolute target layout coordinates.
+    pub fn target_layout_position(&self) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.target_layout_point(self.event.position())
+    }
+}
+
+impl TargetedEvent<crate::ScrollWheelEvent> {
+    /// Returns the scroll delta in target-local layout units.
+    ///
+    /// Pixel deltas are inverse-projected. Line deltas remain semantic line counts.
+    pub fn target_local_delta(&self) -> Result<crate::ScrollDelta, SubtreeTransformError> {
+        match self.event.delta {
+            crate::ScrollDelta::Pixels(delta) => self
+                .target_local_vector(delta)
+                .map(crate::ScrollDelta::Pixels),
+            crate::ScrollDelta::Lines(delta) => Ok(crate::ScrollDelta::Lines(delta)),
+        }
     }
 }
 
@@ -739,6 +976,10 @@ impl TooltipId {
             .as_ref()
             .is_some_and(|tooltip_bounds| {
                 tooltip_bounds.id == *self
+                    && tooltip_bounds
+                        .validity
+                        .as_ref()
+                        .is_none_or(SubtreeTransformValidity::is_valid)
                     && tooltip_bounds.bounds.contains(&window.mouse_position())
             })
     }
@@ -747,6 +988,24 @@ impl TooltipId {
 pub(crate) struct TooltipBounds {
     id: TooltipId,
     bounds: Bounds<Pixels>,
+    validity: Option<SubtreeTransformValidity>,
+}
+
+struct PreparedTooltip {
+    element: AnyElement,
+    validity: Option<SubtreeTransformValidity>,
+}
+
+#[derive(Clone)]
+pub(crate) struct AutoscrollIntent {
+    bounds: Bounds<Pixels>,
+    validity: Option<SubtreeTransformValidity>,
+}
+
+impl AutoscrollIntent {
+    pub(crate) fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -764,6 +1023,14 @@ pub struct ImagePaintDiagnostic {
     pub bounds: Bounds<ScaledPixels>,
     pub tile: crate::AtlasTile,
     pub atlas_access: AtlasAccessDiagnostic,
+}
+
+/// A frame-local fact describing why a transformed subtree was reduced to layout-only output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[expect(missing_docs)]
+pub struct SubtreeTransformDiagnostic {
+    pub frame_generation: u64,
+    pub error: SubtreeTransformError,
 }
 
 /// Metadata describing a framework-rendered frame capture.
@@ -802,6 +1069,33 @@ impl WindowFrameCapture {
     }
 }
 
+#[derive(Clone)]
+struct SubtreeTransformScope {
+    transform: ResolvedSubtreeTransform,
+    validity: Option<SubtreeTransformValidity>,
+}
+
+#[derive(Clone, Copy)]
+enum PrimitiveRasterSnap {
+    NearestEdges,
+    CoverEdges,
+}
+
+struct SubtreeTransformScopeGuard {
+    stack: Rc<RefCell<SmallVec<[SubtreeTransformScope; 8]>>>,
+    entered_depth: usize,
+}
+
+impl Drop for SubtreeTransformScopeGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        if !std::thread::panicking() {
+            debug_assert_eq!(stack.len(), self.entered_depth + 1);
+        }
+        stack.truncate(self.entered_depth);
+    }
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -826,9 +1120,10 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    subtree_transform_stack: Rc<RefCell<SmallVec<[SubtreeTransformScope; 8]>>>,
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
-    pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    pub(crate) requested_autoscroll: Option<AutoscrollIntent>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
@@ -1505,7 +1800,8 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, _cx| {
                         for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                            if hitbox.is_active() && window.mouse_hit_test.ids.contains(&hitbox.id)
+                            {
                                 return Some(*area);
                             }
                         }
@@ -1592,6 +1888,7 @@ impl Window {
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            subtree_transform_stack: Rc::new(RefCell::new(SmallVec::new())),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
@@ -1833,6 +2130,11 @@ impl Window {
             self.refreshing = true;
             self.invalidator.set_dirty(true);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn refresh_pending_for_test(&self) -> bool {
+        self.invalidator.is_dirty()
     }
 
     /// Runs an element subtree while bypassing cached-view journal reuse when requested.
@@ -2750,41 +3052,38 @@ impl Window {
     }
 
     #[inline]
-    fn snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
-        let scale_factor = self.scale_factor();
-        let left = round_to_device_pixel(bounds.left().0, scale_factor);
-        let top = round_to_device_pixel(bounds.top().0, scale_factor);
-        let right = round_to_device_pixel(bounds.right().0, scale_factor).max(left);
-        let bottom = round_to_device_pixel(bounds.bottom().0, scale_factor).max(top);
+    fn device_local_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+        bounds.scale(self.scale_factor())
+    }
+
+    #[inline]
+    fn snap_device_bounds(bounds: Bounds<ScaledPixels>) -> Bounds<ScaledPixels> {
+        let left = round_half_toward_zero(bounds.left().0);
+        let top = round_half_toward_zero(bounds.top().0);
+        let right = round_half_toward_zero(bounds.right().0).max(left);
+        let bottom = round_half_toward_zero(bounds.bottom().0).max(top);
         Bounds::from_corners(
             point(ScaledPixels(left), ScaledPixels(top)),
             point(ScaledPixels(right), ScaledPixels(bottom)),
         )
     }
 
-    /// Rounds half-to-zero but clamps any non-zero input up to 1 dp so thin strokes do not disappear.
     #[inline]
-    fn snap_stroke(&self, value: Pixels) -> ScaledPixels {
-        ScaledPixels(round_stroke_to_device_pixel(value.0, self.scale_factor()))
-    }
-
-    #[inline]
-    fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
-        edges.map(|e| self.snap_stroke(*e))
+    fn cover_device_bounds(bounds: Bounds<ScaledPixels>) -> Bounds<ScaledPixels> {
+        let left = floor_to_device_pixel(bounds.left().0, 1.0);
+        let top = floor_to_device_pixel(bounds.top().0, 1.0);
+        let right = ceil_to_device_pixel(bounds.right().0, 1.0).max(left);
+        let bottom = ceil_to_device_pixel(bounds.bottom().0, 1.0).max(top);
+        Bounds::from_corners(
+            point(ScaledPixels(left), ScaledPixels(top)),
+            point(ScaledPixels(right), ScaledPixels(bottom)),
+        )
     }
 
     /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.
     #[inline]
     fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
-        let scale_factor = self.scale_factor();
-        let left = floor_to_device_pixel(bounds.left().0, scale_factor);
-        let top = floor_to_device_pixel(bounds.top().0, scale_factor);
-        let right = ceil_to_device_pixel(bounds.right().0, scale_factor).max(left);
-        let bottom = ceil_to_device_pixel(bounds.bottom().0, scale_factor).max(top);
-        Bounds::from_corners(
-            point(ScaledPixels(left), ScaledPixels(top)),
-            point(ScaledPixels(right), ScaledPixels(bottom)),
-        )
+        Self::cover_device_bounds(self.device_local_bounds(bounds))
     }
 
     #[inline]
@@ -2872,6 +3171,7 @@ impl Window {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
+        debug_assert!(self.subtree_transform_stack.borrow().is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
         self.next_frame.generation = self.rendered_frame.generation.saturating_add(1);
@@ -2881,21 +3181,26 @@ impl Window {
         // cached paint_range indices in reuse_paint find the handler at the
         // expected position.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
+            let validity = input_handler.validity();
             if let Some(slot) = self
                 .rendered_frame
                 .input_handlers
                 .iter_mut()
                 .rev()
-                .find(|h| h.is_none())
+                .find(|output| output.value.is_none())
             {
-                *slot = Some(input_handler);
+                slot.value = Some(input_handler);
+                slot.validity = validity;
             } else {
-                self.rendered_frame.input_handlers.push(Some(input_handler));
+                self.rendered_frame
+                    .input_handlers
+                    .push(FrameOutput::new(Some(input_handler), validity));
             }
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
         }
+        debug_assert!(self.subtree_transform_stack.borrow().is_empty());
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
@@ -2909,13 +3214,17 @@ impl Window {
             .input_handlers
             .iter_mut()
             .rev()
-            .find_map(|h| h.take())
+            .filter(|output| output.is_valid())
+            .find_map(|output| output.value.take())
         {
             self.platform_window.set_input_handler(input_handler);
         }
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
+        // Painting is complete. Commits may publish state and schedule the frame that displays it.
+        self.refreshing = false;
+        self.invalidator.set_phase(DrawPhase::None);
         self.commit_prepaint(cx);
         self.next_frame.finish(&mut self.rendered_frame);
 
@@ -2924,6 +3233,7 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
         if self.captured_pointer.is_some() && self.captured_pointer_hitbox().is_none() {
             // Cancellation listeners may mutate the window, so leave the draw stack before dispatch.
             let window = self.handle;
@@ -2968,10 +3278,10 @@ impl Window {
                 .retain(&(), |listener| listener(&event, self, cx));
         }
 
+        self.update_ime_position_from_committed_handler(cx);
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
-        self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
 
@@ -3069,7 +3379,7 @@ impl Window {
                 .take()
                 .expect("window-owned active drag should remain available");
             let mut element = active_drag.view.clone().into_any();
-            let offset = self.mouse_position() - active_drag.cursor_offset;
+            let offset = self.mouse_position() - active_drag.window_preview_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
             cx.active_drag = Some(active_drag);
@@ -3092,8 +3402,17 @@ impl Window {
             prompt_element.paint(self, cx);
         } else if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self, cx);
-        } else if let Some(mut tooltip_element) = tooltip_element {
-            tooltip_element.paint(self, cx);
+        } else if let Some(mut tooltip) = tooltip_element
+            && tooltip
+                .validity
+                .as_ref()
+                .is_none_or(SubtreeTransformValidity::is_valid)
+        {
+            self.with_resolved_subtree_transform(
+                ResolvedSubtreeTransform::IDENTITY,
+                tooltip.validity,
+                |window| tooltip.element.paint(window, cx),
+            );
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3129,12 +3448,36 @@ impl Window {
     fn commit_prepaint(&mut self, cx: &mut App) {
         let target_revision = self.next_frame.generation;
         let commits = self.next_frame.prepaint_commits.clone();
-        for commit in commits {
-            commit(target_revision, cx);
+        let current_publications = commits
+            .iter()
+            .filter_map(|output| output.value.publication)
+            .collect::<FxHashSet<_>>();
+        let previous_commits = self.rendered_frame.prepaint_commits.clone();
+        let mut expired_publications = FxHashSet::default();
+        for output in previous_commits {
+            let Some(publication) = output.value.publication else {
+                continue;
+            };
+            if !output.is_valid()
+                || current_publications.contains(&publication)
+                || !expired_publications.insert(publication)
+            {
+                continue;
+            }
+            if let Some(discard) = output.value.discard {
+                discard(target_revision, self, cx);
+            }
+        }
+        for output in commits {
+            if output.is_valid() {
+                (output.value.commit)(target_revision, self, cx);
+            } else if let Some(discard) = output.value.discard {
+                discard(target_revision, self, cx);
+            }
         }
     }
 
-    fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
+    fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<PreparedTooltip> {
         // Use indexing instead of iteration to avoid borrowing self for the duration of the loop.
         for tooltip_request_index in (0..self.next_frame.tooltip_requests.len()).rev() {
             let Some(Some(tooltip_request)) = self
@@ -3146,6 +3489,13 @@ impl Window {
                 log::error!("Unexpectedly absent TooltipRequest");
                 continue;
             };
+            if tooltip_request
+                .validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+            {
+                continue;
+            }
             let mut element = tooltip_request.tooltip.view.clone().into_any();
             let mouse_position = tooltip_request.tooltip.mouse_position;
             let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
@@ -3190,15 +3540,25 @@ impl Window {
                 continue;
             }
 
-            self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
-                element.prepaint(window, cx)
-            });
+            self.with_resolved_subtree_transform(
+                ResolvedSubtreeTransform::IDENTITY,
+                tooltip_request.validity.clone(),
+                |window| {
+                    window.with_absolute_element_offset(tooltip_bounds.origin, |window| {
+                        element.prepaint(window, cx)
+                    })
+                },
+            );
 
             self.tooltip_bounds = Some(TooltipBounds {
                 id: tooltip_request.id,
                 bounds: tooltip_bounds,
+                validity: tooltip_request.validity.clone(),
             });
-            return Some(element);
+            return Some(PreparedTooltip {
+                element,
+                validity: tooltip_request.validity,
+            });
         }
         None
     }
@@ -3228,6 +3588,8 @@ impl Window {
                 let deferred_draw = &mut deferred_draws[deferred_draw_ix];
                 let accessibility_tree_scope = deferred_draw.accessibility_tree_scope;
                 let accessibility_hidden = deferred_draw.accessibility_hidden;
+                let subtree_transform = deferred_draw.subtree_transform;
+                let subtree_transform_validity = deferred_draw.subtree_transform_validity.clone();
                 self.element_id_stack
                     .clone_from(&deferred_draw.element_id_stack);
                 self.text_style_stack
@@ -3237,22 +3599,59 @@ impl Window {
                     .set_active_node(deferred_draw.parent_node);
 
                 let prepaint_start = self.prepaint_index();
-                if let Some(element) = deferred_draw.element.as_mut() {
-                    self.with_rendered_view(deferred_draw.current_view, |window| {
-                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                            window.with_absolute_element_offset(
-                                deferred_draw.absolute_offset,
+                if subtree_transform_validity
+                    .as_ref()
+                    .is_some_and(|validity| !validity.is_valid())
+                {
+                    // The owning transform scope already failed elsewhere in this frame.
+                } else if let Some(element) = deferred_draw.element.as_mut() {
+                    let result = self.transact_subtree_transform(
+                        subtree_transform_validity.clone(),
+                        |window| {
+                            window.with_resolved_subtree_transform(
+                                subtree_transform,
+                                subtree_transform_validity.clone(),
                                 |window| {
-                                    let _hidden_subtree = accessibility_hidden
-                                        .then(|| window.a11y.nodes.enter_hidden_subtree());
-                                    window.with_accessibility_tree_scope(
-                                        accessibility_tree_scope,
-                                        |window| element.prepaint(window, cx),
-                                    );
+                                    window.with_rendered_view(
+                                        deferred_draw.current_view,
+                                        |window| {
+                                            window.with_rem_size(
+                                                Some(deferred_draw.rem_size),
+                                                |window| {
+                                                    window.with_absolute_element_offset(
+                                                        deferred_draw.absolute_offset,
+                                                        |window| {
+                                                            window.with_content_mask(
+                                                    deferred_draw.content_mask,
+                                                    |window| {
+                                                        let _hidden_subtree = accessibility_hidden
+                                                            .then(|| {
+                                                                window
+                                                                    .a11y
+                                                                    .nodes
+                                                                    .enter_hidden_subtree()
+                                                            });
+                                                        window.with_accessibility_tree_scope(
+                                                            accessibility_tree_scope,
+                                                            |window| element.prepaint(window, cx),
+                                                        );
+                                                    },
+                                                );
+                                                        },
+                                                    );
+                                                },
+                                            );
+                                        },
+                                    )
                                 },
                             );
-                        });
-                    })
+                        },
+                    );
+                    if result.is_err()
+                        && let Some(validity) = subtree_transform_validity.as_ref()
+                    {
+                        self.record_subtree_transform_scope_diagnostic(validity);
+                    }
                 } else {
                     self.reuse_prepaint(deferred_draw.prepaint_range.clone());
                 }
@@ -3292,14 +3691,29 @@ impl Window {
 
             let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
-            if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_content_mask(content_mask, |window| {
-                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                            element.paint(window, cx);
-                        });
-                    })
-                })
+            if deferred_draw
+                .subtree_transform_validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+            {
+                // The owning transform scope is layout-only for this frame.
+            } else if let Some(element) = deferred_draw.element.as_mut() {
+                self.with_resolved_subtree_transform(
+                    deferred_draw.subtree_transform,
+                    deferred_draw.subtree_transform_validity.clone(),
+                    |window| {
+                        window.with_rendered_view(deferred_draw.current_view, |window| {
+                            window.with_content_mask(content_mask, |window| {
+                                window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                                    element.paint(window, cx);
+                                });
+                            })
+                        })
+                    },
+                );
+                if let Some(validity) = deferred_draw.subtree_transform_validity.as_ref() {
+                    self.record_subtree_transform_scope_diagnostic(validity);
+                }
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
             }
@@ -3328,14 +3742,23 @@ impl Window {
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             line_layout_index: self.text_system.layout_index(),
+            subtree_transform_diagnostics_index: self
+                .next_frame
+                .subtree_transform_diagnostics
+                .len(),
         }
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        let validity = self.subtree_transform_validity();
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
-                .cloned(),
+                .cloned()
+                .map(|mut hitbox| {
+                    hitbox.retag_validity(validity.clone());
+                    hitbox
+                }),
         );
         let reused_pointer_capture_bindings = self.rendered_frame.pointer_capture_bindings
             [range.start.pointer_capture_bindings_index..range.end.pointer_capture_bindings_index]
@@ -3362,27 +3785,65 @@ impl Window {
             self.rendered_frame.prepaint_commits
                 [range.start.prepaint_commits_index..range.end.prepaint_commits_index]
                 .iter()
-                .cloned(),
+                .map(|output| {
+                    FrameOutput::new(
+                        output.value.clone(),
+                        SubtreeTransformValidity::replayed_under(
+                            output.validity.as_ref(),
+                            validity.clone(),
+                        ),
+                    )
+                }),
         );
         self.next_frame.tooltip_requests.extend(
             self.rendered_frame.tooltip_requests
                 [range.start.tooltips_index..range.end.tooltips_index]
                 .iter_mut()
-                .map(|request| request.take()),
+                .map(|request| {
+                    request.take().map(|mut request| {
+                        request.validity = SubtreeTransformValidity::replayed_under(
+                            request.validity.as_ref(),
+                            validity.clone(),
+                        );
+                        request
+                    })
+                }),
         );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
-        );
+        let accessed_element_states = self.rendered_frame.accessed_element_states
+            [range.start.accessed_element_states_index..range.end.accessed_element_states_index]
+            .to_vec();
+        for key in accessed_element_states {
+            self.next_frame.accessed_element_states.push(key.clone());
+            let recorded_validity = self
+                .rendered_frame
+                .element_state_validities
+                .get(&key)
+                .and_then(Option::as_ref);
+            self.next_frame.element_state_validities.insert(
+                key,
+                SubtreeTransformValidity::replayed_under(recorded_validity, validity.clone()),
+            );
+        }
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.next_frame.subtree_transform_diagnostics.extend(
+            self.rendered_frame.subtree_transform_diagnostics[range
+                .start
+                .subtree_transform_diagnostics_index
+                ..range.end.subtree_transform_diagnostics_index]
+                .iter()
+                .copied()
+                .map(|mut diagnostic| {
+                    diagnostic.frame_generation = self.next_frame.generation;
+                    diagnostic
+                }),
+        );
 
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut self.rendered_frame.dispatch_tree,
             self.focus,
+            validity.clone(),
         );
 
         if reused_subtree.contains_focus() {
@@ -3405,6 +3866,11 @@ impl Window {
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
+                    subtree_transform: deferred_draw.subtree_transform,
+                    subtree_transform_validity: SubtreeTransformValidity::replayed_under(
+                        deferred_draw.subtree_transform_validity.as_ref(),
+                        validity.clone(),
+                    ),
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
@@ -3413,63 +3879,194 @@ impl Window {
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
-            scene_index: self.next_frame.scene.len(),
-            atlas_access_diagnostics_index: self.next_frame.atlas_access_diagnostics.len(),
-            image_paint_diagnostics_index: self.next_frame.image_paint_diagnostics.len(),
+            scene_index: self.next_frame.scene.journal_len(),
+            atlas_access_diagnostics_index: self.next_frame.atlas_access_diagnostic_entries.len(),
+            image_paint_diagnostics_index: self.next_frame.image_paint_diagnostic_entries.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             pointer_cancel_listeners_index: self.next_frame.pointer_cancel_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
+            window_control_hitboxes_index: self.next_frame.window_control_hitboxes.len(),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_entries_index: self.next_frame.debug_bounds_entries.len(),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_focus_entries_index: self.next_frame.debug_focus_entries.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
+            subtree_transform_diagnostics_index: self
+                .next_frame
+                .subtree_transform_diagnostics
+                .len(),
         }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        let validity = self.subtree_transform_validity();
+        let window_control_start = self.next_frame.window_control_hitboxes.len();
+        self.next_frame.window_control_hitboxes.extend(
+            self.rendered_frame.window_control_hitboxes[range.start.window_control_hitboxes_index
+                ..range.end.window_control_hitboxes_index]
+                .iter()
+                .cloned(),
+        );
+        for (_, hitbox) in &mut self.next_frame.window_control_hitboxes[window_control_start..] {
+            hitbox.retag_validity(validity.clone());
+        }
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let bounds_entries = self.rendered_frame.debug_bounds_entries
+                [range.start.debug_bounds_entries_index..range.end.debug_bounds_entries_index]
+                .to_vec();
+            for (selector, bounds, recorded_validity) in bounds_entries {
+                self.next_frame
+                    .debug_bounds
+                    .insert(selector.clone(), bounds);
+                self.next_frame.debug_bounds_entries.push((
+                    selector,
+                    bounds,
+                    SubtreeTransformValidity::replayed_under(
+                        recorded_validity.as_ref(),
+                        validity.clone(),
+                    ),
+                ));
+            }
+            let focus_entries = self.rendered_frame.debug_focus_entries
+                [range.start.debug_focus_entries_index..range.end.debug_focus_entries_index]
+                .to_vec();
+            for (selector, focus_id, recorded_validity) in focus_entries {
+                self.next_frame
+                    .debug_focus_handles
+                    .insert(selector.clone(), focus_id);
+                self.next_frame.debug_focus_entries.push((
+                    selector,
+                    focus_id,
+                    SubtreeTransformValidity::replayed_under(
+                        recorded_validity.as_ref(),
+                        validity.clone(),
+                    ),
+                ));
+            }
+        }
         self.next_frame.cursor_styles.extend(
             self.rendered_frame.cursor_styles
                 [range.start.cursor_styles_index..range.end.cursor_styles_index]
                 .iter()
-                .cloned(),
+                .cloned()
+                .map(|mut request| {
+                    request.validity = SubtreeTransformValidity::replayed_under(
+                        request.validity.as_ref(),
+                        validity.clone(),
+                    );
+                    request
+                }),
         );
         self.next_frame.input_handlers.extend(
             self.rendered_frame.input_handlers
                 [range.start.input_handlers_index..range.end.input_handlers_index]
                 .iter_mut()
-                .map(|handler| handler.take()),
+                .map(|output| {
+                    let mut handler = output.value.take();
+                    let replayed_validity = SubtreeTransformValidity::replayed_under(
+                        output.validity.as_ref(),
+                        validity.clone(),
+                    );
+                    if let Some(handler) = handler.as_mut() {
+                        handler.set_validity(replayed_validity.clone());
+                    }
+                    FrameOutput::new(handler, replayed_validity)
+                }),
         );
         self.next_frame.mouse_listeners.extend(
             self.rendered_frame.mouse_listeners
                 [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
                 .iter_mut()
-                .map(|listener| listener.take()),
+                .map(|output| {
+                    FrameOutput::new(
+                        output.value.take(),
+                        SubtreeTransformValidity::replayed_under(
+                            output.validity.as_ref(),
+                            validity.clone(),
+                        ),
+                    )
+                }),
         );
         self.next_frame.pointer_cancel_listeners.extend(
             self.rendered_frame.pointer_cancel_listeners[range.start.pointer_cancel_listeners_index
                 ..range.end.pointer_cancel_listeners_index]
                 .iter_mut()
-                .map(|listener| listener.take()),
+                .map(|output| {
+                    FrameOutput::new(
+                        output.value.take(),
+                        SubtreeTransformValidity::replayed_under(
+                            output.validity.as_ref(),
+                            validity.clone(),
+                        ),
+                    )
+                }),
         );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
-        );
-        self.next_frame.tab_stops.replay(
+        let accessed_element_states = self.rendered_frame.accessed_element_states
+            [range.start.accessed_element_states_index..range.end.accessed_element_states_index]
+            .to_vec();
+        for key in accessed_element_states {
+            self.next_frame.accessed_element_states.push(key.clone());
+            let recorded_validity = self
+                .rendered_frame
+                .element_state_validities
+                .get(&key)
+                .and_then(Option::as_ref);
+            self.next_frame.element_state_validities.insert(
+                key,
+                SubtreeTransformValidity::replayed_under(recorded_validity, validity.clone()),
+            );
+        }
+        self.next_frame.tab_stops.replay_scoped(
             &self.rendered_frame.tab_stops.insertion_history
                 [range.start.tab_handle_index..range.end.tab_handle_index],
+            validity.clone(),
         );
-        self.next_frame.atlas_access_diagnostics.extend(
-            self.rendered_frame.atlas_access_diagnostics[range.start.atlas_access_diagnostics_index
+        self.next_frame.atlas_access_diagnostic_entries.extend(
+            self.rendered_frame.atlas_access_diagnostic_entries[range
+                .start
+                .atlas_access_diagnostics_index
                 ..range.end.atlas_access_diagnostics_index]
                 .iter()
-                .copied(),
+                .map(|entry| {
+                    FrameOutput::new(
+                        entry.value,
+                        SubtreeTransformValidity::replayed_under(
+                            entry.validity.as_ref(),
+                            validity.clone(),
+                        ),
+                    )
+                }),
         );
-        self.next_frame.image_paint_diagnostics.extend(
-            self.rendered_frame.image_paint_diagnostics[range.start.image_paint_diagnostics_index
+        self.next_frame.image_paint_diagnostic_entries.extend(
+            self.rendered_frame.image_paint_diagnostic_entries[range
+                .start
+                .image_paint_diagnostics_index
                 ..range.end.image_paint_diagnostics_index]
+                .iter()
+                .map(|entry| {
+                    let mut diagnostic = entry.value;
+                    diagnostic.frame_generation = self.next_frame.generation;
+                    FrameOutput::new(
+                        diagnostic,
+                        SubtreeTransformValidity::replayed_under(
+                            entry.validity.as_ref(),
+                            validity.clone(),
+                        ),
+                    )
+                }),
+        );
+
+        self.text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.next_frame.subtree_transform_diagnostics.extend(
+            self.rendered_frame.subtree_transform_diagnostics[range
+                .start
+                .subtree_transform_diagnostics_index
+                ..range.end.subtree_transform_diagnostics_index]
                 .iter()
                 .copied()
                 .map(|mut diagnostic| {
@@ -3477,13 +4074,14 @@ impl Window {
                     diagnostic
                 }),
         );
-
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
+        let replay_result = self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
+            self.subtree_transform_validity(),
         );
+        if let Err(error) = replay_result {
+            self.record_subtree_transform_failure(error);
+        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -3511,6 +4109,7 @@ impl Window {
         self.next_frame.cursor_styles.push(CursorStyleRequest {
             hitbox_id: Some(hitbox.id),
             style,
+            validity: self.subtree_transform_validity(),
         });
     }
 
@@ -3523,6 +4122,7 @@ impl Window {
         self.next_frame.cursor_styles.push(CursorStyleRequest {
             hitbox_id: None,
             style,
+            validity: self.subtree_transform_validity(),
         })
     }
 
@@ -3531,9 +4131,11 @@ impl Window {
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
         self.invalidator.debug_assert_prepaint();
         let id = TooltipId(post_inc(&mut self.next_tooltip_id.0));
-        self.next_frame
-            .tooltip_requests
-            .push(Some(TooltipRequest { id, tooltip }));
+        self.next_frame.tooltip_requests.push(Some(TooltipRequest {
+            id,
+            tooltip,
+            validity: self.subtree_transform_validity(),
+        }));
         id
     }
 
@@ -3549,7 +4151,13 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(mask) = mask {
-            let mask = mask.intersect(&self.content_mask());
+            let Ok(displayed_bounds) = self.try_project_subtree_bounds(mask.bounds) else {
+                return f(self);
+            };
+            let mask = ContentMask {
+                bounds: displayed_bounds,
+            }
+            .intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
             let result = f(self);
             self.content_mask_stack.pop();
@@ -3632,6 +4240,21 @@ impl Window {
         self.a11y.set_requested_active_for_test(active);
     }
 
+    #[cfg(test)]
+    pub(crate) fn install_tooltip_bounds_with_validity_for_test(
+        &mut self,
+        bounds: Bounds<Pixels>,
+    ) -> (TooltipId, SubtreeTransformValidity) {
+        let id = self.next_tooltip_id;
+        let validity = self.new_subtree_transform_validity();
+        self.tooltip_bounds = Some(TooltipBounds {
+            id,
+            bounds,
+            validity: Some(validity.clone()),
+        });
+        (id, validity)
+    }
+
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
@@ -3640,12 +4263,26 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let focus = self.next_frame.focus;
+        let requested_autoscroll = self.requested_autoscroll.clone();
+        #[cfg(any(test, feature = "test-support"))]
+        let debug_bounds = self.next_frame.debug_bounds.clone();
+        #[cfg(any(test, feature = "test-support"))]
+        let debug_bounds_entries_len = self.next_frame.debug_bounds_entries.len();
+        #[cfg(any(test, feature = "test-support"))]
+        let debug_focus_handles = self.next_frame.debug_focus_handles.clone();
+        #[cfg(any(test, feature = "test-support"))]
+        let debug_focus_entries_len = self.next_frame.debug_focus_entries.len();
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        let inspector_hitboxes = self.next_frame.inspector_hitboxes.clone();
         let a11y_checkpoint = self
             .a11y
             .is_active()
             .then(|| self.a11y.prepaint_checkpoint());
         let result = f(self);
         if result.is_err() {
+            self.next_frame.focus = focus;
+            self.requested_autoscroll = requested_autoscroll;
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
                 .pointer_capture_bindings
@@ -3669,9 +4306,56 @@ impl Window {
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
             self.text_system.truncate_layouts(index.line_layout_index);
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                self.next_frame.debug_bounds = debug_bounds;
+                self.next_frame
+                    .debug_bounds_entries
+                    .truncate(debug_bounds_entries_len);
+                self.next_frame.debug_focus_handles = debug_focus_handles;
+                self.next_frame
+                    .debug_focus_entries
+                    .truncate(debug_focus_entries_len);
+            }
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            {
+                self.next_frame.inspector_hitboxes = inspector_hitboxes;
+            }
             if let Some(checkpoint) = a11y_checkpoint {
                 self.a11y.rollback_prepaint(checkpoint);
             }
+        }
+        result
+    }
+
+    pub(crate) fn transact_subtree_transform<T>(
+        &mut self,
+        validity: Option<SubtreeTransformValidity>,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> Result<T, SubtreeTransformError> {
+        let accessed_element_states_index = self.next_frame.accessed_element_states.len();
+        let mut invalid_element_states = Vec::new();
+        let result = self.transact(|window| {
+            let result = f(window);
+            if let Some(error) = validity
+                .as_ref()
+                .and_then(SubtreeTransformValidity::failure)
+            {
+                invalid_element_states.extend_from_slice(
+                    &window.next_frame.accessed_element_states[accessed_element_states_index..],
+                );
+                Err(error)
+            } else {
+                Ok(result)
+            }
+        });
+
+        if result.is_err() {
+            // `transact` truncates the journal suffix. Keep invalid element-state accesses visible
+            // to `Frame::finish`, which owns disposal of state bound to a failed transform scope.
+            self.next_frame
+                .accessed_element_states
+                .extend(invalid_element_states);
         }
         result
     }
@@ -3683,14 +4367,39 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
-        self.requested_autoscroll = Some(bounds);
+        if let Ok(bounds) = self.try_project_subtree_bounds(bounds) {
+            self.requested_autoscroll = Some(AutoscrollIntent {
+                bounds,
+                validity: self.subtree_transform_validity(),
+            });
+        }
     }
 
     /// This method can be called from a containing element such as [`crate::List`] to support the autoscroll behavior
     /// described in [`Self::request_autoscroll`].
-    pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
+    pub(crate) fn take_autoscroll(&mut self) -> Option<AutoscrollIntent> {
         self.invalidator.debug_assert_prepaint();
-        self.requested_autoscroll.take()
+        let intent = self.requested_autoscroll.take()?;
+        if intent
+            .validity
+            .as_ref()
+            .is_some_and(|validity| !validity.is_valid())
+        {
+            return None;
+        }
+        match self
+            .subtree_transform()
+            .try_inverse_project_bounds(intent.bounds)
+        {
+            Ok(bounds) => Some(AutoscrollIntent {
+                bounds,
+                validity: intent.validity,
+            }),
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                None
+            }
+        }
     }
 
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
@@ -3737,6 +4446,329 @@ impl Window {
             .last()
             .copied()
             .unwrap_or_default()
+    }
+
+    pub(crate) fn subtree_transform(&self) -> ResolvedSubtreeTransform {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        self.subtree_transform_stack
+            .borrow()
+            .last()
+            .map(|scope| scope.transform)
+            .unwrap_or(ResolvedSubtreeTransform::IDENTITY)
+    }
+
+    pub(crate) fn resolve_subtree_transform(
+        &self,
+        local: SubtreeTransform,
+        child_bounds: Bounds<Pixels>,
+    ) -> Result<ResolvedSubtreeTransform, SubtreeTransformError> {
+        let resolved = ResolvedSubtreeTransform::try_from_local(
+            self.subtree_transform(),
+            local,
+            child_bounds,
+        )?;
+        PrimitiveTransform::try_from_resolved(resolved, self.scale_factor())?;
+        Ok(resolved)
+    }
+
+    pub(crate) fn new_subtree_transform_validity(&self) -> SubtreeTransformValidity {
+        SubtreeTransformValidity::new(self.subtree_transform_validity())
+    }
+
+    pub(crate) fn subtree_transform_validity(&self) -> Option<SubtreeTransformValidity> {
+        self.subtree_transform_stack
+            .borrow()
+            .last()
+            .and_then(|scope| scope.validity.clone())
+    }
+
+    pub(crate) fn with_resolved_subtree_transform<R>(
+        &mut self,
+        transform: ResolvedSubtreeTransform,
+        validity: Option<SubtreeTransformValidity>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let stack = self.subtree_transform_stack.clone();
+        let entered_depth = stack.borrow().len();
+        let _a11y_validity = self.a11y.nodes.enter_transform_validity(validity.clone());
+        stack.borrow_mut().push(SubtreeTransformScope {
+            transform,
+            validity,
+        });
+        let _guard = SubtreeTransformScopeGuard {
+            stack,
+            entered_depth,
+        };
+        f(self)
+    }
+
+    fn record_subtree_transform_failure(&self, error: SubtreeTransformError) {
+        if let Some(scope) = self.subtree_transform_stack.borrow().last()
+            && let Some(validity) = scope.validity.as_ref()
+        {
+            validity.invalidate(error);
+        }
+    }
+
+    pub(crate) fn record_subtree_transform_scope_diagnostic(
+        &mut self,
+        validity: &SubtreeTransformValidity,
+    ) {
+        if let Some(error) = validity.take_unreported_failure() {
+            self.record_subtree_transform_diagnostic(error);
+        }
+    }
+
+    pub(crate) fn record_subtree_transform_diagnostic(&mut self, error: SubtreeTransformError) {
+        self.next_frame
+            .subtree_transform_diagnostics
+            .push(SubtreeTransformDiagnostic {
+                frame_generation: self.next_frame.generation,
+                error,
+            });
+        log::error!(
+            target: "open_gpui::subtree_transform",
+            "subtree transform suppressed a layout-only subtree: {error}"
+        );
+    }
+
+    pub(crate) fn try_project_subtree_bounds(
+        &self,
+        bounds: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, SubtreeTransformError> {
+        self.subtree_transform()
+            .try_project_bounds(bounds)
+            .inspect_err(|error| self.record_subtree_transform_failure(*error))
+    }
+
+    pub(crate) fn try_element_geometry(
+        &self,
+        layout_bounds: Bounds<Pixels>,
+    ) -> Result<ElementGeometry, SubtreeTransformError> {
+        let transform = self.subtree_transform();
+        let displayed_bounds = transform
+            .try_project_bounds(layout_bounds)
+            .inspect_err(|error| self.record_subtree_transform_failure(*error))?;
+        Ok(ElementGeometry::from_resolved(
+            layout_bounds,
+            displayed_bounds,
+            transform,
+        ))
+    }
+
+    pub(crate) fn try_project_subtree_point(
+        &self,
+        point: Point<Pixels>,
+    ) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.subtree_transform()
+            .try_project_point(point)
+            .inspect_err(|error| self.record_subtree_transform_failure(*error))
+    }
+
+    pub(crate) fn try_project_subtree_accessibility_bounds(
+        &self,
+        bounds: Bounds<Pixels>,
+    ) -> Result<(Bounds<Pixels>, accesskit::Rect), SubtreeTransformError> {
+        let displayed = self.try_project_subtree_bounds(bounds)?;
+        let scale = f64::from(self.scale_factor());
+        let x0 = f64::from(displayed.origin.x.0) * scale;
+        let y0 = f64::from(displayed.origin.y.0) * scale;
+        let x1 = (f64::from(displayed.origin.x.0) + f64::from(displayed.size.width.0)) * scale;
+        let y1 = (f64::from(displayed.origin.y.0) + f64::from(displayed.size.height.0)) * scale;
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !x0.is_finite()
+            || !y0.is_finite()
+            || !x1.is_finite()
+            || !y1.is_finite()
+        {
+            let error = SubtreeTransformError::UnrepresentableResult;
+            self.record_subtree_transform_failure(error);
+            return Err(error);
+        }
+        Ok((displayed, accesskit::Rect { x0, y0, x1, y1 }))
+    }
+
+    fn base_primitive_transform(&self) -> Option<PrimitiveTransform> {
+        match PrimitiveTransform::try_from_resolved(self.subtree_transform(), self.scale_factor()) {
+            Ok(transform) => Some(transform),
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                None
+            }
+        }
+    }
+
+    fn primitive_raster_transform(
+        &self,
+        base: PrimitiveTransform,
+        local_raster_bounds: Bounds<ScaledPixels>,
+        snap: PrimitiveRasterSnap,
+    ) -> Option<PrimitiveTransform> {
+        let projected_bounds = match base.try_project_bounds(local_raster_bounds) {
+            Ok(bounds) => bounds,
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                return None;
+            }
+        };
+        let snapped_bounds = match snap {
+            PrimitiveRasterSnap::NearestEdges => Self::snap_device_bounds(projected_bounds),
+            PrimitiveRasterSnap::CoverEdges => Self::cover_device_bounds(projected_bounds),
+        };
+        if local_raster_bounds.is_empty() || snapped_bounds.is_empty() {
+            return None;
+        }
+
+        match base.try_retarget_bounds(local_raster_bounds, snapped_bounds) {
+            Ok(transform) => Some(transform),
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                None
+            }
+        }
+    }
+
+    fn try_raster_local_stroke(
+        local: ScaledPixels,
+        projected_axis_scale: f32,
+        raster_axis_scale: f32,
+    ) -> Result<ScaledPixels, SubtreeTransformError> {
+        if !local.0.is_finite()
+            || !projected_axis_scale.is_normal()
+            || projected_axis_scale <= 0.0
+            || !raster_axis_scale.is_normal()
+            || raster_axis_scale <= 0.0
+        {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        let projected = local.0 * projected_axis_scale;
+        let snapped = round_stroke_to_device_pixel(projected, 1.0);
+        let raster_local = snapped / raster_axis_scale;
+        let round_trip = raster_local * raster_axis_scale;
+        if !projected.is_finite()
+            || !snapped.is_finite()
+            || !raster_local.is_finite()
+            || !round_trip.is_finite()
+            || (local.0 != 0.0
+                && (projected == 0.0
+                    || snapped == 0.0
+                    || !raster_local.is_normal()
+                    || !raster_local.recip().is_finite()
+                    || round_trip == 0.0))
+        {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        Ok(ScaledPixels(raster_local))
+    }
+
+    fn raster_border_widths(
+        &self,
+        edges: Edges<Pixels>,
+        base: PrimitiveTransform,
+        raster: PrimitiveTransform,
+    ) -> Option<Edges<ScaledPixels>> {
+        let edges = edges.scale(self.scale_factor());
+        let base_scale = base.scale();
+        let raster_scale = raster.scale();
+        let result = (|| {
+            Ok(Edges {
+                top: Self::try_raster_local_stroke(
+                    edges.top,
+                    base_scale.height,
+                    raster_scale.height,
+                )?,
+                right: Self::try_raster_local_stroke(
+                    edges.right,
+                    base_scale.width,
+                    raster_scale.width,
+                )?,
+                bottom: Self::try_raster_local_stroke(
+                    edges.bottom,
+                    base_scale.height,
+                    raster_scale.height,
+                )?,
+                left: Self::try_raster_local_stroke(
+                    edges.left,
+                    base_scale.width,
+                    raster_scale.width,
+                )?,
+            })
+        })();
+        match result {
+            Ok(edges) => Some(edges),
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                None
+            }
+        }
+    }
+
+    fn underline_raster_projection(
+        &self,
+        base: PrimitiveTransform,
+        local_bounds: Bounds<ScaledPixels>,
+        local_thickness: ScaledPixels,
+        height_multiplier: f32,
+    ) -> Option<(PrimitiveTransform, ScaledPixels)> {
+        let projected_bounds = match base.try_project_bounds(local_bounds) {
+            Ok(bounds) => bounds,
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                return None;
+            }
+        };
+        let projected_thickness = local_thickness.0 * base.scale().height;
+        let snapped_thickness = round_stroke_to_device_pixel(projected_thickness, 1.0);
+        let snapped_width = round_stroke_to_device_pixel(projected_bounds.size.width.0, 1.0);
+        if !projected_thickness.is_finite()
+            || !snapped_thickness.is_finite()
+            || !snapped_width.is_finite()
+        {
+            self.record_subtree_transform_failure(SubtreeTransformError::UnrepresentableResult);
+            return None;
+        }
+        let target_bounds = Bounds::new(
+            projected_bounds
+                .origin
+                .map(|value| ScaledPixels(round_half_toward_zero(value.0))),
+            size(
+                ScaledPixels(snapped_width),
+                ScaledPixels(snapped_thickness * height_multiplier),
+            ),
+        );
+        if local_bounds.is_empty() || target_bounds.is_empty() {
+            return None;
+        }
+        let raster = match base.try_retarget_bounds(local_bounds, target_bounds) {
+            Ok(transform) => transform,
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                return None;
+            }
+        };
+        match Self::try_raster_local_stroke(
+            local_thickness,
+            base.scale().height,
+            raster.scale().height,
+        ) {
+            Ok(thickness) => Some((raster, thickness)),
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                None
+            }
+        }
+    }
+
+    fn insert_scene_primitive(&mut self, primitive: impl Into<Primitive>) {
+        if let Err(error) = self
+            .next_frame
+            .scene
+            .insert_primitive_scoped(primitive, self.subtree_transform_validity())
+        {
+            self.record_subtree_transform_failure(error);
+        }
     }
 
     /// Obtain the current element opacity. This method should only be called during the
@@ -3832,6 +4864,9 @@ impl Window {
 
         let key = (global_id.clone(), TypeId::of::<S>());
         self.next_frame.accessed_element_states.push(key.clone());
+        self.next_frame
+            .element_state_validities
+            .insert(key.clone(), self.subtree_transform_validity());
 
         if let Some(any) = self
             .next_frame
@@ -3957,6 +4992,49 @@ impl Window {
         content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
+        let transform = self.subtree_transform();
+        let validity = self.subtree_transform_validity();
+        self.defer_draw_with_transform(
+            element,
+            absolute_offset,
+            priority,
+            content_mask,
+            transform,
+            validity,
+        );
+    }
+
+    /// Defers an element at a deliberate window-space portal boundary.
+    ///
+    /// Unlike [`Self::defer_draw`], this resets inherited subtree geometry. Theme and presentation
+    /// inheritance are unaffected; callers must project portal anchors into window space first.
+    pub fn defer_draw_in_window_space(
+        &mut self,
+        element: AnyElement,
+        absolute_offset: Point<Pixels>,
+        priority: usize,
+        content_mask: Option<ContentMask<Pixels>>,
+    ) {
+        self.invalidator.debug_assert_prepaint();
+        self.defer_draw_with_transform(
+            element,
+            absolute_offset,
+            priority,
+            content_mask,
+            ResolvedSubtreeTransform::IDENTITY,
+            self.subtree_transform_validity(),
+        );
+    }
+
+    fn defer_draw_with_transform(
+        &mut self,
+        element: AnyElement,
+        absolute_offset: Point<Pixels>,
+        priority: usize,
+        content_mask: Option<ContentMask<Pixels>>,
+        subtree_transform: ResolvedSubtreeTransform,
+        subtree_transform_validity: Option<SubtreeTransformValidity>,
+    ) {
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
@@ -3970,6 +5048,8 @@ impl Window {
             priority,
             element: Some(element),
             absolute_offset,
+            subtree_transform,
+            subtree_transform_validity,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
         });
@@ -3984,17 +5064,23 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let content_mask = self.content_mask();
-        let clipped_bounds = bounds.intersect(&content_mask.bounds);
-        if !clipped_bounds.is_empty() {
-            self.next_frame
-                .scene
-                .push_layer(self.cover_bounds(clipped_bounds));
+        let clipped_bounds = self
+            .try_project_subtree_bounds(bounds)
+            .ok()
+            .map(|bounds| bounds.intersect(&content_mask.bounds));
+        if let Some(clipped_bounds) = clipped_bounds.filter(|bounds| !bounds.is_empty()) {
+            self.next_frame.scene.push_layer_scoped(
+                self.cover_bounds(clipped_bounds),
+                self.subtree_transform_validity(),
+            );
         }
 
         let result = f(self);
 
-        if !clipped_bounds.is_empty() {
-            self.next_frame.scene.pop_layer();
+        if clipped_bounds.is_some_and(|bounds| !bounds.is_empty()) {
+            self.next_frame
+                .scene
+                .pop_layer_scoped(self.subtree_transform_validity());
         }
 
         result
@@ -4016,17 +5102,20 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
-        let element_bounds = self.cover_bounds(bounds);
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return;
+        };
+        let element_bounds = self.device_local_bounds(bounds);
         let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
             if shadow.inset {
                 continue;
             }
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
-            self.next_frame.scene.insert_primitive(Shadow {
+            let mut primitive = Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: self.cover_bounds(shadow_bounds),
+                bounds: self.device_local_bounds(shadow_bounds),
                 content_mask,
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
@@ -4034,7 +5123,17 @@ impl Window {
                 element_corner_radii,
                 inset: 0,
                 pad: 0,
-            });
+                transform: base_transform,
+            };
+            let Some(transform) = self.primitive_raster_transform(
+                base_transform,
+                primitive.local_raster_bounds(),
+                PrimitiveRasterSnap::CoverEdges,
+            ) else {
+                continue;
+            };
+            primitive.transform = transform;
+            self.insert_scene_primitive(primitive);
         }
     }
 
@@ -4052,7 +5151,10 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
-        let element_bounds = self.cover_bounds(bounds);
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return;
+        };
+        let element_bounds = self.device_local_bounds(bounds);
         let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
             if !shadow.inset {
@@ -4068,10 +5170,10 @@ impl Window {
                 bottom_right: (corner_radii.bottom_right - shadow.spread_radius).max(zero),
                 bottom_left: (corner_radii.bottom_left - shadow.spread_radius).max(zero),
             };
-            self.next_frame.scene.insert_primitive(Shadow {
+            let mut primitive = Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: self.cover_bounds(hole),
+                bounds: self.device_local_bounds(hole),
                 content_mask,
                 corner_radii: hole_corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
@@ -4079,7 +5181,17 @@ impl Window {
                 element_corner_radii,
                 inset: 1,
                 pad: 0,
-            });
+                transform: base_transform,
+            };
+            let Some(transform) = self.primitive_raster_transform(
+                base_transform,
+                primitive.local_raster_bounds(),
+                PrimitiveRasterSnap::CoverEdges,
+            ) else {
+                continue;
+            };
+            primitive.transform = transform;
+            self.insert_scene_primitive(primitive);
         }
     }
 
@@ -4096,17 +5208,32 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let opacity = self.element_opacity();
-        let snapped_bounds = self.snap_bounds(quad.bounds);
-        let snapped_border_widths = self.snap_border_widths(quad.border_widths);
-        self.next_frame.scene.insert_primitive(Quad {
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return;
+        };
+        let bounds = self.device_local_bounds(quad.bounds);
+        let Some(transform) = self.primitive_raster_transform(
+            base_transform,
+            bounds,
+            PrimitiveRasterSnap::NearestEdges,
+        ) else {
+            return;
+        };
+        let Some(border_widths) =
+            self.raster_border_widths(quad.border_widths, base_transform, transform)
+        else {
+            return;
+        };
+        self.insert_scene_primitive(Quad {
             order: 0,
-            bounds: snapped_bounds,
+            bounds,
             content_mask: self.snapped_content_mask(),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
-            border_widths: snapped_border_widths,
+            border_widths,
             border_style: quad.border_style,
+            transform,
         });
     }
 
@@ -4119,12 +5246,15 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
+        let Some(transform) = self.base_primitive_transform() else {
+            return;
+        };
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
-        self.next_frame
-            .scene
-            .insert_primitive(path.scale(scale_factor));
+        let mut path = path.scale(scale_factor);
+        path.transform = transform;
+        self.insert_scene_primitive(path);
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -4139,19 +5269,29 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let thickness = self.snap_stroke(style.thickness);
-        let height = if style.wavy {
-            ScaledPixels(thickness.0 * 3.)
-        } else {
-            thickness
-        };
+        let local_thickness = style.thickness.scale(scale_factor);
+        let height_multiplier = if style.wavy { 3.0 } else { 1.0 };
         let bounds = Bounds {
-            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
-            size: size(self.snap_stroke(width), height),
+            origin: origin.scale(scale_factor),
+            size: size(
+                width.scale(scale_factor),
+                ScaledPixels(local_thickness.0 * height_multiplier),
+            ),
         };
         let element_opacity = self.element_opacity();
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return;
+        };
+        let Some((transform, thickness)) = self.underline_raster_projection(
+            base_transform,
+            bounds,
+            local_thickness,
+            height_multiplier,
+        ) else {
+            return;
+        };
 
-        self.next_frame.scene.insert_primitive(Underline {
+        self.insert_scene_primitive(Underline {
             order: 0,
             pad: 0,
             bounds,
@@ -4159,6 +5299,7 @@ impl Window {
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness,
             wavy: if style.wavy { 1 } else { 0 },
+            transform,
         });
     }
 
@@ -4174,21 +5315,30 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let height = style.thickness;
+        let local_thickness = style.thickness.scale(scale_factor);
         let bounds = Bounds {
-            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
-            size: size(self.snap_stroke(width), self.snap_stroke(height)),
+            origin: origin.scale(scale_factor),
+            size: size(width.scale(scale_factor), local_thickness),
         };
         let opacity = self.element_opacity();
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return;
+        };
+        let Some((transform, thickness)) =
+            self.underline_raster_projection(base_transform, bounds, local_thickness, 1.0)
+        else {
+            return;
+        };
 
-        self.next_frame.scene.insert_primitive(Underline {
+        self.insert_scene_primitive(Underline {
             order: 0,
             pad: 0,
             bounds,
             content_mask: self.snapped_content_mask(),
-            thickness: self.snap_stroke(style.thickness),
+            thickness,
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: 0,
+            transform,
         });
     }
 
@@ -4212,6 +5362,9 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return Ok(());
+        };
         let glyph_origin = origin.scale(scale_factor);
 
         let quantized_origin = Point::new(
@@ -4225,7 +5378,8 @@ impl Window {
             (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
         );
         let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
-        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
+        let subpixel_rendering =
+            base_transform.is_identity() && self.should_use_subpixel_rendering(font_id, font_size);
         let dilation = self.text_system().glyph_dilation_for_color(color);
         let params = RenderGlyphParams {
             font_id,
@@ -4251,27 +5405,34 @@ impl Window {
                 origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
+            let Some(transform) = self.primitive_raster_transform(
+                base_transform,
+                bounds,
+                PrimitiveRasterSnap::NearestEdges,
+            ) else {
+                return Ok(());
+            };
             let content_mask = self.snapped_content_mask();
 
             if subpixel_rendering {
-                self.next_frame.scene.insert_primitive(SubpixelSprite {
+                self.insert_scene_primitive(SubpixelSprite {
                     order: 0,
                     pad: 0,
                     bounds,
                     content_mask,
                     color: color.opacity(element_opacity),
                     tile,
-                    transformation: TransformationMatrix::unit(),
+                    transform,
                 });
             } else {
-                self.next_frame.scene.insert_primitive(MonochromeSprite {
+                self.insert_scene_primitive(MonochromeSprite {
                     order: 0,
                     pad: 0,
                     bounds,
                     content_mask,
                     color: color.opacity(element_opacity),
                     tile,
-                    transformation: TransformationMatrix::unit(),
+                    transform,
                 });
             }
         }
@@ -4315,6 +5476,9 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return Ok(());
+        };
         let glyph_origin = origin.scale(scale_factor);
         let integer_origin = glyph_origin.map(|c| ScaledPixels(round_half_toward_zero(c.0)));
         let params = RenderGlyphParams {
@@ -4342,10 +5506,17 @@ impl Window {
                 origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
+            let Some(transform) = self.primitive_raster_transform(
+                base_transform,
+                bounds,
+                PrimitiveRasterSnap::NearestEdges,
+            ) else {
+                return Ok(());
+            };
             let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
 
-            self.next_frame.scene.insert_primitive(PolychromeSprite {
+            self.insert_scene_primitive(PolychromeSprite {
                 order: 0,
                 pad: 0,
                 grayscale: false,
@@ -4354,6 +5525,7 @@ impl Window {
                 content_mask,
                 tile,
                 opacity,
+                transform,
             });
         }
         Ok(())
@@ -4367,14 +5539,16 @@ impl Window {
         bounds: Bounds<Pixels>,
         path: SharedString,
         mut data: Option<&[u8]>,
-        transformation: TransformationMatrix,
         color: Hsla,
         cx: &App,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let bounds = self.snap_bounds(bounds);
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return Ok(());
+        };
+        let bounds = self.device_local_bounds(bounds);
 
         let params = RenderSvgParams {
             path,
@@ -4407,18 +5581,22 @@ impl Window {
                 .size
                 .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
         };
-        let final_bounds = svg_bounds
-            .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
-            .map_size(|size| size.ceil());
+        let Some(transform) = self.primitive_raster_transform(
+            base_transform,
+            svg_bounds,
+            PrimitiveRasterSnap::NearestEdges,
+        ) else {
+            return Ok(());
+        };
 
-        self.next_frame.scene.insert_primitive(MonochromeSprite {
+        self.insert_scene_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
-            bounds: final_bounds,
+            bounds: svg_bounds,
             content_mask,
             color: color.opacity(element_opacity),
             tile,
-            transformation,
+            transform,
         });
 
         Ok(())
@@ -4438,7 +5616,17 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.snap_bounds(bounds);
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return Ok(());
+        };
+        let bounds = self.device_local_bounds(bounds);
+        let Some(transform) = self.primitive_raster_transform(
+            base_transform,
+            bounds,
+            PrimitiveRasterSnap::NearestEdges,
+        ) else {
+            return Ok(());
+        };
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -4461,7 +5649,14 @@ impl Window {
         let opacity = self.element_opacity();
         let atlas_diagnostic = atlas_access.diagnostic;
 
-        self.next_frame.scene.insert_primitive(PolychromeSprite {
+        let displayed_bounds = match transform.try_project_bounds(bounds) {
+            Ok(bounds) => bounds,
+            Err(error) => {
+                self.record_subtree_transform_failure(error);
+                return Ok(());
+            }
+        };
+        self.insert_scene_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
             grayscale,
@@ -4470,19 +5665,24 @@ impl Window {
             corner_radii,
             tile,
             opacity,
+            transform,
         });
+        let validity = self.subtree_transform_validity();
         self.next_frame
-            .atlas_access_diagnostics
-            .push(atlas_diagnostic);
+            .atlas_access_diagnostic_entries
+            .push(FrameOutput::new(atlas_diagnostic, validity.clone()));
         self.next_frame
-            .image_paint_diagnostics
-            .push(ImagePaintDiagnostic {
-                frame_generation: self.next_frame.generation,
-                image: params,
-                bounds,
-                tile,
-                atlas_access: atlas_diagnostic,
-            });
+            .image_paint_diagnostic_entries
+            .push(FrameOutput::new(
+                ImagePaintDiagnostic {
+                    frame_generation: self.next_frame.generation,
+                    image: params,
+                    bounds: displayed_bounds,
+                    tile,
+                    atlas_access: atlas_diagnostic,
+                },
+                validity,
+            ));
         Ok(())
     }
 
@@ -4495,13 +5695,24 @@ impl Window {
 
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.snap_bounds(bounds);
+        let bounds = self.device_local_bounds(bounds);
         let content_mask = self.snapped_content_mask();
-        self.next_frame.scene.insert_primitive(PaintSurface {
+        let Some(base_transform) = self.base_primitive_transform() else {
+            return;
+        };
+        let Some(transform) = self.primitive_raster_transform(
+            base_transform,
+            bounds,
+            PrimitiveRasterSnap::NearestEdges,
+        ) else {
+            return;
+        };
+        self.insert_scene_primitive(PaintSurface {
             order: 0,
             bounds,
             content_mask,
             image_buffer,
+            transform,
         });
     }
 
@@ -4525,8 +5736,72 @@ impl Window {
     /// Cached subtrees retain the record and enqueue it again when their prepaint journal is reused.
     /// Records created inside a failed [`Self::transact`] attempt are discarded before commit.
     pub fn record_prepaint_commit(&mut self, commit: impl Fn(u64, &mut App) + 'static) {
+        self.record_prepaint_window_commit(move |revision, _, cx| commit(revision, cx));
+    }
+
+    /// Records a validity-gated side effect that may also update the current window.
+    ///
+    /// Use this when a prepaint measurement must not become observable until painting confirms
+    /// that its transformed subtree is representable. The callback runs after painting and may
+    /// request the follow-up frame that displays the committed state.
+    pub fn record_prepaint_window_commit(
+        &mut self,
+        commit: impl Fn(u64, &mut Window, &mut App) + 'static,
+    ) {
         self.invalidator.debug_assert_prepaint();
-        self.next_frame.prepaint_commits.push(Rc::new(commit));
+        self.next_frame.prepaint_commits.push(FrameOutput::new(
+            PrepaintCommit {
+                publication: None,
+                commit: Rc::new(commit),
+                discard: None,
+            },
+            self.subtree_transform_validity(),
+        ));
+    }
+
+    /// Records a validity-gated, cross-frame publication transaction.
+    ///
+    /// The commit callback runs after painting when the current transform stack is valid. The
+    /// discard callback runs instead when painting proves that the recorded subtree geometry is
+    /// invalid. It also runs when a valid publication from the previous frame is absent from the
+    /// current frame, including when an enclosing [`Self::transact`] rolls back or an ancestor
+    /// transform prevents this subtree from prepainting.
+    ///
+    /// Use one stable [`PrepaintPublicationId`] for each logical publication and record it at most
+    /// once per frame. Cached subtrees retain both the ID and callbacks in their frame journal.
+    pub fn record_prepaint_window_transaction(
+        &mut self,
+        publication: PrepaintPublicationId,
+        commit: impl Fn(u64, &mut Window, &mut App) + 'static,
+        discard: impl Fn(u64, &mut Window, &mut App) + 'static,
+    ) {
+        self.invalidator.debug_assert_prepaint();
+        let commit: Rc<dyn Fn(u64, &mut Window, &mut App)> = Rc::new(commit);
+        let discard: Rc<dyn Fn(u64, &mut Window, &mut App)> = Rc::new(discard);
+        self.next_frame.prepaint_commits.push(FrameOutput::new(
+            PrepaintCommit {
+                publication: Some(publication),
+                commit,
+                discard: Some(discard),
+            },
+            self.subtree_transform_validity(),
+        ));
+    }
+
+    pub(crate) fn record_autoscroll_commit(
+        &mut self,
+        intent: AutoscrollIntent,
+        commit: impl Fn(u64, &mut Window, &mut App) + 'static,
+    ) {
+        self.invalidator.debug_assert_prepaint();
+        self.next_frame.prepaint_commits.push(FrameOutput::new(
+            PrepaintCommit {
+                publication: None,
+                commit: Rc::new(commit),
+                discard: None,
+            },
+            intent.validity,
+        ));
     }
 
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
@@ -4625,16 +5900,44 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
+        let transform = self.subtree_transform();
+        let validity = self.subtree_transform_validity();
+        let geometry = self.try_element_geometry(bounds);
         let mut id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
         let hitbox = Hitbox {
             id,
-            bounds,
+            geometry: geometry.unwrap_or_else(|_| {
+                ElementGeometry::from_resolved(bounds, Bounds::default(), transform)
+            }),
+            validity,
             content_mask,
             behavior,
         };
-        self.next_frame.hitboxes.push(hitbox.clone());
+        if geometry.is_ok() {
+            self.next_frame.hitboxes.push(hitbox.clone());
+        }
         hitbox
+    }
+
+    pub(crate) fn committed_hitbox(&self, id: HitboxId) -> Option<Hitbox> {
+        self.rendered_frame
+            .hitboxes
+            .iter()
+            .find(|hitbox| hitbox.id == id && hitbox.is_active())
+            .cloned()
+    }
+
+    pub(crate) fn preparing_frame_generation(&self) -> u64 {
+        self.next_frame.generation
+    }
+
+    pub(crate) fn prepared_hitbox(&self, id: HitboxId) -> Option<Hitbox> {
+        self.next_frame
+            .hitboxes
+            .iter()
+            .find(|hitbox| hitbox.id == id && hitbox.is_active())
+            .cloned()
     }
 
     /// Set a hitbox which will act as a control area of the platform window.
@@ -4643,6 +5946,36 @@ impl Window {
     pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.window_control_hitboxes.push((area, hitbox));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let layout_bounds = bounds;
+        let Ok(displayed_bounds) = self.try_project_subtree_bounds(layout_bounds) else {
+            return;
+        };
+        self.next_frame
+            .debug_bounds
+            .insert(selector.clone(), displayed_bounds);
+        self.next_frame.debug_bounds_entries.push((
+            selector,
+            displayed_bounds,
+            self.subtree_transform_validity(),
+        ));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn record_debug_focus(&mut self, selector: String, focus_id: FocusId) {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        self.next_frame
+            .debug_focus_handles
+            .insert(selector.clone(), focus_id);
+        self.next_frame.debug_focus_entries.push((
+            selector,
+            focus_id,
+            self.subtree_transform_validity(),
+        ));
     }
 
     /// Sets the key context for the current element. This context will be used to translate
@@ -4727,9 +6060,17 @@ impl Window {
 
         if focus_handle.is_focused(self) {
             let cx = self.to_async(cx);
-            self.next_frame
-                .input_handlers
-                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
+            let transform = self.subtree_transform();
+            let validity = self.subtree_transform_validity();
+            self.next_frame.input_handlers.push(FrameOutput::new(
+                Some(PlatformInputHandler::new(
+                    cx,
+                    Box::new(input_handler),
+                    transform,
+                    validity.clone(),
+                )),
+                validity,
+            ));
         }
     }
 
@@ -4744,13 +6085,16 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        self.next_frame.mouse_listeners.push(Some(Box::new(
-            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref() {
-                    listener(event, phase, window, cx)
-                }
-            },
-        )));
+        self.next_frame.mouse_listeners.push(FrameOutput::new(
+            Some(Box::new(
+                move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
+                    if let Some(event) = event.downcast_ref() {
+                        listener(event, phase, window, cx)
+                    }
+                },
+            )),
+            self.subtree_transform_validity(),
+        ));
     }
 
     /// Register a pointer-cancellation listener on the window for the next frame.
@@ -4764,7 +6108,10 @@ impl Window {
         self.invalidator.debug_assert_paint();
         self.next_frame
             .pointer_cancel_listeners
-            .push(Some(Box::new(listener)));
+            .push(FrameOutput::new(
+                Some(Box::new(listener)),
+                self.subtree_transform_validity(),
+            ));
     }
 
     /// Registers a persistent mouse and pointer interceptor owned by this window.
@@ -5047,11 +6394,15 @@ impl Window {
 
         if let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
             let mut listeners = mem::take(&mut self.rendered_frame.pointer_cancel_listeners);
-            for listener in &mut listeners {
-                listener.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
+            for output in &mut listeners {
+                if output.is_valid() {
+                    output.value.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
+                }
             }
-            for listener in listeners.iter_mut().rev() {
-                listener.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
+            for output in listeners.iter_mut().rev() {
+                if output.is_valid() {
+                    output.value.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
+                }
             }
             self.rendered_frame.pointer_cancel_listeners = listeners;
         } else {
@@ -5060,8 +6411,11 @@ impl Window {
             // Capture phase, events bubble from back to front. Handlers for this phase are used for
             // special purposes, such as detecting events outside of a given Bounds.
             if cx.propagate_event {
-                for listener in &mut listeners {
-                    listener.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
+                for output in &mut listeners {
+                    if !output.is_valid() {
+                        continue;
+                    }
+                    output.value.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
                     if !cx.propagate_event {
                         break;
                     }
@@ -5070,8 +6424,11 @@ impl Window {
 
             // Bubble phase, where most normal handlers do their work.
             if cx.propagate_event {
-                for listener in listeners.iter_mut().rev() {
-                    listener.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
+                for output in listeners.iter_mut().rev() {
+                    if !output.is_valid() {
+                        continue;
+                    }
+                    output.value.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
                     if !cx.propagate_event {
                         break;
                     }
@@ -5597,15 +6954,18 @@ impl Window {
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
-    pub fn invalidate_character_coordinates(&self) {
-        self.on_next_frame(|window, cx| {
-            if let Some(mut input_handler) = window.platform_window.take_input_handler() {
-                if let Some(bounds) = input_handler.selected_bounds(window, cx) {
-                    window.platform_window.update_ime_position(bounds);
-                }
-                window.platform_window.set_input_handler(input_handler);
-            }
-        });
+    pub fn invalidate_character_coordinates(&mut self) {
+        self.refresh();
+    }
+
+    fn update_ime_position_from_committed_handler(&mut self, cx: &mut App) {
+        let Some(mut input_handler) = self.platform_window.take_input_handler() else {
+            return;
+        };
+        if let Some(bounds) = input_handler.selected_bounds(self, cx) {
+            self.platform_window.update_ime_position(bounds);
+        }
+        self.platform_window.set_input_handler(input_handler);
     }
 
     /// Present a platform dialog.
@@ -6048,6 +7408,27 @@ impl Window {
         false
     }
 
+    /// Returns the active Inspector element for test assertions.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inspector_active_element_id_for_test(
+        &self,
+        _cx: &App,
+    ) -> Option<crate::InspectorElementId> {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            return self
+                .inspector
+                .as_ref()?
+                .read(_cx)
+                .active_element_id()
+                .cloned();
+        }
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        {
+            None
+        }
+    }
+
     /// Executes the provided function with mutable access to an inspector state.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn with_inspector_state<T: 'static, R>(
@@ -6140,9 +7521,12 @@ impl Window {
                     .next_frame
                     .hitboxes
                     .iter()
-                    .find(|hitbox| hitbox.id == hitbox_id)
+                    .find(|hitbox| hitbox.id == hitbox_id && hitbox.is_active())
             {
-                self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+                self.paint_quad(crate::fill(
+                    hitbox.displayed_bounds(),
+                    crate::rgba(0x61afef4d),
+                ));
             }
         }
     }
@@ -6733,5 +8117,38 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod raster_projection_tests {
+    use super::*;
+
+    #[test]
+    fn raster_stroke_round_trips_through_the_corrected_axis_scale() {
+        assert_eq!(
+            Window::try_raster_local_stroke(ScaledPixels(0.25), 2.0, 2.0),
+            Ok(ScaledPixels(0.5))
+        );
+        assert_eq!(
+            Window::try_raster_local_stroke(ScaledPixels::default(), f32::MAX, f32::MAX),
+            Ok(ScaledPixels::default())
+        );
+    }
+
+    #[test]
+    fn raster_stroke_rejects_projection_and_inverse_projection_underflow() {
+        assert_eq!(
+            Window::try_raster_local_stroke(
+                ScaledPixels(f32::MIN_POSITIVE),
+                f32::MIN_POSITIVE,
+                1.0,
+            ),
+            Err(SubtreeTransformError::UnrepresentableResult)
+        );
+        assert_eq!(
+            Window::try_raster_local_stroke(ScaledPixels(1.0), 1.0, f32::MAX),
+            Err(SubtreeTransformError::UnrepresentableResult)
+        );
     }
 }

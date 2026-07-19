@@ -1,5 +1,6 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, DropZone,
+    DockHost, DockNode, DockNodeId, DockSpaceId, DockViewportHostGeometry,
+    DockViewportRuntimeHandle, DropZone,
     accessibility_scene::DockAccessibilityScene,
     debug::DockDebugRegion,
     divider_hit_map::{DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget},
@@ -8,6 +9,7 @@ use crate::{
         DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
     },
     drop_scene_fact, geometry,
+    host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
@@ -19,22 +21,166 @@ use crate::{
         DockDividerSample, DockPaneClipSample, DockTransitionSample, DockVisualAffordanceSample,
     },
     transition_geometry::DockTransitionPlan,
-    viewport_drop_scene::DockViewportHostSceneFrame,
+    viewport_drop_scene::DockViewportHostSceneSnapshot,
     visual_affordance_scene::{
         DockPayloadTabPreviewLayout, DockPayloadTabPreviewPlacement, DockVisualAffordanceLayer,
         DockVisualAffordanceScene,
     },
 };
 use open_gpui::{
-    AnyElement, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
-    div, point, px, quad, rgb, rgba,
+    AnyElement, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
+    DropEvent, Entity, HitboxBehavior, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PointerCaptureHandle,
+    PrepaintPublicationId, Render, Rgba, SharedString, Styled, TargetedEvent, Window, WindowId,
+    black, canvas, div, point, px, quad, rgb, rgba,
 };
 use open_gpui_motion::MotionTransition;
 use std::{cell::RefCell, rc::Rc};
 
-pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
+#[derive(Clone)]
+pub(crate) struct DockViewportHostSceneCandidate {
+    pub(crate) snapshot: DockViewportHostSceneSnapshot,
+    pub(crate) presentation_scene: DockPresentationScene,
+}
+
+#[derive(Default)]
+pub(crate) struct DockViewportHostSceneCandidateState {
+    pending: Option<DockViewportHostSceneCandidate>,
+    committed: Option<DockViewportHostSceneCandidate>,
+    prepaint_ran: bool,
+}
+
+impl DockViewportHostSceneCandidateState {
+    fn begin_prepaint(&mut self) {
+        self.pending = None;
+        self.prepaint_ran = true;
+    }
+
+    fn set_pending(&mut self, candidate: DockViewportHostSceneCandidate) {
+        self.pending = Some(candidate);
+    }
+
+    fn pending_mut(&mut self) -> Option<&mut DockViewportHostSceneCandidate> {
+        self.pending.as_mut()
+    }
+
+    fn candidate_for_commit(&mut self) -> Option<DockViewportHostSceneCandidate> {
+        if !self.prepaint_ran {
+            return self.committed.clone();
+        }
+        self.prepaint_ran = false;
+        let candidate = self.pending.take();
+        if candidate.is_none() {
+            self.committed = None;
+        }
+        candidate
+    }
+
+    fn commit(&mut self, candidate: DockViewportHostSceneCandidate) {
+        self.committed = Some(candidate);
+    }
+
+    fn discard(&mut self) {
+        self.pending = None;
+        self.committed = None;
+        self.prepaint_ran = false;
+    }
+}
+
+pub(crate) type DockViewportHostSceneCandidateSlot =
+    Rc<RefCell<DockViewportHostSceneCandidateState>>;
+
+fn clear_viewport_host_scene_publication(
+    runtime: &DockViewportRuntimeHandle,
+    entity: &Entity<DockHost>,
+    space: &DockSpaceId,
+    window_id: WindowId,
+    window: &mut Window,
+    app: &mut App,
+) -> bool {
+    let runtime_changed = runtime.discard_rendered_viewport_host_scene_frame(space, window_id);
+    let host_changed = entity.update(app, |host, _| {
+        let mut changed = host.clear_last_presentation_scene();
+        changed |= host.publish_rendered_viewport_host_scene_frame_from_render(None, window);
+        changed
+    });
+    runtime_changed || host_changed
+}
+
+fn record_viewport_host_scene_transaction(
+    window: &mut Window,
+    publication: PrepaintPublicationId,
+    frame_slot: DockViewportHostSceneCandidateSlot,
+    runtime: DockViewportRuntimeHandle,
+    entity: Entity<DockHost>,
+    space: DockSpaceId,
+    window_id: WindowId,
+    passthrough_pointer_input: bool,
+) {
+    let discard_frame_slot = frame_slot.clone();
+    let discard_runtime = runtime.clone();
+    let discard_entity = entity.clone();
+    let discard_space = space.clone();
+    window.record_prepaint_window_transaction(
+        publication,
+        move |_, window, app| {
+            let Some(candidate) = frame_slot.borrow_mut().candidate_for_commit() else {
+                if clear_viewport_host_scene_publication(
+                    &runtime, &entity, &space, window_id, window, app,
+                ) {
+                    window.refresh();
+                }
+                return;
+            };
+            let DockViewportHostSceneCandidate {
+                snapshot,
+                presentation_scene,
+            } = candidate;
+            let committed_candidate = DockViewportHostSceneCandidate {
+                snapshot: snapshot.clone(),
+                presentation_scene: presentation_scene.clone(),
+            };
+            let preparation = runtime.commit_rendered_viewport_host_scene_snapshot(
+                snapshot,
+                window,
+                app,
+                passthrough_pointer_input,
+            );
+            let Some(frame) = preparation.frame.clone() else {
+                frame_slot.borrow_mut().discard();
+                if preparation.changed
+                    || clear_viewport_host_scene_publication(
+                        &runtime, &entity, &space, window_id, window, app,
+                    )
+                {
+                    window.refresh();
+                }
+                return;
+            };
+            let interaction_frame_changed = entity.update(app, |host, _| {
+                host.set_last_presentation_scene(presentation_scene);
+                host.publish_rendered_viewport_host_scene_frame_from_render(Some(frame), window)
+            });
+            frame_slot.borrow_mut().commit(committed_candidate);
+            if preparation.changed || interaction_frame_changed {
+                window.refresh();
+            }
+        },
+        move |_, window: &mut Window, app: &mut App| {
+            discard_frame_slot.borrow_mut().discard();
+            if clear_viewport_host_scene_publication(
+                &discard_runtime,
+                &discard_entity,
+                &discard_space,
+                window_id,
+                window,
+                app,
+            ) {
+                window.refresh();
+            }
+        },
+    );
+}
 
 const DROP_PREVIEW_TAB_HEIGHT: f32 = 26.0;
 const DROP_PREVIEW_TAB_GAP: f32 = 6.0;
@@ -55,11 +201,13 @@ impl Render for DockHost {
         self.ensure_viewport_activation_subscription(window, cx);
         self.ensure_viewport_bounds_subscription(window, cx);
         self.ensure_viewport_release_subscription(window, cx);
+        let raw_drag_pointer_capture = self.ensure_pointer_session(window, cx);
         let session = self.render_session(cx);
         self.sync_panel_focus_trackers(session.visible_panel_items(), window, cx);
         let drop_host_space = session.space().clone();
         let outside_release_host_space = session.space().clone();
-        let viewport_host_scene_frame = Rc::new(RefCell::new(None));
+        let viewport_host_scene_frame =
+            Rc::new(RefCell::new(DockViewportHostSceneCandidateState::default()));
         let transition_sample = self.sample_transition_for_render(Some(window));
 
         let selector = self.record_debug_selector(
@@ -79,71 +227,81 @@ impl Render for DockHost {
             .text_color(black())
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    let payload = event.drag(cx).clone();
+                    let payload = event.drag().clone();
+                    let Ok(layout_position) = event.target_layout_position() else {
+                        return;
+                    };
                     this.begin_host_drop_scene_from_render(
                         &payload,
-                        event.bounds,
-                        event.event.position,
+                        event.geometry(),
+                        DockRenderedPointerPosition::new(layout_position, event.window_position()),
                         window,
                         cx,
                     );
                 },
             ))
-            .on_drop(
-                cx.listener(move |this, payload: &DockDragPayload, window, cx| {
+            .on_drop(cx.listener(
+                move |this, event: &DropEvent<DockDragPayload>, window, cx| {
+                    let payload = event.value();
+                    let Ok(layout_position) = event.pointer().target_layout_position() else {
+                        return;
+                    };
                     let drag_session = this.active_payload_drag_session(payload);
                     let event_receiver_local_scene_proof =
                         this.interaction().viewport_host_scene_frame().cloned();
                     this.drop_payload_release_from_render(
-                        DockPayloadDropRelease::hovered_host_with_session(
+                        DockPayloadDropRelease::hovered_host_with_positions(
                             payload.clone(),
                             drop_host_space.clone(),
-                            window.mouse_position(),
+                            layout_position,
+                            event.pointer().window_event().position,
                             drag_session,
                         )
                         .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof),
                         window,
                         cx,
                     );
-                }),
-            )
+                },
+            ))
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(move |this, event: &MouseUpEvent, window, cx| {
-                    let payload = cx.active_drag_value::<DockDragPayload>().cloned();
-                    let drag_session = payload
-                        .as_ref()
-                        .and_then(|payload| this.active_payload_drag_session(payload));
-                    let tear_off_geometry = drag_session.as_ref().and_then(|session| {
-                        this.active_payload_drag_tear_off_geometry(Some(session))
-                    });
-                    let platform_viewports_allowed = this.with_workspace(cx, |workspace| {
-                        workspace.policy().allows_platform_viewports()
-                    });
-                    let request = DockRenderedOutsideReleaseRequest::new(
-                        platform_viewports_allowed,
-                        payload,
-                        cx.mouse_button_is_pressed(MouseButton::Left),
-                        outside_release_host_space.clone(),
-                        event.position,
-                    )
-                    .with_drag_session(drag_session)
-                    .with_tear_off_geometry(tear_off_geometry);
-                    match this.interaction_mut().rendered_outside_release(request) {
-                        DockRenderedOutsideReleaseDecision::Inactive => {}
-                        DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
-                            this.finish_payload_drag_session(&drag_session, cx);
-                            this.clear_drop_preview_interaction();
-                            this.viewport_runtime().clear_routed_drop_preview(cx);
-                            window.refresh();
+                cx.listener(
+                    move |this, event: &TargetedEvent<MouseUpEvent>, window, cx| {
+                        let payload = cx.active_drag_value::<DockDragPayload>().cloned();
+                        let drag_session = payload
+                            .as_ref()
+                            .and_then(|payload| this.active_payload_drag_session(payload));
+                        let tear_off_geometry = drag_session.as_ref().and_then(|session| {
+                            this.active_payload_drag_tear_off_geometry(Some(session))
+                        });
+                        let platform_viewports_allowed = this.with_workspace(cx, |workspace| {
+                            workspace.policy().allows_platform_viewports()
+                        });
+                        let request = DockRenderedOutsideReleaseRequest::new(
+                            platform_viewports_allowed,
+                            payload,
+                            cx.mouse_button_is_pressed(MouseButton::Left),
+                            outside_release_host_space.clone(),
+                            event.window_event().position,
+                        )
+                        .with_drag_session(drag_session)
+                        .with_tear_off_geometry(tear_off_geometry);
+                        match this.interaction_mut().rendered_outside_release(request) {
+                            DockRenderedOutsideReleaseDecision::Inactive => {}
+                            DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
+                                this.finish_payload_drag_session(&drag_session, cx);
+                                this.clear_drop_preview_interaction();
+                                this.viewport_runtime().clear_routed_drop_preview(cx);
+                                window.refresh();
+                            }
+                            DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
+                                this.drop_payload_release_from_render(release, window, cx);
+                                cx.stop_active_drag(window);
+                                cx.stop_propagation();
+                            }
                         }
-                        DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
-                            this.drop_payload_release_from_render(release, window, cx);
-                            cx.stop_active_drag(window);
-                            cx.stop_propagation();
-                        }
-                    }
-                }),
+                    },
+                ),
             );
 
         if active_docking_drag {
@@ -207,12 +365,13 @@ impl Render for DockHost {
                 *floating,
                 &session,
                 &viewport_host_scene_frame,
+                raw_drag_pointer_capture,
                 window,
                 cx,
             ));
         }
 
-        host = host.child(self.render_divider_event_layer(&session, cx));
+        host = host.child(self.render_divider_event_layer(&session, raw_drag_pointer_capture, cx));
         if active_docking_drag {
             host = host.child(self.render_payload_drag_event_layer(cx));
         }
@@ -388,7 +547,7 @@ impl DockHost {
         &mut self,
         node_id: DockNodeId,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -437,7 +596,7 @@ impl DockHost {
         &mut self,
         root: DockNodeId,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -460,15 +619,15 @@ impl DockHost {
             .overflow_hidden()
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    let payload = event.drag(cx).clone();
-                    if !event.bounds.contains(&event.event.position) {
+                    let payload = event.drag().clone();
+                    let Ok(layout_position) = event.target_layout_position() else {
                         return;
-                    }
+                    };
                     this.update_local_root_drop_scene_from_render(
                         &payload,
                         root,
-                        event.bounds,
-                        event.event.position,
+                        event.layout_bounds(),
+                        DockRenderedPointerPosition::new(layout_position, event.window_position()),
                         window,
                         cx,
                     );
@@ -481,24 +640,38 @@ impl DockHost {
     fn render_divider_event_layer(
         &self,
         session: &DockHostRenderSession,
+        pointer_capture: PointerCaptureHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entity = cx.entity();
         let session = session.clone();
+        let prepaint_entity = entity.clone();
+        let prepaint_session = session.clone();
 
         canvas(
-            |_, _, _| (),
-            move |bounds, _, window, app| {
-                let scene = entity.update(app, |host, _| {
-                    host.resolved_render_presentation_scene(&session, bounds)
+            move |bounds, window, app| {
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                window
+                    .bind_pointer_capture(&pointer_capture, hitbox.id)
+                    .expect("DockHost pointer capture must bind to its interaction layer");
+                let scene = prepaint_entity.update(app, |host, _| {
+                    host.resolved_render_presentation_scene(
+                        &prepaint_session,
+                        hitbox.layout_bounds(),
+                    )
                 });
                 let hit_map = DockDividerHitMap::from_scene(&scene);
-                let hover_position = Some(window.mouse_position());
+                (hitbox, scene, hit_map)
+            },
+            move |_, (hitbox, scene, hit_map), window, app| {
+                let hover_position = (hitbox.is_active() && hitbox.is_hovered(window))
+                    .then(|| hitbox.window_to_layout_point(window.mouse_position()).ok())
+                    .flatten();
                 let corner_dragging = entity.read(app).interaction().corner_splitter_drag_active();
                 let corner_affordances =
                     hit_map.corner_affordances(hover_position, corner_dragging, true);
 
-                if let Some(target) = hit_map.hit(window.mouse_position()) {
+                if let Some(target) = hover_position.and_then(|position| hit_map.hit(position)) {
                     window.set_window_cursor_style(cursor_for_divider_target(target));
                 }
                 for affordance in &corner_affordances {
@@ -516,34 +689,61 @@ impl DockHost {
                     let entity = entity.clone();
                     let scene = scene.clone();
                     let hit_map = hit_map.clone();
-                    move |event: &MouseDownEvent, _, _, app| {
-                        if event.button != MouseButton::Left {
+                    let hitbox = hitbox.clone();
+                    move |event: &MouseDownEvent, phase, window, app| {
+                        if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
                             return;
                         }
-                        let Some(target) = hit_map.hit(event.position).cloned() else {
+                        if !hitbox.is_active()
+                            || !hitbox.is_mouse_event_target(window)
+                            || !hitbox.contains_window_point(event.position)
+                        {
+                            return;
+                        }
+                        let Ok(layout_position) = hitbox.window_to_layout_point(event.position)
+                        else {
                             return;
                         };
-                        entity.update(app, |host, cx| {
-                            host.begin_divider_drag_from_scene(&scene, &target, event.position, cx);
+                        let Some(target) = hit_map.hit(layout_position).cloned() else {
+                            return;
+                        };
+                        let captured = window
+                            .capture_pointer(&pointer_capture, MouseButton::Left)
+                            .is_ok();
+                        let began = entity.update(app, |host, cx| {
+                            host.begin_divider_drag_from_scene(&scene, &target, layout_position, cx)
                         });
+                        if !began {
+                            if captured {
+                                let _ = window.release_pointer(&pointer_capture);
+                            }
+                            return;
+                        }
                         app.stop_propagation();
                     }
                 });
 
                 window.on_mouse_event({
                     let entity = entity.clone();
-                    move |event: &MouseMoveEvent, _, _, app| {
-                        if event.pressed_button != Some(MouseButton::Left) {
+                    let hitbox = hitbox.clone();
+                    move |event: &MouseMoveEvent, phase, _, app| {
+                        if phase != DispatchPhase::Capture
+                            || event.pressed_button != Some(MouseButton::Left)
+                        {
                             return;
                         }
+                        let Ok(layout_position) = hitbox.window_to_layout_point(event.position)
+                        else {
+                            return;
+                        };
                         entity.update(app, |host, cx| {
-                            host.update_splitter_drag_from_render(event.position, cx);
+                            host.update_splitter_drag_from_render(layout_position, cx);
                         });
                     }
                 });
 
-                window.on_mouse_event(move |event: &MouseUpEvent, _, _, app| {
-                    if event.button != MouseButton::Left {
+                window.on_mouse_event(move |event: &MouseUpEvent, phase, _, app| {
+                    if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
                         return;
                     }
                     entity.update(app, |host, cx| {
@@ -587,19 +787,24 @@ impl DockHost {
         let entity = cx.entity();
 
         canvas(
-            |_, _, _| (),
-            move |bounds, _, window, _app| {
+            |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            move |_, hitbox, window, _app| {
                 window.on_mouse_event({
                     let entity = entity.clone();
+                    let hitbox = hitbox.clone();
                     move |event: &MouseMoveEvent, phase, window, app| {
                         if phase != DispatchPhase::Capture
                             || event.pressed_button != Some(MouseButton::Left)
                         {
                             return;
                         }
-                        if !bounds.contains(&event.position) {
+                        if !hitbox.contains_window_point(event.position) {
                             return;
                         }
+                        let Ok(layout_position) = hitbox.window_to_layout_point(event.position)
+                        else {
+                            return;
+                        };
                         let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
                         else {
                             return;
@@ -607,7 +812,7 @@ impl DockHost {
                         let changed = entity.update(app, |host, cx| {
                             host.update_payload_drag_hover_from_rendered_host_scene(
                                 &payload,
-                                event.position,
+                                DockRenderedPointerPosition::new(layout_position, event.position),
                                 window,
                                 cx,
                             )
@@ -620,13 +825,18 @@ impl DockHost {
 
                 window.on_mouse_event({
                     let entity = entity.clone();
+                    let hitbox = hitbox.clone();
                     move |event: &MouseUpEvent, phase, window, app| {
                         if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
                             return;
                         }
-                        if !bounds.contains(&event.position) {
+                        if !hitbox.contains_window_point(event.position) {
                             return;
                         }
+                        let Ok(layout_position) = hitbox.window_to_layout_point(event.position)
+                        else {
+                            return;
+                        };
                         let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
                         else {
                             return;
@@ -634,7 +844,7 @@ impl DockHost {
                         entity.update(app, |host, cx| {
                             host.drop_payload_release_from_rendered_host_scene(
                                 payload,
-                                event.position,
+                                DockRenderedPointerPosition::new(layout_position, event.position),
                                 window,
                                 cx,
                             );
@@ -656,7 +866,7 @@ impl DockHost {
     fn render_transition_sample_layer(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         sample: &crate::transition_executor::DockTransitionSample,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -730,7 +940,7 @@ impl DockHost {
     fn render_transition_pane_clip(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         clip: &DockPaneClipSample,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -842,7 +1052,7 @@ impl DockHost {
     fn render_empty_space(
         &mut self,
         session: &DockHostRenderSession,
-        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -863,14 +1073,14 @@ impl DockHost {
             .text_color(rgb(0x657083))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    let payload = event.drag(cx).clone();
-                    if !event.bounds.contains(&event.event.position) {
+                    let payload = event.drag().clone();
+                    let Ok(layout_position) = event.target_layout_position() else {
                         return;
-                    }
+                    };
                     this.update_local_empty_space_drop_scene_from_render(
                         &payload,
-                        event.event.position,
-                        event.bounds,
+                        DockRenderedPointerPosition::new(layout_position, event.window_position()),
+                        event.layout_bounds(),
                         false,
                         window,
                         cx,
@@ -884,7 +1094,7 @@ impl DockHost {
     fn render_passthrough_empty_central_space(
         &mut self,
         session: &DockHostRenderSession,
-        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -901,14 +1111,14 @@ impl DockHost {
             .bg(rgba(0x00000000))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    let payload = event.drag(cx).clone();
-                    if !event.bounds.contains(&event.event.position) {
+                    let payload = event.drag().clone();
+                    let Ok(layout_position) = event.target_layout_position() else {
                         return;
-                    }
+                    };
                     this.update_local_empty_space_drop_scene_from_render(
                         &payload,
-                        event.event.position,
-                        event.bounds,
+                        DockRenderedPointerPosition::new(layout_position, event.window_position()),
+                        event.layout_bounds(),
                         true,
                         window,
                         cx,
@@ -1295,11 +1505,10 @@ impl DockHost {
         guide.into_any_element()
     }
 
-    /// Publishes viewport bounds during prepaint so cross-window releases can resolve even when
-    /// the target window did not receive the drag-move event.
+    /// Captures viewport geometry during prepaint and publishes it after a valid paint.
     pub(crate) fn render_viewport_host_scene_probe(
         &self,
-        frame_slot: &DockViewportHostSceneFrameSlot,
+        frame_slot: &DockViewportHostSceneCandidateSlot,
         session: &DockHostRenderSession,
         drop_guide_style: geometry::DockDropGuideStyle,
         passthrough_pointer_input: bool,
@@ -1307,44 +1516,51 @@ impl DockHost {
     ) -> AnyElement {
         let entity = cx.entity();
         let runtime = self.viewport_runtime().clone();
+        let publication = self.viewport_scene_publication();
         let space = self.space().clone();
         let session = session.clone();
         let frame_slot = frame_slot.clone();
         canvas(
             move |bounds, window, app| {
-                let initial_facts = entity.update(app, |host, _| {
-                    let scene = host.resolved_render_presentation_scene(&session, bounds);
-                    host.set_last_presentation_scene(scene);
-                    let scene = host
-                        .last_presentation_scene()
-                        .expect("scene should be stored");
-                    drop_scene_fact::presentation_scene_drop_facts(scene, &session)
+                frame_slot.borrow_mut().begin_prepaint();
+                let window_id = window.window_handle().window_id();
+                record_viewport_host_scene_transaction(
+                    window,
+                    publication,
+                    frame_slot.clone(),
+                    runtime.clone(),
+                    entity.clone(),
+                    space.clone(),
+                    window_id,
+                    passthrough_pointer_input,
+                );
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                if !hitbox.is_active() {
+                    return;
+                }
+                let scene = entity.update(app, |host, _| {
+                    host.resolved_render_presentation_scene(&session, hitbox.layout_bounds())
                 });
                 let mouse_position = window.mouse_position();
-                let host_position = point(
-                    mouse_position.x - bounds.origin.x,
-                    mouse_position.y - bounds.origin.y,
-                );
-                let preparation = runtime.prepare_rendered_viewport_host_scene_frame(
+                let Ok(host_position) = hitbox.window_to_local_point(mouse_position) else {
+                    return;
+                };
+                let window_facts = crate::DockViewportWindowFacts::from_window(window, app);
+                let snapshot = DockViewportHostSceneSnapshot::new_with_facts(
                     space.clone(),
-                    window,
-                    app,
-                    bounds,
+                    window.window_handle().window_id(),
+                    window_facts.current_bounds,
+                    DockViewportHostGeometry::from_hitbox(&hitbox),
                     host_position,
                     drop_guide_style,
-                    passthrough_pointer_input,
-                    initial_facts,
+                    drop_scene_fact::presentation_scene_drop_facts(&scene, &session),
                 );
-                let interaction_frame_changed = entity.update(app, |host, _| {
-                    host.publish_rendered_viewport_host_scene_frame_from_render(
-                        preparation.frame.clone(),
-                        window,
-                    )
-                });
-                *frame_slot.borrow_mut() = preparation.frame;
-                if preparation.changed || interaction_frame_changed {
-                    window.refresh();
-                }
+                frame_slot
+                    .borrow_mut()
+                    .set_pending(DockViewportHostSceneCandidate {
+                        snapshot,
+                        presentation_scene: scene,
+                    });
             },
             |_, _, _, _| (),
         )
@@ -1358,29 +1574,21 @@ impl DockHost {
     /// Publishes render-measured tab-label bounds whose size depends on text shaping.
     pub(crate) fn render_tab_label_drop_scene_fact_probe(
         &self,
-        frame_slot: &DockViewportHostSceneFrameSlot,
+        frame_slot: &DockViewportHostSceneCandidateSlot,
         tabs: DockNodeId,
         target_index: usize,
         is_central: bool,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> AnyElement {
-        let entity = cx.entity();
-        let runtime = self.viewport_runtime().clone();
         let frame_slot = frame_slot.clone();
         canvas(
-            move |bounds, window, app| {
-                let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
+            move |bounds, _, _| {
+                let mut candidate_slot = frame_slot.borrow_mut();
+                let Some(candidate) = candidate_slot.pending_mut() else {
                     return;
                 };
                 let fact = drop_scene_fact::tab_label(tabs, target_index, bounds, is_central);
-                if let Some(next_frame) = runtime.push_viewport_host_scene_frame_fact(&frame, fact)
-                {
-                    let frame = Some(next_frame.clone());
-                    *frame_slot.borrow_mut() = Some(next_frame);
-                    entity.update(app, |host, _| {
-                        host.publish_rendered_viewport_host_scene_frame_from_render(frame, window);
-                    });
-                }
+                candidate.snapshot.push_fact(fact);
             },
             |_, _, _, _| (),
         )

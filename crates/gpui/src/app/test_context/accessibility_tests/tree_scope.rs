@@ -1,5 +1,67 @@
 use super::*;
 
+use crate::{SubtreeTransform, SubtreeTransformExt, fill, point, red};
+
+struct LateFailedModalAccessibilityView;
+
+impl Render for LateFailedModalAccessibilityView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("late-failed-modal-root")
+            .role(Role::Group)
+            .aria_label("Valid accessibility root")
+            .child(
+                div()
+                    .id("late-failed-modal-sibling")
+                    .role(Role::Button)
+                    .aria_label("Valid accessibility sibling"),
+            )
+            .child(
+                accessibility_scope(
+                    AccessibilityTreeScope::ModalRoot,
+                    div()
+                        .id("late-failed-modal")
+                        .role(Role::Dialog)
+                        .aria_label("Late failed modal")
+                        .aria_modal(true)
+                        .child(canvas(
+                            |_, _, _| {},
+                            |_, _, window, _| {
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        point(px(f32::MAX), px(0.0)),
+                                        size(px(10.0), px(10.0)),
+                                    ),
+                                    red(),
+                                ));
+                            },
+                        )),
+                )
+                .with_subtree_transform(
+                    SubtreeTransform::try_uniform_scale(2.0).expect("valid transform"),
+                ),
+            )
+    }
+}
+
+#[open_gpui::test]
+fn late_failed_modal_does_not_restrict_valid_accessibility_siblings(cx: &mut TestAppContext) {
+    let window = cx.open_window(size(px(320.0), px(200.0)), |_, _| {
+        LateFailedModalAccessibilityView
+    });
+    let window = window.into();
+
+    assert!(cx.activate_accessibility(window));
+    let update = cx.latest_accessibility_tree_update(window).unwrap();
+    node_with_label(&update, "Valid accessibility sibling");
+    assert!(
+        update
+            .nodes
+            .iter()
+            .all(|(_, node)| node.label() != Some("Late failed modal"))
+    );
+}
+
 struct ModalAccessibilityProbeView {
     modal_open: bool,
     auxiliary_hidden: bool,

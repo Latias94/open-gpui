@@ -194,6 +194,90 @@ keyed runtime once. Renderer-neutral state requests still accept an `active_valu
 editor-owned Combobox adapter projects its current runtime value into its private embedded
 Listbox; neither path recreates a public controlled-active API.
 
+## Interactive Subtree Transform And Coordinates
+
+The SVG-only `Transformation`, `TransformationMatrix`, and `Svg::with_transformation` APIs are
+deleted without aliases. They changed raster output while leaving descendants, input, IME,
+accessibility, and diagnostics at the old geometry. Use the checked layout-neutral subtree
+authority for supported axis-aligned scale and translation:
+
+```rust
+use open_gpui::{
+    SubtreeTransform, SubtreeTransformExt as _, SubtreeTransformOrigin, div, point, px, size,
+};
+
+let transform = SubtreeTransform::try_new(
+    size(1.25, 0.9),
+    point(px(8.0), px(-4.0)),
+    SubtreeTransformOrigin::CENTER,
+)?;
+
+let element = div().child(content).with_subtree_transform(transform);
+```
+
+The contract accepts only finite, strictly positive normal axis scale with a representable reciprocal,
+finite logical-pixel translation, and a finite post-layout origin. `TOP_LEFT` and `CENTER` are
+built in; `SubtreeTransformOrigin::try_new(anchor, offset)` resolves
+`anchor * child_size + offset` after layout. Rotation, skew, arbitrary matrices, reflection, and
+3D have no replacement in this API. A numeric or backend conversion failure suppresses the whole
+affected subtree transaction; it never clamps or substitutes identity.
+
+Retained geometry or other state published outside the frame journal must use a stable
+`PrepaintPublicationId` with `Window::record_prepaint_window_transaction`. GPUI commits it only
+after a valid paint and invokes its discard callback when the frame is invalid or the publication
+is absent from the next completed frame. Reuse the ID across renders of one logical producer; do
+not publish directly from prepaint or preserve last-known state after unmount or rollback.
+
+For a top-left-relative pixel origin, use the checked
+`SubtreeTransformOrigin::try_pixels(offset)` constructor. The origin type has no unchecked pixel
+conversion or `From<Point<Pixels>>` implementation; invalid input must be handled at the call site.
+
+Raw platform events remain window-space. Interactive listeners now receive `TargetedEvent<E>`
+where target geometry is required. Read the original event through `window_event()` and use the
+checked target-local or target-layout helpers for control logic:
+
+```rust
+div().on_mouse_move(|event, _window, _cx| {
+    let raw_window_position = event.window_event().position;
+    let Ok(local_position) = event.target_local_position() else {
+        return;
+    };
+    update_selection(local_position, raw_window_position);
+})
+```
+
+`on_click` and `on_aux_click` receive `TargetedEvent<ClickEvent>`. Drag construction receives
+`DragStartGeometry`; `on_drag_move` receives `DragMoveEvent<T>` whose `drag()` reads the captured
+payload; and `on_drop` receives `DropEvent<T>` with `value()` plus a targeted `pointer()`. Use
+`window_preview_offset()` only for the window-space drag preview. Pixel wheel deltas can be read in
+target-local units; line deltas preserve their semantic unit.
+
+For committed geometry, use `Hitbox::geometry()` or wrap content with `measured_element`. Its
+listener is now `Fn(MeasuredElementSnapshot, &mut App)`: the snapshot carries frame generation,
+semantic/global identity, and one immutable `ElementGeometry` with layout bounds, displayed
+bounds, and checked local/layout/window conversions. Failed transform scopes publish no snapshot.
+
+Complex custom consumers must keep visual stacking and pointer ownership in the same committed
+coordinate model. Docking now resolves divider junctions separately for the root and each floating
+surface, gives every floating container a blocking boundary across its complete bounds, and retains
+one stable capture owner for raw and standard GPUI drags. High-level drag sources acquire it after
+crossing the drag threshold, so removal of their owner binding produces terminal cancellation
+without capturing ordinary clicks. Terminal cancellation keeps the GPUI window-owned payload
+visible while each observer clears only its own runtime session, preview, anchor, and outside-release
+poll; this lets the true owner observe cancellation even when multiple independent hosts share a
+window. Establish component payload state only after policy and checked geometry accept the
+underlying drag session, and defer rollback when the framework writes its active drag after the
+constructor returns. Do not flatten transformed overlays into one hit list, treat only dividers as
+occluding, or leave component drag state dependent on receiving a normal mouse-up.
+
+Motion remains below GPUI. Sample `MotionProjection::try_transform_sample` and convert it in a
+consumer that depends on both crates, such as
+`open_gpui_ui_components::gpui_adapter::subtree_transform_from_motion_projection`. Do not add a
+GPUI type or identity fallback to `open-gpui-motion`.
+
+See [ADR 0021](../adr/0021-open-gpui-interactive-subtree-transform-authority.md) for composition,
+cache/deferred, renderer, and failure-ordering details.
+
 ## Semantic Activation Authority
 
 Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests

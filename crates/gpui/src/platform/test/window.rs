@@ -35,6 +35,7 @@ pub(crate) struct TestWindowState {
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
+    ime_position_history: Vec<Bounds<Pixels>>,
     is_minimized: bool,
     is_fullscreen: bool,
     accepts_pointer_input: bool,
@@ -122,6 +123,7 @@ impl TestWindow {
             resize_callback: None,
             moved_callback: None,
             input_handler: None,
+            ime_position_history: Vec::new(),
             is_minimized: false,
             is_fullscreen: false,
             accepts_pointer_input: params.accepts_pointer_input,
@@ -146,6 +148,16 @@ impl TestWindow {
             .accessibility
             .retain_activation_result(&callbacks, initial_update);
         true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ime_position_history(&self) -> Vec<Bounds<Pixels>> {
+        self.0.lock().ime_position_history.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_ime_position_history(&self) {
+        self.0.lock().ime_position_history.clear();
     }
 
     pub(crate) fn deactivate_accessibility(&self) -> bool {
@@ -496,7 +508,9 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        self.0.lock().ime_position_history.push(bounds);
+    }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None

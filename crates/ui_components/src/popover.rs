@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
@@ -676,7 +676,7 @@ impl RenderOnce for Popover {
                             let overlay_binding = overlay_binding.clone();
                             this.cursor_pointer()
                                 .hover(move |style| style.bg(trigger_hover_background))
-                                .on_click(move |_event: &ClickEvent, window, cx| {
+                                .on_click(move |_event, window, cx| {
                                     cx.stop_propagation();
                                     window_overlay_runtime
                                         .request_open_change(

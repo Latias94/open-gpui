@@ -3,10 +3,10 @@
 use open_gpui::prelude::*;
 
 use open_gpui::{
-    Anchor, App, AppContext, BorrowAppContext, Bounds, Context, FocusHandle, InteractiveElement,
-    IntoElement, ListAlignment, ListState, ParentElement, Pixels, Render, ScrollHandle,
-    StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions, anchored, deferred,
-    div, px, rgb, size,
+    Anchor, App, AppContext, BorrowAppContext, Bounds, Context, ElementGeometry, FocusHandle,
+    InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Pixels, Render,
+    ScrollHandle, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
+    anchored, deferred, div, px, rgb, size,
 };
 use open_gpui_devtools::DevtoolsInspectorController;
 
@@ -41,6 +41,7 @@ use crate::pages::{
 mod components;
 mod focus_a11y;
 mod overlay;
+mod presentation;
 mod support;
 
 pub(crate) use components::*;
@@ -132,6 +133,12 @@ pub struct GalleryShell {
     page_scroll_handle: ScrollHandle,
     components_list_state: ListState,
     editable_text_input: open_gpui::Entity<TextInputController>,
+    presentation_text_input: open_gpui::Entity<TextInputController>,
+    presentation_scroll_handle: ScrollHandle,
+    presentation_projection_progress: f32,
+    presentation_action_count: usize,
+    presentation_drag_status: String,
+    presentation_geometry: Option<ElementGeometry>,
     focus_controls: [FocusHandle; pages::focus_a11y::FOCUS_CONTROLS.len()],
     tooltip_focus_controls: [FocusHandle; 4],
     focus_a11y: FocusA11yPageState,
@@ -179,6 +186,17 @@ impl GalleryShell {
                 controller
             }),
 
+            presentation_text_input: cx.new(|cx| {
+                let mut controller = TextInputController::with_value("Transform-aware input", cx);
+                controller.set_placeholder("Type inside the transformed subtree", cx);
+                controller
+            }),
+            presentation_scroll_handle: ScrollHandle::new(),
+            presentation_projection_progress: 0.0,
+            presentation_action_count: 0,
+            presentation_drag_status: "Ready".to_owned(),
+            presentation_geometry: None,
+
             focus_controls: pages::focus_a11y::FOCUS_CONTROLS
                 .map(|spec| cx.focus_handle().tab_index(spec.tab_index).tab_stop(true)),
 
@@ -225,6 +243,36 @@ impl GalleryShell {
 
     pub(crate) fn editable_text_input(&self) -> &open_gpui::Entity<TextInputController> {
         &self.editable_text_input
+    }
+
+    /// Returns the current presentation projection progress.
+    pub const fn presentation_projection_progress(&self) -> f32 {
+        self.presentation_projection_progress
+    }
+
+    /// Returns the number of transformed action activations.
+    pub const fn presentation_action_count(&self) -> usize {
+        self.presentation_action_count
+    }
+
+    /// Returns the latest transformed drag/drop status.
+    pub fn presentation_drag_status(&self) -> &str {
+        &self.presentation_drag_status
+    }
+
+    /// Returns the latest committed presentation geometry.
+    pub const fn presentation_geometry(&self) -> Option<ElementGeometry> {
+        self.presentation_geometry
+    }
+
+    /// Returns the presentation page's nested scroll handle.
+    pub fn presentation_scroll_handle(&self) -> &ScrollHandle {
+        &self.presentation_scroll_handle
+    }
+
+    /// Returns the presentation page's editable controller.
+    pub fn presentation_text_input(&self) -> &open_gpui::Entity<TextInputController> {
+        &self.presentation_text_input
     }
 
     pub fn devtools_inspector(&self) -> &open_gpui::Entity<DevtoolsInspectorController> {
@@ -615,6 +663,10 @@ impl GalleryShell {
 
             GalleryPage::Overlay => self
                 .render_overlay_page(snapshot, window, cx)
+                .into_any_element(),
+
+            GalleryPage::Presentation => self
+                .render_presentation_page(snapshot, window, cx)
                 .into_any_element(),
 
             GalleryPage::Components => {

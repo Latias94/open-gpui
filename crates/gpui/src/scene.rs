@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::PlatformPixelBuffer;
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    Point, ScaledPixels, Size, SubtreeTransformError,
+    bounds_tree::BoundsTree,
+    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    point,
 };
 use std::{
     fmt::Debug,
@@ -57,29 +60,69 @@ impl Scene {
     }
 
     pub fn len(&self) -> usize {
+        self.paint_operations
+            .iter()
+            .filter(|operation| {
+                operation
+                    .validity
+                    .as_ref()
+                    .is_none_or(SubtreeTransformValidity::is_valid)
+            })
+            .count()
+    }
+
+    pub(crate) fn journal_len(&self) -> usize {
         self.paint_operations.len()
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        self.push_layer_scoped(bounds, None);
+    }
+
+    pub(crate) fn push_layer_scoped(
+        &mut self,
+        bounds: Bounds<ScaledPixels>,
+        validity: Option<SubtreeTransformValidity>,
+    ) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
-        self.paint_operations
-            .push(PaintOperation::StartLayer(bounds));
+        self.paint_operations.push(PaintOperation {
+            kind: PaintOperationKind::StartLayer(bounds),
+            validity,
+        });
     }
 
     pub fn pop_layer(&mut self) {
-        self.layer_stack.pop();
-        self.paint_operations.push(PaintOperation::EndLayer);
+        self.pop_layer_scoped(None);
     }
 
-    pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+    pub(crate) fn pop_layer_scoped(&mut self, validity: Option<SubtreeTransformValidity>) {
+        self.layer_stack.pop();
+        self.paint_operations.push(PaintOperation {
+            kind: PaintOperationKind::EndLayer,
+            validity,
+        });
+    }
+
+    pub fn insert_primitive(
+        &mut self,
+        primitive: impl Into<Primitive>,
+    ) -> Result<(), SubtreeTransformError> {
+        self.insert_primitive_scoped(primitive, None)
+    }
+
+    pub(crate) fn insert_primitive_scoped(
+        &mut self,
+        primitive: impl Into<Primitive>,
+        validity: Option<SubtreeTransformValidity>,
+    ) -> Result<(), SubtreeTransformError> {
         let mut primitive = primitive.into();
         let clipped_bounds = primitive
-            .bounds()
+            .try_visual_bounds()?
             .intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
-            return;
+            return Ok(());
         }
 
         let order = self
@@ -122,21 +165,68 @@ impl Scene {
                 self.surfaces.push(surface.clone());
             }
         }
-        self.paint_operations
-            .push(PaintOperation::Primitive(primitive));
+        self.paint_operations.push(PaintOperation {
+            kind: PaintOperationKind::Primitive(primitive),
+            validity,
+        });
+        Ok(())
     }
 
-    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+    pub(crate) fn replay(
+        &mut self,
+        range: Range<usize>,
+        prev_scene: &Scene,
+        validity: Option<SubtreeTransformValidity>,
+    ) -> Result<(), SubtreeTransformError> {
         for operation in &prev_scene.paint_operations[range] {
-            match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
-                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
-                PaintOperation::EndLayer => self.pop_layer(),
+            let replayed_validity = SubtreeTransformValidity::replayed_under(
+                operation.validity.as_ref(),
+                validity.clone(),
+            );
+            match &operation.kind {
+                PaintOperationKind::Primitive(primitive) => {
+                    self.insert_primitive_scoped(primitive.clone(), replayed_validity)?
+                }
+                PaintOperationKind::StartLayer(bounds) => {
+                    self.push_layer_scoped(*bounds, replayed_validity)
+                }
+                PaintOperationKind::EndLayer => self.pop_layer_scoped(replayed_validity),
             }
         }
+        Ok(())
     }
 
     pub fn finish(&mut self) {
+        if self.paint_operations.iter().any(|operation| {
+            operation
+                .validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+        }) {
+            let operations = std::mem::take(&mut self.paint_operations);
+            self.clear();
+            for operation in &operations {
+                if operation
+                    .validity
+                    .as_ref()
+                    .is_some_and(|validity| !validity.is_valid())
+                {
+                    continue;
+                }
+                match &operation.kind {
+                    PaintOperationKind::Primitive(primitive) => self
+                        .insert_primitive_scoped(primitive.clone(), operation.validity.clone())
+                        .expect("previously accepted scene primitive must remain representable"),
+                    PaintOperationKind::StartLayer(bounds) => {
+                        self.push_layer_scoped(*bounds, operation.validity.clone())
+                    }
+                    PaintOperationKind::EndLayer => {
+                        self.pop_layer_scoped(operation.validity.clone())
+                    }
+                }
+            }
+            self.paint_operations = operations;
+        }
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
         self.paths.sort_by_key(|path| path.order);
@@ -199,7 +289,12 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
-pub(crate) enum PaintOperation {
+pub(crate) struct PaintOperation {
+    kind: PaintOperationKind,
+    validity: Option<SubtreeTransformValidity>,
+}
+
+pub(crate) enum PaintOperationKind {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
@@ -244,6 +339,31 @@ impl Primitive {
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
         }
+    }
+
+    pub fn transform(&self) -> PrimitiveTransform {
+        match self {
+            Primitive::Shadow(shadow) => shadow.transform,
+            Primitive::Quad(quad) => quad.transform,
+            Primitive::Path(path) => path.transform,
+            Primitive::Underline(underline) => underline.transform,
+            Primitive::MonochromeSprite(sprite) => sprite.transform,
+            Primitive::SubpixelSprite(sprite) => sprite.transform,
+            Primitive::PolychromeSprite(sprite) => sprite.transform,
+            Primitive::Surface(surface) => surface.transform,
+        }
+    }
+
+    fn local_raster_bounds(&self) -> Bounds<ScaledPixels> {
+        match self {
+            Primitive::Shadow(shadow) => shadow.local_raster_bounds(),
+            _ => *self.bounds(),
+        }
+    }
+
+    pub fn try_visual_bounds(&self) -> Result<Bounds<ScaledPixels>, SubtreeTransformError> {
+        self.transform()
+            .try_project_bounds(self.local_raster_bounds())
     }
 }
 
@@ -483,6 +603,205 @@ pub enum PrimitiveBatch {
     Surfaces(Range<usize>),
 }
 
+/// Renderer-facing raster projection derived from GPUI's checked subtree transform authority.
+///
+/// This type is an internal cross-crate ABI. Application code constructs [`crate::SubtreeTransform`]
+/// instead. [`crate::Window`] may retarget this axis-aligned projection after projecting and
+/// snapping a primitive's raster envelope, while shaders retain the primitive's local coordinates
+/// for gradients, signed-distance fields, and texture sampling.
+#[doc(hidden)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[repr(C)]
+pub struct PrimitiveTransform {
+    scale_x: f32,
+    scale_y: f32,
+    translation_x: f32,
+    translation_y: f32,
+}
+
+impl Default for PrimitiveTransform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+impl PrimitiveTransform {
+    pub const IDENTITY: Self = Self {
+        scale_x: 1.0,
+        scale_y: 1.0,
+        translation_x: 0.0,
+        translation_y: 0.0,
+    };
+
+    pub(crate) fn try_new(
+        scale: Size<f32>,
+        translation: Point<ScaledPixels>,
+    ) -> Result<Self, SubtreeTransformError> {
+        if !scale.width.is_normal()
+            || scale.width <= 0.0
+            || !scale.height.is_normal()
+            || scale.height <= 0.0
+            || !scale.width.recip().is_finite()
+            || !scale.height.recip().is_finite()
+        {
+            return Err(SubtreeTransformError::InvalidScale);
+        }
+        if !translation.x.0.is_finite() || !translation.y.0.is_finite() {
+            return Err(SubtreeTransformError::NonFiniteTranslation);
+        }
+        Ok(Self {
+            scale_x: scale.width,
+            scale_y: scale.height,
+            translation_x: translation.x.0,
+            translation_y: translation.y.0,
+        })
+    }
+
+    pub(crate) fn try_from_resolved(
+        resolved: ResolvedSubtreeTransform,
+        scale_factor: f32,
+    ) -> Result<Self, SubtreeTransformError> {
+        if !scale_factor.is_normal() || scale_factor <= 0.0 {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        let offset = resolved.offset();
+        let translation_x = offset.x.0 * scale_factor;
+        let translation_y = offset.y.0 * scale_factor;
+        if !translation_x.is_finite() || !translation_y.is_finite() {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        Self::try_new(
+            resolved.scale(),
+            point(ScaledPixels(translation_x), ScaledPixels(translation_y)),
+        )
+    }
+
+    pub fn is_identity(self) -> bool {
+        self == Self::IDENTITY
+    }
+
+    pub(crate) fn scale(self) -> Size<f32> {
+        Size::new(self.scale_x, self.scale_y)
+    }
+
+    fn try_from_components(components: [f32; 4]) -> Result<Self, SubtreeTransformError> {
+        Self::try_new(
+            Size::new(components[0], components[1]),
+            point(ScaledPixels(components[2]), ScaledPixels(components[3])),
+        )
+    }
+
+    #[doc(hidden)]
+    pub const fn components(self) -> [f32; 4] {
+        [
+            self.scale_x,
+            self.scale_y,
+            self.translation_x,
+            self.translation_y,
+        ]
+    }
+
+    fn validate(self) -> Result<(), SubtreeTransformError> {
+        Self::try_from_components(self.components()).map(|_| ())
+    }
+
+    pub fn try_project_bounds(
+        self,
+        bounds: Bounds<ScaledPixels>,
+    ) -> Result<Bounds<ScaledPixels>, SubtreeTransformError> {
+        self.validate()?;
+        let origin_x = self.scale_x.mul_add(bounds.origin.x.0, self.translation_x);
+        let origin_y = self.scale_y.mul_add(bounds.origin.y.0, self.translation_y);
+        let width = self.scale_x * bounds.size.width.0;
+        let height = self.scale_y * bounds.size.height.0;
+        if !origin_x.is_finite() || !origin_y.is_finite() {
+            return Err(SubtreeTransformError::UnrepresentableResult);
+        }
+        for (source, projected) in [(bounds.size.width.0, width), (bounds.size.height.0, height)] {
+            if !projected.is_finite() || (source != 0.0 && projected == 0.0) {
+                return Err(SubtreeTransformError::UnrepresentableResult);
+            }
+        }
+        Ok(Bounds::new(
+            point(ScaledPixels(origin_x), ScaledPixels(origin_y)),
+            Size::new(ScaledPixels(width), ScaledPixels(height)),
+        ))
+    }
+
+    /// Returns an axis-aligned projection that maps `source` onto `target` exactly at both edges.
+    ///
+    /// This is used after the checked subtree projection has produced device-space bounds and the
+    /// window has applied its single device-pixel snapping policy. Interior points remain a linear
+    /// interpolation of the primitive's original local coordinate space.
+    pub(crate) fn try_retarget_bounds(
+        self,
+        source: Bounds<ScaledPixels>,
+        target: Bounds<ScaledPixels>,
+    ) -> Result<Self, SubtreeTransformError> {
+        self.validate()?;
+
+        fn retarget_axis(
+            source_origin: f32,
+            source_size: f32,
+            target_origin: f32,
+            target_size: f32,
+            fallback_scale: f32,
+        ) -> Result<(f32, f32), SubtreeTransformError> {
+            if !source_origin.is_finite()
+                || !source_size.is_finite()
+                || !target_origin.is_finite()
+                || !target_size.is_finite()
+                || source_size < 0.0
+                || target_size < 0.0
+            {
+                return Err(SubtreeTransformError::UnrepresentableResult);
+            }
+
+            let scale = if source_size == 0.0 {
+                if target_size != 0.0 {
+                    return Err(SubtreeTransformError::UnrepresentableResult);
+                }
+                fallback_scale
+            } else {
+                if target_size == 0.0 {
+                    return Err(SubtreeTransformError::UnrepresentableResult);
+                }
+                target_size / source_size
+            };
+            let translation = scale.mul_add(-source_origin, target_origin);
+            if !scale.is_normal()
+                || scale <= 0.0
+                || !scale.recip().is_finite()
+                || !translation.is_finite()
+            {
+                return Err(SubtreeTransformError::UnrepresentableResult);
+            }
+            Ok((scale, translation))
+        }
+
+        let (scale_x, translation_x) = retarget_axis(
+            source.origin.x.0,
+            source.size.width.0,
+            target.origin.x.0,
+            target.size.width.0,
+            self.scale_x,
+        )?;
+        let (scale_y, translation_y) = retarget_axis(
+            source.origin.y.0,
+            source.size.height.0,
+            target.origin.y.0,
+            target.size.height.0,
+            self.scale_y,
+        )?;
+
+        Self::try_new(
+            Size::new(scale_x, scale_y),
+            point(ScaledPixels(translation_x), ScaledPixels(translation_y)),
+        )
+        .map_err(|_| SubtreeTransformError::UnrepresentableResult)
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone)]
 #[repr(C)]
 #[expect(missing_docs)]
@@ -495,6 +814,7 @@ pub struct Quad {
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
+    pub(crate) transform: PrimitiveTransform,
 }
 
 impl From<Quad> for Primitive {
@@ -514,6 +834,7 @@ pub struct Underline {
     pub color: Hsla,
     pub thickness: ScaledPixels,
     pub wavy: u32,
+    pub(crate) transform: PrimitiveTransform,
 }
 
 impl From<Underline> for Primitive {
@@ -537,6 +858,17 @@ pub struct Shadow {
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
     pub pad: u32, // align to 8 bytes
+    pub(crate) transform: PrimitiveTransform,
+}
+
+impl Shadow {
+    pub(crate) fn local_raster_bounds(&self) -> Bounds<ScaledPixels> {
+        if self.inset != 0 {
+            self.element_bounds
+        } else {
+            self.bounds.dilate(ScaledPixels(3.0 * self.blur_radius.0))
+        }
+    }
 }
 
 impl From<Shadow> for Primitive {
@@ -556,109 +888,6 @@ pub enum BorderStyle {
     Dashed = 1,
 }
 
-/// A data type representing a 2 dimensional transformation that can be applied to an element.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[repr(C)]
-pub struct TransformationMatrix {
-    /// 2x2 matrix containing rotation and scale,
-    /// stored row-major
-    pub rotation_scale: [[f32; 2]; 2],
-    /// translation vector
-    pub translation: [f32; 2],
-}
-
-impl Eq for TransformationMatrix {}
-
-impl TransformationMatrix {
-    /// The unit matrix, has no effect.
-    pub fn unit() -> Self {
-        Self {
-            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
-            translation: [0.0, 0.0],
-        }
-    }
-
-    /// Move the origin by a given point
-    pub fn translate(mut self, point: Point<ScaledPixels>) -> Self {
-        self.compose(Self {
-            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
-            translation: [point.x.0, point.y.0],
-        })
-    }
-
-    /// Clockwise rotation in radians around the origin
-    pub fn rotate(self, angle: Radians) -> Self {
-        self.compose(Self {
-            rotation_scale: [
-                [angle.0.cos(), -angle.0.sin()],
-                [angle.0.sin(), angle.0.cos()],
-            ],
-            translation: [0.0, 0.0],
-        })
-    }
-
-    /// Scale around the origin
-    pub fn scale(self, size: Size<f32>) -> Self {
-        self.compose(Self {
-            rotation_scale: [[size.width, 0.0], [0.0, size.height]],
-            translation: [0.0, 0.0],
-        })
-    }
-
-    /// Perform matrix multiplication with another transformation
-    /// to produce a new transformation that is the result of
-    /// applying both transformations: first, `other`, then `self`.
-    #[inline]
-    pub fn compose(self, other: TransformationMatrix) -> TransformationMatrix {
-        if other == Self::unit() {
-            return self;
-        }
-        // Perform matrix multiplication
-        TransformationMatrix {
-            rotation_scale: [
-                [
-                    self.rotation_scale[0][0] * other.rotation_scale[0][0]
-                        + self.rotation_scale[0][1] * other.rotation_scale[1][0],
-                    self.rotation_scale[0][0] * other.rotation_scale[0][1]
-                        + self.rotation_scale[0][1] * other.rotation_scale[1][1],
-                ],
-                [
-                    self.rotation_scale[1][0] * other.rotation_scale[0][0]
-                        + self.rotation_scale[1][1] * other.rotation_scale[1][0],
-                    self.rotation_scale[1][0] * other.rotation_scale[0][1]
-                        + self.rotation_scale[1][1] * other.rotation_scale[1][1],
-                ],
-            ],
-            translation: [
-                self.translation[0]
-                    + self.rotation_scale[0][0] * other.translation[0]
-                    + self.rotation_scale[0][1] * other.translation[1],
-                self.translation[1]
-                    + self.rotation_scale[1][0] * other.translation[0]
-                    + self.rotation_scale[1][1] * other.translation[1],
-            ],
-        }
-    }
-
-    /// Apply transformation to a point, mainly useful for debugging
-    pub fn apply(&self, point: Point<Pixels>) -> Point<Pixels> {
-        let input = [point.x.0, point.y.0];
-        let mut output = self.translation;
-        for (i, output_cell) in output.iter_mut().enumerate() {
-            for (k, input_cell) in input.iter().enumerate() {
-                *output_cell += self.rotation_scale[i][k] * *input_cell;
-            }
-        }
-        Point::new(output[0].into(), output[1].into())
-    }
-}
-
-impl Default for TransformationMatrix {
-    fn default() -> Self {
-        Self::unit()
-    }
-}
-
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 #[expect(missing_docs)]
@@ -669,7 +898,7 @@ pub struct MonochromeSprite {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
-    pub transformation: TransformationMatrix,
+    pub(crate) transform: PrimitiveTransform,
 }
 
 impl From<MonochromeSprite> for Primitive {
@@ -688,7 +917,7 @@ pub struct SubpixelSprite {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
-    pub transformation: TransformationMatrix,
+    pub(crate) transform: PrimitiveTransform,
 }
 
 impl From<SubpixelSprite> for Primitive {
@@ -709,11 +938,19 @@ pub struct PolychromeSprite {
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
+    pub(crate) transform: PrimitiveTransform,
 }
 
 impl From<PolychromeSprite> for Primitive {
     fn from(sprite: PolychromeSprite) -> Self {
         Primitive::PolychromeSprite(sprite)
+    }
+}
+
+impl PolychromeSprite {
+    #[doc(hidden)]
+    pub const fn renderer_transform(&self) -> PrimitiveTransform {
+        self.transform
     }
 }
 
@@ -723,6 +960,7 @@ pub struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    pub(crate) transform: PrimitiveTransform,
     #[cfg(target_os = "macos")]
     pub image_buffer: PlatformPixelBuffer,
 }
@@ -730,6 +968,13 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+impl PaintSurface {
+    #[doc(hidden)]
+    pub const fn renderer_transform(&self) -> PrimitiveTransform {
+        self.transform
     }
 }
 
@@ -747,9 +992,17 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub content_mask: ContentMask<P>,
     pub vertices: Vec<PathVertex<P>>,
     pub color: Background,
+    pub(crate) transform: PrimitiveTransform,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
+}
+
+impl<P: Clone + Debug + Default + PartialEq> Path<P> {
+    #[doc(hidden)]
+    pub const fn renderer_transform(&self) -> PrimitiveTransform {
+        self.transform
+    }
 }
 
 impl Path<Pixels> {
@@ -767,6 +1020,7 @@ impl Path<Pixels> {
             },
             content_mask: Default::default(),
             color: Default::default(),
+            transform: PrimitiveTransform::IDENTITY,
             contour_count: 0,
         }
     }
@@ -787,6 +1041,7 @@ impl Path<Pixels> {
             current: self.current.scale(factor),
             contour_count: self.contour_count,
             color: self.color,
+            transform: self.transform,
         }
     }
 
@@ -899,5 +1154,146 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scaled_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
+        Bounds::new(
+            point(ScaledPixels(x), ScaledPixels(y)),
+            Size::new(ScaledPixels(width), ScaledPixels(height)),
+        )
+    }
+
+    #[test]
+    fn transformed_visual_bounds_drive_scene_culling_and_order() {
+        let mask = ContentMask {
+            bounds: scaled_bounds(100.0, 50.0, 40.0, 40.0),
+        };
+        let translated = PrimitiveTransform::try_new(
+            Size::new(2.0, 3.0),
+            point(ScaledPixels(100.0), ScaledPixels(50.0)),
+        )
+        .unwrap();
+        let mut scene = Scene::default();
+        let first = Quad {
+            bounds: scaled_bounds(0.0, 0.0, 10.0, 10.0),
+            content_mask: mask,
+            transform: translated,
+            ..Default::default()
+        };
+        scene.insert_primitive(first).unwrap();
+
+        assert_eq!(scene.quads.len(), 1);
+        assert_eq!(
+            Primitive::Quad(first).try_visual_bounds().unwrap(),
+            scaled_bounds(100.0, 50.0, 20.0, 30.0)
+        );
+
+        let second = Quad {
+            bounds: scaled_bounds(105.0, 55.0, 10.0, 10.0),
+            content_mask: mask,
+            transform: PrimitiveTransform::IDENTITY,
+            ..Default::default()
+        };
+        scene.insert_primitive(second).unwrap();
+        assert!(scene.quads[1].order > scene.quads[0].order);
+
+        let outside = Quad {
+            bounds: scaled_bounds(0.0, 0.0, 10.0, 10.0),
+            content_mask: mask,
+            transform: PrimitiveTransform::IDENTITY,
+            ..Default::default()
+        };
+        scene.insert_primitive(outside).unwrap();
+        assert_eq!(scene.quads.len(), 2);
+    }
+
+    #[test]
+    fn projected_bounds_allow_translation_to_zero() {
+        let transform = PrimitiveTransform::try_new(
+            Size::new(2.0, 3.0),
+            point(ScaledPixels(-20.0), ScaledPixels(15.0)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            transform
+                .try_project_bounds(scaled_bounds(10.0, -5.0, 4.0, 6.0))
+                .unwrap(),
+            scaled_bounds(0.0, 0.0, 8.0, 18.0)
+        );
+    }
+
+    #[test]
+    fn raster_transform_retargets_projected_edges_after_snapping() {
+        let source = scaled_bounds(0.4, 0.4, 1.0, 1.0);
+        let base = PrimitiveTransform::try_new(
+            Size::new(2.0, 2.0),
+            point(ScaledPixels(0.4), ScaledPixels(0.4)),
+        )
+        .unwrap();
+        let snapped_projected = scaled_bounds(1.0, 1.0, 2.0, 2.0);
+        let raster = base.try_retarget_bounds(source, snapped_projected).unwrap();
+
+        assert_eq!(
+            raster.try_project_bounds(source).unwrap(),
+            snapped_projected
+        );
+        assert_ne!(
+            base.try_project_bounds(scaled_bounds(0.0, 0.0, 1.0, 1.0))
+                .unwrap(),
+            snapped_projected,
+            "pre-projection snapping must remain observably different"
+        );
+    }
+
+    #[test]
+    fn raster_transform_preserves_a_degenerate_axis_and_rejects_collapse() {
+        let base = PrimitiveTransform::try_new(
+            Size::new(2.0, 3.0),
+            point(ScaledPixels(0.25), ScaledPixels(-0.5)),
+        )
+        .unwrap();
+        let source = scaled_bounds(4.0, 2.0, 0.0, 3.0);
+        let target = scaled_bounds(8.0, 6.0, 0.0, 9.0);
+
+        let raster = base.try_retarget_bounds(source, target).unwrap();
+        assert_eq!(raster.try_project_bounds(source).unwrap(), target);
+        assert_eq!(
+            base.try_retarget_bounds(
+                scaled_bounds(0.0, 0.0, 0.25, 1.0),
+                scaled_bounds(0.0, 0.0, 0.0, 1.0),
+            ),
+            Err(SubtreeTransformError::UnrepresentableResult)
+        );
+    }
+
+    #[test]
+    fn shadow_visual_bounds_include_the_shader_raster_envelope() {
+        let mask = ContentMask {
+            bounds: scaled_bounds(-100.0, -100.0, 200.0, 200.0),
+        };
+        let shadow = Shadow {
+            order: 0,
+            blur_radius: ScaledPixels(2.0),
+            bounds: scaled_bounds(10.0, 20.0, 30.0, 40.0),
+            corner_radii: Corners::default(),
+            content_mask: mask,
+            color: Hsla::default(),
+            element_bounds: scaled_bounds(10.0, 20.0, 30.0, 40.0),
+            element_corner_radii: Corners::default(),
+            inset: 0,
+            pad: 0,
+            transform: PrimitiveTransform::IDENTITY,
+        };
+
+        assert_eq!(
+            Primitive::Shadow(shadow).try_visual_bounds().unwrap(),
+            scaled_bounds(4.0, 14.0, 42.0, 52.0)
+        );
     }
 }

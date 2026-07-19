@@ -7,12 +7,17 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_scroll_wheel(
         &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
+        listener: impl Fn(&TargetedEvent<ScrollWheelEvent>, &mut Window, &mut App) -> ScrollWheelIntent
+        + 'static,
     ) {
         self.scroll_wheel_listeners.push(Box::new(
             move |event, phase, hitbox, focus_handle, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx).apply(focus_handle, window, cx);
+                    (listener)(&TargetedEvent::new(event, hitbox), window, cx).apply(
+                        focus_handle,
+                        window,
+                        cx,
+                    );
                 }
             },
         ));
@@ -41,12 +46,17 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn capture_scroll_wheel(
         &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
+        listener: impl Fn(&TargetedEvent<ScrollWheelEvent>, &mut Window, &mut App) -> ScrollWheelIntent
+        + 'static,
     ) {
         self.scroll_wheel_listeners.push(Box::new(
             move |event, phase, hitbox, focus_handle, window, cx| {
                 if phase == DispatchPhase::Capture && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx).apply(focus_handle, window, cx);
+                    (listener)(&TargetedEvent::new(event, hitbox), window, cx).apply(
+                        focus_handle,
+                        window,
+                        cx,
+                    );
                 }
             },
         ));

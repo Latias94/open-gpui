@@ -9,7 +9,7 @@ use open_gpui::{
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, InspectorElementId,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, Point, RenderOnce, ScrollHandle, ShapedLine, SharedString, Style,
-    Styled, TextRun, UTF16Selection, Window, div, fill, point, px, relative, rgba,
+    Styled, TargetedEvent, TextRun, UTF16Selection, Window, div, fill, point, px, relative, rgba,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
@@ -602,26 +602,41 @@ impl TextareaController {
 
     fn on_mouse_down(
         &mut self,
-        event: &MouseDownEvent,
+        event: &TargetedEvent<MouseDownEvent>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Ok(position) = event.target_layout_position() else {
+            return;
+        };
         self.is_selecting = true;
 
-        if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+        if event.window_event().modifiers.shift {
+            self.select_to(self.index_for_mouse_position(position), cx);
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx);
+            self.move_to(self.index_for_mouse_position(position), cx);
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+    fn on_mouse_up(
+        &mut self,
+        _: &TargetedEvent<MouseUpEvent>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
         self.is_selecting = false;
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.is_selecting {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+    fn on_mouse_move(
+        &mut self,
+        event: &TargetedEvent<MouseMoveEvent>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_selecting
+            && let Ok(position) = event.target_layout_position()
+        {
+            self.select_to(self.index_for_mouse_position(position), cx);
         }
     }
 }

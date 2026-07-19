@@ -1,5 +1,5 @@
 use open_gpui::prelude::*;
-use open_gpui::{AnyElement, ClickEvent, IntoElement, ParentElement, Styled, Window, div, px, rgb};
+use open_gpui::{AnyElement, IntoElement, ParentElement, Styled, Window, div, px, rgb};
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, TableRowChildrenLoadState, TableTreeRow, ui_px,
 };
@@ -149,7 +149,8 @@ fn render_table_tree_toggle(context: TableRowRenderContext) -> AnyElement {
         .ui_semantics(&semantics)
         .cursor_pointer()
         .hover(|style| style.bg(rgb(0xe8ede6)))
-        .on_click(move |event: &ClickEvent, window: &mut Window, cx| {
+        .on_click(move |event, window: &mut Window, cx| {
+            let event = event.window_event();
             if !event.standard_click() || window.default_prevented() {
                 return;
             }

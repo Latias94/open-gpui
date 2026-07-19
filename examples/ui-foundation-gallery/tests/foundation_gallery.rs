@@ -764,5 +764,7 @@ mod foundation_contracts;
 mod overlay_contracts;
 #[path = "foundation_gallery/overlay_smoke.rs"]
 mod overlay_smoke;
+#[path = "foundation_gallery/presentation_smoke.rs"]
+mod presentation_smoke;
 #[path = "foundation_gallery/u11_convergence_smoke.rs"]
 mod u11_convergence_smoke;

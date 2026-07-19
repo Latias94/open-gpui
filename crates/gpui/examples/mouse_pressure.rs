@@ -1,8 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use open_gpui::{
-    App, Bounds, Context, MousePressureEvent, PressureStage, Window, WindowBounds, WindowOptions,
-    div, prelude::*, px, rgb, size,
+    App, Bounds, Context, MousePressureEvent, PressureStage, TargetedEvent, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
 use open_gpui_platform::application;
 
@@ -35,12 +35,12 @@ impl Render for MousePressureExample {
 impl MousePressureExample {
     fn on_mouse_pressure(
         &mut self,
-        pressure_event: &MousePressureEvent,
+        pressure_event: &TargetedEvent<MousePressureEvent>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.pressure_amount = pressure_event.pressure;
-        self.pressure_stage = pressure_event.stage;
+        self.pressure_amount = pressure_event.window_event().pressure;
+        self.pressure_stage = pressure_event.window_event().stage;
 
         cx.notify();
     }

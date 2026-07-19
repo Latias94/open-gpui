@@ -5,9 +5,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, px,
+    AnyElement, App, ElementId, FocusHandle, InteractiveElement, IntoElement, ParentElement,
+    Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 #[cfg(test)]
 use open_gpui_ui_core::FocusTargetId;
@@ -956,7 +955,7 @@ impl RenderOnce for Sheet {
                             let overlay_binding = overlay_binding.clone();
                             this.cursor_pointer()
                                 .hover(move |style| style.bg(trigger_hover_background))
-                                .on_click(move |_event: &ClickEvent, window, cx| {
+                                .on_click(move |_event, window, cx| {
                                     cx.stop_propagation();
                                     window_overlay_runtime
                                         .request_open_change(
@@ -1275,7 +1274,7 @@ fn sheet_close_button(
         .focus_visible(move |style| style.shadow(close_focus_shadow.clone()))
         .cursor_pointer()
         .hover(move |style| style.bg(close_hover_background))
-        .on_click(move |_event: &ClickEvent, window, cx| {
+        .on_click(move |_event, window, cx| {
             cx.stop_propagation();
             window_overlay_runtime
                 .request_open_change(

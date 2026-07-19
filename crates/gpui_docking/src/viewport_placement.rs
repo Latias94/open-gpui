@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(snapshot.display_id, None);
         assert_eq!(snapshot.window_bounds, None);
         assert_eq!(snapshot.current_bounds, None);
-        assert_eq!(snapshot.host_bounds, None);
+        assert_eq!(snapshot.host_geometry, None);
     }
 
     #[test]
@@ -448,6 +448,11 @@ mod tests {
             snapshot.global_screen_bounds(),
             Some(bounds(100.0, 200.0, 800.0, 600.0))
         );
-        assert_eq!(snapshot.host_bounds, Some(bounds(10.0, 20.0, 300.0, 200.0)));
+        assert_eq!(
+            snapshot
+                .host_geometry
+                .map(crate::DockViewportHostGeometry::layout_bounds),
+            Some(bounds(10.0, 20.0, 300.0, 200.0))
+        );
     }
 }

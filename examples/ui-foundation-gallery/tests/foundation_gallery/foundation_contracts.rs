@@ -15,6 +15,7 @@ fn gallery_sections_cover_the_foundation_slices() {
             "adaptive",
             "focus-a11y",
             "overlay",
+            "presentation",
             "components",
             "devtools"
         ]
@@ -52,6 +53,10 @@ fn labels_are_stable_for_manual_dogfood_output() {
     assert_eq!(
         GalleryPage::from_id("devtools"),
         Some(GalleryPage::Devtools)
+    );
+    assert_eq!(
+        GalleryPage::from_id("presentation"),
+        Some(GalleryPage::Presentation)
     );
     assert_eq!(GalleryPage::from_id("missing"), None);
     assert_eq!(DeviceShellMode::Desktop.as_str(), "desktop");

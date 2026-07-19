@@ -4,8 +4,8 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use open_gpui::{
-    App, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task, Window,
-    WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size, svg,
+    App, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, TargetedEvent, Task,
+    Window, WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size, svg,
 };
 use open_gpui_platform::application;
 
@@ -51,7 +51,12 @@ impl HelloWorld {
         }
     }
 
-    fn start_animation(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn start_animation(
+        &mut self,
+        _: &TargetedEvent<ClickEvent>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.opacity = 0.0;
         self.animating = true;
         cx.notify();

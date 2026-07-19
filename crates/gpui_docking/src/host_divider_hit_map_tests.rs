@@ -1,7 +1,9 @@
 use crate::{
-    DockGraph, DockNode, SplitAxis,
-    divider_hit_map::{DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget},
-    host_test_support::{item, open_host, space, split_graph},
+    DockFloatingContainer, DockGraph, DockNode, SplitAxis,
+    divider_hit_map::{
+        DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget, DockDividerSurface,
+    },
+    host_test_support::{floating_bounds, item, open_host, space, split_graph},
     visual_affordance_scene::{
         DockVisualAffordanceKind, DockVisualAffordanceScene, DockVisualAffordanceState,
     },
@@ -223,6 +225,104 @@ fn divider_hit_map_prefers_corner_when_splitter_hits_intersect(cx: &mut TestAppC
         }
         DockDividerHitTarget::Single(_) => panic!("junction should prefer corner target"),
     }
+}
+
+#[open_gpui::test]
+fn divider_hit_map_resolves_only_the_topmost_visual_surface(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let root_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let root_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![root_left, root_right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root_split);
+
+    let floating_top = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating_bottom = graph.insert_node(DockNode::Tabs {
+        items: vec![item("d")],
+        selected: Some(item("d")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![floating_top, floating_bottom],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(150.0, 40.0, 100.0, 160.0),
+        });
+
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+            ("d", "Panel D", "D"),
+        ],
+        size(px(400.0), px(240.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(400.0, 240.0), cx)
+    });
+    let root_handle = scene
+        .splitters
+        .iter()
+        .find(|splitter| splitter.split == root_split)
+        .expect("root splitter should be present");
+    let floating_handle = scene
+        .splitters
+        .iter()
+        .find(|splitter| splitter.split == floating_split)
+        .expect("floating splitter should be present");
+    let floating_scene = scene
+        .floating_containers
+        .first()
+        .expect("floating surface should be present");
+    let hit_map = DockDividerHitMap::from_scene(&scene);
+
+    let covered_root_point = point(
+        root_handle.bounds.center().x,
+        floating_scene.title_bar_bounds.center().y,
+    );
+    assert!(root_handle.bounds.contains(&covered_root_point));
+    assert!(floating_scene.bounds.contains(&covered_root_point));
+    assert!(
+        hit_map.hit(covered_root_point).is_none(),
+        "floating chrome must occlude a root splitter even when it has no divider there"
+    );
+
+    let overlap = point(
+        root_handle.bounds.center().x,
+        floating_handle.bounds.center().y,
+    );
+    assert!(root_handle.bounds.contains(&overlap));
+    assert!(floating_handle.bounds.contains(&overlap));
+    let DockDividerHitTarget::Single(handle) = hit_map
+        .hit(overlap)
+        .expect("the floating splitter should own the overlap")
+    else {
+        panic!("root and floating splitters must not synthesize a cross-surface corner");
+    };
+    assert_eq!(handle.key.split, floating_split);
+    assert_eq!(handle.surface, DockDividerSurface::Floating(floating));
 }
 
 #[open_gpui::test]

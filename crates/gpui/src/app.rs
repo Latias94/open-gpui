@@ -2578,9 +2578,8 @@ pub struct AnyDrag {
     /// The value of the dragged item, to be dropped
     pub value: Arc<dyn Any>,
 
-    /// This is used to render the dragged item in the same place
-    /// on the original element that the drag was initiated
-    pub cursor_offset: Point<Pixels>,
+    /// Window-space offset used to keep the drag preview under the pointer.
+    pub window_preview_offset: Point<Pixels>,
 
     /// The cursor style to use while dragging
     pub cursor_style: Option<CursorStyle>,

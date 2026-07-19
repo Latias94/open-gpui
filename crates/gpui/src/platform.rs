@@ -37,7 +37,8 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, MouseButton,
     Pixels, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
     RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    SystemWindowTab, Task, Window, WindowControlArea, geometry::ResolvedSubtreeTransform, hash,
+    point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -1396,6 +1397,8 @@ impl From<TileId> for etagere::AllocId {
 pub struct PlatformInputHandler {
     cx: AsyncWindowContext,
     handler: Box<dyn InputHandler>,
+    transform: ResolvedSubtreeTransform,
+    validity: Option<crate::geometry::SubtreeTransformValidity>,
 }
 
 #[expect(missing_docs)]
@@ -1407,15 +1410,36 @@ pub struct PlatformInputHandler {
     allow(dead_code)
 )]
 impl PlatformInputHandler {
-    pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
-        Self { cx, handler }
+    pub(crate) fn new(
+        cx: AsyncWindowContext,
+        handler: Box<dyn InputHandler>,
+        transform: ResolvedSubtreeTransform,
+        validity: Option<crate::geometry::SubtreeTransformValidity>,
+    ) -> Self {
+        Self {
+            cx,
+            handler,
+            transform,
+            validity,
+        }
+    }
+
+    pub(crate) fn validity(&self) -> Option<crate::geometry::SubtreeTransformValidity> {
+        self.validity.clone()
+    }
+
+    pub(crate) fn set_validity(
+        &mut self,
+        validity: Option<crate::geometry::SubtreeTransformValidity>,
+    ) {
+        self.validity = validity;
     }
 
     fn update_in_input_transaction<R>(
         &mut self,
         callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
     ) -> Result<R> {
-        let Self { cx, handler } = self;
+        let Self { cx, handler, .. } = self;
         cx.update(|window, app| {
             window
                 .with_input_transaction(app, |window, app| callback(handler.as_mut(), window, app))
@@ -1487,11 +1511,13 @@ impl PlatformInputHandler {
     }
 
     pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
+        let transform = self.transform;
         self.update_in_input_transaction(|handler, window, cx| {
             handler.bounds_for_range(range_utf16, window, cx)
         })
         .ok()
         .flatten()
+        .and_then(|bounds| transform.try_project_bounds(bounds).ok())
     }
 
     #[allow(dead_code)]
@@ -1543,11 +1569,14 @@ impl PlatformInputHandler {
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
         let handler = self.handler.as_mut();
+        let transform = self.transform;
         window.with_input_transaction(cx, |window, cx| {
             let marked_range = handler.marked_text_range(window, cx);
             let selection = handler.selected_text_range(true, window, cx)?;
             Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
-                handler.bounds_for_range(range, window, cx)
+                handler
+                    .bounds_for_range(range, window, cx)
+                    .and_then(|bounds| transform.try_project_bounds(bounds).ok())
             })
         })
     }
@@ -1562,6 +1591,7 @@ impl PlatformInputHandler {
 
     #[allow(unused)]
     pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
+        let point = self.transform.try_inverse_project_point(point).ok()?;
         self.update_in_input_transaction(|handler, window, cx| {
             handler.character_index_for_point(point, window, cx)
         })
@@ -1669,10 +1699,11 @@ pub trait InputHandler: 'static {
     /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)
     fn unmark_text(&mut self, window: &mut Window, cx: &mut App);
 
-    /// Get the bounds of the given document range in screen coordinates
+    /// Get the bounds of the given document range in untransformed window-layout coordinates.
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
     ///
-    /// This is used for positioning the IME candidate window
+    /// GPUI projects the result through the focused element's committed subtree transform before
+    /// passing it to the platform for IME candidate-window positioning.
     fn bounds_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -1680,9 +1711,10 @@ pub trait InputHandler: 'static {
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
 
-    /// Get the character offset for the given point in terms of UTF16 characters
+    /// Get the character offset for an untransformed window-layout point in UTF-16 characters.
     ///
     /// Corresponds to [characterIndexForPoint:](https://developer.apple.com/documentation/appkit/nstextinputclient/characterindex(for:))
+    /// GPUI inverse-projects platform window coordinates before calling this method.
     fn character_index_for_point(
         &mut self,
         point: Point<Pixels>,

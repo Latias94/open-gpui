@@ -1090,7 +1090,8 @@ mod tests {
         );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
         assert_eq!(state.diagnostics().len(), 1);
-        assert_eq!(state.target_rows().len(), 16);
+        let capture_target_count = devtools_gallery_capture().targets.targets.len();
+        assert_eq!(state.target_rows().len(), capture_target_count);
         let event_state = devtools_gallery_state().with_filter("motion-frame-demand");
         assert!(event_state.event_rows().iter().any(|row| {
             row.event_id == "gallery.motion-frame-demand" && row.kind_label == "instant"

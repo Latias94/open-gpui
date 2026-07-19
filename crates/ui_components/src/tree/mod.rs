@@ -17,8 +17,8 @@ use crate::scroll_surface::{
 };
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, CursorStyle, Empty, Entity, FocusHandle, InteractiveElement,
-    IntoElement, KeyDownEvent, ParentElement, RenderOnce, ScrollHandle, SharedString,
+    AnyElement, App, CursorStyle, Empty, Entity, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, RenderOnce, ScrollHandle, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px, rgb, rgba,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, UiPx, ui_px};
@@ -557,7 +557,7 @@ fn render_tree_item(
                     tree_id,
                     source_value: item_value,
                 },
-                |_, _, _, _, cx| cx.new(|_| Empty),
+                |_, _, _, cx| cx.new(|_| Empty),
             )
         })
         .when(!disabled, |this| {
@@ -568,7 +568,7 @@ fn render_tree_item(
             let scroll_handle = scroll_handle.clone();
             let state = state.clone();
             let item_value = item_value.clone();
-            this.on_click(move |_event: &ClickEvent, window, cx| {
+            this.on_click(move |_event, window, cx| {
                 cx.stop_propagation();
                 window.prevent_default();
                 runtime.update(cx, |runtime, cx| {
@@ -744,7 +744,8 @@ fn tree_drop_zone(
                     .bg(rgb(0xe8f3ef)),
             }
         })
-        .on_drop(move |drag: &TreeDragPayload, window, cx| {
+        .on_drop(move |event, window, cx| {
+            let drag: &TreeDragPayload = event.value();
             if drag.tree_id != tree_for_drop {
                 return;
             }
@@ -811,7 +812,7 @@ fn tree_disclosure(
         .when(has_children && !disabled && !children_loading, |this| {
             this.cursor_pointer()
                 .hover(|style| style.bg(rgb(0xe8ede6)))
-                .on_click(move |_event: &ClickEvent, window, cx| {
+                .on_click(move |_event, window, cx| {
                     cx.stop_propagation();
                     window.prevent_default();
                     let Some(toggle) = toggle.clone() else {

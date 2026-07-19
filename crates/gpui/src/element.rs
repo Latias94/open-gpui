@@ -467,26 +467,27 @@ impl<E: Element> Drawable<E> {
                 let mut pushed_a11y_node = false;
                 if window.a11y.is_active() {
                     if let Some(global_id) = global_id.as_ref() {
-                        if let Some(role) = self.element.a11y_role() {
+                        if let Some(role) = self.element.a11y_role()
+                            && let Ok((displayed_bounds, accessibility_bounds)) =
+                                window.try_project_subtree_accessibility_bounds(bounds)
+                        {
                             let node_id = global_id.accesskit_node_id();
                             let mut node = accesskit::Node::new(role);
-                            let scale = window.scale_factor();
-                            node.set_bounds(accesskit::Rect {
-                                x0: (bounds.origin.x.0 * scale) as f64,
-                                y0: (bounds.origin.y.0 * scale) as f64,
-                                x1: ((bounds.origin.x.0 + bounds.size.width.0) * scale) as f64,
-                                y1: ((bounds.origin.y.0 + bounds.size.height.0) * scale) as f64,
-                            });
                             self.element.write_a11y_info(&mut node);
+                            node.clear_transform();
+                            node.set_bounds(accessibility_bounds);
                             pushed_a11y_node = window.a11y.nodes.push(node_id, node);
                             if pushed_a11y_node {
-                                window.a11y.record_node_bounds(node_id, bounds);
+                                window.a11y.record_node_bounds(node_id, displayed_bounds);
                             }
                         }
                     }
                 }
 
-                let node_id = window.next_frame.dispatch_tree.push_node();
+                let node_id = window
+                    .next_frame
+                    .dispatch_tree
+                    .push_node_scoped(window.subtree_transform_validity());
                 let prepaint = self.element.prepaint(
                     global_id.as_ref(),
                     inspector_id.as_ref(),

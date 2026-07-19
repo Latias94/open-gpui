@@ -100,7 +100,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
                     window_id: window.window_handle().window_id(),
                     value: Arc::new(paths.clone()),
                     view: cx.new(|_| paths).into(),
-                    cursor_offset: position,
+                    window_preview_offset: position,
                     cursor_style: None,
                     button: MouseButton::Left,
                 });

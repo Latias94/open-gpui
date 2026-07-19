@@ -4,8 +4,9 @@ use crate::{
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_scene_fact,
+    host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
-    render::DockViewportHostSceneFrameSlot,
+    render::DockViewportHostSceneCandidateSlot,
 };
 use open_gpui::{
     AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, Empty, InteractiveElement,
@@ -27,7 +28,7 @@ impl DockHost {
         items: Vec<DockItemId>,
         selected: usize,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -45,6 +46,7 @@ impl DockHost {
         let drop_root = session.drop_root_for_tabs(node);
         let source_space = session.space().clone();
         let entity = cx.entity();
+        let pointer_capture = self.pointer_capture_handle();
         let stack_title = if items.len() == 1 {
             session.panel_title(&selected_item)
         } else {
@@ -71,42 +73,58 @@ impl DockHost {
             .border_color(rgb(0xd8dde6))
             .bg(white())
             .capture_any_mouse_down(move |event, _window, cx| {
-                if event.button != MouseButton::Left {
+                if event.window_event().button != MouseButton::Left {
                     return;
                 }
                 anchor_entity.update(cx, |host, _| {
                     host.record_payload_drag_anchor_from_render(
                         anchor_space.clone(),
                         node,
-                        event.position,
+                        event.window_event().position,
                     );
                 });
             })
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    let payload = event.drag(cx).clone();
+                    let payload = event.drag().clone();
                     if payload.source_space == source_space && payload.source_node == node {
                         let cursor_position = this
                             .payload_drag_anchor_position_from_render(&payload)
-                            .unwrap_or(event.event.position);
+                            .unwrap_or_else(|| event.window_position());
+                        let source_bounds = this
+                            .viewport_runtime()
+                            .rendered_leaf_displayed_bounds_for_tabs(
+                                &source_space,
+                                Some(window.window_handle().window_id()),
+                                node,
+                            )
+                            .unwrap_or_else(|| event.displayed_bounds());
                         let mut geometry = DockDragTearOffGeometry::from_source_bounds(
-                            event.bounds,
+                            source_bounds,
                             cursor_position,
                         )
-                        .with_preferred_size(event.bounds.size);
+                        .with_preferred_size(source_bounds.size);
                         if let Some(display) = window.display(cx) {
                             geometry = geometry.with_display_work_area(display.visible_bounds());
                         }
                         this.update_payload_drag_tear_off_geometry_from_render(&payload, geometry);
                     }
-                    if event.bounds.contains(&event.event.position)
+                    if let Ok(layout_position) = event.target_layout_position()
                         && let Some(drop_root) = drop_root
                     {
-                        let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
+                        let fact = drop_scene_fact::leaf(
+                            drop_root,
+                            node,
+                            event.layout_bounds(),
+                            is_central,
+                        );
                         this.update_local_drop_scene_fact_from_render(
                             &payload,
                             fact,
-                            event.event.position,
+                            DockRenderedPointerPosition::new(
+                                layout_position,
+                                event.window_position(),
+                            ),
                             window,
                             cx,
                         );
@@ -114,6 +132,7 @@ impl DockHost {
                 },
             ));
         let stack_drag_entity = entity.clone();
+        let stack_pointer_capture = pointer_capture;
         let mut tab_hit_targets = Vec::with_capacity(items.len());
         for index in 0..items.len() {
             if let Some(bounds) = self.viewport_runtime().rendered_tab_label_bounds_for_tabs(
@@ -141,11 +160,10 @@ impl DockHost {
             .bg(rgb(0xe7ebf0))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !event.bounds.contains(&event.event.position) {
+                    let Ok(position) = event.target_layout_position() else {
                         return;
-                    }
-                    let payload = event.drag(cx).clone();
-                    let position = event.event.position;
+                    };
+                    let payload = event.drag().clone();
                     let window_id = window.window_handle().window_id();
                     let fact = tab_hit_targets_for_bar
                         .iter()
@@ -170,46 +188,47 @@ impl DockHost {
                             )
                         })
                         .unwrap_or_else(|| {
-                            drop_scene_fact::tab_bar(node, tab_count, event.bounds, is_central)
+                            drop_scene_fact::tab_bar(
+                                node,
+                                tab_count,
+                                event.layout_bounds(),
+                                is_central,
+                            )
                         });
                     this.update_local_drop_scene_fact_from_render(
                         &payload,
                         fact,
-                        event.event.position,
+                        DockRenderedPointerPosition::new(position, event.window_position()),
                         window,
                         cx,
                     );
                 },
             ))
-            .on_drag(
-                stack_payload,
-                move |payload, position, source_bounds, window, cx| {
-                    stack_drag_entity.update(cx, |host, cx| {
-                        host.focus_host_for_drag_from_render(window, cx);
-                        host.begin_payload_drag_from_render(payload, cx);
-                        let cursor_position = host
-                            .payload_drag_anchor_position_from_render(payload)
-                            .unwrap_or(source_bounds.origin + position);
-                        let source_bounds = host
-                            .viewport_runtime()
-                            .rendered_leaf_bounds_for_tabs(
-                                host.space(),
-                                Some(window.window_handle().window_id()),
-                                node,
-                            )
-                            .unwrap_or(source_bounds);
-                        host.update_payload_drag_tear_off_geometry_from_render(
-                            payload,
-                            DockDragTearOffGeometry::from_source_bounds(
-                                source_bounds,
-                                cursor_position,
-                            )
+            .on_drag(stack_payload, move |payload, geometry, window, cx| {
+                let _ = window.capture_pointer(&stack_pointer_capture, MouseButton::Left);
+                stack_drag_entity.update(cx, |host, cx| {
+                    host.focus_host_for_drag_from_render(window, cx);
+                    host.begin_payload_drag_from_render(payload, cx);
+                    let source_bounds = geometry.displayed_bounds();
+                    let cursor_position = host
+                        .payload_drag_anchor_position_from_render(payload)
+                        .unwrap_or_else(|| geometry.window_position());
+                    let source_bounds = host
+                        .viewport_runtime()
+                        .rendered_leaf_displayed_bounds_for_tabs(
+                            host.space(),
+                            Some(window.window_handle().window_id()),
+                            node,
+                        )
+                        .unwrap_or(source_bounds);
+                    host.update_payload_drag_tear_off_geometry_from_render(
+                        payload,
+                        DockDragTearOffGeometry::from_source_bounds(source_bounds, cursor_position)
                             .with_preferred_size(source_bounds.size),
-                        );
-                    });
-                    cx.new(|_| Empty)
-                },
-            );
+                    );
+                });
+                cx.new(|_| Empty)
+            });
         tab_bar = tab_bar_a11y.apply_to(tab_bar);
 
         for (index, item) in items.into_iter().enumerate() {
@@ -233,6 +252,7 @@ impl DockHost {
                 title.clone(),
             );
             let drag_entity = entity.clone();
+            let drag_pointer_capture = pointer_capture;
             let focus_entity = entity.clone();
             let target_index = index;
             let tab_item = item.clone();
@@ -286,60 +306,57 @@ impl DockHost {
                 )
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                        if !event.bounds.contains(&event.event.position) {
+                        let Ok(layout_position) = event.target_layout_position() else {
                             return;
-                        }
-                        let payload = event.drag(cx).clone();
+                        };
+                        let payload = event.drag().clone();
                         // The tabs leaf owns tear-off sizing; the tab label is only a drop target.
                         let fact = drop_scene_fact::tab_label(
                             node,
                             target_index,
-                            event.bounds,
+                            event.layout_bounds(),
                             is_central,
                         );
                         this.update_local_drop_scene_fact_from_render(
                             &payload,
                             fact,
-                            event.event.position,
+                            DockRenderedPointerPosition::new(
+                                layout_position,
+                                event.window_position(),
+                            ),
                             window,
                             cx,
                         );
                     },
                 ))
-                .on_drag(
-                    payload,
-                    move |payload, position, source_bounds, window, cx| {
-                        drag_entity.update(cx, |host, cx| {
-                            host.focus_host_for_drag_from_render(window, cx);
-                            host.begin_tab_item_drag_from_render(
+                .on_drag(payload, move |payload, geometry, window, cx| {
+                    let _ = window.capture_pointer(&drag_pointer_capture, MouseButton::Left);
+                    drag_entity.update(cx, |host, cx| {
+                        host.focus_host_for_drag_from_render(window, cx);
+                        host.begin_tab_item_drag_from_render(node, drag_item.clone(), payload, cx);
+                        let source_bounds = geometry.displayed_bounds();
+                        let cursor_position = host
+                            .payload_drag_anchor_position_from_render(payload)
+                            .unwrap_or_else(|| geometry.window_position());
+                        let source_bounds = host
+                            .viewport_runtime()
+                            .rendered_leaf_displayed_bounds_for_tabs(
+                                host.space(),
+                                Some(window.window_handle().window_id()),
                                 node,
-                                drag_item.clone(),
-                                payload,
-                                cx,
-                            );
-                            let cursor_position = host
-                                .payload_drag_anchor_position_from_render(payload)
-                                .unwrap_or(source_bounds.origin + position);
-                            let source_bounds = host
-                                .viewport_runtime()
-                                .rendered_leaf_bounds_for_tabs(
-                                    host.space(),
-                                    Some(window.window_handle().window_id()),
-                                    node,
-                                )
-                                .unwrap_or(source_bounds);
-                            host.update_payload_drag_tear_off_geometry_from_render(
-                                payload,
-                                DockDragTearOffGeometry::from_source_bounds(
-                                    source_bounds,
-                                    cursor_position,
-                                )
-                                .with_preferred_size(source_bounds.size),
-                            );
-                        });
-                        cx.new(|_| Empty)
-                    },
-                );
+                            )
+                            .unwrap_or(source_bounds);
+                        host.update_payload_drag_tear_off_geometry_from_render(
+                            payload,
+                            DockDragTearOffGeometry::from_source_bounds(
+                                source_bounds,
+                                cursor_position,
+                            )
+                            .with_preferred_size(source_bounds.size),
+                        );
+                    });
+                    cx.new(|_| Empty)
+                });
             tab = tab_a11y.apply_to(tab);
             // Tab labels are a deliberate render-measured exception: final hit bounds depend on
             // intrinsic title and close-button layout, not the presentation scene's equal slots.

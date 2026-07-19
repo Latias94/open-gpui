@@ -10,8 +10,8 @@ use image::RgbaImage;
 use objc2_foundation::NSUInteger;
 use open_gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    Path, Point, PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad, ScaledPixels, Scene,
+    Shadow, Size, Underline, point, size,
 };
 
 use objc2_core_video::{
@@ -134,7 +134,16 @@ pub struct PathRasterizationVertex {
     pub xy_position: Point<ScaledPixels>,
     pub st_position: Point<f32>,
     pub color: Background,
-    pub bounds: Bounds<ScaledPixels>,
+    pub local_bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub transform: PrimitiveTransform,
+}
+
+fn path_visual_bounds(path: &Path<ScaledPixels>) -> Option<Bounds<ScaledPixels>> {
+    path.renderer_transform()
+        .try_project_bounds(path.bounds)
+        .ok()
+        .map(|bounds| bounds.intersect(&path.content_mask.bounds))
 }
 
 impl MetalRenderer {
@@ -818,7 +827,9 @@ impl MetalRenderer {
                     viewport_size,
                     &command_encoder,
                 ),
-                PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
+                PrimitiveBatch::SubpixelSprites { .. } => unreachable!(
+                    "macOS reports subpixel rendering as unsupported, so glyphs use monochrome sprites"
+                ),
             };
             if !ok {
                 command_encoder.end_encoding();
@@ -886,11 +897,17 @@ impl MetalRenderer {
         align_offset(instance_offset);
         let mut vertices = Vec::new();
         for path in paths {
+            if path_visual_bounds(path).is_none() {
+                command_encoder.end_encoding();
+                return false;
+            }
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
                 xy_position: v.xy_position,
                 st_position: v.st_position,
                 color: path.color,
-                bounds: path.bounds.intersect(&path.content_mask.bounds),
+                local_bounds: path.bounds,
+                content_mask: path.content_mask,
+                transform: path.renderer_transform(),
             }));
         }
         let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
@@ -1097,20 +1114,30 @@ impl MetalRenderer {
         // batch combines different draw orders, we perform a single copy
         // for a minimal spanning rect.
         let sprites;
-        if paths.last().unwrap().order == first_path.order {
+        if paths
+            .last()
+            .is_some_and(|path| path.order == first_path.order)
+        {
             sprites = paths
                 .iter()
-                .map(|path| PathSprite {
-                    bounds: path.clipped_bounds(),
-                })
-                .collect();
+                .map(|path| path_visual_bounds(path).map(|bounds| PathSprite { bounds }))
+                .collect::<Option<Vec<_>>>();
         } else {
-            let mut bounds = first_path.clipped_bounds();
+            let Some(mut bounds) = path_visual_bounds(first_path) else {
+                return false;
+            };
             for path in paths.iter().skip(1) {
-                bounds = bounds.union(&path.clipped_bounds());
+                let Some(path_bounds) = path_visual_bounds(path) else {
+                    return false;
+                };
+                bounds = bounds.union(&path_bounds);
             }
-            sprites = vec![PathSprite { bounds }];
+            sprites = Some(vec![PathSprite { bounds }]);
         }
+
+        let Some(sprites) = sprites else {
+            return false;
+        };
 
         align_offset(instance_offset);
         let sprite_bytes_len = mem::size_of_val(sprites.as_slice());
@@ -1416,7 +1443,7 @@ impl MetalRenderer {
             };
 
             align_offset(instance_offset);
-            let next_offset = *instance_offset + mem::size_of::<Surface>();
+            let next_offset = *instance_offset + mem::size_of::<SurfaceBounds>();
             if next_offset > instance_buffer.size {
                 return false;
             }
@@ -1445,6 +1472,7 @@ impl MetalRenderer {
                     SurfaceBounds {
                         bounds: surface.bounds,
                         content_mask: surface.content_mask,
+                        transform: surface.renderer_transform(),
                     },
                 );
             }
@@ -1647,11 +1675,70 @@ pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct SurfaceBounds {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    pub transform: PrimitiveTransform,
+}
+
+#[cfg(test)]
+mod abi_layout_tests {
+    use super::*;
+    use open_gpui::SubpixelSprite;
+    use std::mem::{align_of, offset_of, size_of};
+
+    #[test]
+    fn primitive_transform_has_shader_abi_layout() {
+        assert_eq!(align_of::<PrimitiveTransform>(), align_of::<f32>());
+        assert_eq!(size_of::<PrimitiveTransform>(), 4 * size_of::<f32>());
+        assert_eq!(
+            PrimitiveTransform::IDENTITY.components(),
+            [1.0, 1.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn transformed_primitive_fields_are_terminal_in_shader_abi() {
+        assert_eq!(size_of::<Quad>(), 176);
+        assert_eq!(size_of::<Shadow>(), 128);
+        assert_eq!(size_of::<Underline>(), 80);
+        assert_eq!(size_of::<MonochromeSprite>(), 104);
+        assert_eq!(size_of::<SubpixelSprite>(), 104);
+        assert_eq!(size_of::<PolychromeSprite>(), 104);
+    }
+
+    #[test]
+    fn renderer_owned_shader_structs_have_contiguous_c_layouts() {
+        assert_eq!(align_of::<PathRasterizationVertex>(), align_of::<f32>());
+        assert_eq!(offset_of!(PathRasterizationVertex, xy_position), 0);
+        assert_eq!(offset_of!(PathRasterizationVertex, st_position), 8);
+        assert_eq!(offset_of!(PathRasterizationVertex, color), 16);
+        assert_eq!(
+            offset_of!(PathRasterizationVertex, local_bounds),
+            16 + size_of::<Background>()
+        );
+        assert_eq!(
+            offset_of!(PathRasterizationVertex, content_mask),
+            offset_of!(PathRasterizationVertex, local_bounds) + size_of::<Bounds<ScaledPixels>>()
+        );
+        assert_eq!(
+            offset_of!(PathRasterizationVertex, transform),
+            offset_of!(PathRasterizationVertex, content_mask)
+                + size_of::<ContentMask<ScaledPixels>>()
+        );
+        assert_eq!(
+            size_of::<PathRasterizationVertex>(),
+            offset_of!(PathRasterizationVertex, transform) + size_of::<PrimitiveTransform>()
+        );
+
+        assert_eq!(align_of::<SurfaceBounds>(), align_of::<f32>());
+        assert_eq!(offset_of!(SurfaceBounds, bounds), 0);
+        assert_eq!(offset_of!(SurfaceBounds, content_mask), 16);
+        assert_eq!(offset_of!(SurfaceBounds, transform), 32);
+        assert_eq!(size_of::<SurfaceBounds>(), 48);
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

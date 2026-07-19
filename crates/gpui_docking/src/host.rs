@@ -10,7 +10,8 @@ use crate::{
     zoom_state::DockZoomState,
 };
 use open_gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, WindowId, px,
+    AppContext as _, Context, Entity, FocusHandle, Pixels, PointerCaptureHandle,
+    PrepaintPublicationId, Subscription, Window, WindowId, WindowMouseEvent, px,
 };
 use open_gpui_motion::MotionPreference;
 use std::collections::HashMap;
@@ -63,6 +64,9 @@ pub struct DockHost {
     space: DockSpaceId,
     focus_handle: FocusHandle,
     viewport_runtime: DockViewportRuntimeHandle,
+    viewport_scene_publication: PrepaintPublicationId,
+    raw_drag_pointer_capture: Option<PointerCaptureHandle>,
+    pointer_session_subscription: Option<Subscription>,
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
     viewport_release_subscription: Option<Subscription>,
@@ -93,6 +97,9 @@ impl DockHost {
             space: space.into(),
             focus_handle: cx.focus_handle(),
             viewport_runtime,
+            viewport_scene_publication: PrepaintPublicationId::new(),
+            raw_drag_pointer_capture: None,
+            pointer_session_subscription: None,
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
             viewport_release_subscription: None,
@@ -116,6 +123,11 @@ impl DockHost {
 
     pub(crate) fn host_focus_handle(&self) -> FocusHandle {
         self.focus_handle.clone()
+    }
+
+    pub(crate) fn pointer_capture_handle(&self) -> PointerCaptureHandle {
+        self.raw_drag_pointer_capture
+            .expect("DockHost pointer session must be initialized before rendering descendants")
     }
 
     #[cfg(test)]
@@ -209,12 +221,56 @@ impl DockHost {
         self.last_presentation_scene = Some(scene);
     }
 
+    pub(crate) fn clear_last_presentation_scene(&mut self) -> bool {
+        self.last_presentation_scene.take().is_some()
+    }
+
     pub(crate) fn viewport_runtime(&self) -> &DockViewportRuntimeHandle {
         &self.viewport_runtime
     }
 
+    pub(crate) fn viewport_scene_publication(&self) -> PrepaintPublicationId {
+        self.viewport_scene_publication
+    }
+
     pub(crate) fn motion_preference(&self, cx: &Context<Self>) -> MotionPreference {
         self.with_workspace(cx, |workspace| workspace.options().motion_preference)
+    }
+
+    pub(crate) fn ensure_pointer_session(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PointerCaptureHandle {
+        let window_id = window.window_handle().window_id();
+        if let Some(handle) = self
+            .raw_drag_pointer_capture
+            .filter(|handle| handle.window_id() == window_id)
+            && self.pointer_session_subscription.is_some()
+        {
+            return handle;
+        }
+
+        self.pointer_session_subscription = None;
+        let handle = window.new_pointer_capture_handle();
+        let weak_host = cx.entity().downgrade();
+        let subscription = window.intercept_mouse_events(move |event, window, app| {
+            if !matches!(event, WindowMouseEvent::Cancel(_)) {
+                return;
+            }
+            let Some(host) = weak_host.upgrade() else {
+                return;
+            };
+            let changed = host.update(app, |host, cx| {
+                host.cancel_pointer_interactions_from_render(cx)
+            });
+            if changed {
+                window.refresh();
+            }
+        });
+        self.raw_drag_pointer_capture = Some(handle);
+        self.pointer_session_subscription = Some(subscription);
+        handle
     }
 
     pub(crate) fn ensure_viewport_activation_subscription(

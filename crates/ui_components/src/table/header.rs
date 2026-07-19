@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    Axis, ClickEvent, CursorStyle, Empty, FontWeight, IntoElement, KeyDownEvent, ParentElement,
-    ScrollHandle, Styled, div, px, rgb,
+    Axis, CursorStyle, Empty, FontWeight, IntoElement, KeyDownEvent, ParentElement, ScrollHandle,
+    Styled, div, px, rgb,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, SortDirection as A11ySortDirection, TableColumnId,
@@ -318,7 +318,7 @@ fn render_table_header_group_cell(
                 .tab_stop(true)
                 .cursor_pointer()
                 .hover(|style| style.bg(rgb(0xe9ece3)))
-                .on_click(move |_event: &ClickEvent, window, cx| {
+                .on_click(move |_event, window, cx| {
                     cx.stop_propagation();
                     handler(action.clone(), window, cx);
                 })
@@ -337,7 +337,7 @@ fn render_table_header_group_cell(
         .child(format!("{}{}", header_label, sort_suffix))
         .when_some(order_drag, |this, drag| {
             this.cursor(CursorStyle::OpenHand)
-                .on_drag(drag, |_, _, _, _, cx| cx.new(|_| Empty))
+                .on_drag(drag, |_, _, _, cx| cx.new(|_| Empty))
         })
         .when_some(order_drop_target, |this, column| {
             this.when_some(order_drop_handler.clone(), |this, handler| {

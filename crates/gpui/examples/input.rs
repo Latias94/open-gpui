@@ -6,9 +6,9 @@ use open_gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
-    WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
-    rgb, rgba, size, white, yellow,
+    ShapedLine, SharedString, Style, TargetedEvent, TextRun, UTF16Selection, UnderlineStyle,
+    Window, WindowBounds, WindowOptions, actions, black, div, fill, hsla, opaque_grey, point,
+    prelude::*, px, relative, rgb, rgba, size, white, yellow,
 };
 use open_gpui_platform::application;
 use unicode_segmentation::*;
@@ -109,26 +109,39 @@ impl TextInput {
 
     fn on_mouse_down(
         &mut self,
-        event: &MouseDownEvent,
+        event: &TargetedEvent<MouseDownEvent>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.is_selecting = true;
 
-        if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+        let Ok(position) = event.target_layout_position() else {
+            return;
+        };
+        if event.window_event().modifiers.shift {
+            self.select_to(self.index_for_mouse_position(position), cx);
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx)
+            self.move_to(self.index_for_mouse_position(position), cx)
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, _: &mut Context<Self>) {
+    fn on_mouse_up(
+        &mut self,
+        _: &TargetedEvent<MouseUpEvent>,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
         self.is_selecting = false;
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.is_selecting {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+    fn on_mouse_move(
+        &mut self,
+        event: &TargetedEvent<MouseMoveEvent>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_selecting && let Ok(position) = event.target_layout_position() {
+            self.select_to(self.index_for_mouse_position(position), cx);
         }
     }
 
@@ -639,7 +652,12 @@ impl Focusable for InputExample {
 }
 
 impl InputExample {
-    fn on_reset_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_reset_click(
+        &mut self,
+        _: &TargetedEvent<MouseUpEvent>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.recent_keystrokes.clear();
         self.text_input
             .update(cx, |text_input, _cx| text_input.reset());
