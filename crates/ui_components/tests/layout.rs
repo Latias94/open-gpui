@@ -386,6 +386,8 @@ fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppCo
         moves: moves.clone(),
         selections: selections.clone(),
     });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
@@ -1752,6 +1754,8 @@ fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
     }
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });

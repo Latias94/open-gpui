@@ -424,6 +424,18 @@ impl FocusScopeRuntime {
         Ok(())
     }
 
+    /// Reactivates a suspended scope without capturing a new restore target or claiming focus.
+    pub(crate) fn resume_scope(
+        &self,
+        scope: FocusScopeId,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        self.state
+            .update(cx, |state, _| state.resume_scope(&scope, window))
+    }
+
     /// Deactivates a committed-open scope and queues deterministic restoration.
     #[cfg(test)]
     pub(crate) fn deactivate_scope(
@@ -553,7 +565,7 @@ impl FocusScopeRuntime {
                 .focused(cx)
                 .is_some_and(|current| !root.contains(&current, window))
         {
-            window.blur();
+            window.blur(cx);
         }
         if moved {
             let current = window.focused(cx);
@@ -627,7 +639,7 @@ impl FocusScopeRuntime {
                     state.record_focus(Some(&target), window);
                 });
             }
-            Some(FocusCommit::Blur) => window.blur(),
+            Some(FocusCommit::Blur) => window.blur(cx),
             Some(FocusCommit::RetryAfterFrame) => {
                 let runtime = self.clone();
                 window.on_next_frame(move |window, cx| {
@@ -655,7 +667,7 @@ impl FocusScopeRuntime {
                     state.record_focus(Some(&target), window);
                 });
             }
-            Some(FocusCommit::Blur) => window.blur(),
+            Some(FocusCommit::Blur) => window.blur(cx),
             Some(FocusCommit::RetryAfterFrame) => {
                 let runtime = self.clone();
                 window.on_next_frame(move |window, cx| {
@@ -1190,6 +1202,31 @@ impl FocusScopeRuntimeState {
                 }
             }),
         )
+    }
+
+    fn resume_scope(
+        &mut self,
+        scope_id: &FocusScopeId,
+        window: &Window,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let Some(existing_scope) = self.scopes.get(scope_id) else {
+            return Err(FocusScopeRuntimeError::UnknownScope(scope_id.clone()));
+        };
+        if existing_scope.active {
+            return Ok(());
+        }
+
+        self.cancel_claims_for_scope(scope_id);
+        let scope = self
+            .scopes
+            .get_mut(scope_id)
+            .expect("focus scope existence was checked before mutation");
+        self.next_activation_sequence = self.next_activation_sequence.wrapping_add(1);
+        scope.active = true;
+        scope.activation_sequence = self.next_activation_sequence;
+        scope.activation_focus_claim_revision = window.focus_claim_revision();
+        scope.lifecycle_generation = scope.lifecycle_generation.wrapping_add(1);
+        Ok(())
     }
 
     fn queue_target_validation(

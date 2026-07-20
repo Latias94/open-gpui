@@ -253,7 +253,7 @@ pub struct SemanticDescriptor<'a, NodeId = std::convert::Infallible> {
     invalid: Option<bool>,
     busy: Option<bool>,
     read_only: Option<bool>,
-    hidden: Option<bool>,
+    omit_accessibility_node: Option<bool>,
     modal: Option<bool>,
     disabled: Option<bool>,
     expanded: Option<bool>,
@@ -295,7 +295,7 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
             invalid: None,
             busy: None,
             read_only: None,
-            hidden: None,
+            omit_accessibility_node: None,
             modal: None,
             disabled: None,
             expanded: None,
@@ -398,9 +398,11 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
         self.read_only
     }
 
-    /// Returns hidden state when applicable.
-    pub const fn hidden(&self) -> Option<bool> {
-        self.hidden
+    /// Returns the current-node accessibility omission request when explicitly specified.
+    ///
+    /// Omission applies only to this descriptor's node. It does not suppress descendant nodes.
+    pub const fn omit_accessibility_node(&self) -> Option<bool> {
+        self.omit_accessibility_node
     }
 
     /// Returns modal state when applicable.
@@ -599,9 +601,12 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
         self
     }
 
-    /// Applies hidden state.
-    pub const fn with_hidden(mut self, hidden: bool) -> Self {
-        self.hidden = Some(hidden);
+    /// Applies a current-node-only accessibility omission request.
+    ///
+    /// This does not suppress descendant nodes. Use the renderer's subtree presentation authority
+    /// when an entire subtree must be absent from accessibility and interaction.
+    pub const fn with_omit_accessibility_node(mut self, omitted: bool) -> Self {
+        self.omit_accessibility_node = Some(omitted);
         self
     }
 
@@ -824,5 +829,20 @@ mod tests {
 
         let disabled = read_only.with_disabled(true);
         assert_eq!(disabled.available_actions().count(), 0);
+    }
+
+    #[test]
+    fn semantic_descriptor_names_current_node_omission_explicitly() {
+        let default: SemanticDescriptor<'_> = SemanticDescriptor::new(Role::Group);
+        assert_eq!(default.omit_accessibility_node(), None);
+
+        let omitted = default.with_omit_accessibility_node(true);
+        assert_eq!(omitted.omit_accessibility_node(), Some(true));
+        assert_eq!(
+            omitted
+                .with_omit_accessibility_node(false)
+                .omit_accessibility_node(),
+            Some(false)
+        );
     }
 }

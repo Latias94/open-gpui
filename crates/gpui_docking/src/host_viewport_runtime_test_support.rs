@@ -245,14 +245,17 @@ impl DockCrossWindowVisualDragFixture {
         let threshold = point(start.x + px(24.0), start.y);
         let end = target_position(debug_bounds(&mut target_visual, &target_selector));
 
+        activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
         source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        cx.set_platform_hovered_window(Some(self.target.window()));
         target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
         before_release(&self.target.host, cx);
         if release == DockCrossWindowDragRelease::Release {
             target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
         }
         cx.run_until_parked();
+        cx.set_platform_hovered_window(None);
     }
 }
 

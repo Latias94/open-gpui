@@ -11,10 +11,7 @@ use crate::{
     drop_scene_fact, geometry,
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostRenderSession, selected_index},
-    interaction::{
-        DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
-        DockRenderedOutsideReleaseRequest,
-    },
+    interaction::DockPayloadDropRelease,
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
     transition_executor::{
@@ -31,8 +28,8 @@ use open_gpui::{
     AnyElement, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
     DropEvent, Entity, HitboxBehavior, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PointerCaptureHandle,
-    PrepaintPublicationId, Render, Rgba, SharedString, Styled, TargetedEvent, Window, WindowId,
-    black, canvas, div, point, px, quad, rgb, rgba,
+    PrepaintPublicationId, Render, Rgba, SharedString, Styled, Window, WindowId, black, canvas,
+    div, point, px, quad, rgb, rgba,
 };
 use open_gpui_motion::MotionTransition;
 use std::{cell::RefCell, rc::Rc};
@@ -201,11 +198,11 @@ impl Render for DockHost {
         self.ensure_viewport_activation_subscription(window, cx);
         self.ensure_viewport_bounds_subscription(window, cx);
         self.ensure_viewport_release_subscription(window, cx);
-        let raw_drag_pointer_capture = self.ensure_pointer_session(window, cx);
+        self.prepare_pending_focus_selection_from_render(window, cx);
+        let raw_drag_pointer_capture = self.ensure_pointer_session(window);
         let session = self.render_session(cx);
         self.sync_panel_focus_trackers(session.visible_panel_items(), window, cx);
         let drop_host_space = session.space().clone();
-        let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame =
             Rc::new(RefCell::new(DockViewportHostSceneCandidateState::default()));
         let transition_sample = self.sample_transition_for_render(Some(window));
@@ -214,7 +211,37 @@ impl Render for DockHost {
             DockDebugRegion::Host,
             format!("{}:host", session.selector_prefix()),
         );
-        let active_docking_drag = cx.active_drag_value::<DockDragPayload>().is_some();
+        let active_docking_payload = cx.active_drag_value::<DockDragPayload>().cloned();
+        let active_docking_drag = active_docking_payload.is_some();
+        let weak_host = cx.entity().downgrade();
+        let pointer_session_payload = active_docking_payload.clone();
+        let pointer_session_listener = canvas(
+            |_, _, _| (),
+            move |_, _, window, _app| {
+                let weak_host = weak_host.clone();
+                let frame_payload = pointer_session_payload.clone();
+                window.on_pointer_cancel(move |_, phase, window, app| {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    let Some(host) = weak_host.upgrade() else {
+                        return;
+                    };
+                    let payload = app
+                        .active_drag_value::<DockDragPayload>()
+                        .cloned()
+                        .or_else(|| frame_payload.clone());
+                    let changed = host.update(app, |host, cx| {
+                        host.cancel_pointer_interactions_from_render(payload.as_ref(), window, cx)
+                    });
+                    if changed {
+                        window.refresh();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full();
 
         let mut host = div()
             .id(selector.clone())
@@ -225,6 +252,7 @@ impl Render for DockHost {
             .size_full()
             .overflow_hidden()
             .text_color(black())
+            .child(pointer_session_listener)
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag().clone();
@@ -262,47 +290,7 @@ impl Render for DockHost {
                         cx,
                     );
                 },
-            ))
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(
-                    move |this, event: &TargetedEvent<MouseUpEvent>, window, cx| {
-                        let payload = cx.active_drag_value::<DockDragPayload>().cloned();
-                        let drag_session = payload
-                            .as_ref()
-                            .and_then(|payload| this.active_payload_drag_session(payload));
-                        let tear_off_geometry = drag_session.as_ref().and_then(|session| {
-                            this.active_payload_drag_tear_off_geometry(Some(session))
-                        });
-                        let platform_viewports_allowed = this.with_workspace(cx, |workspace| {
-                            workspace.policy().allows_platform_viewports()
-                        });
-                        let request = DockRenderedOutsideReleaseRequest::new(
-                            platform_viewports_allowed,
-                            payload,
-                            cx.mouse_button_is_pressed(MouseButton::Left),
-                            outside_release_host_space.clone(),
-                            event.window_event().position,
-                        )
-                        .with_drag_session(drag_session)
-                        .with_tear_off_geometry(tear_off_geometry);
-                        match this.interaction_mut().rendered_outside_release(request) {
-                            DockRenderedOutsideReleaseDecision::Inactive => {}
-                            DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
-                                this.finish_payload_drag_session(&drag_session, cx);
-                                this.clear_drop_preview_interaction();
-                                this.viewport_runtime().clear_routed_drop_preview(cx);
-                                window.refresh();
-                            }
-                            DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
-                                this.drop_payload_release_from_render(release, window, cx);
-                                cx.stop_active_drag(window);
-                                cx.stop_propagation();
-                            }
-                        }
-                    },
-                ),
-            );
+            ));
 
         if active_docking_drag {
             let host_focus = self.host_focus_handle();
@@ -372,9 +360,7 @@ impl Render for DockHost {
         }
 
         host = host.child(self.render_divider_event_layer(&session, raw_drag_pointer_capture, cx));
-        if active_docking_drag {
-            host = host.child(self.render_payload_drag_event_layer(cx));
-        }
+        host = host.child(self.render_payload_drag_event_layer(cx));
 
         if let Some(sample) = transition_sample.as_ref() {
             host = host.child(self.render_transition_sample_layer(
@@ -783,6 +769,9 @@ impl DockHost {
         self.resolved_render_presentation_scene(&session, bounds)
     }
 
+    // GPUI captures the source pointer for the lifetime of a drag, which suppresses
+    // `on_mouse_up_out`. This preinstalled layer transports foreign hover events and owns the
+    // terminal mouse-up for Dock payloads without weakening GPUI's window-local drag contract.
     fn render_payload_drag_event_layer(&self, cx: &mut Context<Self>) -> AnyElement {
         let entity = cx.entity();
 
@@ -809,17 +798,28 @@ impl DockHost {
                         else {
                             return;
                         };
-                        let changed = entity.update(app, |host, cx| {
-                            host.update_payload_drag_hover_from_rendered_host_scene(
+                        let receiver_window_id = window.window_handle().window_id();
+                        let handled = entity.update(app, |host, cx| {
+                            if !host
+                                .viewport_runtime()
+                                .is_foreign_payload_drag_for_window(&payload, receiver_window_id)
+                            {
+                                return None;
+                            }
+                            Some(host.update_payload_drag_hover_from_rendered_host_scene(
                                 &payload,
                                 DockRenderedPointerPosition::new(layout_position, event.position),
                                 window,
                                 cx,
-                            )
+                            ))
                         });
+                        let Some(changed) = handled else {
+                            return;
+                        };
                         if changed {
                             window.refresh();
                         }
+                        app.stop_propagation();
                     }
                 });
 
@@ -830,25 +830,47 @@ impl DockHost {
                         if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
                             return;
                         }
-                        if !hitbox.contains_window_point(event.position) {
-                            return;
-                        }
-                        let Ok(layout_position) = hitbox.window_to_layout_point(event.position)
-                        else {
-                            return;
-                        };
                         let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
                         else {
                             return;
                         };
-                        entity.update(app, |host, cx| {
-                            host.drop_payload_release_from_rendered_host_scene(
+                        let receiver_window_id = window.window_handle().window_id();
+                        let layout_position = hitbox
+                            .contains_window_point(event.position)
+                            .then(|| hitbox.window_to_layout_point(event.position).ok())
+                            .flatten();
+                        let handled = entity.update(app, |host, cx| {
+                            if host.active_payload_drag_session(&payload).is_none() {
+                                return false;
+                            }
+                            if let Some(layout_position) = layout_position {
+                                host.drop_payload_release_from_rendered_host_scene(
+                                    payload,
+                                    DockRenderedPointerPosition::new(
+                                        layout_position,
+                                        event.position,
+                                    ),
+                                    window,
+                                    cx,
+                                );
+                                return true;
+                            }
+                            if !host
+                                .viewport_runtime()
+                                .is_payload_drag_source_window(&payload, receiver_window_id)
+                            {
+                                return false;
+                            }
+                            host.drop_payload_release_outside_rendered_host_scene(
                                 payload,
-                                DockRenderedPointerPosition::new(layout_position, event.position),
+                                event.position,
                                 window,
                                 cx,
-                            );
+                            )
                         });
+                        if !handled {
+                            return;
+                        }
                         app.stop_active_drag(window);
                         app.stop_propagation();
                         window.refresh();

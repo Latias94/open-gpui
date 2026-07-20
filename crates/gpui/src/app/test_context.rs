@@ -1592,6 +1592,9 @@ mod accessibility_tests;
 mod pointer_session_tests;
 
 #[cfg(test)]
+mod presentation_tests;
+
+#[cfg(test)]
 mod transform_tests;
 
 #[cfg(test)]
@@ -2022,8 +2025,8 @@ mod tests {
         cx.update_window_entity(&view, |view, window, _cx| {
             let consume = view.consume.clone();
             let events = view.events.clone();
-            view.mouse_subscription =
-                Some(window.intercept_mouse_events(move |event, window, cx| {
+            view.mouse_subscription = Some(window.intercept_window_mouse_events(
+                move |event, window, cx| {
                     if !matches!(event, WindowMouseEvent::Down(_)) {
                         return;
                     }
@@ -2032,7 +2035,8 @@ mod tests {
                         cx.stop_propagation();
                         window.prevent_default();
                     }
-                }));
+                },
+            ));
         });
 
         let pass_through = cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
@@ -2129,8 +2133,8 @@ mod tests {
         cx.update_window_entity(&view, |view, window, _cx| {
             let consume = view.consume.clone();
             let events = view.events.clone();
-            view.mouse_subscription =
-                Some(window.intercept_mouse_events(move |event, window, cx| {
+            view.mouse_subscription = Some(window.intercept_window_mouse_events(
+                move |event, window, cx| {
                     let label = match event {
                         WindowMouseEvent::Down(_) => "interceptor-down",
                         WindowMouseEvent::Up(_) => "interceptor-up",
@@ -2147,7 +2151,8 @@ mod tests {
                         cx.stop_propagation();
                         window.prevent_default();
                     }
-                }));
+                },
+            ));
         });
 
         for (interceptor, node, input) in inputs() {
@@ -2165,6 +2170,7 @@ mod tests {
                     let drag_view = cx.new(|_| Empty).into();
                     cx.active_drag = Some(AnyDrag {
                         window_id: window.window_handle().window_id(),
+                        source: None,
                         value: Arc::new("drag"),
                         view: drag_view,
                         window_preview_offset: point(px(0.0), px(0.0)),
@@ -2213,8 +2219,8 @@ mod tests {
         cx.update_window_entity(&view, |view, window, _cx| {
             let events = view.events.clone();
             let reentered = reentered.clone();
-            view.mouse_subscription =
-                Some(window.intercept_mouse_events(move |event, window, cx| {
+            view.mouse_subscription = Some(window.intercept_window_mouse_events(
+                move |event, window, cx| {
                     let WindowMouseEvent::Down(event) = event else {
                         return;
                     };
@@ -2226,7 +2232,8 @@ mod tests {
                         assert!(nested.default_prevented);
                         events.borrow_mut().push("nested-rejected");
                     }
-                }));
+                },
+            ));
         });
 
         let result = cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
@@ -2262,8 +2269,8 @@ mod tests {
         cx.update(|window, cx| window.draw(cx).clear());
         cx.update_window_entity(&view, |view, window, _cx| {
             let events = view.events.clone();
-            view.mouse_subscription =
-                Some(window.intercept_mouse_events(move |event, window, cx| {
+            view.mouse_subscription = Some(window.intercept_window_mouse_events(
+                move |event, window, cx| {
                     assert!(matches!(event, WindowMouseEvent::Move(_)));
                     events.borrow_mut().push("mouse-interceptor");
                     let nested = window.dispatch_event(
@@ -2277,7 +2284,8 @@ mod tests {
                     assert!(!nested.propagate);
                     assert!(nested.default_prevented);
                     events.borrow_mut().push("nested-rejected");
-                }));
+                },
+            ));
         });
 
         let result = cx.simulate_event_with_dispatch_snapshot(MouseMoveEvent {
@@ -2314,7 +2322,7 @@ mod tests {
             view.focus.focus(window, cx);
             let consume = view.consume.clone();
             let events = view.events.clone();
-            view.key_subscription = Some(window.intercept_key_down(
+            view.key_subscription = Some(window.intercept_window_key_down(
                 move |_: &KeyDownEvent, window, cx| {
                     events.borrow_mut().push("interceptor");
                     if consume.get() {
@@ -2374,15 +2382,16 @@ mod tests {
         cx.update_window_entity(&view, |view, window, cx| {
             view.focus.focus(window, cx);
             let events = view.events.clone();
-            view.key_subscription = Some(window.intercept_key_down(move |event, window, cx| {
-                if event.keystroke.key == "escape" {
-                    events.borrow_mut().push("interceptor-escape");
-                    cx.stop_propagation();
-                    window.prevent_default();
-                } else {
-                    events.borrow_mut().push("interceptor-prefix");
-                }
-            }));
+            view.key_subscription =
+                Some(window.intercept_window_key_down(move |event, window, cx| {
+                    if event.keystroke.key == "escape" {
+                        events.borrow_mut().push("interceptor-escape");
+                        cx.stop_propagation();
+                        window.prevent_default();
+                    } else {
+                        events.borrow_mut().push("interceptor-prefix");
+                    }
+                }));
         });
 
         let prefix = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
@@ -2430,15 +2439,17 @@ mod tests {
             view.focus.focus(window, cx);
             let events = view.events.clone();
             let reentered = reentered.clone();
-            view.key_subscription = Some(window.intercept_key_down(move |event, window, cx| {
-                events.borrow_mut().push("interceptor");
-                if !reentered.replace(true) {
-                    let nested = window.dispatch_event(PlatformInput::KeyDown(event.clone()), cx);
-                    assert!(!nested.propagate);
-                    assert!(nested.default_prevented);
-                    events.borrow_mut().push("nested-rejected");
-                }
-            }));
+            view.key_subscription =
+                Some(window.intercept_window_key_down(move |event, window, cx| {
+                    events.borrow_mut().push("interceptor");
+                    if !reentered.replace(true) {
+                        let nested =
+                            window.dispatch_event(PlatformInput::KeyDown(event.clone()), cx);
+                        assert!(!nested.propagate);
+                        assert!(nested.default_prevented);
+                        events.borrow_mut().push("nested-rejected");
+                    }
+                }));
         });
 
         let result = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
@@ -2478,7 +2489,7 @@ mod tests {
         cx.update_window_entity(&view, |view, window, cx| {
             view.focus.focus(window, cx);
             let events = view.events.clone();
-            view.key_subscription = Some(window.intercept_key_down(move |_, window, cx| {
+            view.key_subscription = Some(window.intercept_window_key_down(move |_, window, cx| {
                 events.borrow_mut().push("key-interceptor");
                 let nested = window.dispatch_event(
                     PlatformInput::MouseDown(MouseDownEvent {
@@ -2738,6 +2749,7 @@ mod tests {
         cx.update(|app| {
             app.active_drag = Some(AnyDrag {
                 window_id: hovered.window_id(),
+                source: None,
                 value: Arc::new("drag"),
                 view: app.new(|_| Empty).into(),
                 window_preview_offset: point(px(0.0), px(0.0)),

@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, mem, rc::Rc};
 
 use thiserror::Error;
 
@@ -6,6 +6,8 @@ use crate::{
     App, HitboxId, MouseButton, MouseMoveEvent, MouseUpEvent, PlatformInput, PointerCancelEvent,
     PointerCancelReason, Window, WindowId,
 };
+
+use super::{Frame, PendingPointerCancellation};
 
 /// A stable identifier for a pointer capture owner within one window.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -102,8 +104,8 @@ pub enum PointerCaptureError {
         /// The stale or unknown hitbox.
         hitbox: HitboxId,
     },
-    /// The handle has no binding in the currently rendered frame.
-    #[error("pointer capture handle {handle:?} is not bound in the rendered frame")]
+    /// The handle has no binding in the current interactive frame.
+    #[error("pointer capture handle {handle:?} is not bound in the current interactive frame")]
     HandleNotBound {
         /// The unbound handle.
         handle: PointerCaptureHandle,
@@ -217,7 +219,7 @@ impl Window {
         }
     }
 
-    /// Captures the pointer for a stable handle bound in the currently rendered frame.
+    /// Captures the pointer for a stable handle bound in the current interactive frame.
     ///
     /// While captured, the handle's current-frame hitbox is the exclusive event target for mouse
     /// move, up, pressure, and cancellation listeners, regardless of pointer position. Physical
@@ -229,6 +231,9 @@ impl Window {
         button: MouseButton,
     ) -> Result<(), PointerCaptureError> {
         self.ensure_pointer_capture_window(handle)?;
+        if !self.subtree_presentation().is_interactive() {
+            return Err(PointerCaptureError::HandleNotBound { handle: *handle });
+        }
         if !self.is_window_active() {
             return Err(PointerCaptureError::WindowInactive {
                 window: self.handle.window_id(),
@@ -237,13 +242,13 @@ impl Window {
         if !self.pressed_mouse_buttons.contains(button) {
             return Err(PointerCaptureError::ButtonNotPressed { button });
         }
-        let bound_hitbox = self
-            .rendered_frame
+        let frame = self.current_interaction_frame();
+        let bound_hitbox = frame
             .pointer_capture_bindings
             .iter()
             .find_map(|(id, hitbox)| (*id == handle.id).then_some(*hitbox))
             .filter(|hitbox| {
-                self.rendered_frame
+                frame
                     .hitboxes
                     .iter()
                     .any(|candidate| candidate.id == *hitbox && candidate.is_active())
@@ -287,6 +292,26 @@ impl Window {
         }
     }
 
+    pub(crate) fn finish_drag_source(
+        &mut self,
+        handle: &PointerCaptureHandle,
+        button: MouseButton,
+    ) -> Result<bool, PointerCaptureError> {
+        self.ensure_pointer_capture_window(handle)?;
+        let capture_released = if self
+            .captured_pointer
+            .is_some_and(|captured| captured.handle == *handle)
+        {
+            self.captured_pointer = None;
+            true
+        } else {
+            false
+        };
+        let button_released = self.pressed_mouse_buttons.contains(button);
+        self.pressed_mouse_buttons.remove(button);
+        Ok(button_released || capture_released)
+    }
+
     /// Returns the active pointer-capture session, if any.
     pub fn captured_pointer(&self) -> Option<PointerCapture> {
         self.captured_pointer
@@ -310,6 +335,9 @@ impl Window {
     ///
     /// Callers inside an input handler must defer this operation until the current dispatch ends.
     pub fn cancel_pointer_session(&mut self, reason: PointerCancelReason, cx: &mut App) {
+        if self.flush_pending_pointer_cancellation(cx) {
+            return;
+        }
         if !self.has_active_pointer_session(cx) {
             return;
         }
@@ -344,17 +372,92 @@ impl Window {
     }
 
     pub(super) fn captured_pointer_hitbox(&self) -> Option<HitboxId> {
-        let captured = self.captured_pointer?.handle.id;
-        let hitbox = self
-            .rendered_frame
+        self.captured_pointer_hitbox_in_frame(&self.rendered_frame)
+    }
+
+    pub(super) fn captured_pointer_hitbox_in_frame(&self, frame: &Frame) -> Option<HitboxId> {
+        self.pointer_capture_hitbox_for_handle_in_frame(self.captured_pointer?.handle, frame)
+    }
+
+    pub(super) fn pointer_capture_hitbox_for_handle_in_frame(
+        &self,
+        handle: PointerCaptureHandle,
+        frame: &Frame,
+    ) -> Option<HitboxId> {
+        if handle.window_id != self.handle.window_id() {
+            return None;
+        }
+        let captured = handle.id;
+        let hitbox = frame
             .pointer_capture_bindings
             .iter()
             .find_map(|(id, hitbox)| (*id == captured).then_some(*hitbox))?;
-        self.rendered_frame
+        frame
             .hitboxes
             .iter()
             .any(|candidate| candidate.id == hitbox && candidate.is_active())
             .then_some(hitbox)
+    }
+
+    pub(super) fn queue_pointer_session_cancellation(
+        &mut self,
+        owner: PointerCaptureHandle,
+        reason: PointerCancelReason,
+        cx: &mut App,
+    ) {
+        if self.pending_pointer_cancellation.is_some() {
+            return;
+        }
+        let target = self.pointer_capture_hitbox_for_handle_in_frame(owner, &self.rendered_frame);
+
+        if self
+            .captured_pointer
+            .is_some_and(|captured| captured.handle == owner)
+        {
+            self.captured_pointer = None;
+        }
+        if cx.active_drag.as_ref().is_some_and(|drag| {
+            drag.window_id == self.handle.window_id() && drag.source == Some(owner)
+        }) {
+            cx.active_drag = None;
+            self.refresh();
+        }
+        let mut listeners = self.rendered_frame.pointer_cancel_listeners.clone();
+        listeners.retain(|output| output.value.is_some());
+        self.pending_pointer_cancellation = Some(PendingPointerCancellation {
+            event: PointerCancelEvent { reason },
+            target,
+            listeners,
+        });
+
+        let window = self.handle;
+        cx.defer(move |cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    window.flush_pending_pointer_cancellation(cx);
+                })
+                .ok();
+        });
+    }
+
+    pub(super) fn flush_pending_pointer_cancellation(&mut self, cx: &mut App) -> bool {
+        let Some(pending) = self.pending_pointer_cancellation.take() else {
+            return false;
+        };
+
+        let mut current_listeners = mem::replace(
+            &mut self.rendered_frame.pointer_cancel_listeners,
+            pending.listeners,
+        );
+        let _target = pending
+            .target
+            .map(|target| MouseEventTargetGuard::enter(self.mouse_event_target.clone(), target));
+        self.dispatch_event(PlatformInput::PointerCanceled(pending.event), cx);
+        mem::swap(
+            &mut self.rendered_frame.pointer_cancel_listeners,
+            &mut current_listeners,
+        );
+        true
     }
 
     /// Binds a stable pointer capture handle to a hitbox in the frame being built.
@@ -369,6 +472,9 @@ impl Window {
     ) -> Result<(), PointerCaptureError> {
         self.invalidator.debug_assert_prepaint();
         self.ensure_pointer_capture_window(handle)?;
+        if !self.subtree_presentation().is_interactive() {
+            return Ok(());
+        }
 
         if !self
             .next_frame

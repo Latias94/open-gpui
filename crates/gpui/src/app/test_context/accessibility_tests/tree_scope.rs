@@ -1,6 +1,9 @@
 use super::*;
 
-use crate::{SubtreeTransform, SubtreeTransformExt, fill, point, red};
+use crate::{
+    SubtreePresentation, SubtreePresentationExt, SubtreeTransform, SubtreeTransformExt, fill,
+    point, red,
+};
 
 struct LateFailedModalAccessibilityView;
 
@@ -149,14 +152,18 @@ impl Render for ModalAccessibilityProbeView {
                     .id("auxiliary")
                     .role(Role::Group)
                     .aria_label("Auxiliary group")
-                    .aria_hidden(self.auxiliary_hidden)
                     .child(
                         div()
                             .id("auxiliary-action")
                             .role(Role::Button)
                             .aria_label("Auxiliary action")
                             .on_a11y_action(AccessibleAction::Click, |_, _, _| {}),
-                    ),
+                    )
+                    .with_subtree_presentation(if self.auxiliary_hidden {
+                        SubtreePresentation::Inert
+                    } else {
+                        SubtreePresentation::Visible
+                    }),
             );
 
         if self.modal_open {

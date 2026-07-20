@@ -19,6 +19,11 @@ pub(crate) struct TestPanel {
     focus_handle: FocusHandle,
 }
 
+pub(crate) struct TestDockHostFocusFixture {
+    host: Entity<DockHost>,
+    external_focus: FocusHandle,
+}
+
 impl TestPanel {
     pub(crate) fn new(label: &'static str, cx: &mut Context<Self>) -> Self {
         Self {
@@ -33,6 +38,7 @@ impl Render for TestPanel {
         let selector = format!("test-panel:{}", self.label);
         div()
             .debug_selector(move || selector)
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(rgb(0xffffff))
             .child(self.label)
@@ -42,6 +48,20 @@ impl Render for TestPanel {
 impl Focusable for TestPanel {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl Render for TestDockHostFocusFixture {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().relative().size_full().child(self.host.clone()).child(
+            div()
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .w(px(0.0))
+                .h(px(0.0))
+                .track_focus(&self.external_focus),
+        )
     }
 }
 
@@ -168,6 +188,39 @@ pub(crate) fn open_workspace(
     open_controller_space(cx, controller, dock_space, window_size)
 }
 
+pub(crate) fn open_workspace_with_external_focus(
+    cx: &mut TestAppContext,
+    workspace: DockWorkspace,
+    window_size: open_gpui::Size<Pixels>,
+) -> (
+    WindowHandle<TestDockHostFocusFixture>,
+    Entity<DockHost>,
+    VisualTestContext,
+    FocusHandle,
+) {
+    let dock_space = workspace.space().clone();
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let window = cx.open_window(window_size, move |_, cx| {
+        let host = cx.new(|cx| {
+            DockHost::from_controller(controller.clone(), dock_space.clone(), runtime.clone(), cx)
+        });
+        TestDockHostFocusFixture {
+            host,
+            external_focus: cx.focus_handle(),
+        }
+    });
+    let fixture = window
+        .root(cx)
+        .expect("window should expose the Dock focus fixture root");
+    let (host, external_focus) = cx.read_entity(&fixture, |fixture, _| {
+        (fixture.host.clone(), fixture.external_focus.clone())
+    });
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+    (window, host, visual, external_focus)
+}
+
 pub(crate) fn open_controller_workspace(
     cx: &mut TestAppContext,
     controller: Entity<DockController>,
@@ -183,6 +236,16 @@ pub(crate) fn open_controller_space(
     window_size: open_gpui::Size<Pixels>,
 ) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    open_controller_space_with_runtime(cx, controller, runtime, dock_space, window_size)
+}
+
+pub(crate) fn open_controller_space_with_runtime(
+    cx: &mut TestAppContext,
+    controller: Entity<DockController>,
+    runtime: DockViewportRuntimeHandle,
+    dock_space: DockSpaceId,
+    window_size: open_gpui::Size<Pixels>,
+) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
     let window = cx.open_window(window_size, move |_, cx| {
         DockHost::from_controller(controller.clone(), dock_space, runtime.clone(), cx)
     });
@@ -190,6 +253,11 @@ pub(crate) fn open_controller_space(
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
     (window, host, visual)
+}
+
+pub(crate) fn activate_window_for_pointer_input(visual: &mut VisualTestContext) {
+    visual.update(|window, _| window.activate_window());
+    visual.run_until_parked();
 }
 
 pub(crate) fn selector_for(
@@ -327,6 +395,7 @@ pub(crate) fn simulate_left_drag(
     } else {
         point(start.x - px(24.0), start.y)
     };
+    activate_window_for_pointer_input(visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold_point, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());

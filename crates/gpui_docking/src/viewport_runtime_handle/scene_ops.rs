@@ -29,8 +29,8 @@ impl DockViewportRuntimeHandle {
         let update = self
             .runtime
             .borrow_mut()
-            .unregister_host_for_space_with_pointer_sync(space, window_id);
-        apply_pointer_synced_runtime_update(self, update, cx)
+            .unregister_host_for_space_with_cleanup(space, window_id);
+        apply_runtime_update(self, update, cx)
     }
 
     pub(crate) fn begin_viewport_host_scene_frame(

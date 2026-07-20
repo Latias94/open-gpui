@@ -24,7 +24,6 @@ use crate::{
         DockViewportHostSceneSnapshot,
     },
     viewport_platform_sync::{
-        record_pointer_input_sync_request as record_pointer_input_sync_request_for_runtime,
         sync_render_passthrough_pointer_input as sync_render_passthrough_pointer_input_for_runtime,
         sync_reused_viewport_window, unavailable_reused_viewport_window_sync,
     },
@@ -95,20 +94,24 @@ fn clear_dockhost_drop_previews(
     changed
 }
 
-fn apply_pointer_synced_runtime_update<C: open_gpui::AppContext>(
+fn apply_runtime_update<C: open_gpui::AppContext>(
     runtime: &DockViewportRuntimeHandle,
     update: DockViewportRuntimeUpdate,
     cx: &mut C,
 ) -> bool {
-    {
-        let mut runtime_core = runtime.runtime.borrow_mut();
-        record_pointer_input_sync_request_for_runtime(
-            &mut runtime_core,
-            update.pointer_input_sync(),
-            cx,
-        );
-    }
     let reconciled = runtime.reconcile_viewport_frame(cx);
+    let changed = refresh_runtime_update(update, cx);
+    changed || reconciled
+}
+
+fn apply_runtime_update_from_window(
+    runtime: &DockViewportRuntimeHandle,
+    update: DockViewportRuntimeUpdate,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let reconciled =
+        runtime.reconcile_viewport_frame_except_window(window.window_handle().window_id(), cx);
     let changed = refresh_runtime_update(update, cx);
     changed || reconciled
 }
@@ -343,17 +346,27 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> DockRuntimeDragSession {
         let focus_item = self.runtime.borrow().drag_focus_item(payload, cx);
-        let begin = self
+        let session = self
             .runtime
             .borrow_mut()
-            .begin_payload_drag_with_pointer_sync_and_focus(payload, focus_item);
-        record_pointer_input_sync_request_for_runtime(
-            &mut self.runtime.borrow_mut(),
-            begin.pointer_input_sync,
-            cx,
-        );
+            .begin_payload_drag_with_focus(payload, focus_item);
         self.reconcile_viewport_frame(cx);
-        begin.session
+        session
+    }
+
+    pub(crate) fn begin_payload_drag_from_window(
+        &self,
+        payload: &DockDragPayload,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> DockRuntimeDragSession {
+        let focus_item = self.runtime.borrow().drag_focus_item(payload, cx);
+        let session = self
+            .runtime
+            .borrow_mut()
+            .begin_payload_drag_with_focus(payload, focus_item);
+        self.reconcile_viewport_frame_except_window(window.window_handle().window_id(), cx);
+        session
     }
 
     pub(crate) fn update_payload_drag_tear_off_geometry(
@@ -371,6 +384,32 @@ impl DockViewportRuntimeHandle {
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
         self.runtime.borrow().active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn active_payload_drag_source_window_id(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<WindowId> {
+        self.runtime
+            .borrow()
+            .active_payload_drag_source_window_id(payload)
+    }
+
+    pub(crate) fn is_foreign_payload_drag_for_window(
+        &self,
+        payload: &DockDragPayload,
+        receiver_window_id: WindowId,
+    ) -> bool {
+        self.active_payload_drag_source_window_id(payload)
+            .is_some_and(|source_window_id| source_window_id != receiver_window_id)
+    }
+
+    pub(crate) fn is_payload_drag_source_window(
+        &self,
+        payload: &DockDragPayload,
+        receiver_window_id: WindowId,
+    ) -> bool {
+        self.active_payload_drag_source_window_id(payload) == Some(receiver_window_id)
     }
 
     pub(crate) fn record_payload_drag_hovered_viewport(
@@ -398,11 +437,31 @@ impl DockViewportRuntimeHandle {
         session: &DockRuntimeDragSession,
         cx: &mut App,
     ) -> bool {
+        let update = self.runtime.borrow_mut().finish_payload_drag(session);
+        apply_runtime_update(self, update, cx)
+    }
+
+    pub(crate) fn finish_payload_drag_from_window(
+        &self,
+        session: &DockRuntimeDragSession,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let update = self.runtime.borrow_mut().finish_payload_drag(session);
+        apply_runtime_update_from_window(self, update, window, cx)
+    }
+
+    pub(crate) fn finish_payload_drag_for_source_space_from_window(
+        &self,
+        space: &DockSpaceId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
         let update = self
             .runtime
             .borrow_mut()
-            .finish_payload_drag_with_pointer_sync(session);
-        apply_pointer_synced_runtime_update(self, update, cx)
+            .finish_payload_drag_for_source_space(space);
+        apply_runtime_update_from_window(self, update, window, cx)
     }
 
     /// Returns registered dock spaces in stable lexical order.

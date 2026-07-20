@@ -2445,6 +2445,7 @@ mod handle_suite {
         let threshold = point(start.x + px(24.0), start.y);
         let end = debug_bounds(&mut target_visual, &target_tabs_selector).center();
 
+        activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(
             start,
             open_gpui::MouseButton::Left,
@@ -2455,6 +2456,7 @@ mod handle_suite {
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
+        cx.set_platform_hovered_window(Some(target_opened.window()));
         target_visual.simulate_mouse_move(
             end,
             open_gpui::MouseButton::Left,
@@ -2466,6 +2468,7 @@ mod handle_suite {
             open_gpui::Modifiers::none(),
         );
         cx.run_until_parked();
+        cx.set_platform_hovered_window(None);
 
         cx.read_entity(&controller, |controller, _| {
             let DockNode::Tabs { items, selected } = controller
@@ -2731,6 +2734,7 @@ mod handle_suite {
         let threshold = point(start.x + px(24.0), start.y);
         let end = debug_bounds(&mut target_visual, &target_stack).center();
 
+        activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(
             start,
             open_gpui::MouseButton::Left,
@@ -2741,6 +2745,7 @@ mod handle_suite {
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
+        cx.set_platform_hovered_window(Some(target_opened.window()));
         target_visual.simulate_mouse_move(
             end,
             open_gpui::MouseButton::Left,
@@ -2752,6 +2757,7 @@ mod handle_suite {
             open_gpui::Modifiers::none(),
         );
         cx.run_until_parked();
+        cx.set_platform_hovered_window(None);
         let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
         let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
 

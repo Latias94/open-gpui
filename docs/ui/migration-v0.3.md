@@ -259,16 +259,17 @@ bounds, and checked local/layout/window conversions. Failed transform scopes pub
 
 Complex custom consumers must keep visual stacking and pointer ownership in the same committed
 coordinate model. Docking now resolves divider junctions separately for the root and each floating
-surface, gives every floating container a blocking boundary across its complete bounds, and retains
-one stable capture owner for raw and standard GPUI drags. High-level drag sources acquire it after
-crossing the drag threshold, so removal of their owner binding produces terminal cancellation
-without capturing ordinary clicks. Terminal cancellation keeps the GPUI window-owned payload
-visible while each observer clears only its own runtime session, preview, anchor, and outside-release
-poll; this lets the true owner observe cancellation even when multiple independent hosts share a
-window. Establish component payload state only after policy and checked geometry accept the
-underlying drag session, and defer rollback when the framework writes its active drag after the
-constructor returns. Do not flatten transformed overlays into one hit list, treat only dividers as
-occluding, or leave component drag state dependent on receiving a normal mouse-up.
+surface and gives every floating container a blocking boundary across its complete bounds. Raw
+splitter and composite-floating drags retain the Dock host capture owner. Standard GPUI payload
+drags use the source element's stable owner and acquire it only after crossing the drag threshold,
+so `on_drag` sources must call `.id(...)` first and removal of that binding produces terminal
+cancellation without capturing ordinary clicks. A frame-scoped listener inside each rendered `DockHost` receives
+terminal cancellation from the old committed frame and clears only that host's runtime session,
+preview, anchor, and outside-release poll. It does not leave a window-global observer after the host
+is suppressed or removed. Establish component payload state only after policy and checked geometry
+accept the underlying drag session, and defer rollback when the framework writes its active drag
+after the constructor returns. Do not flatten transformed overlays into one hit list, treat only
+dividers as occluding, or leave component drag state dependent on receiving a normal mouse-up.
 
 Motion remains below GPUI. Sample `MotionProjection::try_transform_sample` and convert it in a
 consumer that depends on both crates, such as
@@ -277,6 +278,81 @@ GPUI type or identity fallback to `open-gpui-motion`.
 
 See [ADR 0021](../adr/0021-open-gpui-interactive-subtree-transform-authority.md) for composition,
 cache/deferred, renderer, and failure-ordering details.
+
+## Layout-Preserving Subtree Presentation
+
+`Style::visibility`, the generated Serde/schema `StyleRefinement::visibility` field,
+`Visibility::{Visible, Hidden}`, `visibility_style_methods!` and its generated `.visible()` /
+`.invisible()` (`fn visible` / `fn invisible`) methods, `Element::a11y_hidden`, and `aria_hidden`
+are deleted without aliases. They independently suppressed paint or accessibility and could leave
+a hidden subtree interactive or focused. Replace ancestor-level hiding with one three-state
+authority:
+
+```rust
+use open_gpui::{
+    ParentElement as _, SubtreePresentation, SubtreePresentationExt as _, div,
+};
+
+let element = div()
+    .child("Content")
+    .with_subtree_presentation(SubtreePresentation::Inert);
+```
+
+The exact contract is:
+
+| State | Layout | Paint | Input | Focus / IME | Accessibility |
+| --- | --- | --- | --- | --- | --- |
+| `Visible` | yes | yes | yes | yes | yes |
+| `Inert` | yes | yes | no | no | no |
+| `Hidden` | yes | no | no | no | no |
+
+All three states retain measurement, flex/grid ordering, sibling placement, and scroll extent.
+Use `SubtreePresentation::Inert` when the subtree must remain painted but must leave every input,
+focus, IME, and accessibility route; use `SubtreePresentation::Hidden` when paint must also stop.
+Use `Display::None` when layout participation must be removed. Keep component `disabled` state for
+controls that remain discoverable with disabled semantics; an inert subtree is absent from the
+final AccessKit tree and cannot be activated by pointer, keyboard, AccessKit, or an
+`ActivationHandle`.
+
+Nested declarations choose the most suppressive ancestor state, so a descendant cannot restore
+itself to `Visible`. Ordinary deferred elements, cached views, transforms, and coordinate portals
+inherit that state. Independently owned window overlays start at an explicit
+`WindowOverlayRuntime` root and still inherit suppression from their overlay parent.
+
+Dynamic `Visible` to `Inert` or `Hidden` transitions revoke hover/cursor state, pointer capture,
+drag/drop, focus, IME, tooltip and overlay intent, inspector targets, and AccessKit membership at
+the committed-frame boundary. The old pointer owner receives one terminal cancel. Restoring
+`Visible` does not replay pressed keys, pointer releases, focus claims, pending scroll callbacks,
+tooltips, or activation arms; require fresh input.
+
+Code that must settle one programmatic focus restoration or clearance should use
+`Window::focus_with_completion`, `Context::focus_with_completion`,
+`Window::blur_with_completion`, or `Context::blur_with_completion` and handle
+`FocusClaimOutcome::{Committed, Rejected, Superseded}`. `Window::blur` and
+`Window::disable_focus` now require `cx`; migrate `window.blur()` to `window.blur(cx)` and
+`window.disable_focus()` to `window.disable_focus(cx)`. Use `on_focus_committed` to observe one
+handle becoming the exact committed local focus, or `on_focus_committed_in` to observe committed
+focus entering a handle or descendant. These committed observations work while the platform window
+is inactive; keep `on_focus_in` for effective active-window focus entry. Do not infer focus success
+from calling `focus`, `blur`, an `on_next_frame` callback, or platform activation: a late
+inert/hidden candidate can still be rejected, and platform activation may expose an already
+retained local focus without creating a new committed-focus event. Sealed requests receive one
+later platform candidate generation; they do not recursively redraw inside the current effect
+cycle. `Window::focused` exposes current intent and may be provisional during a candidate render;
+use `Window::committed_focus` when a synchronous read specifically needs the last committed local
+leaf.
+
+Decorative leaf elements that intentionally emit no accessibility node use
+`omit_accessibility_node(true)`. That method omits only the current leaf projection and must not be
+used as an ancestor presentation switch. Renderer-neutral component adapters now express that
+same narrow operation as
+`SemanticDescriptor::with_omit_accessibility_node(true)`. The ambiguous `with_hidden` builder and
+`hidden` getter are deleted without aliases because their names incorrectly implied descendant
+suppression. Strict DevTools payload consumers must likewise rename the semantic state key from
+`hidden` to `omit_accessibility_node`.
+
+See [ADR 0022](../adr/0022-open-gpui-subtree-presentation-authority.md) for frame ordering,
+low-level registration gates, deferred/cache behavior, and overlay-root ownership.
 
 ## Semantic Activation Authority
 

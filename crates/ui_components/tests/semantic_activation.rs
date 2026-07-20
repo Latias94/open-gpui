@@ -4,8 +4,8 @@ use std::rc::Rc;
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     AppContext as _, Context, InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke,
-    Modifiers, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
-    accesskit, div,
+    Modifiers, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
+    SubtreePresentation, SubtreePresentationExt, Window, accesskit, div,
 };
 use open_gpui_ui_components::{
     ActivationHandle, ActivationKey, ActivationRequestResult, ActivationSource, Button, Checkbox,

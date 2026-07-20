@@ -181,9 +181,6 @@ pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
 
-    /// Should the element be painted on screen?
-    pub visibility: Visibility,
-
     // Overflow properties
     /// How children overflowing their container should affect layout
     #[refineable]
@@ -328,16 +325,6 @@ impl StyleRefinement {
     pub fn grid_location_mut(&mut self) -> &mut GridLocation {
         self.grid_location.get_or_insert_default()
     }
-}
-
-/// The value of the visibility property, similar to the CSS property `visibility`
-#[derive(Default, Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub enum Visibility {
-    /// The element should be drawn as normal.
-    #[default]
-    Visible,
-    /// The element should not be drawn, but should still take up space in the layout.
-    Hidden,
 }
 
 /// The possible values of the box-shadow property
@@ -731,7 +718,6 @@ impl Default for Style {
     fn default() -> Self {
         Style {
             display: Display::Block,
-            visibility: Visibility::Visible,
             overflow: Point {
                 x: Overflow::Visible,
                 y: Overflow::Visible,

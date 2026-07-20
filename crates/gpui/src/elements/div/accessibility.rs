@@ -49,7 +49,7 @@ pub(super) struct InteractivityAccessibility {
     pub(super) invalid: Option<bool>,
     pub(super) busy: Option<bool>,
     pub(super) read_only: Option<bool>,
-    pub(super) hidden: Option<bool>,
+    pub(super) omit_node: bool,
     pub(super) modal: Option<bool>,
     pub(super) disabled: Option<bool>,
     pub(super) expanded: Option<bool>,
@@ -151,13 +151,6 @@ impl InteractivityAccessibility {
                 node.set_read_only();
             } else {
                 node.clear_read_only();
-            }
-        }
-        if let Some(hidden) = self.hidden {
-            if hidden {
-                node.set_hidden();
-            } else {
-                node.clear_hidden();
             }
         }
         if let Some(modal) = self.modal {

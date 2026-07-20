@@ -7,13 +7,13 @@ use std::{
 
 use crate::{
     AnyDrag, AnyView, App, AppContext as _, Bounds, Context, DispatchPhase, Empty, Entity,
-    FocusHandle, HitboxBehavior, InputHandler, InteractiveElement, InteractiveText, IntoElement,
-    KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, PlatformInput, Point, PointerCancelEvent,
-    PointerCancelReason, PointerCaptureError, PointerCaptureHandle, Render,
-    StatefulInteractiveElement, StyleRefinement, Styled, StyledText, TestAppContext,
-    UTF16Selection, VisualContext, Window, WindowMouseEvent, canvas, deferred, div, point, px,
-    size,
+    EventEmitter, FocusHandle, Focusable, HitboxBehavior, InputHandler, InteractiveElement,
+    InteractiveText, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput, Point,
+    PointerCancelEvent, PointerCancelReason, PointerCaptureError, PointerCaptureHandle,
+    PromptLevel, PromptResponse, Render, StatefulInteractiveElement, StyleRefinement, Styled,
+    StyledText, SubtreePresentation, SubtreePresentationExt, TestAppContext, UTF16Selection,
+    VisualContext, Window, WindowMouseEvent, canvas, deferred, div, point, px, size,
 };
 
 crate::actions!(pointer_session_actions, [RemoveWindowWithPointer]);
@@ -69,6 +69,95 @@ struct PointerCancelJournalRoot {
     child: Entity<PointerCancelJournalProbe>,
 }
 
+struct WindowLocalDragSource;
+
+struct DraggablePrompt {
+    focus: FocusHandle,
+    drag_starts: Rc<Cell<usize>>,
+}
+
+impl EventEmitter<PromptResponse> for DraggablePrompt {}
+
+impl Focusable for DraggablePrompt {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for DraggablePrompt {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let drag_starts = self.drag_starts.clone();
+        div()
+            .id("draggable-custom-prompt")
+            .size_full()
+            .focusable()
+            .track_focus(&self.focus)
+            .on_drag(11_u32, move |_, _, _, cx| {
+                drag_starts.set(drag_starts.get() + 1);
+                cx.new(|_| Empty)
+            })
+    }
+}
+
+impl Render for WindowLocalDragSource {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("window-local-drag-source")
+            .size_full()
+            .on_drag(7_u32, |_, _, _, cx| cx.new(|_| Empty))
+    }
+}
+
+struct WindowLocalDropTarget {
+    drag_moves: Rc<Cell<usize>>,
+    drops: Rc<Cell<usize>>,
+    can_drop_checks: Rc<Cell<usize>>,
+    drag_over_styles: Rc<Cell<usize>>,
+}
+
+impl Render for WindowLocalDropTarget {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let drag_moves = self.drag_moves.clone();
+        let drops = self.drops.clone();
+        let can_drop_checks = self.can_drop_checks.clone();
+        let drag_over_styles = self.drag_over_styles.clone();
+        div()
+            .size_full()
+            .can_drop(move |_, _, _| {
+                can_drop_checks.set(can_drop_checks.get() + 1);
+                true
+            })
+            .drag_over::<u32>(move |style, _, _, _| {
+                drag_over_styles.set(drag_over_styles.get() + 1);
+                style
+            })
+            .on_drag_move::<u32>(move |_, _, _| drag_moves.set(drag_moves.get() + 1))
+            .on_drop::<u32>(move |_, _, _| drops.set(drops.get() + 1))
+    }
+}
+
+struct RepeatedDropTarget {
+    can_drop_checks: Rc<Cell<usize>>,
+    first_drops: Rc<Cell<usize>>,
+    second_drops: Rc<Cell<usize>>,
+}
+
+impl Render for RepeatedDropTarget {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let can_drop_checks = self.can_drop_checks.clone();
+        let first_drops = self.first_drops.clone();
+        let second_drops = self.second_drops.clone();
+        div()
+            .size_full()
+            .can_drop(move |_, _, _| {
+                can_drop_checks.set(can_drop_checks.get() + 1);
+                true
+            })
+            .on_drop::<u32>(move |_, _, _| first_drops.set(first_drops.get() + 1))
+            .on_drop::<u32>(move |_, _, _| second_drops.set(second_drops.get() + 1))
+    }
+}
+
 impl Render for PointerCancelJournalRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(deferred(
@@ -100,6 +189,42 @@ impl Render for PointerCancelJournalProbe {
             },
         )
         .size_full()
+    }
+}
+
+struct MixedCachedPointerCancelRoot {
+    presentation: SubtreePresentation,
+    capture: PointerCaptureHandle,
+    cached_child: Entity<PointerCancelJournalProbe>,
+    events: Rc<RefCell<Vec<(&'static str, DispatchPhase)>>>,
+}
+
+impl Render for MixedCachedPointerCancelRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let capture = self.capture;
+        let events = self.events.clone();
+        let owner = canvas(
+            move |bounds, window, _| {
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                window.bind_pointer_capture(&capture, hitbox.id).unwrap();
+            },
+            move |_, _, window, _| {
+                let events = events.clone();
+                window.on_pointer_cancel(move |_, phase, _, _| {
+                    events.borrow_mut().push(("owner", phase));
+                });
+            },
+        )
+        .size_full()
+        .with_subtree_presentation(self.presentation);
+
+        div()
+            .size_full()
+            .child(deferred(
+                AnyView::from(self.cached_child.clone())
+                    .cached(StyleRefinement::default().size_full()),
+            ))
+            .child(owner)
     }
 }
 
@@ -471,6 +596,7 @@ impl Render for ActionWindowRemovalProbe {
                     .expect("mouse down should establish pointer capture before the action");
                 cx.active_drag = Some(AnyDrag {
                     window_id: window.window_handle().window_id(),
+                    source: None,
                     value: Arc::new("drag"),
                     view: cx.new(|_| Empty).into(),
                     window_preview_offset: point(px(0.0), px(0.0)),
@@ -935,6 +1061,7 @@ fn pointer_capture_requires_a_pressed_button_and_rejects_competing_owners(cx: &m
     cx.update(|window, cx| {
         cx.active_drag = Some(AnyDrag {
             window_id: window.window_handle().window_id(),
+            source: None,
             value: Arc::new("drag"),
             view: cx.new(|_| Empty).into(),
             window_preview_offset: point(px(0.0), px(0.0)),
@@ -981,6 +1108,294 @@ fn pointer_capture_requires_a_pressed_button_and_rejects_competing_owners(cx: &m
 }
 
 #[open_gpui::test]
+fn stopping_an_active_drag_releases_its_source_pointer_capture(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|window, _| PointerCaptureOwnersProbe {
+        first: window.new_pointer_capture_handle(),
+        second: window.new_pointer_capture_handle(),
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    let source = cx.update_window_entity(&view, |view, _, _| view.first);
+
+    cx.update(|window, cx| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        window
+            .capture_pointer(&source, MouseButton::Left)
+            .expect("the drag source should capture the pressed pointer");
+        cx.active_drag = Some(AnyDrag {
+            window_id: window.window_handle().window_id(),
+            source: Some(source),
+            value: Arc::new("drag"),
+            view: cx.new(|_| Empty).into(),
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+
+        assert!(cx.stop_active_drag(window));
+        assert!(cx.active_drag.is_none());
+        assert!(window.captured_pointer().is_none());
+        assert!(!window.has_active_pointer_session(cx));
+    });
+}
+
+#[open_gpui::test]
+fn stopping_a_cross_window_drag_releases_capture_in_its_source_window(cx: &mut TestAppContext) {
+    let source_handle = Rc::new(Cell::new(None));
+    let source_window: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let source_handle = source_handle.clone();
+            move |window, _| {
+                let first = window.new_pointer_capture_handle();
+                source_handle.set(Some(first));
+                PointerCaptureOwnersProbe {
+                    first,
+                    second: window.new_pointer_capture_handle(),
+                }
+            }
+        })
+        .into();
+    let target_window: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let source = source_handle
+        .get()
+        .expect("the source window should create its capture handle");
+
+    cx.update_window(source_window, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+    cx.update_window(source_window, |_, window, cx| {
+        window.draw(cx).clear();
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        window
+            .capture_pointer(&source, MouseButton::Left)
+            .expect("the source window should capture the drag pointer");
+        cx.active_drag = Some(AnyDrag {
+            window_id: source_window.window_id(),
+            source: Some(source),
+            value: Arc::new("cross-window-drag"),
+            view: cx.new(|_| Empty).into(),
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should start the drag");
+
+    cx.update_window(target_window, |_, window, cx| {
+        assert!(cx.stop_active_drag(window));
+    })
+    .expect("the target window should stop the drag");
+
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    assert!(
+        cx.update_window(source_window, |_, window, cx| {
+            window.captured_pointer().is_none() && !window.has_active_pointer_session(cx)
+        })
+        .expect("the source window should remain open")
+    );
+}
+
+#[open_gpui::test]
+fn standard_drag_targets_reject_drags_from_another_window(cx: &mut TestAppContext) {
+    let drag_moves = Rc::new(Cell::new(0));
+    let drops = Rc::new(Cell::new(0));
+    let can_drop_checks = Rc::new(Cell::new(0));
+    let drag_over_styles = Rc::new(Cell::new(0));
+    let source_window: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| WindowLocalDragSource)
+        .into();
+    let target_window: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let drag_moves = drag_moves.clone();
+            let drops = drops.clone();
+            let can_drop_checks = can_drop_checks.clone();
+            let drag_over_styles = drag_over_styles.clone();
+            move |_, _| WindowLocalDropTarget {
+                drag_moves,
+                drops,
+                can_drop_checks,
+                drag_over_styles,
+            }
+        })
+        .into();
+
+    cx.update_window(source_window, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+    cx.update_window(target_window, |_, window, cx| window.draw(cx).clear())
+        .expect("the target window should remain open");
+    cx.update_window(source_window, |_, window, cx| {
+        window.draw(cx).clear();
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: point(px(30.0), px(10.0)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            cx,
+        );
+        assert!(cx.active_drag.is_some(), "the source should start a drag");
+        assert!(
+            window.captured_pointer().is_some(),
+            "the source should own pointer capture"
+        );
+    })
+    .expect("the source window should remain open");
+
+    cx.update_window(target_window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: point(px(10.0), px(10.0)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            cx,
+        );
+        window.dispatch_event(mouse_up(MouseButton::Left, 10.0, 10.0), cx);
+    })
+    .expect("the target window should accept isolated input");
+
+    assert_eq!(drag_moves.get(), 0);
+    assert_eq!(drops.get(), 0);
+    assert_eq!(can_drop_checks.get(), 0);
+    assert_eq!(drag_over_styles.get(), 0);
+    assert_eq!(
+        cx.read(|cx| cx.active_drag.as_ref().map(|drag| drag.window_id)),
+        Some(source_window.window_id()),
+        "the unrelated target must not consume the source drag"
+    );
+    assert!(
+        cx.update_window(source_window, |_, window, cx| {
+            window.captured_pointer().is_some() && window.has_active_pointer_session(cx)
+        })
+        .expect("the source window should remain open"),
+        "the source session must remain intact after unrelated input"
+    );
+
+    cx.update_window(source_window, |_, window, cx| {
+        window.dispatch_event(mouse_up(MouseButton::Left, 30.0, 10.0), cx);
+        assert!(window.captured_pointer().is_none());
+        assert!(!window.has_active_pointer_session(cx));
+    })
+    .expect("the source window should finish its drag");
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+}
+
+#[open_gpui::test]
+fn repeated_drop_listeners_receive_one_matching_drop_each(cx: &mut TestAppContext) {
+    let can_drop_checks = Rc::new(Cell::new(0));
+    let first_drops = Rc::new(Cell::new(0));
+    let second_drops = Rc::new(Cell::new(0));
+    let window_handle: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let can_drop_checks = can_drop_checks.clone();
+            let first_drops = first_drops.clone();
+            let second_drops = second_drops.clone();
+            move |_, _| RepeatedDropTarget {
+                can_drop_checks,
+                first_drops,
+                second_drops,
+            }
+        })
+        .into();
+
+    cx.update_window(window_handle, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the drop target window should remain open");
+    cx.run_until_parked();
+    cx.update_window(window_handle, |_, window, cx| {
+        window.draw(cx).clear();
+        cx.active_drag = Some(AnyDrag {
+            window_id: window_handle.window_id(),
+            source: None,
+            value: Arc::new(7_u32),
+            view: cx.new(|_| Empty).into(),
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+        window.dispatch_event(mouse_up(MouseButton::Left, 10.0, 10.0), cx);
+    })
+    .expect("the drop target window should dispatch the drop");
+
+    assert_eq!(can_drop_checks.get(), 1);
+    assert_eq!(first_drops.get(), 1);
+    assert_eq!(second_drops.get(), 1);
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+}
+
+#[open_gpui::test]
+fn drag_source_in_custom_prompt_survives_its_first_drag_frame(cx: &mut TestAppContext) {
+    let drag_starts = Rc::new(Cell::new(0));
+    cx.update({
+        let drag_starts = drag_starts.clone();
+        move |cx| {
+            cx.set_prompt_builder(move |_, _, _, _, handle, window, cx| {
+                let drag_starts = drag_starts.clone();
+                let view = cx.new(|cx| DraggablePrompt {
+                    focus: cx.focus_handle(),
+                    drag_starts,
+                });
+                handle.with_view(view, window, cx)
+            });
+        }
+    });
+    let window_handle: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let _response = cx
+        .update_window(window_handle, |_, window, cx| {
+            window.activate_window();
+            window.draw(cx).clear();
+            window.prompt(PromptLevel::Info, "Drag prompt", None, &["OK"], cx)
+        })
+        .expect("the prompt window should remain open");
+    cx.run_until_parked();
+
+    cx.update_window(window_handle, |_, window, cx| {
+        window.draw(cx).clear();
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: point(px(30.0), px(10.0)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            cx,
+        );
+        assert!(cx.active_drag.is_some());
+        assert!(window.captured_pointer().is_some());
+    })
+    .expect("the prompt should start its drag");
+
+    cx.run_until_parked();
+    cx.update_window(window_handle, |_, window, cx| {
+        assert_eq!(drag_starts.get(), 1);
+        assert!(cx.active_drag.is_some());
+        assert!(window.captured_pointer().is_some());
+        assert!(window.has_active_pointer_session(cx));
+        window.dispatch_event(mouse_up(MouseButton::Left, 30.0, 10.0), cx);
+        assert!(cx.active_drag.is_none());
+        assert!(window.captured_pointer().is_none());
+    })
+    .expect("the prompt drag should remain owned until release");
+}
+
+#[open_gpui::test]
 fn pointer_cancellation_is_unpreventable_and_clears_the_entire_session(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|window, _| PointerCaptureOwnersProbe {
         first: window.new_pointer_capture_handle(),
@@ -993,7 +1408,7 @@ fn pointer_cancellation_is_unpreventable_and_clears_the_entire_session(cx: &mut 
     let events = Rc::new(RefCell::new(Vec::new()));
     let first_events = events.clone();
     let _first_interceptor = cx.update(|window, _| {
-        window.intercept_mouse_events(move |event, window, cx| {
+        window.intercept_window_mouse_events(move |event, window, cx| {
             if let WindowMouseEvent::Cancel(event) = event {
                 assert_eq!(event.reason, PointerCancelReason::WindowDeactivated);
                 first_events.borrow_mut().push("first");
@@ -1004,7 +1419,7 @@ fn pointer_cancellation_is_unpreventable_and_clears_the_entire_session(cx: &mut 
     });
     let second_events = events.clone();
     let _second_interceptor = cx.update(|window, _| {
-        window.intercept_mouse_events(move |event, _, _| {
+        window.intercept_window_mouse_events(move |event, _, _| {
             if matches!(event, WindowMouseEvent::Cancel(_)) {
                 second_events.borrow_mut().push("second");
             }
@@ -1027,6 +1442,7 @@ fn pointer_cancellation_is_unpreventable_and_clears_the_entire_session(cx: &mut 
             .expect("the pressed pointer session should capture");
         cx.active_drag = Some(AnyDrag {
             window_id: window.window_handle().window_id(),
+            source: None,
             value: Arc::new("drag"),
             view: cx.new(|_| Empty).into(),
             window_preview_offset: point(px(0.0), px(0.0)),
@@ -1076,7 +1492,7 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
     let _cancel_subscription = cx.update(|window, _| {
         let cancellations = cancellations.clone();
-        window.intercept_mouse_events(move |event, _, _| {
+        window.intercept_window_mouse_events(move |event, _, _| {
             if let WindowMouseEvent::Cancel(event) = event {
                 cancellations.borrow_mut().push(event.reason);
             }
@@ -1096,6 +1512,7 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
         );
         cx.active_drag = Some(AnyDrag {
             window_id: window.window_handle().window_id(),
+            source: None,
             value: Arc::new("drag"),
             view: cx.new(|_| Empty).into(),
             window_preview_offset: point(px(0.0), px(0.0)),
@@ -1164,7 +1581,7 @@ fn completed_missing_owner_frame_revokes_before_a_later_rebind(cx: &mut TestAppC
     cx.update(|window, cx| window.draw(cx).clear());
     let _cancel_subscription = cx.update(|window, _| {
         let cancellations = cancellations.clone();
-        window.intercept_mouse_events(move |event, _, _| {
+        window.intercept_window_mouse_events(move |event, _, _| {
             if let WindowMouseEvent::Cancel(event) = event {
                 cancellations.borrow_mut().push(event.reason);
             }
@@ -1220,7 +1637,7 @@ fn completed_missing_owner_frame_does_not_duplicate_cancellation_on_later_window
     cx.update(|window, cx| window.draw(cx).clear());
     let _cancel_subscription = cx.update(|window, _| {
         let cancellations = cancellations.clone();
-        window.intercept_mouse_events(move |event, _, _| {
+        window.intercept_window_mouse_events(move |event, _, _| {
             if let WindowMouseEvent::Cancel(event) = event {
                 cancellations.borrow_mut().push(event.reason);
             }
@@ -1379,13 +1796,14 @@ fn remove_window_from_input_callback_cancels_after_dispatch_before_removal(
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
-        window.intercept_mouse_events(move |event, window, cx| match event {
+        window.intercept_window_mouse_events(move |event, window, cx| match event {
             WindowMouseEvent::Down(_) => {
                 window
                     .capture_pointer(&handle, MouseButton::Left)
                     .expect("the input callback should establish pointer capture");
                 cx.active_drag = Some(AnyDrag {
                     window_id: window.window_handle().window_id(),
+                    source: None,
                     value: Arc::new("drag"),
                     view: cx.new(|_| Empty).into(),
                     window_preview_offset: point(px(0.0), px(0.0)),
@@ -1449,7 +1867,7 @@ fn remove_window_from_action_callback_cancels_after_dispatch_before_removal(
     cx.update_window_entity(&view, |view, window, cx| view.focus.focus(window, cx));
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
-        window.intercept_mouse_events(move |event, window, _| {
+        window.intercept_window_mouse_events(move |event, window, _| {
             if let WindowMouseEvent::Cancel(event) = event {
                 assert_eq!(event.reason, PointerCancelReason::WindowClosed);
                 assert!(!window.removed, "cancellation must precede window removal");
@@ -1595,7 +2013,7 @@ fn key_listener_close_skips_synthetic_text_input(cx: &mut TestAppContext) {
     cx.update(|window, cx| window.draw(cx).clear());
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
-        window.intercept_mouse_events(move |event, window, cx| {
+        window.intercept_window_mouse_events(move |event, window, cx| {
             if let WindowMouseEvent::Cancel(event) = event {
                 assert_eq!(event.reason, PointerCancelReason::WindowClosed);
                 assert!(!window.removed, "cancellation must precede window removal");
@@ -1646,7 +2064,7 @@ fn synthetic_text_handler_close_waits_for_handler_return(cx: &mut TestAppContext
     cx.update(|window, cx| window.draw(cx).clear());
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
-        window.intercept_mouse_events(move |event, window, cx| {
+        window.intercept_window_mouse_events(move |event, window, cx| {
             if let WindowMouseEvent::Cancel(event) = event {
                 assert_eq!(event.reason, PointerCancelReason::WindowClosed);
                 assert!(!window.removed, "cancellation must precede window removal");
@@ -1705,7 +2123,7 @@ fn platform_ime_insert_text_close_waits_for_callback_and_notifies_once(cx: &mut 
     cx.update(|window, cx| window.draw(cx).clear());
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
-        window.intercept_mouse_events(move |event, window, cx| {
+        window.intercept_window_mouse_events(move |event, window, cx| {
             if let WindowMouseEvent::Cancel(event) = event {
                 assert_eq!(event.reason, PointerCancelReason::WindowClosed);
                 assert!(!window.removed, "cancellation must precede window removal");
@@ -1828,6 +2246,7 @@ fn removing_an_unrelated_window_preserves_the_drag_owned_by_another_window(
     cx.update(|app| {
         app.active_drag = Some(AnyDrag {
             window_id: second.window_id(),
+            source: None,
             value: Arc::new("second-window-drag"),
             view: app.new(|_| Empty).into(),
             window_preview_offset: point(px(0.0), px(0.0)),
@@ -1906,6 +2325,127 @@ fn pointer_cancel_listeners_are_isolated_unpreventable_and_replayed_from_cached_
 }
 
 #[open_gpui::test]
+fn cached_listener_replay_and_capture_revocation_share_one_complete_cancel_dispatch(
+    cx: &mut TestAppContext,
+) {
+    let renders = Rc::new(Cell::new(0));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view({
+        let renders = renders.clone();
+        let events = events.clone();
+        move |window, cx| MixedCachedPointerCancelRoot {
+            presentation: SubtreePresentation::Visible,
+            capture: window.new_pointer_capture_handle(),
+            cached_child: cx.new(|_| PointerCancelJournalProbe {
+                renders,
+                events: events.clone(),
+            }),
+            events,
+        }
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let capture = cx.update_window_entity(&view, |view, _, _| view.capture);
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        window
+            .capture_pointer(&capture, MouseButton::Left)
+            .expect("visible capture owner should be bound");
+    });
+    let cached_renders = renders.get();
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.presentation = SubtreePresentation::Inert;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    assert_eq!(
+        renders.get(),
+        cached_renders,
+        "the unrelated listener subtree must replay its cached paint journal"
+    );
+    assert!(cx.update(|window, _| window.captured_pointer().is_none()));
+    let events = events.borrow();
+    for label in ["first", "second", "owner"] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(candidate, _)| *candidate == label)
+                .map(|(_, phase)| *phase)
+                .collect::<Vec<_>>(),
+            [DispatchPhase::Capture, DispatchPhase::Bubble],
+            "{label} must receive both terminal cancellation phases exactly once"
+        );
+    }
+}
+
+#[open_gpui::test]
+fn stale_drag_revocation_before_root_paint_preserves_cached_cancel_journal(
+    cx: &mut TestAppContext,
+) {
+    let renders = Rc::new(Cell::new(0));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view({
+        let renders = renders.clone();
+        let events = events.clone();
+        move |window, cx| MixedCachedPointerCancelRoot {
+            presentation: SubtreePresentation::Visible,
+            capture: window.new_pointer_capture_handle(),
+            cached_child: cx.new(|_| PointerCancelJournalProbe {
+                renders,
+                events: events.clone(),
+            }),
+            events,
+        }
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let capture = cx.update_window_entity(&view, |view, _, _| view.capture);
+    let cached_renders = renders.get();
+
+    cx.update(|window, cx| {
+        cx.active_drag = Some(AnyDrag {
+            window_id: window.window_handle().window_id(),
+            source: Some(capture),
+            value: Arc::new("drag"),
+            view: cx.new(|_| Empty).into(),
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    });
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.presentation = SubtreePresentation::Inert;
+        cx.notify();
+    });
+
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    assert_eq!(
+        renders.get(),
+        cached_renders,
+        "the listener subtree should retain a valid cached paint journal"
+    );
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    let events = events.borrow();
+    for label in ["first", "second", "owner"] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(candidate, _)| *candidate == label)
+                .map(|(_, phase)| *phase)
+                .collect::<Vec<_>>(),
+            [DispatchPhase::Capture, DispatchPhase::Bubble],
+            "{label} must receive the stale drag's terminal cancellation exactly once"
+        );
+    }
+}
+
+#[open_gpui::test]
 fn stateful_div_cancel_prevents_activation_even_when_cancel_propagation_is_stopped(
     cx: &mut TestAppContext,
 ) {
@@ -1926,7 +2466,7 @@ fn stateful_div_cancel_prevents_activation_even_when_cancel_propagation_is_stopp
     cx.update(|window, cx| window.draw(cx).clear());
 
     let _cancel_interceptor = cx.update(|window, _| {
-        window.intercept_mouse_events(|event, window, cx| {
+        window.intercept_window_mouse_events(|event, window, cx| {
             if matches!(event, WindowMouseEvent::Cancel(_)) {
                 cx.stop_propagation();
                 window.prevent_default();
@@ -2040,6 +2580,7 @@ fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut Te
         move |app| {
             app.active_drag = Some(AnyDrag {
                 window_id: first.window_id(),
+                source: None,
                 value: Arc::new("first-window-drag"),
                 view: app
                     .new(move |_| DragPreviewProbe {

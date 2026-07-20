@@ -8,7 +8,7 @@ impl WindowOverlayRuntime {
             return;
         }
         let weak_key_state = self.state.downgrade();
-        let key_subscription = window.intercept_key_down(move |event, window, cx| {
+        let key_subscription = window.intercept_window_key_down(move |event, window, cx| {
             let Some(state) = weak_key_state.upgrade() else {
                 return;
             };
@@ -21,7 +21,7 @@ impl WindowOverlayRuntime {
             runtime.handle_key_down(event, window, cx);
         });
         let weak_mouse_state = self.state.downgrade();
-        let mouse_subscription = window.intercept_mouse_events(move |event, window, cx| {
+        let mouse_subscription = window.intercept_window_mouse_events(move |event, window, cx| {
             let Some(state) = weak_mouse_state.upgrade() else {
                 return;
             };
@@ -452,8 +452,10 @@ impl WindowOverlayRuntimeState {
     pub(super) fn highest_modal_barrier_index(&self) -> Option<usize> {
         self.stack.iter().enumerate().rev().find_map(|(index, id)| {
             let entry = self.entries.get(id)?;
-            (entry.policy.kind() == OverlayLayerKind::Modal && entry.lifecycle.presence().present())
-                .then_some(index)
+            (entry.policy.kind() == OverlayLayerKind::Modal
+                && entry.lifecycle.presence().present()
+                && entry.presentation.is_interactive())
+            .then_some(index)
         })
     }
 
@@ -493,7 +495,9 @@ impl WindowOverlayRuntimeState {
             .skip(floor)
             .filter_map(|id| {
                 let entry = self.entries.get(id)?;
-                Some(OverlayLayer::new(id.as_str(), entry.projected_policy()))
+                entry
+                    .keyboard_eligible()
+                    .then(|| OverlayLayer::new(id.as_str(), entry.projected_policy()))
             })
             .collect()
     }
@@ -512,6 +516,7 @@ impl WindowOverlayRuntimeState {
             };
             if entry.policy.kind() == OverlayLayerKind::Modal
                 && entry.lifecycle.presence().present()
+                && entry.presentation.is_interactive()
             {
                 modal_barrier = Some(index);
             }

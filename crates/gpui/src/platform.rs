@@ -33,12 +33,12 @@ pub type PlatformPixelBuffer = objc2_core_foundation::CFRetained<objc2_core_vide
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, MouseButton,
-    Pixels, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, Window, WindowControlArea, geometry::ResolvedSubtreeTransform, hash,
-    point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, FocusId, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout,
+    MouseButton, Pixels, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
+    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
+    geometry::ResolvedSubtreeTransform, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -1396,6 +1396,7 @@ impl From<TileId> for etagere::AllocId {
 #[expect(missing_docs)]
 pub struct PlatformInputHandler {
     cx: AsyncWindowContext,
+    focus_id: FocusId,
     handler: Box<dyn InputHandler>,
     transform: ResolvedSubtreeTransform,
     validity: Option<crate::geometry::SubtreeTransformValidity>,
@@ -1412,12 +1413,14 @@ pub struct PlatformInputHandler {
 impl PlatformInputHandler {
     pub(crate) fn new(
         cx: AsyncWindowContext,
+        focus_id: FocusId,
         handler: Box<dyn InputHandler>,
         transform: ResolvedSubtreeTransform,
         validity: Option<crate::geometry::SubtreeTransformValidity>,
     ) -> Self {
         Self {
             cx,
+            focus_id,
             handler,
             transform,
             validity,
@@ -1428,11 +1431,21 @@ impl PlatformInputHandler {
         self.validity.clone()
     }
 
+    pub(crate) fn focus_id(&self) -> FocusId {
+        self.focus_id
+    }
+
     pub(crate) fn set_validity(
         &mut self,
         validity: Option<crate::geometry::SubtreeTransformValidity>,
     ) {
         self.validity = validity;
+    }
+
+    pub(crate) fn finish_composition(&mut self, window: &mut Window, cx: &mut App) {
+        if self.handler.marked_text_range(window, cx).is_some() {
+            self.handler.unmark_text(window, cx);
+        }
     }
 
     fn update_in_input_transaction<R>(

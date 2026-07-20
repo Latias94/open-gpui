@@ -6,12 +6,27 @@ impl DockViewportRuntimeHandle {
         delivery: DockDropDelivery,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        self.deliver_drop_commit_delivery_with_live_window(delivery, None, cx)
+    }
+
+    fn deliver_drop_commit_delivery_with_live_window(
+        &self,
+        delivery: DockDropDelivery,
+        live_window: Option<AnyWindowHandle>,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let result = match delivery.into_tear_off_request() {
             Ok(request) => self.commit_tear_off_drop_route(request, cx),
-            Err(delivery) => self
-                .runtime
-                .borrow_mut()
-                .deliver_drop_commit_delivery_with_outcome(delivery, cx),
+            Err(delivery) => {
+                let mut runtime = self.runtime.borrow_mut();
+                match live_window {
+                    Some(window) => runtime
+                        .deliver_drop_commit_delivery_from_live_window_with_outcome(
+                            delivery, window, cx,
+                        ),
+                    None => runtime.deliver_drop_commit_delivery_with_outcome(delivery, cx),
+                }
+            }
         };
         self.clear_routed_drop_preview(cx);
         if let Ok(DockViewportDropRouteOutcome::Action(outcome)) = &result {
@@ -225,6 +240,28 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        self.commit_payload_drop_from_screen_with_live_window(request, None, cx)
+    }
+
+    pub(crate) fn commit_payload_drop_from_window(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        self.commit_payload_drop_from_screen_with_live_window(
+            request,
+            Some(window.window_handle()),
+            cx,
+        )
+    }
+
+    fn commit_payload_drop_from_screen_with_live_window(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        live_window: Option<AnyWindowHandle>,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let resolution = self.resolve_payload_drop_delivery_for_request(request, cx);
         let delivery = match DockDropDelivery::from_resolution(resolution) {
             Ok(delivery) => delivery,
@@ -234,7 +271,7 @@ impl DockViewportRuntimeHandle {
                 return result;
             }
         };
-        self.deliver_drop_commit_delivery(delivery, cx)
+        self.deliver_drop_commit_delivery_with_live_window(delivery, live_window, cx)
     }
 
     /// Resolves and commits a rendered payload release from platform signal snapshots in tests.

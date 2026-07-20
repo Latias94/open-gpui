@@ -169,15 +169,14 @@ impl DockHost {
                 // Fully transparent empty surfaces do not reliably initiate GPUI drag hit-tests.
                 .bg(rgba(0x00000001))
                 .on_drag(payload, move |payload, geometry, window, cx| {
-                    let _ = window.capture_pointer(&pointer_capture, MouseButton::Left);
                     let Ok(start_layout_position) = geometry.target_layout_position() else {
-                        defer_rejected_payload_drag_cleanup(payload, pointer_capture, window, cx);
+                        defer_rejected_payload_drag_cleanup(payload, window, cx);
                         return cx.new(|_| Empty);
                     };
                     let Ok(source_window_bounds) =
                         geometry.geometry().layout_to_window_bounds(bounds)
                     else {
-                        defer_rejected_payload_drag_cleanup(payload, pointer_capture, window, cx);
+                        defer_rejected_payload_drag_cleanup(payload, window, cx);
                         return cx.new(|_| Empty);
                     };
                     let start_window_position = geometry.window_position();
@@ -201,7 +200,7 @@ impl DockHost {
                         ) {
                             return false;
                         }
-                        host.begin_payload_drag_from_render(payload, cx);
+                        host.begin_payload_drag_from_render(payload, window, cx);
                         host.update_payload_drag_tear_off_geometry_from_render(
                             payload,
                             tear_off_geometry,
@@ -209,7 +208,7 @@ impl DockHost {
                         true
                     });
                     if !began {
-                        defer_rejected_payload_drag_cleanup(payload, pointer_capture, window, cx);
+                        defer_rejected_payload_drag_cleanup(payload, window, cx);
                     }
                     cx.new(|_| Empty)
                 })
@@ -369,17 +368,11 @@ impl DockHost {
     }
 }
 
-fn defer_rejected_payload_drag_cleanup(
-    payload: &DockDragPayload,
-    pointer_capture: PointerCaptureHandle,
-    window: &Window,
-    cx: &mut App,
-) {
+fn defer_rejected_payload_drag_cleanup(payload: &DockDragPayload, window: &Window, cx: &mut App) {
     let rejected_payload = payload.clone();
     window.defer(cx, move |window, cx| {
         if cx.active_drag_value::<DockDragPayload>() == Some(&rejected_payload) {
             cx.stop_active_drag(window);
         }
-        let _ = window.release_pointer(&pointer_capture);
     });
 }

@@ -153,6 +153,32 @@ window, viewport, or layout `Pixels` should convert to `UiPx` before calling
 `device_adaptive_snapshot`. UI core intentionally does not expose `Pixels` compatibility aliases,
 because keeping those aliases would preserve a renderer dependency in the neutral crate.
 
+## Subtree Presentation Authority
+
+Official components use `open_gpui::SubtreePresentation` when an owning subtree must retain layout
+while becoming inert or hidden. They must not recreate ancestor paint, input, focus, IME, tooltip,
+overlay, Inspector, or accessibility flags. The exact matrix is:
+
+- `Visible`: layout, paint, input, focus/IME, and accessibility;
+- `Inert`: layout and paint only;
+- `Hidden`: layout only.
+
+A suppressive ancestor wins over every descendant declaration. Component `disabled` remains a
+resolved semantic fact and may be present in the final accessibility tree; subtree inertness is
+absent from accessibility and makes semantic or programmatic activation unavailable. Decorative
+leaf omission through `omit_accessibility_node` does not hide descendants and cannot substitute
+for subtree presentation. Renderer-neutral producers represent that leaf operation with
+`SemanticDescriptor::with_omit_accessibility_node`; the descriptor intentionally has no generic
+`hidden` state because accessibility omission and subtree presentation are different contracts.
+
+Official overlay adapters bind their local presentation to `WindowOverlayRuntime`. A suppressed
+layer remains in its controlled lifecycle but releases modal input and focus authority; its open
+overlay descendants inherit the effective suppression, while independent window-root layers do
+not. Restoration to `Visible` resumes current lifecycle without claiming initial focus or replaying
+the input that originally opened the surface. Tooltip, HoverCard, Popover, Dialog, AlertDialog,
+Sheet, Menu, and ContextMenu must follow this same runtime path rather than installing family-local
+presentation tails.
+
 ## Overlay Behavior
 
 Overlay component state should use renderer-neutral policy types from `open_gpui_ui_core` before

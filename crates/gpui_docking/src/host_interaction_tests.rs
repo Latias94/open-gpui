@@ -171,6 +171,8 @@ fn rejected_single_tabs_floating_drag_does_not_leave_payload_state(cx: &mut Test
     .expect("single-tabs floating handle should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
+    visual.update(|window, _| window.activate_window());
+    cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
@@ -179,7 +181,9 @@ fn rejected_single_tabs_floating_drag_does_not_leave_payload_state(cx: &mut Test
     );
     cx.run_until_parked();
 
-    assert!(visual.update(|_, cx| cx.active_drag_value::<DockDragPayload>().is_none()));
+    assert!(visual.update(|window, cx| {
+        window.captured_pointer().is_none() && cx.active_drag_value::<DockDragPayload>().is_none()
+    }));
     host.read_with(&visual, |host, _| {
         assert!(host.floating_drag().is_none());
         let payload = DockDragPayload::new_floating(space(), floating, "Panel A".to_string());
@@ -288,6 +292,7 @@ fn top_floating_content_occludes_a_lower_floating_title_bar(cx: &mut TestAppCont
     let start = debug_bounds(&mut visual, &lower_handle).center();
     assert!(debug_bounds(&mut visual, &upper_surface).contains(&start));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
@@ -399,6 +404,7 @@ fn occluding_overlay_blocks_raw_composite_floating_drag_acquisition(cx: &mut Tes
     .expect("composite floating handle selector should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     host.read_with(&visual, |host, _| {
         assert!(
@@ -503,8 +509,12 @@ fn window_deactivation_cancels_a_single_tabs_floating_payload_drag(cx: &mut Test
         MouseButton::Left,
         Modifiers::none(),
     );
-    cx.run_until_parked();
-    let payload = visual.update(|_, cx| {
+    let payload = visual.update(|window, cx| {
+        assert!(window.captured_pointer().is_some());
+        assert!(
+            window.accepts_pointer_input(),
+            "payload drag must keep the source content window interactive for local routing"
+        );
         cx.active_drag_value::<DockDragPayload>()
             .cloned()
             .expect("single-tabs floating drag should establish a payload")
@@ -524,13 +534,16 @@ fn window_deactivation_cancels_a_single_tabs_floating_payload_drag(cx: &mut Test
     host.read_with(&visual, |host, _| {
         assert!(host.floating_drag().is_some());
         assert!(host.interaction().outside_release_poll_running());
+        assert!(host.active_payload_drag_session(&payload).is_some());
     });
 
     visual.deactivate_window();
     cx.run_until_parked();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
     assert!(visual.update(|window, cx| {
-        window.captured_pointer().is_none() && cx.active_drag_value::<DockDragPayload>().is_none()
+        window.captured_pointer().is_none()
+            && window.accepts_pointer_input()
+            && cx.active_drag_value::<DockDragPayload>().is_none()
     }));
     host.read_with(&visual, |host, _| {
         assert!(
@@ -539,6 +552,7 @@ fn window_deactivation_cancels_a_single_tabs_floating_payload_drag(cx: &mut Test
         );
         assert!(host.interaction().drop_preview().is_none());
         assert!(!host.interaction().outside_release_poll_running());
+        assert!(host.active_payload_drag_session(&payload).is_none());
     });
 }
 
@@ -790,6 +804,7 @@ fn horizontal_splitter_drag_updates_width_fractions(cx: &mut TestAppContext) {
 
     let start = debug_bounds(&mut visual, &handle).center();
     let end = point(start.x + px(80.0), start.y);
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
@@ -980,6 +995,7 @@ fn occluding_overlay_blocks_raw_splitter_drag_acquisition(cx: &mut TestAppContex
     .expect("splitter handle selector should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     host.read_with(&visual, |host, _| {
         assert!(
@@ -1021,6 +1037,7 @@ fn vertical_splitter_drag_updates_height_fractions(cx: &mut TestAppContext) {
 
     let start = debug_bounds(&mut visual, &handle).center();
     let end = point(start.x, start.y + px(80.0));
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
@@ -1062,6 +1079,7 @@ fn splitter_drag_clamps_to_minimum_pane_size(cx: &mut TestAppContext) {
 
     let start = debug_bounds(&mut visual, &handle).center();
     let end = point(start.x - px(300.0), start.y);
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
@@ -1126,6 +1144,7 @@ fn corner_splitter_drag_updates_both_axes_through_rendered_events(cx: &mut TestA
     };
     let end = point(start.x + px(80.0), start.y + px(48.0));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
@@ -1182,6 +1201,7 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let start = debug_bounds(&mut visual, &source_tab).center();
     let end = debug_bounds(&mut visual, &target_tabs).center();
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
@@ -1297,6 +1317,7 @@ fn tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab(cx: &mut Test
     let target_bounds = debug_bounds(&mut visual, &target_tab);
     let append_hover = point(target_bounds.right() + px(16.0), target_bounds.center().y);
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
@@ -1389,6 +1410,7 @@ fn tab_bar_preview_positions_payload_tab_at_leading_and_middle_slots(cx: &mut Te
     )
     .expect("second target tab selector should be emitted");
     let start = debug_bounds(&mut visual, &source_tab).center();
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
@@ -1735,6 +1757,7 @@ fn dragging_tab_bar_empty_area_renders_multi_tab_center_preview(cx: &mut TestApp
     );
     let end = debug_bounds(&mut visual, &target_stack).center();
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
@@ -1812,6 +1835,7 @@ fn multi_tab_center_preview_clamps_payload_tabs_in_narrow_target(cx: &mut TestAp
     );
     let end = debug_bounds(&mut visual, &target_stack).center();
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
@@ -1945,6 +1969,7 @@ fn same_stack_tab_preview_is_stable_when_pointer_is_stationary(cx: &mut TestAppC
     let start = debug_bounds(&mut visual, &source_tab).center();
     let hold = point(start.x + px(28.0), start.y);
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
@@ -2032,6 +2057,7 @@ fn same_stack_tab_preview_holds_slot_across_center_jitter(cx: &mut TestAppContex
     let left_of_center = point(start.x - px(12.0), start.y + px(4.0));
     let right_of_center = point(start.x + px(4.0), start.y + px(4.0));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(drag_threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(left_of_center, MouseButton::Left, Modifiers::none());
@@ -2131,6 +2157,7 @@ fn viewport_same_stack_tab_preview_is_stable_when_pointer_is_stationary(cx: &mut
     let start = debug_bounds(&mut visual, &source_tab).center();
     let hold = point(start.x + px(28.0), start.y);
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
@@ -2330,16 +2357,19 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
         workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
     workspace.policy_mut().set_allow_platform_viewports(true);
     let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
-    let (source_window, source_host, mut source_visual) = open_controller_space(
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         source_space.clone(),
         size(px(360.0), px(220.0)),
     );
-    let (target_window, target_host, mut target_visual) = open_controller_space(
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         target_space.clone(),
         size(px(360.0), px(220.0)),
     );
@@ -2364,8 +2394,10 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
     let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
     let end = inner_edge_drop_position(target_bounds, DropZone::Bottom);
 
+    activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_hovered_window(Some(target_window.into()));
     target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
@@ -2389,6 +2421,7 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
 
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
     let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
@@ -2484,16 +2517,19 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
     );
     workspace.policy_mut().set_allow_platform_viewports(true);
     let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
-    let (source_window, source_host, mut source_visual) = open_controller_space(
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         source_space.clone(),
         size(px(360.0), px(220.0)),
     );
-    let (target_window, target_host, mut target_visual) = open_controller_space(
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         target_space.clone(),
         size(px(480.0), px(260.0)),
     );
@@ -2521,8 +2557,10 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
     let right_child_bounds = debug_bounds(&mut target_visual, &right_child);
     let end = inner_edge_drop_position(right_child_bounds, DropZone::Bottom);
 
+    activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_hovered_window(Some(target_window.into()));
     target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
@@ -2546,6 +2584,7 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
 
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
     let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
@@ -2659,16 +2698,19 @@ fn cross_window_tab_drag_to_edge_creates_split(
         workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
     workspace.policy_mut().set_allow_platform_viewports(true);
     let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
-    let (source_window, source_host, mut source_visual) = open_controller_space(
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         source_space.clone(),
         size(px(360.0), px(220.0)),
     );
-    let (target_window, target_host, mut target_visual) = open_controller_space(
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         target_space.clone(),
         size(px(360.0), px(220.0)),
     );
@@ -2693,8 +2735,10 @@ fn cross_window_tab_drag_to_edge_creates_split(
     let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
     let end = inner_edge_drop_position(target_bounds, zone);
 
+    activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_hovered_window(Some(target_window.into()));
     target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
@@ -2726,6 +2770,7 @@ fn cross_window_tab_drag_to_edge_creates_split(
 
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
     let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
@@ -2833,6 +2878,7 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let end = inner_edge_drop_position(target_bounds, DropZone::Right);
     let window_id = window.window_id();
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
@@ -2927,7 +2973,7 @@ fn dragging_tab_to_root_edge_resolves_from_render_leaf_fact_root(cx: &mut TestAp
     let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
     window
         .update(cx, |host, window, cx| {
-            host.begin_tab_item_drag_from_render(left_tabs, item("a"), &payload, cx);
+            host.begin_tab_item_drag_from_render(left_tabs, item("a"), &payload, window, cx);
             host.update_payload_drag_tear_off_geometry_from_render(
                 &payload,
                 crate::drag::DockDragTearOffGeometry::from_source_bounds(source_bounds, start)
@@ -3035,6 +3081,7 @@ fn floating_leaf_render_fact_does_not_resolve_against_primary_root(cx: &mut Test
     let threshold = point(start.x + px(24.0), start.y);
     let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
@@ -3070,16 +3117,19 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
     workspace.policy_mut().set_allow_platform_viewports(true);
     let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
-    let (_source_window, source_host, mut source_visual) = open_controller_space(
+    let (_source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         source_space.clone(),
         size(px(360.0), px(220.0)),
     );
-    let (target_window, target_host, mut target_visual) = open_controller_space(
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         empty_space.clone(),
         size(px(360.0), px(220.0)),
     );
@@ -3099,8 +3149,10 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
     let threshold = point(start.x + px(24.0), start.y);
     let end = debug_bounds(&mut target_visual, &target_empty).center();
 
+    activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_hovered_window(Some(target_window.into()));
     target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     target_visual = VisualTestContext::from_window(target_window.into(), cx);
@@ -3110,6 +3162,7 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
 
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -3190,6 +3243,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
@@ -3344,6 +3398,7 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
@@ -3444,11 +3499,13 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
 
+    activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     source_visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 
     let (detached_space, detached_tabs) = cx.read_entity(&controller, |controller, _| {
         let detached_space = controller
@@ -3495,15 +3552,18 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
     let start = debug_bounds(&mut detached_visual, &detached_tab).center();
     let end = debug_bounds(&mut source_visual, &target_tabs).center();
 
+    activate_window_for_pointer_input(&mut detached_visual);
     detached_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     detached_visual.simulate_mouse_move(
         point(start.x + px(24.0), start.y),
         MouseButton::Left,
         Modifiers::none(),
     );
+    cx.set_platform_hovered_window(Some(opened.window()));
     source_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
 
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -3518,7 +3578,6 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
             "detached viewport should be empty after docking its tab back"
         );
     });
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
 #[open_gpui::test]
@@ -3585,6 +3644,7 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
@@ -3686,6 +3746,7 @@ fn runtime_rendered_mouse_up_with_unknown_button_state_does_not_tear_off(cx: &mu
     let outside_window = point(px(900.0), px(900.0));
 
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
@@ -3758,6 +3819,7 @@ fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut T
     let outside_window = point(px(900.0), px(900.0));
 
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(outside_window, MouseButton::Left, Modifiers::none());
@@ -3859,6 +3921,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
@@ -3913,6 +3976,7 @@ fn non_runtime_mouse_up_outside_host_does_not_commit_stale_drop(cx: &mut TestApp
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
@@ -4017,6 +4081,7 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
     let end = debug_bounds(&mut visual, &target_tabs).center();
 
     let threshold = point(start.x + px(24.0), start.y);
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
@@ -4105,6 +4170,7 @@ fn dragging_split_floating_title_bar_to_center_rejects_visible_split_payload(
     let end = debug_bounds(&mut visual, &target_panel).center();
 
     let threshold = point(start.x + px(24.0), start.y);
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
@@ -4167,6 +4233,7 @@ fn policy_rejected_edge_hover_renders_rejected_drop_preview_without_commit(
     let threshold = point(start.x + px(24.0), start.y);
     let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
@@ -4222,6 +4289,7 @@ fn class_rejected_edge_hover_renders_rejected_drop_preview_without_commit(cx: &m
     let threshold = point(start.x + px(24.0), start.y);
     let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
@@ -4291,6 +4359,7 @@ fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut Te
     let threshold = point(start.x + px(24.0), start.y);
     let end = debug_bounds(&mut visual, &target_panel).center();
 
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());

@@ -530,8 +530,8 @@ where
     if let Some(read_only) = descriptor.read_only() {
         element = StatefulInteractiveElement::aria_read_only(element, read_only);
     }
-    if let Some(hidden) = descriptor.hidden() {
-        element = StatefulInteractiveElement::aria_hidden(element, hidden);
+    if let Some(omitted) = descriptor.omit_accessibility_node() {
+        element = StatefulInteractiveElement::omit_accessibility_node(element, omitted);
     }
     if let Some(modal) = descriptor.modal() {
         element = StatefulInteractiveElement::aria_modal(element, modal);

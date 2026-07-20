@@ -78,15 +78,17 @@ Dock divider routing also follows committed visual surfaces rather than one flat
 Root and each floating container build junctions independently; the last rendered floating
 container owns its complete bounds through a blocking pointer boundary, so its ordinary content as
 well as its dividers occludes every lower surface. A root splitter and a floating splitter therefore
-cannot synthesize a cross-surface corner. Raw Dock splitter, composite-floating, and standard GPUI
-payload drags acquire one stable host capture owner; high-level drags acquire it only after crossing
-the drag threshold. A persistent window cancellation observer clears raw drag state, payload
-runtime sessions, previews, anchors, and outside-release polling on deactivation, capture
-revocation, or window removal even if the host subtree is absent from the replacement frame. GPUI
-retains the window-owned active payload until every cancellation observer has run, so an independent
-Dock host cannot consume the event before the session owner. A single-tabs floating drag publishes
-its Dock payload only after floating policy accepts the transient session; policy or geometry
-rejection retracts the GPUI drag and capture without leaving a second partial authority.
+cannot synthesize a cross-surface corner. Raw Dock splitter and composite-floating drags use the
+stable Dock host capture owner. Standard GPUI payload drags use the source element's stable owner,
+acquired by GPUI only after crossing the drag threshold; `on_drag` therefore requires a stable
+element ID. A frame-scoped cancel listener published by the rendered `DockHost` clears raw drag
+state, payload runtime sessions, previews, anchors, and outside-release polling on
+deactivation, capture revocation, presentation suppression, or window removal. GPUI dispatches the
+terminal cancellation from the old committed frame before replacing its listener journal, so the
+true owner observes cancellation once without leaving a window-global observer after the host
+subtree disappears. A single-tabs floating drag publishes its Dock payload only after floating
+policy accepts the transient session; policy or geometry rejection retracts the GPUI drag and
+capture without leaving a second partial authority.
 
 Ordinary deferred descendants capture the current mapping. `window_portal` is an explicit
 window-coordinate boundary: its anchor is projected before the content mapping resets. The reset

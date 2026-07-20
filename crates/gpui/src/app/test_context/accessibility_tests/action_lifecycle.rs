@@ -660,7 +660,7 @@ fn accessibility_action_window_removal_commits_after_listener_and_pointer_cancel
         .update(cx, {
             let lifecycle = lifecycle.clone();
             move |_, window, _| {
-                window.intercept_mouse_events(move |event, window, cx| {
+                window.intercept_window_mouse_events(move |event, window, cx| {
                     if let WindowMouseEvent::Cancel(event) = event {
                         assert_eq!(event.reason, PointerCancelReason::WindowClosed);
                         assert!(!window.removed, "cancellation must precede window removal");

@@ -3,15 +3,19 @@ use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
-    DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
-    host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
-    presentation_scene::DockPresentationScene, transition_executor::DockTransitionExecutor,
-    visual_affordance_scene::DockVisualAffordanceScene, workspace::DockWorkspace,
+    DockViewportRuntimeHandle,
+    geometry::DockDropGuideStyle,
+    host_render_session::DockHostRenderSession,
+    interaction::{DockInteractionRuntime, DockPendingFocusCommand},
+    presentation_scene::DockPresentationScene,
+    transition_executor::DockTransitionExecutor,
+    visual_affordance_scene::DockVisualAffordanceScene,
+    workspace::DockWorkspace,
     zoom_state::DockZoomState,
 };
 use open_gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Pixels, PointerCaptureHandle,
-    PrepaintPublicationId, Subscription, Window, WindowId, WindowMouseEvent, px,
+    AppContext as _, Context, Entity, FocusClaimOutcome, FocusHandle, Pixels, PointerCaptureHandle,
+    PrepaintPublicationId, Subscription, Window, WindowId, px,
 };
 use open_gpui_motion::MotionPreference;
 use std::collections::HashMap;
@@ -20,6 +24,18 @@ use std::collections::HashMap;
 struct DockPanelFocusTracker {
     focus_handle: FocusHandle,
     _subscription: Subscription,
+}
+
+#[derive(Debug)]
+struct DockPendingFocusCompletion {
+    ticket: DockPendingFocusCommand,
+    target: Option<FocusHandle>,
+    _subscription: Subscription,
+}
+
+enum DockNoPanelFocusSettlement {
+    Focus(FocusHandle),
+    Blur,
 }
 
 /// Static host rendering options.
@@ -66,11 +82,11 @@ pub struct DockHost {
     viewport_runtime: DockViewportRuntimeHandle,
     viewport_scene_publication: PrepaintPublicationId,
     raw_drag_pointer_capture: Option<PointerCaptureHandle>,
-    pointer_session_subscription: Option<Subscription>,
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
     viewport_release_subscription: Option<Subscription>,
     panel_focus_trackers: HashMap<DockItemId, DockPanelFocusTracker>,
+    pending_focus_completion: Option<DockPendingFocusCompletion>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
     #[cfg(test)]
@@ -99,11 +115,11 @@ impl DockHost {
             viewport_runtime,
             viewport_scene_publication: PrepaintPublicationId::new(),
             raw_drag_pointer_capture: None,
-            pointer_session_subscription: None,
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
             viewport_release_subscription: None,
             panel_focus_trackers: HashMap::new(),
+            pending_focus_completion: None,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             #[cfg(test)]
@@ -123,11 +139,6 @@ impl DockHost {
 
     pub(crate) fn host_focus_handle(&self) -> FocusHandle {
         self.focus_handle.clone()
-    }
-
-    pub(crate) fn pointer_capture_handle(&self) -> PointerCaptureHandle {
-        self.raw_drag_pointer_capture
-            .expect("DockHost pointer session must be initialized before rendering descendants")
     }
 
     #[cfg(test)]
@@ -237,39 +248,17 @@ impl DockHost {
         self.with_workspace(cx, |workspace| workspace.options().motion_preference)
     }
 
-    pub(crate) fn ensure_pointer_session(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> PointerCaptureHandle {
+    pub(crate) fn ensure_pointer_session(&mut self, window: &mut Window) -> PointerCaptureHandle {
         let window_id = window.window_handle().window_id();
         if let Some(handle) = self
             .raw_drag_pointer_capture
             .filter(|handle| handle.window_id() == window_id)
-            && self.pointer_session_subscription.is_some()
         {
             return handle;
         }
 
-        self.pointer_session_subscription = None;
         let handle = window.new_pointer_capture_handle();
-        let weak_host = cx.entity().downgrade();
-        let subscription = window.intercept_mouse_events(move |event, window, app| {
-            if !matches!(event, WindowMouseEvent::Cancel(_)) {
-                return;
-            }
-            let Some(host) = weak_host.upgrade() else {
-                return;
-            };
-            let changed = host.update(app, |host, cx| {
-                host.cancel_pointer_interactions_from_render(cx)
-            });
-            if changed {
-                window.refresh();
-            }
-        });
         self.raw_drag_pointer_capture = Some(handle);
-        self.pointer_session_subscription = Some(subscription);
         handle
     }
 
@@ -367,7 +356,44 @@ impl DockHost {
         &mut self,
         command: DockViewportFocusCommand,
     ) -> bool {
-        self.interaction.request_viewport_focus_command(command)
+        let changed = self.interaction.request_viewport_focus_command(command);
+        if changed {
+            self.pending_focus_completion = None;
+        }
+        changed
+    }
+
+    pub(crate) fn prepare_pending_focus_selection_from_render(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ticket) = self.interaction.pending_focus_command_ticket() else {
+            return;
+        };
+        if !window.subtree_presentation().is_interactive() {
+            self.clear_pending_focus_command_generation(ticket.generation());
+            return;
+        }
+        let command = ticket.command();
+        if command.source() != crate::DockViewportFocusCommandSource::ViewportActivation {
+            return;
+        }
+        let DockViewportFocusRequest::Panel(item) = command.request() else {
+            return;
+        };
+        let space = self.space().clone();
+
+        if self
+            .mutate_controller_from_host(cx, |controller| {
+                controller
+                    .workspace_mut()
+                    .select_item_in_space(space, item.clone())
+            })
+            .is_err()
+        {
+            self.clear_pending_focus_command_generation(ticket.generation());
+        }
     }
 
     pub(crate) fn apply_pending_focus_from_render(
@@ -376,65 +402,53 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(command) = self.interaction.pending_focus_command().cloned() else {
+        let Some(ticket) = self.interaction.pending_focus_command_ticket() else {
             return;
         };
+        if !window.subtree_presentation().is_interactive() {
+            self.clear_pending_focus_command_generation(ticket.generation());
+            return;
+        }
+        let command = ticket.command();
         match command.request().clone() {
             DockViewportFocusRequest::Panel(item) => {
-                let should_preselect =
-                    command.source() == crate::DockViewportFocusCommandSource::ViewportActivation;
                 match session
                     .visible_panel_registration(&item)
-                    .map(|panel| panel.request_focus(window, cx))
+                    .and_then(|panel| panel.focus_handle(cx))
                 {
-                    Some(true) => {
-                        self.clear_pending_focus_command();
-                        self.remember_panel_focus(item, cx);
-                    }
-                    Some(false) => {
-                        self.record_no_panel_focus_for_gone_platform_panel(&command, &item, cx);
-                        self.clear_pending_focus_command();
-                    }
-                    None if should_preselect => {
-                        let focus_item = item;
-                        let changed = self
-                            .mutate_controller_from_host(cx, |controller| {
-                                controller.select_item_in_space(focus_item.clone())
-                            })
-                            .is_ok_and(|outcome| outcome.changed());
-                        if changed {
-                            cx.notify();
-                        }
-
-                        let controller = self.controller.clone();
-                        let registration = cx.read_entity(&controller, |controller, _| {
-                            controller
-                                .workspace()
-                                .panels()
-                                .render_registration(&focus_item)
-                        });
-                        if registration.is_some_and(|panel| panel.request_focus(window, cx)) {
-                            self.clear_pending_focus_command();
-                            self.remember_panel_focus(focus_item, cx);
-                        } else {
-                            self.record_no_panel_focus_for_gone_platform_panel(
-                                &command,
-                                &focus_item,
-                                cx,
-                            );
-                            self.clear_pending_focus_command();
-                        }
+                    Some(focus_handle) => {
+                        let focus_target = window
+                            .committed_focus(cx)
+                            .filter(|focused| focus_handle.contains(focused, window))
+                            .unwrap_or(focus_handle);
+                        self.ensure_pending_panel_focus_completion(
+                            &ticket,
+                            &item,
+                            &focus_target,
+                            window,
+                            cx,
+                        );
                     }
                     None => {
-                        self.record_no_panel_focus_for_gone_platform_panel(&command, &item, cx);
-                        self.clear_pending_focus_command();
+                        self.record_no_panel_focus_for_gone_platform_panel(command, &item, cx);
+                        self.clear_pending_focus_command_generation(ticket.generation());
                     }
                 }
             }
             DockViewportFocusRequest::NoPanelFocus => {
-                window.blur();
-                self.viewport_runtime().record_no_panel_focus(self.space());
-                self.clear_pending_focus_command();
+                match self.no_panel_focus_settlement(window, cx) {
+                    DockNoPanelFocusSettlement::Focus(focus_handle) => {
+                        self.ensure_pending_no_panel_focus_completion(
+                            &ticket,
+                            Some(&focus_handle),
+                            window,
+                            cx,
+                        );
+                    }
+                    DockNoPanelFocusSettlement::Blur => {
+                        self.ensure_pending_no_panel_focus_completion(&ticket, None, window, cx);
+                    }
+                }
             }
         }
     }
@@ -442,9 +456,11 @@ impl DockHost {
     pub(crate) fn remember_panel_focus(&mut self, item: DockItemId, cx: &mut Context<Self>) {
         let space = self.space().clone();
         self.viewport_runtime()
-            .record_panel_focus(space, item.clone());
+            .record_panel_focus(space.clone(), item.clone());
         let _ = self.mutate_controller_from_host(cx, |controller| {
-            controller.select_item_in_space(item.clone())
+            controller
+                .workspace_mut()
+                .select_item_in_space(space, item.clone())
         });
     }
 
@@ -485,8 +501,132 @@ impl DockHost {
         self.interaction.pending_focus_command()
     }
 
-    pub(crate) fn clear_pending_focus_command(&mut self) {
-        let _ = self.interaction.take_pending_focus_command();
+    fn clear_pending_focus_command_generation(&mut self, generation: u64) -> bool {
+        let cleared = self
+            .interaction
+            .take_pending_focus_command_if_generation(generation)
+            .is_some();
+        if cleared {
+            self.pending_focus_completion = None;
+        }
+        cleared
+    }
+
+    fn ensure_pending_panel_focus_completion(
+        &mut self,
+        ticket: &DockPendingFocusCommand,
+        item: &DockItemId,
+        focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .pending_focus_completion
+            .as_ref()
+            .is_some_and(|completion| {
+                completion.ticket == *ticket && completion.target.as_ref() == Some(focus_handle)
+            })
+        {
+            return;
+        }
+
+        self.pending_focus_completion = None;
+        let focus_ticket = ticket.clone();
+        let focus_item = item.clone();
+        let completion_generation = ticket.generation();
+        let subscription =
+            cx.focus_with_completion(focus_handle, window, move |outcome, host, _window, cx| {
+                if !host.clear_pending_focus_command_generation(completion_generation) {
+                    return;
+                }
+                if outcome == FocusClaimOutcome::Committed {
+                    host.remember_panel_focus(focus_item, cx);
+                }
+                cx.notify();
+            });
+        if self.interaction.pending_focus_command_ticket().as_ref() != Some(ticket) {
+            drop(subscription);
+            return;
+        }
+        self.pending_focus_completion = Some(DockPendingFocusCompletion {
+            ticket: focus_ticket,
+            target: Some(focus_handle.clone()),
+            _subscription: subscription,
+        });
+    }
+
+    fn ensure_pending_no_panel_focus_completion(
+        &mut self,
+        ticket: &DockPendingFocusCommand,
+        target: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = target.cloned();
+        if self
+            .pending_focus_completion
+            .as_ref()
+            .is_some_and(|completion| completion.ticket == *ticket && completion.target == target)
+        {
+            return;
+        }
+
+        self.pending_focus_completion = None;
+        let focus_ticket = ticket.clone();
+        let completion_generation = ticket.generation();
+        let completion = move |_: FocusClaimOutcome,
+                               host: &mut DockHost,
+                               window: &mut Window,
+                               cx: &mut Context<DockHost>| {
+            if !host.clear_pending_focus_command_generation(completion_generation) {
+                return;
+            }
+            let committed_focus = window.committed_focus(cx);
+            if !host.focus_belongs_to_panel(committed_focus.as_ref(), window) {
+                host.viewport_runtime().record_no_panel_focus(host.space());
+            }
+            cx.notify();
+        };
+        let subscription = match target.as_ref() {
+            Some(target) => cx.focus_with_completion(target, window, completion),
+            None => cx.blur_with_completion(window, completion),
+        };
+        if self.interaction.pending_focus_command_ticket().as_ref() != Some(ticket) {
+            drop(subscription);
+            return;
+        }
+        self.pending_focus_completion = Some(DockPendingFocusCompletion {
+            ticket: focus_ticket,
+            target,
+            _subscription: subscription,
+        });
+    }
+
+    fn no_panel_focus_settlement(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> DockNoPanelFocusSettlement {
+        let current_focus = window.focused(cx);
+        let committed_focus = window.committed_focus(cx);
+        let current_is_panel = self.focus_belongs_to_panel(current_focus.as_ref(), window);
+
+        match current_focus {
+            Some(current) if !current_is_panel => DockNoPanelFocusSettlement::Focus(current),
+            Some(_) => committed_focus
+                .filter(|focus| !self.focus_belongs_to_panel(Some(focus), window))
+                .map(DockNoPanelFocusSettlement::Focus)
+                .unwrap_or(DockNoPanelFocusSettlement::Blur),
+            None => DockNoPanelFocusSettlement::Blur,
+        }
+    }
+
+    fn focus_belongs_to_panel(&self, focus: Option<&FocusHandle>, window: &Window) -> bool {
+        focus.is_some_and(|focus| {
+            self.panel_focus_trackers
+                .values()
+                .any(|tracker| tracker.focus_handle.contains(focus, window))
+        })
     }
 
     #[cfg(test)]
@@ -509,7 +649,6 @@ impl DockHost {
         let focus_item = item.clone();
         let subscription = cx.on_focus_in(&focus_handle, window, move |host, _window, cx| {
             host.remember_panel_focus(focus_item.clone(), cx);
-            host.clear_pending_focus_command();
             cx.notify();
         });
         self.panel_focus_trackers.insert(

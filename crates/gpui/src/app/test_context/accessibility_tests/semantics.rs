@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::{SubtreePresentation, SubtreePresentationExt};
+
 struct HardHiddenModalAccessibilityProbeView {
     hidden: bool,
     activations: usize,
@@ -22,7 +24,6 @@ impl Render for HardHiddenModalAccessibilityProbeView {
             .child(
                 div()
                     .id("hard-hidden-modal-subtree")
-                    .aria_hidden(self.hidden)
                     .child(accessibility_scope(
                         AccessibilityTreeScope::ModalRoot,
                         div()
@@ -52,7 +53,12 @@ impl Render for HardHiddenModalAccessibilityProbeView {
                                     })
                                     .ok();
                             }),
-                    ))),
+                    )))
+                    .with_subtree_presentation(if self.hidden {
+                        SubtreePresentation::Inert
+                    } else {
+                        SubtreePresentation::Visible
+                    }),
             )
     }
 }
@@ -94,7 +100,7 @@ impl Render for ExtendedAccessibilityProbeView {
                         .aria_busy(true)
                         .aria_read_only(self.read_only)
                         .aria_required(true)
-                        .aria_hidden(false)
+                        .omit_accessibility_node(false)
                         .aria_modal(false)
                         .aria_disabled(self.disabled)
                         .focusable()
@@ -132,7 +138,6 @@ impl Render for RolelessHiddenAccessibilityProbeView {
         div().id("roleless-hidden-probe").role(Role::Group).child(
             div()
                 .id("roleless-hidden-container")
-                .aria_hidden(self.hidden)
                 .child(
                     div()
                         .id("roleless-hidden-direct")
@@ -160,7 +165,12 @@ impl Render for RolelessHiddenAccessibilityProbeView {
                                 })
                                 .ok();
                         }),
-                )),
+                ))
+                .with_subtree_presentation(if self.hidden {
+                    SubtreePresentation::Inert
+                } else {
+                    SubtreePresentation::Visible
+                }),
         )
     }
 }

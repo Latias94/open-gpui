@@ -2,7 +2,8 @@ use super::*;
 
 use open_gpui::{
     AccessibleAction, AnyView, AppContext as _, Bounds, Context, InteractiveElement, ParentElement,
-    Render, Role, StatefulInteractiveElement, Styled, accesskit, deferred, div, point, px, size,
+    Render, Role, StatefulInteractiveElement, Styled, SubtreePresentation, SubtreePresentationExt,
+    accesskit, deferred, div, point, px, size,
 };
 
 const PARENT_LAYER: &str = "surface-parent";
@@ -13,6 +14,39 @@ struct NestedLayerProbe {
     runtime: WindowOverlayRuntime,
     layer_id: &'static str,
     binding: Option<OverlayLayerBinding>,
+}
+
+struct PresentationLayerProbe {
+    runtime: WindowOverlayRuntime,
+    binding: Option<OverlayLayerBinding>,
+}
+
+impl Render for PresentationLayerProbe {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let binding = self
+            .runtime
+            .bind_component_layer(
+                &cx.entity(),
+                self.binding.as_ref(),
+                modal_registration("presentation-modal", OverlayPresence::open()),
+                window,
+                cx,
+            )
+            .expect("presentation modal should bind");
+        self.binding = Some(binding);
+        div().id("presentation-modal-surface").size_full()
+    }
+}
+
+struct PresentationLayerRoot {
+    presentation: SubtreePresentation,
+    child: Entity<PresentationLayerProbe>,
+}
+
+impl Render for PresentationLayerRoot {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        AnyView::from(self.child.clone()).with_subtree_presentation(self.presentation)
+    }
 }
 
 impl NestedLayerProbe {
@@ -45,6 +79,94 @@ impl Render for NestedLayerProbe {
             .aria_label(self.layer_id)
             .size_full()
     }
+}
+
+#[open_gpui::test]
+fn presentation_suppression_disables_modal_authority_without_replaying_focus(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let window = cx.add_window(|window, cx| {
+        let runtime = WindowOverlayRuntime::for_window(window, cx);
+        let child = cx.new(|_| PresentationLayerProbe {
+            runtime,
+            binding: None,
+        });
+        PresentationLayerRoot {
+            presentation: SubtreePresentation::Visible,
+            child,
+        }
+    });
+    let root = window.root(cx).unwrap();
+    let any_window = window.into();
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let runtime = {
+        let child = cx.read(|cx| root.read(cx).child.clone());
+        cx.read(|cx| child.read(cx).runtime.clone())
+    };
+    let surface_focus = {
+        let child = cx.read(|cx| root.read(cx).child.clone());
+        cx.read(|cx| {
+            child
+                .read(cx)
+                .binding
+                .as_ref()
+                .expect("presentation modal should be bound")
+                .surface_focus
+                .clone()
+        })
+    };
+
+    let visible = cx
+        .update_window(any_window, |_, window, cx| {
+            runtime.snapshot(window, cx).unwrap()
+        })
+        .unwrap();
+    let visible = &visible.layers()[0];
+    assert_eq!(visible.phase(), OverlayLayerPhase::Open);
+    assert_eq!(visible.presentation(), SubtreePresentation::Visible);
+    assert!(visible.keyboard_eligible());
+    assert!(visible.modal_pointer_barrier());
+    assert!(visible.focus_active());
+
+    root.update(cx, |root, cx| {
+        root.presentation = SubtreePresentation::Inert;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let inert = cx
+        .update_window(any_window, |_, window, cx| {
+            runtime.snapshot(window, cx).unwrap()
+        })
+        .unwrap();
+    let inert = &inert.layers()[0];
+    assert_eq!(inert.phase(), OverlayLayerPhase::Open);
+    assert_eq!(inert.presence(), OverlayPresence::open());
+    assert_eq!(inert.presentation(), SubtreePresentation::Inert);
+    assert!(!inert.keyboard_eligible());
+    assert!(!inert.modal_pointer_barrier());
+    assert!(!inert.focus_active());
+
+    root.update(cx, |root, cx| {
+        root.presentation = SubtreePresentation::Visible;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let (restored, surface_focused) = cx
+        .update_window(any_window, |_, window, cx| {
+            (
+                runtime.snapshot(window, cx).unwrap(),
+                surface_focus.is_focused(window),
+            )
+        })
+        .unwrap();
+    let restored = &restored.layers()[0];
+    assert_eq!(restored.phase(), OverlayLayerPhase::Open);
+    assert_eq!(restored.presentation(), SubtreePresentation::Visible);
+    assert!(restored.keyboard_eligible());
+    assert!(restored.modal_pointer_barrier());
+    assert!(restored.focus_active());
+    assert!(!surface_focused, "resume must not replay initial focus");
 }
 
 struct SurfaceProjectionProbe {
@@ -421,6 +543,49 @@ fn child_registration(id: &'static str, parent: &'static str) -> OverlayLayerReg
     layer_registration(id).parent(parent)
 }
 
+fn rebind_with_presentation(
+    runtime: &WindowOverlayRuntime,
+    binding: &OverlayLayerBinding,
+    mut registration: OverlayLayerRegistration,
+    presentation: SubtreePresentation,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    registration.presentation = presentation;
+    let focus_config = runtime
+        .state
+        .read(cx)
+        .prepare_rebind(
+            binding.lease(),
+            &registration,
+            &binding.trigger_focus,
+            &binding.surface_focus,
+        )
+        .expect("test overlay should prepare rebind");
+    runtime
+        .rebind_focus(&focus_config, window, cx)
+        .expect("test overlay focus bundle should rebind");
+    let plan = runtime
+        .state
+        .update(cx, |state, _| {
+            state.rebind_layer_plan(binding.lease(), registration)
+        })
+        .expect("test overlay should rebind");
+    runtime
+        .cancel_focus_claims(&plan.cancel_focus_claims, window, cx)
+        .expect("test overlay claims should cancel");
+    for dispatch in &plan.descendant_dispatches {
+        runtime
+            .apply_focus_transition(dispatch.focus_transition.clone(), window, cx)
+            .expect("descendant focus transition should apply");
+    }
+    for transition in plan.focus_transitions {
+        runtime
+            .apply_focus_transition(transition, window, cx)
+            .expect("presentation focus transition should apply");
+    }
+}
+
 fn a11y_disposition(
     runtime: &WindowOverlayRuntime,
     binding: &OverlayLayerBinding,
@@ -430,6 +595,125 @@ fn a11y_disposition(
         .state
         .read(cx)
         .accessibility_tree_scope(binding.lease(), runtime.window_id)
+}
+
+#[open_gpui::test]
+fn parent_presentation_suppresses_open_descendants_but_not_independent_roots(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let window = cx.add_window(SurfaceProjectionProbe::new);
+    let (runtime, parent, child, independent) = window
+        .update(cx, |probe, window, cx| {
+            let runtime = probe.surface_runtime.clone();
+            let parent = runtime
+                .register_layer(
+                    modal_registration("presentation-parent", OverlayPresence::open()),
+                    window,
+                    cx,
+                )
+                .expect("presentation parent should register");
+            let child = runtime
+                .register_layer(
+                    modal_registration("presentation-child", OverlayPresence::open())
+                        .parent("presentation-parent"),
+                    window,
+                    cx,
+                )
+                .expect("presentation child should register");
+            let independent = runtime
+                .register_layer(layer_registration("presentation-independent"), window, cx)
+                .expect("independent layer should register");
+            (runtime, parent, child, independent)
+        })
+        .expect("presentation hierarchy window should remain open");
+    cx.run_until_parked();
+
+    window
+        .update(cx, |_, window, cx| {
+            rebind_with_presentation(
+                &runtime,
+                &parent,
+                modal_registration("presentation-parent", OverlayPresence::open()),
+                SubtreePresentation::Inert,
+                window,
+                cx,
+            );
+            rebind_with_presentation(
+                &runtime,
+                &child,
+                modal_registration("presentation-child", OverlayPresence::open())
+                    .parent("presentation-parent"),
+                SubtreePresentation::Visible,
+                window,
+                cx,
+            );
+        })
+        .expect("inert hierarchy should rebind without an inactive-parent error");
+    cx.run_until_parked();
+
+    let assert_projection =
+        |expected: SubtreePresentation, active: bool, cx: &mut open_gpui::TestAppContext| {
+            window
+                .update(cx, |_, window, cx| {
+                    let snapshot = runtime.snapshot(window, cx).unwrap();
+                    for id in ["presentation-parent", "presentation-child"] {
+                        let layer = snapshot
+                            .layers()
+                            .iter()
+                            .find(|layer| layer.id().as_str() == id)
+                            .expect("hierarchy layer should remain registered");
+                        assert_eq!(layer.phase(), OverlayLayerPhase::Open);
+                        assert_eq!(layer.presentation(), expected);
+                        assert_eq!(layer.keyboard_eligible(), active);
+                        assert_eq!(layer.modal_pointer_barrier(), active);
+                        assert_eq!(layer.focus_active(), active);
+                    }
+                    let independent_layer = snapshot
+                        .layers()
+                        .iter()
+                        .find(|layer| layer.id().as_str() == "presentation-independent")
+                        .expect("independent layer should remain registered");
+                    assert_eq!(
+                        independent_layer.presentation(),
+                        SubtreePresentation::Visible
+                    );
+                    assert!(independent_layer.keyboard_eligible());
+                })
+                .unwrap();
+        };
+    assert_projection(SubtreePresentation::Inert, false, cx);
+
+    window
+        .update(cx, |_, window, cx| {
+            rebind_with_presentation(
+                &runtime,
+                &parent,
+                modal_registration("presentation-parent", OverlayPresence::open()),
+                SubtreePresentation::Hidden,
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_projection(SubtreePresentation::Hidden, false, cx);
+
+    window
+        .update(cx, |_, window, cx| {
+            rebind_with_presentation(
+                &runtime,
+                &parent,
+                modal_registration("presentation-parent", OverlayPresence::open()),
+                SubtreePresentation::Visible,
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_projection(SubtreePresentation::Visible, true, cx);
+
+    let _ = independent;
 }
 
 fn a11y_node_id_with_label(update: &accesskit::TreeUpdate, label: &str) -> accesskit::NodeId {

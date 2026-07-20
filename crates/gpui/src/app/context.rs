@@ -1,7 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority, Reservation,
-    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
+    FocusClaimOutcome, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority,
+    Reservation, SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    WindowHandle,
 };
 use anyhow::Result;
 use futures::FutureExt;
@@ -588,6 +589,90 @@ impl<'a, T: 'static> Context<'a, T> {
                 .is_ok()
             }));
         self.defer(|_| activate());
+        subscription
+    }
+
+    /// Move focus and observe the terminal result of this specific request.
+    ///
+    /// Dropping the returned subscription cancels callback observation without cancelling the
+    /// focus request.
+    pub fn focus_with_completion(
+        &mut self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        listener: impl FnOnce(FocusClaimOutcome, &mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        window.focus_with_completion(handle, self, move |outcome, window, cx| {
+            view.update(cx, move |view, cx| listener(outcome, view, window, cx))
+                .ok();
+        })
+    }
+
+    /// Remove focus and observe the terminal result of this specific request.
+    ///
+    /// Dropping the returned subscription cancels callback observation without cancelling the
+    /// blur request.
+    pub fn blur_with_completion(
+        &mut self,
+        window: &mut Window,
+        listener: impl FnOnce(FocusClaimOutcome, &mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        window.blur_with_completion(self, move |outcome, window, cx| {
+            view.update(cx, move |view, cx| listener(outcome, view, window, cx))
+                .ok();
+        })
+    }
+
+    /// Register a listener for the given focus handle becoming the exact committed local focus.
+    ///
+    /// Unlike [`Self::on_focus_in`], this observes committed focus while the platform window is
+    /// inactive and does not fire solely because the platform window later becomes active.
+    pub fn on_focus_committed(
+        &mut self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            window.new_focus_listener(Box::new(move |event, window, cx| {
+                view.update(cx, |view, cx| {
+                    if event.is_focus_committed(focus_id) {
+                        listener(view, window, cx)
+                    }
+                })
+                .is_ok()
+            }));
+        activate();
+        subscription
+    }
+
+    /// Register a listener for the given focus handle or one of its descendants becoming part of
+    /// the window's committed local focus path.
+    ///
+    /// Unlike [`Self::on_focus_in`], this observes committed focus while the platform window is
+    /// inactive and does not fire solely because the platform window later becomes active.
+    pub fn on_focus_committed_in(
+        &mut self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            window.new_focus_listener(Box::new(move |event, window, cx| {
+                view.update(cx, |view, cx| {
+                    if event.is_focus_committed_in(focus_id) {
+                        listener(view, window, cx)
+                    }
+                })
+                .is_ok()
+            }));
+        activate();
         subscription
     }
 

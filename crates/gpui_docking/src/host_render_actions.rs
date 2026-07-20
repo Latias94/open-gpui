@@ -3,11 +3,14 @@ use crate::{
     divider_hit_map::{DockDividerHandleHitTarget, DockDividerHitTarget, DockDividerSurface},
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
-    interaction::{DockPayloadDropRelease, DockRuntimeDragSession, SplitterDragAxis},
+    interaction::{
+        DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
+        DockRenderedOutsideReleaseRequest, DockRuntimeDragSession, SplitterDragAxis,
+    },
     presentation_scene::DockPresentationScene,
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
-use open_gpui::{Bounds, Context, Pixels, Point, Window};
+use open_gpui::{Bounds, Context, MouseButton, Pixels, Point, Window};
 use open_gpui_ui_core::AccessibleAction;
 
 const ACCESSIBILITY_SPLITTER_STEP_PX: f32 = 24.0;
@@ -52,9 +55,10 @@ impl DockHost {
     pub(crate) fn begin_payload_drag_from_render(
         &mut self,
         payload: &DockDragPayload,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockRuntimeDragSession {
-        self.begin_payload_drag_interaction(payload, cx)
+        self.begin_payload_drag_interaction(payload, window, cx)
     }
 
     pub(crate) fn begin_tab_item_drag_from_render(
@@ -62,9 +66,10 @@ impl DockHost {
         tabs: DockNodeId,
         item: DockItemId,
         payload: &DockDragPayload,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockRuntimeDragSession {
-        let begin = self.begin_tab_item_drag_interaction(tabs, item, payload, cx);
+        let begin = self.begin_tab_item_drag_interaction(tabs, item, payload, window, cx);
         begin.outcome.finish(cx);
         begin.drag_session
     }
@@ -107,11 +112,12 @@ impl DockHost {
     pub(crate) fn finish_payload_drag_session(
         &mut self,
         session: &DockRuntimeDragSession,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let changed = self
             .viewport_runtime()
-            .finish_payload_drag_with_app(session, cx);
+            .finish_payload_drag_from_window(session, window, cx);
         let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
         changed || anchor_cleared
     }
@@ -122,7 +128,7 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let state_changed = self.cancel_payload_drag_state_from_render(payload, cx);
+        let state_changed = self.cancel_payload_drag_state_from_render(payload, window, cx);
         let active_drag_cleared = cx.stop_active_drag(window);
         state_changed || active_drag_cleared
     }
@@ -130,13 +136,14 @@ impl DockHost {
     fn cancel_payload_drag_state_from_render(
         &mut self,
         payload: &DockDragPayload,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let outside_poll_cleared = self.interaction_mut().cancel_outside_release_poll();
         let drag_session = self.active_payload_drag_session(payload);
         let session_changed = drag_session
             .as_ref()
-            .is_some_and(|session| self.finish_payload_drag_session(session, cx));
+            .is_some_and(|session| self.finish_payload_drag_session(session, window, cx));
         let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
         let local_preview_cleared = self.clear_drop_preview_interaction();
         let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
@@ -198,6 +205,45 @@ impl DockHost {
         )
     }
 
+    pub(crate) fn drop_payload_release_outside_rendered_host_scene(
+        &mut self,
+        payload: DockDragPayload,
+        release_position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let drag_session = self.active_payload_drag_session(&payload);
+        let tear_off_geometry = drag_session
+            .as_ref()
+            .and_then(|session| self.active_payload_drag_tear_off_geometry(Some(session)));
+        let platform_viewports_allowed = self.with_workspace(cx, |workspace| {
+            workspace.policy().allows_platform_viewports()
+        });
+        let request = DockRenderedOutsideReleaseRequest::new(
+            platform_viewports_allowed,
+            Some(payload),
+            cx.mouse_button_is_pressed(MouseButton::Left),
+            self.space().clone(),
+            release_position,
+        )
+        .with_drag_session(drag_session)
+        .with_tear_off_geometry(tear_off_geometry);
+
+        match self.interaction_mut().rendered_outside_release(request) {
+            DockRenderedOutsideReleaseDecision::Inactive => false,
+            DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
+                self.finish_payload_drag_session(&drag_session, window, cx);
+                self.clear_drop_preview_interaction();
+                self.viewport_runtime().clear_routed_drop_preview(cx);
+                true
+            }
+            DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
+                self.drop_payload_release_from_render(release, window, cx);
+                true
+            }
+        }
+    }
+
     pub(crate) fn commit_payload_drop_release(
         &mut self,
         release: DockPayloadDropRelease,
@@ -211,7 +257,7 @@ impl DockHost {
             .finish(cx);
         let session_changed = drag_session
             .as_ref()
-            .is_some_and(|session| self.finish_payload_drag_session(session, cx));
+            .is_some_and(|session| self.finish_payload_drag_session(session, window, cx));
         changed || session_changed
     }
 
@@ -348,24 +394,28 @@ impl DockHost {
 
     pub(crate) fn cancel_pointer_interactions_from_render(
         &mut self,
+        payload: Option<&DockDragPayload>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let raw_drag_changed = self.finish_raw_pointer_drag_from_render(cx);
-        let payload_changed =
-            if let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() {
-                // GPUI clears the active drag after all PointerCancel interceptors run. Keeping it
-                // visible here lets the DockHost that owns the runtime session retire it.
-                self.cancel_payload_drag_state_from_render(&payload, cx)
-            } else {
-                let outside_poll_cleared = self.interaction_mut().cancel_outside_release_poll();
-                let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
-                let local_preview_cleared = self.clear_drop_preview_interaction();
-                let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
-                outside_poll_cleared
-                    || anchor_cleared
-                    || local_preview_cleared
-                    || routed_preview_cleared
-            };
+        let payload_changed = if let Some(payload) = payload {
+            self.cancel_payload_drag_state_from_render(payload, window, cx)
+        } else {
+            let source_space = self.space().clone();
+            let session_cleared = self
+                .viewport_runtime()
+                .finish_payload_drag_for_source_space_from_window(&source_space, window, cx);
+            let outside_poll_cleared = self.interaction_mut().cancel_outside_release_poll();
+            let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
+            let local_preview_cleared = self.clear_drop_preview_interaction();
+            let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+            session_cleared
+                || outside_poll_cleared
+                || anchor_cleared
+                || local_preview_cleared
+                || routed_preview_cleared
+        };
         raw_drag_changed || payload_changed
     }
 

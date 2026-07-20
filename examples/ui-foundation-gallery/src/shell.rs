@@ -5,8 +5,8 @@ use open_gpui::prelude::*;
 use open_gpui::{
     Anchor, App, AppContext, BorrowAppContext, Bounds, Context, ElementGeometry, FocusHandle,
     InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Pixels, Render,
-    ScrollHandle, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
-    anchored, deferred, div, px, rgb, size,
+    ScrollHandle, StatefulInteractiveElement, Styled, SubtreePresentation, Window, WindowBounds,
+    WindowOptions, anchored, deferred, div, px, rgb, size,
 };
 use open_gpui_devtools::DevtoolsInspectorController;
 
@@ -136,6 +136,7 @@ pub struct GalleryShell {
     presentation_text_input: open_gpui::Entity<TextInputController>,
     presentation_scroll_handle: ScrollHandle,
     presentation_projection_progress: f32,
+    presentation_state: SubtreePresentation,
     presentation_action_count: usize,
     presentation_drag_status: String,
     presentation_geometry: Option<ElementGeometry>,
@@ -193,6 +194,7 @@ impl GalleryShell {
             }),
             presentation_scroll_handle: ScrollHandle::new(),
             presentation_projection_progress: 0.0,
+            presentation_state: SubtreePresentation::Visible,
             presentation_action_count: 0,
             presentation_drag_status: "Ready".to_owned(),
             presentation_geometry: None,
@@ -248,6 +250,11 @@ impl GalleryShell {
     /// Returns the current presentation projection progress.
     pub const fn presentation_projection_progress(&self) -> f32 {
         self.presentation_projection_progress
+    }
+
+    /// Returns the live subtree presentation state used by the Presentation page.
+    pub const fn presentation_state(&self) -> SubtreePresentation {
+        self.presentation_state
     }
 
     /// Returns the number of transformed action activations.

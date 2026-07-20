@@ -21,6 +21,11 @@ struct WindowOverlayProjectionProbe {
     runtime: open_gpui_ui_components::gpui_adapter::WindowOverlayRuntime,
 }
 
+#[cfg(feature = "ui-components")]
+struct PresentedOfficialOverlayProbe {
+    presentation: open_gpui::SubtreePresentation,
+}
+
 #[cfg(feature = "gpui")]
 struct WindowFocusProjectionProbe {
     focus: open_gpui::FocusHandle,
@@ -50,6 +55,26 @@ impl open_gpui::Render for WindowOverlayProjectionProbe {
         _: &mut open_gpui::Context<Self>,
     ) -> impl open_gpui::IntoElement {
         open_gpui::div()
+    }
+}
+
+#[cfg(feature = "ui-components")]
+impl open_gpui::Render for PresentedOfficialOverlayProbe {
+    fn render(
+        &mut self,
+        _: &mut open_gpui::Window,
+        _: &mut open_gpui::Context<Self>,
+    ) -> impl open_gpui::IntoElement {
+        use open_gpui::SubtreePresentationExt as _;
+
+        open_gpui_ui_components::Dialog::new(
+            "devtools-presentation-dialog",
+            "Open dialog",
+            "Presentation dialog",
+            "Body",
+        )
+        .open(true)
+        .with_subtree_presentation(self.presentation)
     }
 }
 
@@ -173,6 +198,8 @@ fn framework_adapters_project_window_overlay_runtime_without_raw_layer_ids(
     assert_eq!(child["kind"], "modal");
     assert_eq!(child["phase"], "close-requested");
     assert_eq!(child["presence"], "open");
+    assert_eq!(parent["presentation"], "visible");
+    assert_eq!(child["presentation"], "visible");
     assert_eq!(child["pending_open"], false);
     assert_eq!(child["pending_reason"], "escape-key");
     assert_eq!(child["keyboard_eligible"], true);
@@ -190,6 +217,60 @@ fn framework_adapters_project_window_overlay_runtime_without_raw_layer_ids(
                 .all(|node| !node.label.contains(canary))
         );
     }
+}
+
+#[cfg(feature = "ui-components")]
+#[open_gpui::test]
+fn framework_adapters_project_effective_presentation_from_an_official_overlay(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    use open_gpui::SubtreePresentation;
+    use open_gpui_ui_components::gpui_adapter::WindowOverlayRuntime;
+
+    let (view, cx) = cx.add_window_view(|_, _| PresentedOfficialOverlayProbe {
+        presentation: SubtreePresentation::Visible,
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |probe, _, cx| {
+        probe.presentation = SubtreePresentation::Inert;
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    let inert = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("official Dialog should publish an overlay snapshot")
+    });
+    let inert_projection = ui_components::window_overlay_probe_snapshot(&inert);
+    let inert_payload = inert_projection.tree().nodes[0].children[0]
+        .payload
+        .as_ref()
+        .expect("official Dialog projection payload");
+    assert_eq!(inert_payload["presentation"], "inert");
+    assert_eq!(inert_payload["keyboard_eligible"], false);
+    assert_eq!(inert_payload["modal_pointer_barrier"], false);
+    assert_eq!(inert_payload["focus_active"], false);
+
+    cx.update_window_entity(&view, |probe, _, cx| {
+        probe.presentation = SubtreePresentation::Hidden;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let hidden = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("hidden mounted Dialog should retain lifecycle projection")
+    });
+    let hidden_projection = ui_components::window_overlay_probe_snapshot(&hidden);
+    let hidden_payload = hidden_projection.tree().nodes[0].children[0]
+        .payload
+        .as_ref()
+        .expect("hidden official Dialog projection payload");
+    assert_eq!(hidden_payload["presentation"], "hidden");
+    assert_eq!(hidden_payload["keyboard_eligible"], false);
+    assert_eq!(hidden_payload["modal_pointer_barrier"], false);
+    assert_eq!(hidden_payload["focus_active"], false);
 }
 
 #[cfg(feature = "motion")]

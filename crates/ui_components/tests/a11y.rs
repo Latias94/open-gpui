@@ -131,6 +131,47 @@ fn button_final_tree_and_actions_follow_resolved_projection(cx: &mut open_gpui::
 }
 
 #[open_gpui::test]
+fn semantic_descriptor_omission_keeps_descendant_projection(cx: &mut open_gpui::TestAppContext) {
+    struct OmissionProbe;
+
+    impl Render for OmissionProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let wrapper_semantics = SemanticDescriptor::new(Role::Group)
+                .with_label("Omitted semantic wrapper")
+                .with_omit_accessibility_node(true);
+
+            div().id("semantic-omission-root").child(
+                div()
+                    .id("semantic-omission-wrapper")
+                    .ui_semantics(&wrapper_semantics)
+                    .child(
+                        div()
+                            .id("semantic-omission-descendant")
+                            .role(accesskit::Role::Button)
+                            .aria_label("Projected omission descendant"),
+                    ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| OmissionProbe);
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("current-node omission projection should publish");
+
+    assert!(
+        !update
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some("Omitted semantic wrapper")),
+        "current-node omission must remove only the descriptor's own node"
+    );
+    let (_, descendant) = a11y_node_with_label(&update, "Projected omission descendant");
+    assert_eq!(descendant.role(), accesskit::Role::Button);
+}
+
+#[open_gpui::test]
 fn semantic_relations_resolve_update_and_repair_after_unmount(cx: &mut open_gpui::TestAppContext) {
     struct RelationProbe {
         alternate_label: bool,

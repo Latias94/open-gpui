@@ -215,7 +215,7 @@ impl TableRuntime {
                         target.focus(window, cx);
                     }
                 }
-                None => window.blur(),
+                None => window.blur(cx),
             }
         }
     }

@@ -66,6 +66,16 @@ fn resolved_semantic_canaries_never_cross_any_devtools_artifact_boundary() {
         );
     }
 
+    let omitted_label_payload = fixture_snapshot.tree().nodes[0].children[0]
+        .payload
+        .as_ref()
+        .expect("omitted label semantic payload");
+    assert_eq!(
+        omitted_label_payload["state"]["omit_accessibility_node"],
+        true
+    );
+    assert!(omitted_label_payload["state"].get("hidden").is_none());
+
     let password_payload = fixture_snapshot.tree().nodes[0].children[2]
         .payload
         .as_ref()
@@ -270,7 +280,9 @@ fn resolved_text_form_snapshot(changed: bool) -> open_gpui_devtools::SnapshotPro
         tokens,
     )
     .with_busy(changed);
-    let label_semantics = SemanticDescriptor::<u64>::new(Role::Label).with_label(field.label());
+    let label_semantics = SemanticDescriptor::<u64>::new(Role::Label)
+        .with_label(field.label())
+        .with_omit_accessibility_node(true);
     let error_semantics = SemanticDescriptor::<u64>::new(Role::Label)
         .with_label(field.support_text().expect("field support text"));
 

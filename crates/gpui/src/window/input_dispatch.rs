@@ -98,6 +98,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
             if cx.active_drag.is_none() {
                 cx.active_drag = Some(AnyDrag {
                     window_id: window.window_handle().window_id(),
+                    source: None,
                     value: Arc::new(paths.clone()),
                     view: cx.new(|_| paths).into(),
                     window_preview_offset: position,

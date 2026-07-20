@@ -1180,7 +1180,7 @@ fn target_sync_preserves_an_active_ancestor_last_live_target(cx: &mut open_gpui:
         view.runtime
             .deactivate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
             .expect("empty scope should be active");
-        window.blur();
+        window.blur(cx);
         view.runtime
             .activate_scope(FocusScopeId::new(CHILD_SCOPE), window, cx)
             .expect("child scope should be registered");

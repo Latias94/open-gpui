@@ -2112,6 +2112,7 @@ mod handle_suite {
         )
         .expect("source tab selector should be emitted");
         let start = debug_bounds(&mut source_visual, &source_tab).center();
+        activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
         source_visual.simulate_mouse_move(
             point(start.x + px(24.0), start.y),

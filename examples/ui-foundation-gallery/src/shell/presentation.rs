@@ -40,9 +40,20 @@ impl Render for PresentationDragPreview {
 }
 
 impl GalleryShell {
-    fn set_presentation_progress(&mut self, progress: f32, cx: &mut Context<Self>) {
+    pub fn set_presentation_progress(&mut self, progress: f32, cx: &mut Context<Self>) {
         if self.presentation_projection_progress != progress {
             self.presentation_projection_progress = progress;
+            cx.notify();
+        }
+    }
+
+    pub fn set_presentation_state(
+        &mut self,
+        presentation: SubtreePresentation,
+        cx: &mut Context<Self>,
+    ) {
+        if self.presentation_state != presentation {
+            self.presentation_state = presentation;
             cx.notify();
         }
     }
@@ -74,6 +85,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let progress = self.presentation_projection_progress;
+        let presentation = self.presentation_state;
         let projection = MotionProjection::between(
             motion_rect(
                 motion_point(motion_px(18.0), motion_px(12.0)),
@@ -112,6 +124,11 @@ impl GalleryShell {
             .on_activate(cx.processor(|this, _, _, cx| {
                 this.increment_presentation_action(cx);
             }));
+        let popover = Popover::new(
+            "presentation-popover",
+            "Open details",
+            "Presentation overlay content",
+        );
 
         let drag_source = div()
             .id("presentation-drag-source")
@@ -252,8 +269,19 @@ impl GalleryShell {
                     )
                     .child(
                         div()
-                            .debug_selector(|| "gallery:presentation-action".into())
-                            .child(action),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .debug_selector(|| "gallery:presentation-popover".into())
+                                    .child(popover),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "gallery:presentation-action".into())
+                                    .child(action),
+                            ),
                     ),
             )
             .child(
@@ -308,7 +336,76 @@ impl GalleryShell {
                     .ok();
             }
         })
-        .with_subtree_transform(projection_transform);
+        .with_subtree_transform(projection_transform)
+        .with_subtree_presentation(presentation);
+        let presentation_slot = div()
+            .id("presentation-slot")
+            .debug_selector(|| "gallery:presentation-slot".into())
+            .w(PRESENTATION_STAGE_WIDTH)
+            .flex_none()
+            .child(measured_stage);
+        let presentation_flow_sentinel = div()
+            .debug_selector(|| "gallery:presentation-flow-sentinel".into())
+            .w(PRESENTATION_STAGE_WIDTH)
+            .h(px(1.0))
+            .flex_none();
+        let matrix_lane = |key: &'static str, label: &'static str, state: SubtreePresentation| {
+            let slot_selector = format!("gallery:presentation-matrix:{key}:slot");
+            let sentinel_selector = format!("gallery:presentation-matrix:{key}:sentinel");
+            div()
+                .min_w(px(112.0))
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().text_color(rgb(0x45515f)).child(label))
+                .child(
+                    div()
+                        .debug_selector(move || slot_selector.clone())
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .h(px(64.0))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xb8beb3))
+                                .bg(rgb(0xf4f5f0))
+                                .child(
+                                    div()
+                                        .id(format!("presentation-matrix-{key}-control"))
+                                        .focusable()
+                                        .tab_index(0)
+                                        .role(open_gpui::accesskit::Role::Button)
+                                        .aria_label("Presentation matrix control")
+                                        .text_xs()
+                                        .child("Same layout"),
+                                )
+                                .with_subtree_transform(projection_transform)
+                                .with_subtree_presentation(state),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(move || sentinel_selector.clone())
+                                .h(px(1.0))
+                                .flex_none(),
+                        ),
+                )
+        };
+        let presentation_matrix = div()
+            .debug_selector(|| "gallery:presentation-matrix".into())
+            .flex()
+            .flex_wrap()
+            .gap_3()
+            .children([
+                matrix_lane("visible", "Visible", SubtreePresentation::Visible),
+                matrix_lane("inert", "Inert", SubtreePresentation::Inert),
+                matrix_lane("hidden", "Hidden", SubtreePresentation::Hidden),
+            ]);
 
         let geometry_summary = self.presentation_geometry.map_or_else(
             || "Awaiting committed geometry".to_owned(),
@@ -350,6 +447,54 @@ impl GalleryShell {
                     )
                     .child(
                         div()
+                            .debug_selector(|| "gallery:presentation-state:visible".into())
+                            .child(
+                                Button::new("presentation-state-visible", "Visible")
+                                    .variant(ButtonVariant::Secondary)
+                                    .selected(presentation == SubtreePresentation::Visible)
+                                    .with_size(Size::Small)
+                                    .tokens(snapshot.tokens)
+                                    .on_activate(cx.processor(|this, _, _, cx| {
+                                        this.set_presentation_state(
+                                            SubtreePresentation::Visible,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "gallery:presentation-state:inert".into())
+                            .child(
+                                Button::new("presentation-state-inert", "Inert")
+                                    .variant(ButtonVariant::Secondary)
+                                    .selected(presentation == SubtreePresentation::Inert)
+                                    .with_size(Size::Small)
+                                    .tokens(snapshot.tokens)
+                                    .on_activate(cx.processor(|this, _, _, cx| {
+                                        this.set_presentation_state(SubtreePresentation::Inert, cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "gallery:presentation-state:hidden".into())
+                            .child(
+                                Button::new("presentation-state-hidden", "Hidden")
+                                    .variant(ButtonVariant::Secondary)
+                                    .selected(presentation == SubtreePresentation::Hidden)
+                                    .with_size(Size::Small)
+                                    .tokens(snapshot.tokens)
+                                    .on_activate(cx.processor(|this, _, _, cx| {
+                                        this.set_presentation_state(
+                                            SubtreePresentation::Hidden,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
                             .debug_selector(|| "gallery:presentation-mode:final".into())
                             .child(
                                 Button::new("presentation-mode-final", "Final")
@@ -369,7 +514,9 @@ impl GalleryShell {
                             .child(format!("projection {:.2}", progress)),
                     ),
             )
-            .child(measured_stage)
+            .child(presentation_slot)
+            .child(presentation_flow_sentinel)
+            .child(presentation_matrix)
             .child(
                 div()
                     .id("presentation-readout")
@@ -384,8 +531,8 @@ impl GalleryShell {
                     .text_color(rgb(0x45515f))
                     .child(geometry_summary)
                     .child(format!(
-                        "actions {} | drag {}",
-                        self.presentation_action_count, self.presentation_drag_status
+                        "presentation {presentation:?} | actions {} | drag {}",
+                        self.presentation_action_count, self.presentation_drag_status,
                     )),
             )
             .child(self.render_signal_list(snapshot.selected_page))

@@ -3,7 +3,8 @@ use crate::{
     GlobalElementId, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
     LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, PointerCancelEvent,
     SharedString, Size, TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace,
-    Window, WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    Window, WrappedLine, WrappedLineLayout, clear_active_tooltip, register_tooltip_mouse_handlers,
+    set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use itertools::Itertools;
@@ -971,6 +972,7 @@ struct InteractiveTextClickEvent {
 pub struct InteractiveTextState {
     mouse_down_index: Rc<Cell<Option<usize>>>,
     hovered_index: Rc<Cell<Option<usize>>>,
+    last_hover_event: Rc<RefCell<Option<MouseMoveEvent>>>,
     active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
     committed_tooltip_hitbox: CommittedHitbox,
 }
@@ -1051,12 +1053,37 @@ impl Element for InteractiveText {
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.text.request_layout(None, inspector_id, window, cx)
+        window.with_optional_element_state::<InteractiveTextState, _>(
+            global_id,
+            |interactive_state, window| {
+                let mut interactive_state = interactive_state
+                    .map(|interactive_state| interactive_state.unwrap_or_default());
+                if !window.subtree_presentation().is_interactive()
+                    && let Some(interactive_state) = interactive_state.as_mut()
+                {
+                    interactive_state.mouse_down_index.take();
+                    let hovered_index = interactive_state.hovered_index.take();
+                    let last_hover_event = interactive_state.last_hover_event.borrow_mut().take();
+                    if hovered_index.is_some()
+                        && let Some(hover_listener) = self.hover_listener.take()
+                        && let Some(event) = last_hover_event
+                    {
+                        window.defer(cx, move |window, cx| {
+                            hover_listener(None, event, window, cx)
+                        });
+                    }
+                    clear_active_tooltip(&interactive_state.active_tooltip, window);
+                    interactive_state.committed_tooltip_hitbox = CommittedHitbox::default();
+                }
+                let layout = self.text.request_layout(None, inspector_id, window, cx);
+                (layout, interactive_state)
+            },
+        )
     }
 
     fn prepaint(
@@ -1073,12 +1100,13 @@ impl Element for InteractiveText {
             |interactive_state, window| {
                 let mut interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
+                let interactive = window.subtree_presentation().is_interactive();
 
                 if let Some(interactive_state) = interactive_state.as_mut() {
-                    if self.tooltip_builder.is_some() {
+                    if interactive && self.tooltip_builder.is_some() {
                         self.tooltip_id =
                             set_tooltip_on_window(&interactive_state.active_tooltip, window);
-                    } else {
+                    } else if interactive {
                         // If there is no longer a tooltip builder, remove the active tooltip.
                         interactive_state.active_tooltip.take();
                     }
@@ -1087,7 +1115,8 @@ impl Element for InteractiveText {
                 self.text
                     .prepaint(None, inspector_id, bounds, state, window, cx);
                 let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                if self.tooltip_builder.is_some()
+                if interactive
+                    && self.tooltip_builder.is_some()
                     && let Some(interactive_state) = interactive_state.as_ref()
                 {
                     interactive_state
@@ -1187,6 +1216,7 @@ impl Element for InteractiveText {
                     let hitbox = hitbox.clone();
                     let text_layout = text_layout.clone();
                     let hovered_index = interactive_state.hovered_index.clone();
+                    let last_hover_event = interactive_state.last_hover_event.clone();
                     move |event: &MouseMoveEvent, phase, window, cx| {
                         if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                             let current = hovered_index.get();
@@ -1196,6 +1226,11 @@ impl Element for InteractiveText {
                                 .and_then(|position| text_layout.index_for_position(position).ok());
                             if current != updated {
                                 hovered_index.set(updated);
+                                if updated.is_some() {
+                                    *last_hover_event.borrow_mut() = Some(event.clone());
+                                } else {
+                                    last_hover_event.borrow_mut().take();
+                                }
                                 if let Some(hover_listener) = hover_listener.as_ref() {
                                     hover_listener(updated, event.clone(), window, cx);
                                 }
@@ -1299,14 +1334,81 @@ impl IntoElement for InteractiveText {
 mod tests {
     use super::*;
     use crate::{
-        Context, Modifiers, ParentElement as _, Render, Styled as _, SubtreeTransform,
+        AppContext as _, Context, Modifiers, MouseButton, ParentElement as _, Render, Styled as _,
+        SubtreePresentation, SubtreePresentationExt as _, SubtreeTransform,
         SubtreeTransformExt as _, TestAppContext, VisualContext as _, Window, div, point, px,
     };
-    use std::{cell::Cell, rc::Rc, time::Duration};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::Duration,
+    };
 
     struct DelayedTooltipTransformProbe {
         translated: bool,
+        presentation: SubtreePresentation,
         tooltip_builds: Rc<Cell<usize>>,
+    }
+
+    struct PresentationTooltipView;
+
+    impl Render for PresentationTooltipView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(20.0)).h(px(20.0)).child("tooltip")
+        }
+    }
+
+    struct VisibleTooltipPresentationProbe {
+        presentation: SubtreePresentation,
+        tooltip_builds: Rc<Cell<usize>>,
+    }
+
+    struct ClickableTextPresentationProbe {
+        presentation: SubtreePresentation,
+        activations: Rc<Cell<usize>>,
+    }
+
+    struct HoverableTextPresentationProbe {
+        presentation: SubtreePresentation,
+        events: Rc<RefCell<Vec<Option<usize>>>>,
+    }
+
+    impl Render for VisibleTooltipPresentationProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let tooltip_builds = self.tooltip_builds.clone();
+            div().size_full().child(
+                InteractiveText::new("visible-tooltip-text", StyledText::new("tooltip"))
+                    .tooltip(move |_, _, cx| {
+                        tooltip_builds.set(tooltip_builds.get() + 1);
+                        Some(cx.new(|_| PresentationTooltipView).into())
+                    })
+                    .with_subtree_presentation(self.presentation),
+            )
+        }
+    }
+
+    impl Render for ClickableTextPresentationProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            div().size_full().child(
+                InteractiveText::new("presentation-clickable-text", StyledText::new("click"))
+                    .on_click(vec![0..5], move |_, _, _| {
+                        activations.set(activations.get() + 1)
+                    })
+                    .with_subtree_presentation(self.presentation),
+            )
+        }
+    }
+
+    impl Render for HoverableTextPresentationProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let events = self.events.clone();
+            div().size_full().child(
+                InteractiveText::new("presentation-hoverable-text", StyledText::new("hover"))
+                    .on_hover(move |index, _, _, _| events.borrow_mut().push(index))
+                    .with_subtree_presentation(self.presentation),
+            )
+        }
     }
 
     impl Render for DelayedTooltipTransformProbe {
@@ -1324,9 +1426,8 @@ mod tests {
                         tooltip_builds.set(tooltip_builds.get() + 1);
                         None
                     })
-                    .with_subtree_transform(
-                        SubtreeTransform::try_translation(translation).unwrap(),
-                    ),
+                    .with_subtree_transform(SubtreeTransform::try_translation(translation).unwrap())
+                    .with_subtree_presentation(self.presentation),
             )
         }
     }
@@ -1368,6 +1469,7 @@ mod tests {
             let tooltip_builds = tooltip_builds.clone();
             move |_, _| DelayedTooltipTransformProbe {
                 translated: false,
+                presentation: SubtreePresentation::Visible,
                 tooltip_builds,
             }
         });
@@ -1385,5 +1487,173 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(tooltip_builds.get(), 0);
+    }
+
+    #[crate::test]
+    fn delayed_tooltip_requires_fresh_hover_after_presentation_suppression(
+        cx: &mut TestAppContext,
+    ) {
+        let tooltip_builds = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view({
+            let tooltip_builds = tooltip_builds.clone();
+            move |_, _| DelayedTooltipTransformProbe {
+                translated: false,
+                presentation: SubtreePresentation::Visible,
+                tooltip_builds,
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
+
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Inert;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.dispatcher.advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        assert_eq!(tooltip_builds.get(), 0);
+
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Visible;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.dispatcher.advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        assert_eq!(
+            tooltip_builds.get(),
+            0,
+            "restoring presentation must not replay the suppressed hover"
+        );
+
+        cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
+        cx.dispatcher.advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        assert_eq!(tooltip_builds.get(), 1);
+    }
+
+    #[crate::test]
+    fn visible_tooltip_does_not_reappear_after_presentation_suppression(cx: &mut TestAppContext) {
+        let tooltip_builds = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view({
+            let tooltip_builds = tooltip_builds.clone();
+            move |_, _| VisibleTooltipPresentationProbe {
+                presentation: SubtreePresentation::Visible,
+                tooltip_builds,
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
+        cx.dispatcher.advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(tooltip_builds.get(), 1);
+        assert!(cx.update(|window, _| window.tooltip_bounds.is_some()));
+
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Hidden;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.update(|window, _| window.tooltip_bounds.is_none()));
+
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Visible;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(tooltip_builds.get(), 1);
+        assert!(
+            cx.update(|window, _| window.tooltip_bounds.is_none()),
+            "restoring presentation must not replay a previously visible tooltip"
+        );
+
+        cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
+        cx.dispatcher.advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(tooltip_builds.get(), 2);
+        assert!(cx.update(|window, _| window.tooltip_bounds.is_some()));
+    }
+
+    #[crate::test]
+    fn clickable_text_requires_fresh_press_after_presentation_suppression(cx: &mut TestAppContext) {
+        let activations = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view({
+            let activations = activations.clone();
+            move |_, _| ClickableTextPresentationProbe {
+                presentation: SubtreePresentation::Visible,
+                activations,
+            }
+        });
+        let position = point(px(4.0), px(4.0));
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::none());
+
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Inert;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Visible;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
+        assert_eq!(
+            activations.get(),
+            0,
+            "restoring presentation must not pair a fresh release with the suppressed press"
+        );
+
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
+        assert_eq!(activations.get(), 1);
+    }
+
+    #[crate::test]
+    fn interactive_text_emits_terminal_hover_on_presentation_suppression(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let events = events.clone();
+            move |_, _| HoverableTextPresentationProbe {
+                presentation: SubtreePresentation::Visible,
+                events,
+            }
+        });
+        let position = point(px(4.0), px(4.0));
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        for presentation in [SubtreePresentation::Inert, SubtreePresentation::Hidden] {
+            cx.simulate_mouse_move(position, None, Modifiers::none());
+            assert!(events.borrow().last().is_some_and(Option::is_some));
+
+            cx.update_window_entity(&view, |view, _, cx| {
+                view.presentation = presentation;
+                cx.notify();
+            });
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.run_until_parked();
+            assert_eq!(events.borrow().last(), Some(&None));
+
+            let event_count = events.borrow().len();
+            cx.update_window_entity(&view, |view, _, cx| {
+                view.presentation = SubtreePresentation::Visible;
+                cx.notify();
+            });
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.run_until_parked();
+            assert_eq!(
+                events.borrow().len(),
+                event_count,
+                "restoring a stationary pointer must not replay stale text hover"
+            );
+        }
     }
 }

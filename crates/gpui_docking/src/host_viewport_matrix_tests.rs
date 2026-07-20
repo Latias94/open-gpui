@@ -6,10 +6,7 @@ use crate::{
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
-    drop_target::{
-        DockDropResolveSource, DockEmptySpaceDropTarget, DockLeafDropTarget,
-        DockResolvedDropTargetKind, DockRootDropTarget,
-    },
+    drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockRootDropTarget},
     geometry::{self, DockDropBoxKind, DockDropBoxSet},
     host_test_support::*,
     interaction::DockPayloadDropReleaseOrigin,
@@ -734,6 +731,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     let threshold = point(start.x + px(24.0), start.y);
     let target_position = target_hover_position(&mut target_visual, &target_host, case, &nodes);
 
+    activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.set_platform_hovered_window(Some(target_opened.window()));
@@ -749,7 +747,12 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         "{}: target hover preview should have visible bounds",
         case.name
     );
-    assert_target_hover_resolution(cx, &target_host, case, &nodes);
+    assert_target_hover_routed_preview(
+        &runtime,
+        &target_space,
+        target_opened.window().window_id(),
+        case,
+    );
     assert_known_viewport_route(&runtime, &target_space, target_position, case.name);
 
     target_visual.simulate_mouse_up(target_position, MouseButton::Left, Modifiers::none());
@@ -810,6 +813,7 @@ fn run_capture_loss_poll_case(cx: &mut TestAppContext, case: PollMatrixCase) {
     let outside_window = point(px(900.0), px(900.0));
 
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+    activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(outside_window, MouseButton::Left, Modifiers::none());
@@ -1169,44 +1173,21 @@ fn assert_known_viewport_route(
     );
 }
 
-fn assert_target_hover_resolution(
-    cx: &TestAppContext,
-    host: &open_gpui::Entity<crate::DockHost>,
+fn assert_target_hover_routed_preview(
+    runtime: &DockViewportRuntimeHandle,
+    target_space: &DockSpaceId,
+    target_window_id: open_gpui::WindowId,
     case: MatrixCase,
-    nodes: &MatrixNodes,
 ) {
-    let MatrixTarget::RootEdge { zone } = case.target else {
+    let MatrixTarget::RootEdge { .. } = case.target else {
         return;
     };
-    let target = cx
-        .read_entity(host, |host, _| {
-            host.interaction().resolved_drop_target().cloned()
-        })
-        .unwrap_or_else(|| panic!("{}: target hover should resolve locally", case.name));
-    let root = nodes.target_root.expect("root-edge case should have root");
-    let leaf_tabs = nodes
-        .target_tabs
-        .expect("root-edge case should have target tabs");
-
-    assert_eq!(
-        target.source,
-        DockDropResolveSource::RootEdge,
-        "{}: expected RootEdge target, got {:?}",
-        case.name,
-        target
-    );
     assert!(
-        matches!(
-            target.kind,
-            DockResolvedDropTargetKind::RootEdge {
-                root: matched_root,
-                leaf_tabs: Some(matched_leaf_tabs),
-                zone: matched_zone,
-            } if matched_root == root && matched_leaf_tabs == leaf_tabs && matched_zone == zone
-        ),
-        "{}: unexpected root-edge target {:?}",
-        case.name,
-        target
+        runtime
+            .routed_drop_preview_for(target_space, target_window_id)
+            .is_some(),
+        "{}: target hover should publish a routed preview for the target viewport",
+        case.name
     );
 }
 

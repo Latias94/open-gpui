@@ -22,7 +22,24 @@ pub(crate) struct DockInteractionRuntime {
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
     viewport_host_scene_frame: Option<DockViewportHostSceneFrame>,
-    pending_focus_command: Option<DockViewportFocusCommand>,
+    next_focus_command_generation: u64,
+    pending_focus_command: Option<DockPendingFocusCommand>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPendingFocusCommand {
+    generation: u64,
+    command: DockViewportFocusCommand,
+}
+
+impl DockPendingFocusCommand {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn command(&self) -> &DockViewportFocusCommand {
+        &self.command
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -454,12 +471,16 @@ impl DockInteractionRuntime {
         &mut self,
         command: DockViewportFocusCommand,
     ) -> bool {
-        if self.pending_focus_command.as_ref() == Some(&command) {
+        if self
+            .pending_focus_command
+            .as_ref()
+            .is_some_and(|pending| pending.command == command)
+        {
             return false;
         }
         if self.pending_focus_command.as_ref().is_some_and(|existing| {
             matches!(
-                (command.source(), existing.source()),
+                (command.source(), existing.command.source()),
                 (
                     DockViewportFocusCommandSource::PlatformActivation,
                     DockViewportFocusCommandSource::ViewportActivation
@@ -472,16 +493,44 @@ impl DockInteractionRuntime {
         }) {
             return false;
         }
-        self.pending_focus_command = Some(command);
+        self.next_focus_command_generation =
+            self.next_focus_command_generation.wrapping_add(1).max(1);
+        self.pending_focus_command = Some(DockPendingFocusCommand {
+            generation: self.next_focus_command_generation,
+            command,
+        });
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn pending_focus_command(&self) -> Option<&DockViewportFocusCommand> {
-        self.pending_focus_command.as_ref()
+        self.pending_focus_command
+            .as_ref()
+            .map(DockPendingFocusCommand::command)
+    }
+
+    pub(crate) fn pending_focus_command_ticket(&self) -> Option<DockPendingFocusCommand> {
+        self.pending_focus_command.clone()
     }
 
     pub(crate) fn take_pending_focus_command(&mut self) -> Option<DockViewportFocusCommand> {
-        self.pending_focus_command.take()
+        self.pending_focus_command
+            .take()
+            .map(|pending| pending.command)
+    }
+
+    pub(crate) fn take_pending_focus_command_if_generation(
+        &mut self,
+        generation: u64,
+    ) -> Option<DockViewportFocusCommand> {
+        if self
+            .pending_focus_command
+            .as_ref()
+            .is_some_and(|pending| pending.generation == generation)
+        {
+            return self.take_pending_focus_command();
+        }
+        None
     }
 }
 
@@ -970,6 +1019,34 @@ mod tests {
             DockItemId::from(item),
             item.to_string(),
         )
+    }
+
+    #[test]
+    fn stale_focus_command_generation_cannot_consume_a_requeued_equal_command() {
+        let mut runtime = DockInteractionRuntime::default();
+        let command = DockViewportFocusCommand::viewport_activation(
+            crate::DockViewportFocusRequest::panel("a"),
+        );
+        assert!(runtime.request_viewport_focus_command(command.clone()));
+        let stale = runtime
+            .pending_focus_command_ticket()
+            .expect("the first focus command should have a ticket");
+        assert_eq!(runtime.take_pending_focus_command(), Some(command.clone()));
+
+        assert!(runtime.request_viewport_focus_command(command.clone()));
+        let current = runtime
+            .pending_focus_command_ticket()
+            .expect("the requeued focus command should have a new ticket");
+        assert_ne!(stale.generation(), current.generation());
+        assert_eq!(
+            runtime.take_pending_focus_command_if_generation(stale.generation()),
+            None
+        );
+        assert_eq!(runtime.pending_focus_command(), Some(&command));
+        assert_eq!(
+            runtime.take_pending_focus_command_if_generation(current.generation()),
+            Some(command)
+        );
     }
 
     fn poll_request(

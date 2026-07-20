@@ -1,9 +1,9 @@
 use crate::DockItemId;
-use open_gpui::{AnyView, App, Entity, Focusable, Render, Window};
+use open_gpui::{AnyView, App, Entity, FocusHandle, Focusable, Render};
 use std::{cell::OnceCell, collections::HashMap, fmt, rc::Rc};
 
 type DockPanelFactory = Rc<dyn Fn(&mut App) -> AnyView>;
-type DockPanelFocusRequester = Rc<dyn Fn(&AnyView, &mut Window, &mut App) -> bool>;
+type DockPanelFocusResolver = Rc<dyn Fn(&AnyView, &App) -> Option<FocusHandle>>;
 
 #[derive(Clone)]
 pub(crate) struct DockPanelViewHandle {
@@ -17,7 +17,7 @@ pub(crate) struct DockPanelViewStore {
 
 struct DockPanelViewLifecycle {
     source: DockPanelViewSource,
-    focus_requester: Option<DockPanelFocusRequester>,
+    focus_resolver: Option<DockPanelFocusResolver>,
 }
 
 enum DockPanelViewSource {
@@ -33,7 +33,7 @@ impl DockPanelViewHandle {
         Self {
             inner: Rc::new(DockPanelViewLifecycle {
                 source: DockPanelViewSource::View(view.into()),
-                focus_requester: None,
+                focus_resolver: None,
             }),
         }
     }
@@ -45,7 +45,7 @@ impl DockPanelViewHandle {
         Self {
             inner: Rc::new(DockPanelViewLifecycle {
                 source: DockPanelViewSource::View(view.into()),
-                focus_requester: Some(focus_requester::<V>()),
+                focus_resolver: Some(focus_resolver::<V>()),
             }),
         }
     }
@@ -57,7 +57,7 @@ impl DockPanelViewHandle {
                     factory: Rc::new(factory),
                     view: OnceCell::new(),
                 },
-                focus_requester: None,
+                focus_resolver: None,
             }),
         }
     }
@@ -72,7 +72,7 @@ impl DockPanelViewHandle {
                     factory: Rc::new(move |cx| factory(cx).into()),
                     view: OnceCell::new(),
                 },
-                focus_requester: Some(focus_requester::<V>()),
+                focus_resolver: Some(focus_resolver::<V>()),
             }),
         }
     }
@@ -81,8 +81,8 @@ impl DockPanelViewHandle {
         self.inner.resolve_view(cx)
     }
 
-    pub(crate) fn request_focus(&self, window: &mut Window, cx: &mut App) -> bool {
-        self.inner.request_focus(window, cx)
+    pub(crate) fn focus_handle(&self, cx: &mut App) -> Option<FocusHandle> {
+        self.inner.focus_handle(cx)
     }
 }
 
@@ -112,12 +112,12 @@ impl DockPanelViewLifecycle {
         }
     }
 
-    fn request_focus(&self, window: &mut Window, cx: &mut App) -> bool {
-        let Some(request_focus) = &self.focus_requester else {
-            return false;
+    fn focus_handle(&self, cx: &mut App) -> Option<FocusHandle> {
+        let Some(resolve_focus) = &self.focus_resolver else {
+            return None;
         };
         let view = self.resolve_view(cx);
-        request_focus(&view, window, cx)
+        resolve_focus(&view, cx)
     }
 }
 
@@ -131,7 +131,7 @@ impl fmt::Debug for DockPanelViewLifecycle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DockPanelViewLifecycle")
             .field("source", &self.source)
-            .field("focusable", &self.focus_requester.is_some())
+            .field("focusable", &self.focus_resolver.is_some())
             .finish()
     }
 }
@@ -148,15 +148,14 @@ impl fmt::Debug for DockPanelViewSource {
     }
 }
 
-fn focus_requester<V>() -> DockPanelFocusRequester
+fn focus_resolver<V>() -> DockPanelFocusResolver
 where
     V: Focusable + Render,
 {
-    Rc::new(|view, window, cx| {
-        let Ok(entity) = view.clone().downcast::<V>() else {
-            return false;
-        };
-        window.focus(&entity.focus_handle(cx), cx);
-        true
+    Rc::new(|view, cx| {
+        view.clone()
+            .downcast::<V>()
+            .ok()
+            .map(|entity| entity.focus_handle(cx))
     })
 }

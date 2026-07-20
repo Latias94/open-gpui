@@ -642,6 +642,15 @@ impl DispatchTree {
         self.focusable_node_ids.get(&target).copied()
     }
 
+    pub fn valid_focusable_node_id(&self, target: FocusId) -> Option<DispatchNodeId> {
+        self.focusable_node_id(target).filter(|node_id| {
+            self.nodes[node_id.0]
+                .validity
+                .as_ref()
+                .is_none_or(SubtreeTransformValidity::is_valid)
+        })
+    }
+
     pub fn root_node_id(&self) -> DispatchNodeId {
         debug_assert!(!self.nodes.is_empty());
         DispatchNodeId(0)
@@ -656,7 +665,7 @@ impl DispatchTree {
 mod tests {
     use crate::{
         AppContext, DispatchResult, Element, ElementId, GlobalElementId, InspectorElementId,
-        Keystroke, LayoutId, Style,
+        InteractiveElement as _, Keystroke, LayoutId, ParentElement as _, Style, div,
     };
     use core::panic;
     use smallvec::SmallVec;
@@ -803,6 +812,7 @@ mod tests {
         #[derive(Clone)]
         struct CustomElement {
             focus_handle: FocusHandle,
+            sibling_focus_handle: FocusHandle,
             text: Rc<RefCell<String>>,
         }
 
@@ -810,6 +820,7 @@ mod tests {
             fn new(cx: &mut Context<Self>) -> Self {
                 Self {
                     focus_handle: cx.focus_handle(),
+                    sibling_focus_handle: cx.focus_handle(),
                     text: Rc::default(),
                 }
             }
@@ -950,7 +961,9 @@ mod tests {
 
         impl Render for CustomElement {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                self.clone()
+                div()
+                    .child(self.clone())
+                    .child(div().track_focus(&self.sibling_focus_handle))
             }
         }
 
@@ -960,7 +973,9 @@ mod tests {
         });
 
         let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
-        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        let (focus_handle, sibling_focus_handle) = test.update(cx, |test, _| {
+            (test.focus_handle.clone(), test.sibling_focus_handle.clone())
+        });
 
         let pending_input_changed_count = Rc::new(RefCell::new(0usize));
         let pending_input_changed_count_for_observer = pending_input_changed_count.clone();
@@ -993,6 +1008,12 @@ mod tests {
             assert!(*count_after_pending.borrow() > 0);
 
             window.focus(&cx.focus_handle(), cx);
+            assert!(
+                window.has_pending_keystrokes(),
+                "an unqualified focus claim must not clear the active chord"
+            );
+
+            window.focus(&sibling_focus_handle, cx);
 
             assert!(!window.has_pending_keystrokes());
         });

@@ -46,7 +46,6 @@ impl DockHost {
         let drop_root = session.drop_root_for_tabs(node);
         let source_space = session.space().clone();
         let entity = cx.entity();
-        let pointer_capture = self.pointer_capture_handle();
         let stack_title = if items.len() == 1 {
             session.panel_title(&selected_item)
         } else {
@@ -132,7 +131,6 @@ impl DockHost {
                 },
             ));
         let stack_drag_entity = entity.clone();
-        let stack_pointer_capture = pointer_capture;
         let mut tab_hit_targets = Vec::with_capacity(items.len());
         for index in 0..items.len() {
             if let Some(bounds) = self.viewport_runtime().rendered_tab_label_bounds_for_tabs(
@@ -205,10 +203,9 @@ impl DockHost {
                 },
             ))
             .on_drag(stack_payload, move |payload, geometry, window, cx| {
-                let _ = window.capture_pointer(&stack_pointer_capture, MouseButton::Left);
                 stack_drag_entity.update(cx, |host, cx| {
                     host.focus_host_for_drag_from_render(window, cx);
-                    host.begin_payload_drag_from_render(payload, cx);
+                    host.begin_payload_drag_from_render(payload, window, cx);
                     let source_bounds = geometry.displayed_bounds();
                     let cursor_position = host
                         .payload_drag_anchor_position_from_render(payload)
@@ -252,7 +249,6 @@ impl DockHost {
                 title.clone(),
             );
             let drag_entity = entity.clone();
-            let drag_pointer_capture = pointer_capture;
             let focus_entity = entity.clone();
             let target_index = index;
             let tab_item = item.clone();
@@ -330,10 +326,15 @@ impl DockHost {
                     },
                 ))
                 .on_drag(payload, move |payload, geometry, window, cx| {
-                    let _ = window.capture_pointer(&drag_pointer_capture, MouseButton::Left);
                     drag_entity.update(cx, |host, cx| {
                         host.focus_host_for_drag_from_render(window, cx);
-                        host.begin_tab_item_drag_from_render(node, drag_item.clone(), payload, cx);
+                        host.begin_tab_item_drag_from_render(
+                            node,
+                            drag_item.clone(),
+                            payload,
+                            window,
+                            cx,
+                        );
                         let source_bounds = geometry.displayed_bounds();
                         let cursor_position = host
                             .payload_drag_anchor_position_from_render(payload)

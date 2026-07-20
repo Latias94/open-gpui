@@ -69,14 +69,22 @@ impl WindowOverlayRuntimeState {
         self.validate_parent(&registration.id, registration.parent.as_ref())?;
         let lifecycle = LayerLifecycle::from_presence(registration.policy.presence());
         let phase = lifecycle.phase();
+        let presentation = registration
+            .parent
+            .as_ref()
+            .and_then(|parent| self.entries.get(parent))
+            .map(|parent| registration.presentation.max(parent.presentation))
+            .unwrap_or(registration.presentation);
         let mouse_authority_changed =
-            MouseAuthorityProfile::from_policy(&registration.policy, phase).affects_routing();
+            MouseAuthorityProfile::from_policy(&registration.policy, phase, presentation)
+                .affects_routing();
         self.validate_parent_lifecycle(registration.parent.as_ref(), phase)?;
         self.next_lease_token = self.next_lease_token.wrapping_add(1);
         let lease_token = self.next_lease_token;
         let generation = OverlayLayerGeneration(1);
-        let focus_active =
-            phase == OverlayLayerPhase::Open && registration.focus_mode != OverlayFocusMode::None;
+        let focus_active = phase == OverlayLayerPhase::Open
+            && registration.focus_mode != OverlayFocusMode::None
+            && presentation.is_interactive();
         let scope_id = (registration.focus_mode != OverlayFocusMode::None)
             .then(|| scope_id_for(&registration.id));
         let trigger_id = trigger_id_for(&registration.id);
@@ -94,6 +102,8 @@ impl WindowOverlayRuntimeState {
             uncontrolled_commit: registration.uncontrolled_commit,
             lease_token,
             lifecycle,
+            local_presentation: registration.presentation,
+            presentation,
             generation,
             registration_revision: 1,
             open_change_revision: 0,
@@ -150,7 +160,11 @@ impl WindowOverlayRuntimeState {
             return Ok(RebindPlan {
                 generation: transition.generation,
                 cancel_focus_claims: Vec::new(),
-                root_transition: transition.focus_transition,
+                focus_transitions: transition
+                    .focus_transitions
+                    .into_iter()
+                    .map(|planned| planned.transition)
+                    .collect(),
                 descendant_dispatches: Vec::new(),
             });
         }
@@ -187,15 +201,23 @@ impl WindowOverlayRuntimeState {
         }
 
         let mut transition = self.rebind_layer(lease, registration)?;
-        if restore_owner.as_ref() != Some(&root_id)
-            && let FocusTransition::Deactivate { restore, .. } = &mut transition.focus_transition
-        {
-            *restore = false;
+        if restore_owner.as_ref() != Some(&root_id) {
+            for planned in &mut transition.focus_transitions {
+                if planned.layer_id == root_id
+                    && let FocusTransition::Deactivate { restore, .. } = &mut planned.transition
+                {
+                    *restore = false;
+                }
+            }
         }
         Ok(RebindPlan {
             generation: transition.generation,
             cancel_focus_claims,
-            root_transition: transition.focus_transition,
+            focus_transitions: transition
+                .focus_transitions
+                .into_iter()
+                .map(|planned| planned.transition)
+                .collect(),
             descendant_dispatches,
         })
     }
@@ -207,7 +229,8 @@ impl WindowOverlayRuntimeState {
     ) -> Result<RebindTransition, WindowOverlayRuntimeError> {
         self.validate_rebind(lease, &registration)?;
 
-        let old_phase = self.entries[&registration.id].lifecycle.phase();
+        let root_id = registration.id.clone();
+        let old_phase = self.entries[&root_id].lifecycle.phase();
         let ownership_changed = self.entries[&registration.id].ownership != registration.ownership;
         let mut next_lifecycle = self.entries[&registration.id].lifecycle.clone();
         if ownership_changed {
@@ -215,13 +238,90 @@ impl WindowOverlayRuntimeState {
         } else {
             next_lifecycle.rebind_presence(registration.policy.presence());
         }
+
+        let mut affected = self
+            .registration_order
+            .iter()
+            .filter(|candidate| self.is_descendant_or_same(&root_id, candidate))
+            .cloned()
+            .collect::<Vec<_>>();
+        affected.sort_by_key(|id| self.layer_depth(id));
+
+        let mut next_presentations = HashMap::with_capacity(affected.len());
+        for id in &affected {
+            let entry = &self.entries[id];
+            let local = if id == &root_id {
+                registration.presentation
+            } else {
+                entry.local_presentation
+            };
+            let inherited = entry.parent.as_ref().and_then(|parent| {
+                next_presentations
+                    .get(parent)
+                    .copied()
+                    .or_else(|| self.entries.get(parent).map(|entry| entry.presentation))
+            });
+            next_presentations.insert(
+                id.clone(),
+                inherited.map(|parent| local.max(parent)).unwrap_or(local),
+            );
+        }
+
+        let root_presentation_suppressed = self.entries[&root_id].presentation.is_interactive()
+            && !next_presentations[&root_id].is_interactive();
+        if root_presentation_suppressed {
+            next_lifecycle.discard_pending_for_suppression();
+        }
         let next_phase = next_lifecycle.phase();
-        let mouse_authority_changed = {
-            let entry = &self.entries[&registration.id];
-            MouseAuthorityProfile::from_policy(&entry.policy, old_phase)
-                != MouseAuthorityProfile::from_policy(&registration.policy, next_phase)
-        };
-        let focus_transition = self.lifecycle_transition(&registration.id, old_phase, next_phase);
+
+        let mut focus_transitions = Vec::new();
+        let mut mouse_authority_changed = false;
+        for id in &affected {
+            let entry = &self.entries[id];
+            let old_entry_phase = entry.lifecycle.phase();
+            let presentation_suppressed =
+                entry.presentation.is_interactive() && !next_presentations[id].is_interactive();
+            let next_entry_phase = if id == &root_id {
+                next_phase
+            } else if presentation_suppressed
+                && old_entry_phase == OverlayLayerPhase::CloseRequested
+            {
+                OverlayLayerPhase::Open
+            } else {
+                old_entry_phase
+            };
+            let next_presentation = next_presentations[id];
+            let transition = self.lifecycle_presentation_transition(
+                id,
+                old_entry_phase,
+                next_entry_phase,
+                entry.presentation,
+                next_presentation,
+            );
+            if !matches!(transition, FocusTransition::None) {
+                focus_transitions.push(PlannedFocusTransition {
+                    layer_id: id.clone(),
+                    transition,
+                    depth: self.layer_depth(id),
+                });
+            }
+
+            let next_policy = if id == &root_id {
+                &registration.policy
+            } else {
+                &entry.policy
+            };
+            mouse_authority_changed |= MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                old_entry_phase,
+                entry.presentation,
+            ) != MouseAuthorityProfile::from_policy(
+                next_policy,
+                next_entry_phase,
+                next_presentation,
+            );
+        }
+
         let entry = self
             .entries
             .get_mut(&registration.id)
@@ -243,6 +343,7 @@ impl WindowOverlayRuntimeState {
         entry.uncontrolled_commit = registration.uncontrolled_commit;
         entry.registration_revision = entry.registration_revision.wrapping_add(1);
         entry.lifecycle = next_lifecycle;
+        entry.local_presentation = registration.presentation;
         if next_phase == OverlayLayerPhase::Open {
             entry.forced_by_ancestor = false;
         }
@@ -250,15 +351,50 @@ impl WindowOverlayRuntimeState {
             entry.focus_entered = false;
             entry.pending_unregister = false;
         }
-        entry.focus_active = matches!(&focus_transition, FocusTransition::Activate(_))
-            || (entry.focus_active
-                && !matches!(&focus_transition, FocusTransition::Deactivate { .. }));
+        for id in &affected {
+            let entry = self
+                .entries
+                .get_mut(id)
+                .expect("presentation descendants were collected from registered layers");
+            let next_presentation = next_presentations[id];
+            if entry.presentation.is_interactive() && !next_presentation.is_interactive() {
+                entry.lifecycle.discard_pending_for_suppression();
+            }
+            entry.presentation = next_presentation;
+        }
+        for planned in &focus_transitions {
+            let entry = self
+                .entries
+                .get_mut(&planned.layer_id)
+                .expect("focus transition layer remains registered during rebind");
+            match &planned.transition {
+                FocusTransition::Activate(_) | FocusTransition::Resume(_) => {
+                    entry.focus_active = true;
+                }
+                FocusTransition::Deactivate { .. } => entry.focus_active = false,
+                FocusTransition::None => {}
+            }
+        }
+        focus_transitions.sort_by(|left, right| {
+            let left_deactivates = matches!(left.transition, FocusTransition::Deactivate { .. });
+            let right_deactivates = matches!(right.transition, FocusTransition::Deactivate { .. });
+            left_deactivates
+                .cmp(&right_deactivates)
+                .reverse()
+                .then_with(|| {
+                    if left_deactivates {
+                        right.depth.cmp(&left.depth)
+                    } else {
+                        left.depth.cmp(&right.depth)
+                    }
+                })
+        });
         self.sync_stack(&registration.id, old_phase, next_phase, reopened);
         if mouse_authority_changed {
             self.bump_mouse_authority();
         }
         Ok(RebindTransition {
-            focus_transition,
+            focus_transitions,
             generation: self.entries[&registration.id].generation,
         })
     }
@@ -464,8 +600,8 @@ impl WindowOverlayRuntimeState {
         let focus_transition = self.lifecycle_transition(id, old_phase, next_phase);
         let mouse_authority_changed = {
             let entry = &self.entries[id];
-            MouseAuthorityProfile::from_policy(&entry.policy, old_phase)
-                != MouseAuthorityProfile::from_policy(&entry.policy, next_phase)
+            MouseAuthorityProfile::from_policy(&entry.policy, old_phase, entry.presentation)
+                != MouseAuthorityProfile::from_policy(&entry.policy, next_phase, entry.presentation)
         };
         let entry = self
             .entries
@@ -557,8 +693,13 @@ impl WindowOverlayRuntimeState {
         let intent_already_pending = entry.lifecycle.pending_open() == Some(false);
         let old_phase = entry.lifecycle.phase();
         let existing_pending = entry.lifecycle.pending();
-        let mouse_authority_changed = MouseAuthorityProfile::from_policy(&entry.policy, old_phase)
-            != MouseAuthorityProfile::from_policy(&entry.policy, next_phase);
+        let mouse_authority_changed =
+            MouseAuthorityProfile::from_policy(&entry.policy, old_phase, entry.presentation)
+                != MouseAuthorityProfile::from_policy(
+                    &entry.policy,
+                    next_phase,
+                    entry.presentation,
+                );
         let mut focus_transition = self.lifecycle_transition(id, old_phase, next_phase);
         if !allow_restore && let FocusTransition::Deactivate { restore, .. } = &mut focus_transition
         {
@@ -645,8 +786,15 @@ impl WindowOverlayRuntimeState {
         self.finalize_forced_descendants(&lease.layer_id)?;
         let mouse_authority_changed = {
             let entry = &self.entries[&lease.layer_id];
-            MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Closing)
-                != MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Hidden)
+            MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                OverlayLayerPhase::Closing,
+                entry.presentation,
+            ) != MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                OverlayLayerPhase::Hidden,
+                entry.presentation,
+            )
         };
         let entry = self
             .entries
@@ -826,9 +974,15 @@ impl WindowOverlayRuntimeState {
             if entry.pending_unregister {
                 return FocusTransition::None;
             }
-            let mouse_authority_changed =
-                MouseAuthorityProfile::from_policy(&entry.policy, entry.lifecycle.phase())
-                    != MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Hidden);
+            let mouse_authority_changed = MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                entry.lifecycle.phase(),
+                entry.presentation,
+            ) != MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                OverlayLayerPhase::Hidden,
+                entry.presentation,
+            );
             let transition = if entry.focus_active {
                 let restore = allow_restore && entry.should_restore_focus();
                 entry.focus_active = false;
@@ -911,9 +1065,12 @@ impl WindowOverlayRuntimeState {
             .get(id)
             .filter(|entry| entry.lease_token == lease_token)
         {
-            let mouse_authority_changed =
-                MouseAuthorityProfile::from_policy(&entry.policy, entry.lifecycle.phase())
-                    .affects_routing();
+            let mouse_authority_changed = MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                entry.lifecycle.phase(),
+                entry.presentation,
+            )
+            .affects_routing();
             self.entries.remove(id);
             self.registration_order.retain(|candidate| candidate != id);
             self.stack.retain(|candidate| candidate != id);
@@ -1017,7 +1174,7 @@ impl WindowOverlayRuntimeState {
                 .ok_or_else(|| WindowOverlayRuntimeError::MissingParent(parent_id.clone()))?;
             let compatible = match child_phase {
                 OverlayLayerPhase::Open | OverlayLayerPhase::CloseRequested => {
-                    entry.keyboard_eligible()
+                    entry.lifecycle.committed_open()
                 }
                 OverlayLayerPhase::Closing => entry.lifecycle.presence().present(),
                 OverlayLayerPhase::Hidden => true,
@@ -1117,8 +1274,15 @@ impl WindowOverlayRuntimeState {
         });
         let mouse_authority_changed = descendants.iter().any(|descendant| {
             let entry = &self.entries[descendant];
-            MouseAuthorityProfile::from_policy(&entry.policy, entry.lifecycle.phase())
-                != MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Hidden)
+            MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                entry.lifecycle.phase(),
+                entry.presentation,
+            ) != MouseAuthorityProfile::from_policy(
+                &entry.policy,
+                OverlayLayerPhase::Hidden,
+                entry.presentation,
+            )
         });
         for descendant in descendants {
             let entry = self

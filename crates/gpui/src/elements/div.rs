@@ -24,7 +24,7 @@ use crate::{
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
     ParentElement, Pixels, Point, PointerCancelEvent, PointerCaptureHandle, Render,
     ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, TargetedEvent, Task,
-    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
+    TooltipId, Window, WindowControlArea, point, px, size,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
@@ -437,7 +437,7 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse drag event of the given type. Note that this
+    /// Bind the given callback to the window-local mouse drag event of the given type. Note that this
     /// will be called for all move events, inside or outside of this element, as long as the
     /// drag was started with this element under the mouse. Useful for implementing draggable
     /// UIs that don't conform to a drag and drop style interaction, like resizing.
@@ -454,6 +454,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Capture
                     && let Some(drag) = &cx.active_drag
+                    && drag.window_id == window.window_handle().window_id()
                     && drag.value.as_ref().type_id() == TypeId::of::<T>()
                 {
                     (listener)(
@@ -637,7 +638,8 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to drop events of the given type, whether or not the drag started on this element.
+    /// Bind the given callback to window-local drop events of the given type, whether or not the
+    /// drag started on this element.
     /// The imperative API equivalent to [`InteractiveElement::on_drop`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -737,7 +739,7 @@ impl Interactivity {
             self.hover_listener.is_none(),
             "calling on_hover more than once on the same element is not supported"
         );
-        self.hover_listener = Some(Box::new(listener));
+        self.hover_listener = Some(Rc::new(listener));
     }
 
     /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
@@ -1283,7 +1285,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to drop events of the given type, whether or not the drag started on this element.
+    /// Bind the given callback to window-local drop events of the given type, whether or not the
+    /// drag started on this element.
     /// The fluent API equivalent to [`Interactivity::on_drop`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -1389,6 +1392,9 @@ pub trait InteractiveElement: Sized {
 
 /// A trait for elements that want to use the standard GPUI interactivity features
 /// that require state.
+///
+/// Implementors must return a stable [`ElementId`] whenever a stateful method is used. Built-in
+/// elements normally enforce this by exposing these methods only after [`InteractiveElement::id`].
 pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the accessible role for this element.
     ///
@@ -1498,9 +1504,12 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    /// Exclude this element and its descendants from the delivered accessibility tree.
-    fn aria_hidden(mut self, hidden: bool) -> Self {
-        self.interactivity().accessibility.hidden = Some(hidden);
+    /// Omits only this element's semantic node while leaving descendant projection unchanged.
+    ///
+    /// Use [`crate::SubtreePresentation::Inert`] when an entire subtree must be excluded from
+    /// accessibility together with its interactive channels.
+    fn omit_accessibility_node(mut self, omitted: bool) -> Self {
+        self.interactivity().accessibility.omit_node = omitted;
         self
     }
 
@@ -1726,6 +1735,9 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// and the source element bounds.
     /// The fluent API equivalent to [`Interactivity::on_drag`].
     ///
+    /// The drag source must have a stable element ID so GPUI can retain its pointer-capture owner
+    /// across frames. Call [`InteractiveElement::id`] before `on_drag` for built-in elements.
+    ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_drag<T, W>(
         mut self,
@@ -1922,6 +1934,8 @@ pub(crate) type ScrollWheelListener = Box<
 
 pub(crate) type ScrollViewportChangedListener =
     Box<dyn Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static>;
+
+type HoverListener = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
 
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
@@ -2236,16 +2250,15 @@ impl Element for Div {
     }
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
+        if self.interactivity.accessibility.omit_node {
+            return None;
+        }
         // Nodes with `GenericContainer` should never be reported to accesskit.
         // Equivalent to an HTML div with no role.
         self.interactivity
             .accessibility
             .override_role
             .filter(|role| *role != accesskit::Role::GenericContainer)
-    }
-
-    fn a11y_hidden(&self) -> bool {
-        self.interactivity.accessibility.hidden == Some(true)
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -2447,6 +2460,7 @@ pub struct Interactivity {
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_pointer_capture_handle: Option<PointerCaptureHandle>,
+    pub(crate) drag_pointer_capture_handle: Option<PointerCaptureHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) retained_resources: Vec<Rc<dyn Any>>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
@@ -2483,7 +2497,7 @@ pub struct Interactivity {
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) aux_click_listeners: Vec<ClickListener>,
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
-    pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
+    pub(crate) hover_listener: Option<HoverListener>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
@@ -2511,6 +2525,10 @@ impl Interactivity {
         cx: &mut App,
         f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
+        assert!(
+            self.drag_listener.is_none() || global_id.is_some(),
+            "StatefulInteractiveElement::on_drag requires a stable element ID; call .id(...) before .on_drag(...)"
+        );
         #[cfg(any(feature = "inspector", debug_assertions))]
         window.with_inspector_state(
             _inspector_id,
@@ -2534,6 +2552,23 @@ impl Interactivity {
             |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
+
+                if !window.subtree_presentation().is_interactive()
+                    && let Some(element_state) = element_state.as_mut()
+                {
+                    clear_suppressed_interaction_state(
+                        element_state,
+                        self.hover_listener.as_ref(),
+                        window,
+                        cx,
+                    );
+                }
+                if !window.subtree_presentation().is_interactive()
+                    && !self.scroll_viewport_changed_listeners.is_empty()
+                    && let Some(scroll_handle) = self.tracked_scroll_handle.as_ref()
+                {
+                    scroll_handle.discard_next_viewport_event();
+                }
 
                 if let Some(element_state) = element_state.as_ref()
                     && cx.has_active_drag()
@@ -2565,6 +2600,18 @@ impl Interactivity {
                     }
 
                     self.tracked_focus_handle = Some(handle);
+                }
+
+                self.drag_pointer_capture_handle = self.tracked_pointer_capture_handle;
+                if self.drag_pointer_capture_handle.is_none()
+                    && self.drag_listener.is_some()
+                    && let Some(element_state) = element_state.as_mut()
+                {
+                    self.drag_pointer_capture_handle = Some(
+                        *element_state
+                            .drag_pointer_capture_handle
+                            .get_or_insert_with(|| window.new_pointer_capture_handle()),
+                    );
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
@@ -2642,9 +2689,6 @@ impl Interactivity {
                 if let Some(global_id) = global_id {
                     let node_id = global_id.accesskit_node_id();
                     window.a11y.record_focus_id(node_id, focus_handle.id);
-                    if focus_handle.is_focused(window) && window.a11y.nodes.has_node(node_id) {
-                        window.a11y.nodes.set_focus(node_id);
-                    }
                 }
             }
         }
@@ -2653,6 +2697,15 @@ impl Interactivity {
             |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
+                let interactive = window.subtree_presentation().is_interactive();
+                if !interactive && let Some(element_state) = element_state.as_mut() {
+                    clear_suppressed_interaction_state(
+                        element_state,
+                        self.hover_listener.as_ref(),
+                        window,
+                        cx,
+                    );
+                }
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
 
                 if let Some(element_state) = element_state.as_mut() {
@@ -2665,7 +2718,9 @@ impl Interactivity {
                             .hover_state
                             .get_or_insert_with(Default::default);
                     }
-                    if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
+                    if interactive
+                        && let Some(active_tooltip) = element_state.active_tooltip.as_ref()
+                    {
                         if self.tooltip_builder.is_some() {
                             self.tooltip_id = set_tooltip_on_window(active_tooltip, window);
                         } else {
@@ -2679,11 +2734,12 @@ impl Interactivity {
                     window.with_content_mask(
                         style.overflow_mask(bounds, window.rem_size()),
                         |window| {
-                            let hitbox = if self.should_insert_hitbox(&style, window, cx) {
-                                Some(window.insert_hitbox(bounds, self.hitbox_behavior))
-                            } else {
-                                None
-                            };
+                            let hitbox =
+                                if interactive && self.should_insert_hitbox(&style, window, cx) {
+                                    Some(window.insert_hitbox(bounds, self.hitbox_behavior))
+                                } else {
+                                    None
+                                };
 
                             if self.tooltip_builder.is_some()
                                 && let Some(hitbox) = hitbox.as_ref()
@@ -2695,10 +2751,13 @@ impl Interactivity {
                                     .record(hitbox, window);
                             }
 
-                            if let Some(handle) = self.tracked_pointer_capture_handle.as_ref() {
-                                let hitbox = hitbox
+                            if interactive
+                                && let Some(handle) = self
+                                    .tracked_pointer_capture_handle
                                     .as_ref()
-                                    .expect("pointer capture tracking must create a hitbox");
+                                    .or(self.drag_pointer_capture_handle.as_ref())
+                                && let Some(hitbox) = hitbox.as_ref()
+                            {
                                 window
                                     .bind_pointer_capture(handle, hitbox.id)
                                     .unwrap_or_else(|error| {
@@ -2759,6 +2818,9 @@ impl Interactivity {
         let Some(event) = scroll_handle.take_scroll_viewport_changed_event(content_size) else {
             return;
         };
+        if !window.subtree_presentation().is_interactive() {
+            return;
+        }
 
         for listener in &self.scroll_viewport_changed_listeners {
             listener(&event, window, cx);
@@ -2860,15 +2922,13 @@ impl Interactivity {
 
                 self.paint_hover_group_handler(window, cx);
 
-                if style.visibility == Visibility::Hidden {
-                    return ((), element_state);
-                }
-
                 let mut tab_group = None;
                 if self.tab_group {
                     tab_group = self.tab_index;
                 }
-                if let Some(focus_handle) = &self.tracked_focus_handle {
+                if window.subtree_presentation().is_interactive()
+                    && let Some(focus_handle) = &self.tracked_focus_handle
+                {
                     window
                         .next_frame
                         .tab_stops
@@ -3221,6 +3281,7 @@ impl Interactivity {
         }
 
         let drag_cursor_style = self.base_style.as_ref().mouse_cursor;
+        let drag_pointer_capture_handle = self.drag_pointer_capture_handle;
 
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
@@ -3235,21 +3296,29 @@ impl Interactivity {
                     if let Some(drag) = &cx.active_drag
                         && phase == DispatchPhase::Bubble
                         && hitbox.is_hovered(window)
+                        && drag.window_id == window.window_handle().window_id()
                     {
                         let drag_state_type = drag.value.as_ref().type_id();
-                        for (drop_state_type, listener) in &drop_listeners {
-                            if *drop_state_type == drag_state_type {
-                                let drag = cx
-                                    .active_drag
-                                    .take()
-                                    .expect("checked for type drag state type above");
+                        if drop_listeners
+                            .iter()
+                            .any(|(drop_state_type, _)| *drop_state_type == drag_state_type)
+                        {
+                            let drag = cx
+                                .active_drag
+                                .take()
+                                .expect("checked for a matching active drag above");
 
-                                let mut can_drop = true;
-                                if let Some(predicate) = &can_drop_predicate {
-                                    can_drop = predicate(drag.value.as_ref(), window, cx);
-                                }
+                            let mut can_drop = true;
+                            if let Some(predicate) = &can_drop_predicate {
+                                can_drop = predicate(drag.value.as_ref(), window, cx);
+                            }
 
-                                if can_drop {
+                            if can_drop {
+                                for (_, listener) in
+                                    drop_listeners.iter().filter(|(drop_state_type, _)| {
+                                        *drop_state_type == drag_state_type
+                                    })
+                                {
                                     listener(
                                         Arc::clone(&drag.value),
                                         &TargetedEvent::new(event, &hitbox),
@@ -3311,12 +3380,25 @@ impl Interactivity {
                             && let Some((drag_value, drag_listener)) = drag_listener.take()
                             && mouse_down.button == MouseButton::Left
                         {
+                            let Some(drag_pointer_capture_handle) = drag_pointer_capture_handle
+                            else {
+                                pending_mouse_down.take();
+                                return;
+                            };
+                            if window
+                                .capture_pointer(&drag_pointer_capture_handle, mouse_down.button)
+                                .is_err()
+                            {
+                                pending_mouse_down.take();
+                                return;
+                            }
                             *clicked_state.borrow_mut() = ElementClickedState::default();
                             let geometry = DragStartGeometry::new(event.position, hitbox.clone());
                             let window_preview_offset = geometry.window_preview_offset();
                             let drag = (drag_listener)(drag_value.as_ref(), &geometry, window, cx);
                             cx.active_drag = Some(AnyDrag {
                                 window_id: window.window_handle().window_id(),
+                                source: Some(drag_pointer_capture_handle),
                                 view: drag,
                                 value: drag_value,
                                 window_preview_offset,
@@ -3719,8 +3801,9 @@ impl Interactivity {
     ) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
+        let interactive = window.subtree_presentation().is_interactive();
 
-        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+        if interactive && let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             if let Some(in_focus_style) = self.in_focus_style.as_ref()
                 && focus_handle.within_focused(window, cx)
             {
@@ -3741,7 +3824,7 @@ impl Interactivity {
             }
         }
 
-        if !cx.has_active_drag() {
+        if interactive && !cx.has_active_drag() {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 let is_group_hovered =
                     if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
@@ -3781,7 +3864,16 @@ impl Interactivity {
         }
 
         if let Some(hitbox) = hitbox {
-            if let Some(drag) = cx.active_drag.take() {
+            let window_id = window.window_handle().window_id();
+            if cx
+                .active_drag
+                .as_ref()
+                .is_some_and(|drag| drag.window_id == window_id)
+            {
+                let drag = cx
+                    .active_drag
+                    .take()
+                    .expect("checked for a window-local active drag above");
                 let mut can_drop = true;
                 if let Some(can_drop_predicate) = &self.can_drop_predicate {
                     can_drop = can_drop_predicate(drag.value.as_ref(), window, cx);
@@ -3857,6 +3949,37 @@ pub struct InteractiveElementState {
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
     pub(crate) committed_tooltip_hitbox: Option<CommittedHitbox>,
+    pub(crate) drag_pointer_capture_handle: Option<PointerCaptureHandle>,
+}
+
+fn clear_suppressed_interaction_state(
+    state: &mut InteractiveElementState,
+    hover_listener: Option<&HoverListener>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if let Some(clicked) = state.clicked_state.as_ref() {
+        *clicked.borrow_mut() = ElementClickedState::default();
+    }
+    if let Some(hovered) = state.hover_state.as_ref() {
+        *hovered.borrow_mut() = ElementHoverState::default();
+    }
+    if let Some(hovered) = state.hover_listener_state.as_ref() {
+        let was_hovered = mem::take(&mut *hovered.borrow_mut());
+        if was_hovered && let Some(hover_listener) = hover_listener {
+            let hover_listener = hover_listener.clone();
+            window.defer(cx, move |window, cx| {
+                hover_listener(&false, window, cx);
+            });
+        }
+    }
+    if let Some(pending) = state.pending_mouse_down.as_ref() {
+        pending.borrow_mut().take();
+    }
+    if let Some(active_tooltip) = state.active_tooltip.as_ref() {
+        clear_active_tooltip(active_tooltip, window);
+    }
+    state.committed_tooltip_hitbox.take();
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.
@@ -4322,10 +4445,6 @@ where
         self.element.a11y_role()
     }
 
-    fn a11y_hidden(&self) -> bool {
-        self.element.a11y_hidden()
-    }
-
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
         self.element.write_a11y_info(node);
     }
@@ -4438,6 +4557,7 @@ struct ScrollHandleState {
     last_committed_viewport: Option<ScrollViewportStateSnapshot>,
     last_committed_viewport_snapshot: Option<ScrollViewportSnapshot>,
     pending_viewport_change_source: Option<ScrollViewportChangeSource>,
+    discard_next_viewport_event: bool,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
     active_item: Option<ScrollActiveItem>,
@@ -4673,6 +4793,10 @@ impl ScrollHandle {
         self.0.borrow_mut().pending_viewport_change_source = Some(source);
     }
 
+    fn discard_next_viewport_event(&self) {
+        self.0.borrow_mut().discard_next_viewport_event = true;
+    }
+
     fn take_scroll_viewport_changed_event(
         &self,
         content_size: Size<Pixels>,
@@ -4685,6 +4809,7 @@ impl ScrollHandle {
             max_offset: state.max_offset,
             content_size,
         };
+        let discard = mem::take(&mut state.discard_next_viewport_event);
         if state.last_committed_viewport == Some(viewport) {
             state.pending_viewport_change_source = None;
             return None;
@@ -4710,7 +4835,7 @@ impl ScrollHandle {
         };
         state.last_committed_viewport_snapshot = Some(snapshot);
 
-        Some(ScrollViewportChangedEvent { snapshot })
+        (!discard).then_some(ScrollViewportChangedEvent { snapshot })
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
@@ -4964,9 +5089,9 @@ mod tests {
             first.focus(window, cx);
             assert!(window.focus_claim_revision() > first_claim);
 
-            window.blur();
+            window.blur(cx);
             let first_blur = window.focus_claim_revision();
-            window.blur();
+            window.blur(cx);
             assert!(window.focus_claim_revision() > first_blur);
         });
     }

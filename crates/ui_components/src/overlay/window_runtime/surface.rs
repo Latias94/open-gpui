@@ -133,7 +133,7 @@ impl WindowOverlayRuntime {
             registration.parent = Some(parent);
         }
         if let Some(binding) = binding {
-            let generation = self.rebind_layer(binding, registration, window, cx)?;
+            let generation = self.rebind_component_layer(binding, registration, window, cx)?;
             binding.sync_opening_theme(generation, presence, || resolve_opening_theme(window, cx));
             self.state.update(cx, |state, _| {
                 state.record_component_bind(&binding.lease, frame_revision)

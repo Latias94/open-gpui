@@ -20,9 +20,9 @@ impl WindowOverlayRuntime {
 
     /// Registers a new stable layer and returns its ownership binding.
     ///
-    /// This is the low-level manual-lifetime API. Retain the binding and either call
-    /// [`Self::bind_layer_to_entity_release`] or explicitly unregister it. Component code should
-    /// normally use [`Self::register_layer_for_entity`].
+    /// This is an explicit window-root boundary: its presentation does not inherit an element
+    /// traversal. Retain the binding and either call [`Self::bind_layer_to_entity_release`] or
+    /// explicitly unregister it.
     pub fn register_layer(
         &self,
         registration: OverlayLayerRegistration,
@@ -30,7 +30,13 @@ impl WindowOverlayRuntime {
         cx: &mut App,
     ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
         let trigger_focus = cx.focus_handle();
-        self.register_layer_with_focus_handles(registration, trigger_focus, window, cx)
+        self.register_layer_with_focus_handles(
+            registration,
+            trigger_focus,
+            SubtreePresentation::Visible,
+            window,
+            cx,
+        )
     }
 
     pub(crate) fn register_layer_with_trigger_focus(
@@ -40,17 +46,25 @@ impl WindowOverlayRuntime {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
-        self.register_layer_with_focus_handles(registration, trigger_focus, window, cx)
+        self.register_layer_with_focus_handles(
+            registration,
+            trigger_focus,
+            window.subtree_presentation(),
+            window,
+            cx,
+        )
     }
 
     fn register_layer_with_focus_handles(
         &self,
-        registration: OverlayLayerRegistration,
+        mut registration: OverlayLayerRegistration,
         trigger_focus: FocusHandle,
+        presentation: SubtreePresentation,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
         self.ensure_window(window)?;
+        registration.presentation = presentation;
         validate_registration(&registration)?;
         let surface_focus = cx.focus_handle();
         let (lease, focus_config, activate) = self.state.update(cx, |state, _| {
@@ -87,14 +101,21 @@ impl WindowOverlayRuntime {
     }
 
     /// Atomically registers a layer and binds its cleanup to an owner entity.
-    pub fn register_layer_for_entity<T: 'static>(
+    pub(crate) fn register_layer_for_entity<T: 'static>(
         &self,
         registration: OverlayLayerRegistration,
         owner: &Entity<T>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
-        let binding = self.register_layer(registration, window, cx)?;
+        let trigger_focus = cx.focus_handle();
+        let binding = self.register_layer_with_focus_handles(
+            registration,
+            trigger_focus,
+            window.subtree_presentation(),
+            window,
+            cx,
+        )?;
         if let Err(error) = self.bind_layer_to_entity_release(&binding, owner, window, cx) {
             let _ = self.unregister_layer(&binding, window, cx);
             return Err(error);
@@ -121,7 +142,8 @@ impl WindowOverlayRuntime {
 
     /// Rebinds an existing layer with its latest policy, ownership, and callbacks.
     ///
-    /// Stable parent identity and focus mode cannot change for the retained lease.
+    /// This is an explicit window-root boundary. Stable parent identity and focus mode cannot
+    /// change for the retained lease.
     pub fn rebind_layer(
         &self,
         binding: &OverlayLayerBinding,
@@ -129,7 +151,41 @@ impl WindowOverlayRuntime {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<OverlayLayerGeneration, WindowOverlayRuntimeError> {
+        self.rebind_layer_with_presentation(
+            binding,
+            registration,
+            SubtreePresentation::Visible,
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn rebind_component_layer(
+        &self,
+        binding: &OverlayLayerBinding,
+        registration: OverlayLayerRegistration,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<OverlayLayerGeneration, WindowOverlayRuntimeError> {
+        self.rebind_layer_with_presentation(
+            binding,
+            registration,
+            window.subtree_presentation(),
+            window,
+            cx,
+        )
+    }
+
+    fn rebind_layer_with_presentation(
+        &self,
+        binding: &OverlayLayerBinding,
+        mut registration: OverlayLayerRegistration,
+        presentation: SubtreePresentation,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<OverlayLayerGeneration, WindowOverlayRuntimeError> {
         self.ensure_binding(binding, window)?;
+        registration.presentation = presentation;
         if registration.id != binding.lease.layer_id {
             return Err(WindowOverlayRuntimeError::ForeignLease(registration.id));
         }
@@ -148,7 +204,9 @@ impl WindowOverlayRuntime {
         for dispatch in &plan.descendant_dispatches {
             self.apply_focus_transition(dispatch.focus_transition.clone(), window, cx)?;
         }
-        self.apply_focus_transition(plan.root_transition.clone(), window, cx)?;
+        for transition in plan.focus_transitions {
+            self.apply_focus_transition(transition, window, cx)?;
+        }
         self.run_open_change_dispatches(plan.descendant_dispatches, window, cx, |_, _| {});
         Ok(plan.generation)
     }

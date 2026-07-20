@@ -90,7 +90,7 @@ impl DockHost {
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime().clone();
         let release_request = self.viewport_drop_route_request_from_release(release, window, cx);
-        let result = runtime.commit_payload_drop_from_screen(&release_request, cx);
+        let result = runtime.commit_payload_drop_from_window(&release_request, window, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
 

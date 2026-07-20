@@ -8,6 +8,7 @@ use super::DrawPhase;
 
 struct WindowInvalidatorInner {
     dirty: bool,
+    focus_only_dirty: bool,
     draw_phase: DrawPhase,
     dirty_views: FxHashSet<EntityId>,
     update_count: usize,
@@ -23,6 +24,7 @@ impl WindowInvalidator {
         WindowInvalidator {
             inner: Rc::new(RefCell::new(WindowInvalidatorInner {
                 dirty: true,
+                focus_only_dirty: false,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
@@ -36,9 +38,15 @@ impl WindowInvalidator {
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             inner.dirty = true;
+            inner.focus_only_dirty = false;
             cx.push_effect(Effect::Notify { emitter: entity });
             true
         } else {
+            if inner.draw_phase == DrawPhase::Focus {
+                inner.dirty = true;
+                inner.focus_only_dirty = false;
+                cx.push_effect(Effect::Notify { emitter: entity });
+            }
             false
         }
     }
@@ -50,9 +58,40 @@ impl WindowInvalidator {
     pub fn set_dirty(&self, dirty: bool) {
         let mut inner = self.inner.borrow_mut();
         inner.dirty = dirty;
+        inner.focus_only_dirty = false;
         if dirty {
             inner.update_count += 1;
         }
+    }
+
+    pub fn set_focus_only_dirty(&self) {
+        let mut inner = self.inner.borrow_mut();
+        if !inner.dirty {
+            inner.dirty = true;
+            inner.focus_only_dirty = inner.dirty_views.is_empty();
+        } else if !inner.dirty_views.is_empty() {
+            inner.focus_only_dirty = false;
+        }
+        inner.update_count += 1;
+    }
+
+    pub fn clear_focus_only_dirty(&self) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if !inner.focus_only_dirty {
+            return false;
+        }
+        if !inner.dirty_views.is_empty() {
+            inner.focus_only_dirty = false;
+            return false;
+        }
+        inner.dirty = false;
+        inner.focus_only_dirty = false;
+        true
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_focus_only_dirty(&self) -> bool {
+        self.inner.borrow().focus_only_dirty
     }
 
     pub fn set_phase(&self, phase: DrawPhase) {
@@ -71,8 +110,15 @@ impl WindowInvalidator {
         self.inner.borrow_mut().dirty_views = views;
     }
 
-    pub fn not_drawing(&self) -> bool {
-        self.inner.borrow().draw_phase == DrawPhase::None
+    pub fn can_schedule_refresh(&self) -> bool {
+        matches!(
+            self.inner.borrow().draw_phase,
+            DrawPhase::None | DrawPhase::Focus
+        )
+    }
+
+    pub fn is_focus_phase(&self) -> bool {
+        self.inner.borrow().draw_phase == DrawPhase::Focus
     }
 
     #[track_caller]

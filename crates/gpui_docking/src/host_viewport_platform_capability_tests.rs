@@ -226,7 +226,9 @@ mod runtime_suite {
     }
 
     #[open_gpui::test]
-    fn viewport_runtime_drag_restores_original_no_input_source_state(cx: &mut TestAppContext) {
+    fn viewport_runtime_drag_tracks_source_without_mutating_no_input_state(
+        cx: &mut TestAppContext,
+    ) {
         let source = DockSpaceId::from("source");
         let mut graph = DockGraph::new();
         let source_tabs = graph.insert_node(DockNode::Tabs {
@@ -254,23 +256,15 @@ mod runtime_suite {
         let payload =
             DockDragPayload::new_item(source, source_tabs, item("drag"), "Drag".to_string());
 
-        let begin = runtime.begin_payload_drag_with_pointer_sync_and_focus(&payload, None);
+        let session = runtime.begin_payload_drag_with_focus(&payload, None);
         assert_eq!(
-            begin
-                .pointer_input_sync
-                .map(|request| request.requested_accepts_pointer_input()),
-            None,
-            "an already no-input source window should not be re-requested as click-through"
+            runtime.active_payload_drag_source_window_id(&payload),
+            Some(window.window_id()),
+            "the immutable source window should remain available for cross-window routing"
         );
 
-        let finish_update = runtime.finish_payload_drag_with_pointer_sync(&begin.session);
-        assert_eq!(
-            finish_update
-                .pointer_input_sync()
-                .map(|request| (request.window(), request.requested_accepts_pointer_input())),
-            Some((window, false)),
-            "drag finish should restore the source window's original no-input state"
-        );
+        assert!(runtime.finish_payload_drag(&session).changed());
+        assert_eq!(runtime.active_payload_drag_source_window_id(&payload), None);
     }
 
     #[open_gpui::test]
@@ -806,9 +800,7 @@ mod handle_suite {
     use crate::host_viewport_runtime_test_support::*;
 
     #[open_gpui::test]
-    fn viewport_pointer_input_sync_request_does_not_change_route_facts_until_observed(
-        cx: &mut TestAppContext,
-    ) {
+    fn payload_drag_preserves_route_facts_and_source_window_input(cx: &mut TestAppContext) {
         let source = DockSpaceId::from("source");
         let source_tabs = DockNodeId::null();
         let mut workspace = DockWorkspace::new(source.clone(), DockGraph::new());
@@ -845,28 +837,23 @@ mod handle_suite {
         ));
         assert_eq!(runtime.viewport_route_unavailable_reason(&source), None);
 
-        let begin = runtime
+        let session = runtime
             .borrow_mut()
-            .begin_payload_drag_with_pointer_sync_and_focus(&payload, None);
+            .begin_payload_drag_with_focus(&payload, None);
 
-        assert_eq!(
-            begin
-                .pointer_input_sync
-                .map(|request| (request.window(), request.requested_accepts_pointer_input())),
-            Some((opened.window(), false)),
-            "drag begin should request source-window click-through without treating the request as observed state"
+        assert!(
+            opened
+                .window()
+                .update(cx, |_, window, _| window.accepts_pointer_input())
+                .expect("source viewport should remain live"),
+            "payload drag must not turn a normal content window into a click-through window"
         );
         assert_eq!(
             runtime.viewport_route_unavailable_reason(&source),
             None,
             "route facts should remain routable until a refreshed window fact observes native no-input"
         );
-        assert!(
-            runtime
-                .borrow_mut()
-                .finish_payload_drag(&begin.session)
-                .changed()
-        );
+        assert!(runtime.borrow_mut().finish_payload_drag(&session).changed());
     }
 
     #[open_gpui::test]

@@ -4,10 +4,11 @@
 pub const TITLE: &str = "Presentation";
 /// Page summary.
 pub const SUMMARY: &str =
-    "Committed layout and displayed geometry across one interactive transformed subtree.";
+    "Committed geometry and visible/inert/hidden authority across one transformed subtree.";
 /// Foundation signals rendered by this page.
 pub const SIGNALS: &[&str] = &[
     "SubtreeTransform",
+    "SubtreePresentation",
     "ElementGeometry",
     "MotionProjectionTransformSample",
     "TargetedEvent",

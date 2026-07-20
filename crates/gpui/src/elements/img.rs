@@ -806,8 +806,8 @@ impl From<image::ImageError> for ImageCacheError {
 mod tests {
     use super::*;
     use crate::{
-        AtlasAccessOutcome, AtlasRemoveOutcome, Context, IntoElement, ParentElement as _, Render,
-        TestAppContext, Window, canvas, div, point, px, size,
+        AppContext as _, AtlasAccessOutcome, AtlasRemoveOutcome, Context, Empty, IntoElement,
+        ParentElement as _, Render, TestAppContext, Window, canvas, div, point, px, size,
     };
     use image::{Frame, ImageBuffer, Rgba};
 
@@ -851,6 +851,17 @@ mod tests {
         cx.add_empty_window()
             .draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
                 img(ImageSource::Render(test_image(0))).into_any_element()
+            });
+    }
+
+    #[open_gpui::test]
+    #[should_panic(expected = "StatefulInteractiveElement::on_drag requires a stable element ID")]
+    fn idless_image_drag_source_fails_loudly(cx: &mut TestAppContext) {
+        cx.add_empty_window()
+            .draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+                img(ImageSource::Render(test_image(1)))
+                    .on_drag((), |_, _, _, cx| cx.new(|_| Empty))
+                    .into_any_element()
             });
     }
 

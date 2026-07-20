@@ -1325,10 +1325,11 @@ cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_
 ```
 
 `scan-ui-contract` checks narrow component rows, same-declaration public export facts, the exact docs
-projection, Gallery canonical metadata, test-owned scenario artifacts, and removed
-central-authority residue. It executes every registered exact test coordinate, including the
-final-tree and real AccessKit action scenarios that verify semantic assembly instead of inferring it
-from static claim rows.
+projection, Gallery canonical metadata, test-owned scenario artifacts, removed central-authority
+residue, and retired subtree-presentation entry points across GPUI, macros, components, and Gallery
+production source. It executes every registered exact test coordinate, including the final-tree and
+real AccessKit action scenarios that verify semantic assembly instead of inferring it from static
+claim rows.
 Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.
@@ -1367,6 +1368,47 @@ Native CI remains responsible for each renderer on its owning platform. WGPU, Di
 must compile the shared primitive and run their ABI/conversion tests; capable runners additionally
 run the designated transformed-pixel and clip smoke. A Windows local run cannot replace Metal or
 Linux/native backend evidence.
+
+## Layout-Preserving Subtree Presentation Gate
+
+Changes to `SubtreePresentation`, low-level `Window` registration gates, focus/IME reconciliation,
+pointer cancellation, accessibility membership, deferred/cache journals, overlay presentation, or
+official component presentation behavior must run the focused U13 gate:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo fmt --all -- --check
+cargo nextest run --locked -p open-gpui --lib presentation --no-fail-fast
+cargo nextest run --locked -p open-gpui --lib pointer_session accessibility focus text_input tooltip scroll deferred --no-fail-fast
+cargo nextest run --locked -p open-gpui --test presentation_surface --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components --lib presentation --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components --test semantic_activation --test overlay presentation --no-fail-fast
+cargo nextest run --locked -p open-gpui-docking dock_host_presentation --no-fail-fast
+cargo nextest run --locked -p open-gpui-devtools --features ui-components framework_adapters --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery presentation --no-fail-fast
+cargo run --locked -p xtask -- scan-ui-contract
+cargo run --locked -p xtask -- scan-public-api --check
+cargo run --locked -p xtask -- scan-doc-links
+cargo run --locked -p xtask -- verify-release-docs
+git diff --check
+```
+
+The GPUI runtime tests assert the exact `Visible`/`Inert`/`Hidden` channel matrix, ancestor
+dominance, custom-element fail-closed behavior, same-frame focus/capture/IME and final AccessKit
+cleanup, one terminal pointer cancellation, and no stale replay on restoration. Deferred, cache,
+portal, and nested-transform tests must toggle only the ancestor presentation where possible so a
+child notification cannot hide a stale-journal defect.
+
+The Gallery Presentation flow keeps equivalent content and layout metrics while switching all
+three states at identity and transformed geometry. It exercises real controls, scrolling,
+drag/drop, tooltip/deferred content, overlay intent, AccessKit, and Inspector paths. Static enum
+labels or an outer fixed-size wrapper alone are not layout evidence. `presentation_surface` and
+`scan-ui-contract` reject `Style::visibility` and its generated
+Serde/schema `StyleRefinement::visibility` field, `Visibility::{Visible, Hidden}`,
+`visibility_style_methods!` and its generated `.visible()` / `.invisible()` (`fn visible` /
+`fn invisible`) methods, `a11y_hidden`, `aria_hidden`, and compatibility aliases for the retired
+surface. Review must separately confirm that no second ancestor presentation authority exists
+outside `SubtreePresentation`.
 
 Run the full component and gallery package gates only after broad contract-table, theme, or gallery
 changes:

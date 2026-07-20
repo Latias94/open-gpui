@@ -2608,11 +2608,11 @@ mod handle_suite {
         let session = cx.update(|app| runtime.begin_payload_drag_with_app(&payload, app));
         assert_eq!(session.id(), 1);
         assert!(
-            !opened
+            opened
                 .window()
                 .update(cx, |_, window, _| window.accepts_pointer_input())
                 .expect("drag test window should remain live"),
-            "drag begin should mark the source viewport click-through"
+            "payload drag should preserve source viewport pointer input"
         );
         assert_eq!(
             runtime.viewport_route_unavailable_reason(&source),
@@ -2621,8 +2621,8 @@ mod handle_suite {
         );
         assert_eq!(
             viewport_input_status(&runtime, &source),
-            Some(DockViewportInputStatus::NoInputPassThrough),
-            "drag begin should publish native no-input input state before the next release"
+            Some(DockViewportInputStatus::ReceivesInput),
+            "payload drag should not rewrite the registered viewport input state"
         );
         assert_eq!(
             runtime.active_payload_drag_session(&payload),
@@ -2644,7 +2644,7 @@ mod handle_suite {
                 .window()
                 .update(cx, |_, window, _| window.accepts_pointer_input())
                 .expect("drag test window should remain live"),
-            "drag finish should restore the source viewport pointer input"
+            "drag finish should preserve the source viewport pointer input"
         );
         assert_eq!(
             runtime.viewport_route_unavailable_reason(&source),
@@ -2656,7 +2656,7 @@ mod handle_suite {
     }
 
     #[open_gpui::test]
-    fn viewport_runtime_handle_unregister_source_restores_original_drag_window(
+    fn viewport_runtime_handle_unregister_source_retires_drag_without_input_mutation(
         cx: &mut TestAppContext,
     ) {
         let source = DockSpaceId::from("source");
@@ -2695,11 +2695,11 @@ mod handle_suite {
 
         let session = cx.update(|app| runtime.begin_payload_drag_with_app(&payload, app));
         assert!(
-            !opened
+            opened
                 .window()
                 .update(cx, |_, window, _| window.accepts_pointer_input())
                 .expect("drag source viewport should remain live"),
-            "drag begin should make the original source window click-through"
+            "payload drag should preserve the original source window input state"
         );
 
         assert!(cx.update(|app| {
@@ -2710,7 +2710,7 @@ mod handle_suite {
                 .window()
                 .update(cx, |_, window, _| window.accepts_pointer_input())
                 .expect("drag source viewport should remain live"),
-            "source unregister must restore the original drag window, not the current space mapping"
+            "source unregister must not mutate the retired drag window's input state"
         );
         assert_eq!(runtime.active_payload_drag_session(&payload), None);
         assert!(!cx.update(|app| runtime.finish_payload_drag_with_app(&session, app)));
@@ -3321,6 +3321,7 @@ mod handle_suite {
             })
             .expect("source host should commit the routed render drop");
         assert!(changed, "host render drop should report a graph change");
+        cx.set_platform_hovered_window(None);
         let status = runtime.runtime_status();
         assert_eq!(
             status
@@ -3502,6 +3503,7 @@ mod handle_suite {
                 .is_some(),
             "fresh backend route should publish a preview target for the target viewport to accept"
         );
+        cx.set_platform_hovered_window(None);
 
         cx.read_entity(&controller, |controller, _| {
             let DockNode::Tabs { items, selected } = controller
@@ -3902,6 +3904,9 @@ mod handle_suite {
                 );
                 moved_tabs
             });
+            let target_window_id = visual.target.window().window_id();
+            let hover_runtime = runtime.clone();
+            let hover_target_space = target_space.clone();
 
             visual.drag_source_tab_to_target_inner_edge_with_hover(
                 cx,
@@ -3910,26 +3915,12 @@ mod handle_suite {
                 target_right_tabs,
                 second_zone,
                 &format!("{first_zone:?}: second drag"),
-                |target_host, cx| {
-                    let hovered_target = cx
-                        .read_entity(target_host, |host, _| {
-                            host.interaction().resolved_drop_target().cloned()
-                        })
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "{first_zone:?}: second-stage nested hover should resolve an active target"
-                            )
-                        });
+                |_, _| {
                     assert!(
-                        matches!(
-                            hovered_target.kind,
-                            DockResolvedDropTargetKind::InnerEdge {
-                                target_tabs,
-                                zone,
-                                ..
-                            } if target_tabs == target_right_tabs && zone == second_zone
-                        ),
-                        "{first_zone:?}: second-stage nested hover should stay inside the target leaf and resolve {second_zone:?}, got {hovered_target:?}"
+                        hover_runtime
+                            .routed_drop_preview_for(&hover_target_space, target_window_id)
+                            .is_some(),
+                        "{first_zone:?}: second-stage nested hover should publish an allowed routed preview"
                     );
                 },
             );

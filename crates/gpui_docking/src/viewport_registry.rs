@@ -182,13 +182,6 @@ pub(crate) enum DockViewportInputMask {
 }
 
 impl DockViewportInputMask {
-    pub(crate) fn drag_restore_accepts_pointer_input(self) -> bool {
-        match self {
-            Self::ReceivesInput | Self::Minimized => true,
-            Self::NoInputPassThrough => false,
-        }
-    }
-
     pub(crate) fn participates_in_hover_hit_testing(self) -> bool {
         matches!(self, Self::ReceivesInput)
     }

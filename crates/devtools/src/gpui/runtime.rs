@@ -86,16 +86,11 @@ impl GpuiRuntimeFocusSnapshot {
     /// remain absent instead of being guessed from the currently focused handle.
     pub fn from_window(window_id: u64, window: &Window, cx: &App) -> Self {
         let active = window.is_window_active();
-        let focused = window.focused(cx);
+        let focused = window.committed_focus(cx);
         Self {
             active_window_id: active.then_some(window_id),
             focused_window_id: (active && focused.is_some()).then_some(window_id),
-            focused_element_rendered: Some(
-                active
-                    && focused
-                        .as_ref()
-                        .is_some_and(|handle| window.is_focus_handle_rendered(handle)),
-            ),
+            focused_element_rendered: Some(active && focused.is_some()),
             focus_claim_revision: Some(window.focus_claim_revision()),
             rendered_frame_revision: Some(window.rendered_frame_revision()),
             focus_scope_count: None,

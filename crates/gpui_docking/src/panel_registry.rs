@@ -3,7 +3,7 @@ use crate::{
     DockPanelPlacementTarget,
     panel_view::{DockPanelViewHandle, DockPanelViewStore},
 };
-use open_gpui::{AnyView, App, Window};
+use open_gpui::{AnyView, App, FocusHandle};
 use thiserror::Error;
 
 /// Render-time registration snapshot for one dock panel.
@@ -25,8 +25,8 @@ impl DockPanelRenderRegistration {
         self.view.resolve_view(cx)
     }
 
-    pub(crate) fn request_focus(&self, window: &mut Window, cx: &mut App) -> bool {
-        self.view.request_focus(window, cx)
+    pub(crate) fn focus_handle(&self, cx: &mut App) -> Option<FocusHandle> {
+        self.view.focus_handle(cx)
     }
 }
 

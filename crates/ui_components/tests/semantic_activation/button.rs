@@ -363,3 +363,112 @@ fn pointer_activation_survives_same_gate_owner_rerender(cx: &mut open_gpui::Test
         &[ActivationSource::Pointer]
     );
 }
+
+#[open_gpui::test]
+fn presentation_suppression_unbinds_programmatic_activation_and_clears_armed_input(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct Probe {
+        presentation: SubtreePresentation,
+        handle: ActivationHandle,
+        activations: Rc<RefCell<Vec<ActivationSource>>>,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            Button::new("presentation-activation-button", "Present")
+                .on_activate(move |activation, _, _| {
+                    activations.borrow_mut().push(activation.source())
+                })
+                .activation_handle(&self.handle)
+                .with_subtree_presentation(self.presentation)
+        }
+    }
+
+    let handle = ActivationHandle::new();
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| Probe {
+        presentation: SubtreePresentation::Visible,
+        handle: handle.clone(),
+        activations: activations.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let bounds = cx
+        .debug_bounds("button:presentation-activation-button:root")
+        .expect("visible button should expose its root bounds");
+
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched
+        );
+    });
+    activations.borrow_mut().clear();
+
+    cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::none());
+    view.update(cx, |view, cx| {
+        view.presentation = SubtreePresentation::Inert;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Unavailable
+        );
+    });
+    view.update(cx, |view, cx| {
+        view.presentation = SubtreePresentation::Visible;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.simulate_mouse_up(bounds.center(), MouseButton::Left, Modifiers::none());
+    assert!(
+        activations.borrow().is_empty(),
+        "restoring visibility must not consume a pointer arm from before suppression"
+    );
+
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("visible button should publish accessibility");
+    let node = node_with_label(&update, "Present");
+    assert!(cx.dispatch_accessibility_action(action_request(accesskit::Action::Focus, node,)));
+    let key_down =
+        cx.simulate_event_with_dispatch_snapshot(key_down("enter", Modifiers::none(), false));
+    assert!(key_down.propagation_stopped());
+    view.update(cx, |view, cx| {
+        view.presentation = SubtreePresentation::Hidden;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Unavailable
+        );
+    });
+    view.update(cx, |view, cx| {
+        view.presentation = SubtreePresentation::Visible;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let key_up = cx.simulate_event_with_dispatch_snapshot(key_up("enter", Modifiers::none()));
+    assert!(key_up.propagated());
+    assert!(
+        activations.borrow().is_empty(),
+        "restoring visibility must not consume a key arm from before suppression"
+    );
+
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched
+        );
+    });
+    assert_eq!(
+        activations.borrow().as_slice(),
+        &[ActivationSource::Programmatic]
+    );
+}

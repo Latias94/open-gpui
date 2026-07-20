@@ -8,7 +8,6 @@ use crate::{
 pub use open_gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
-    visibility_style_methods,
 };
 const ELLIPSIS: SharedString = SharedString::new_static("…");
 
@@ -24,7 +23,6 @@ pub trait Styled: Sized {
     fn style(&mut self) -> &mut StyleRefinement;
 
     open_gpui_macros::style_helpers!();
-    open_gpui_macros::visibility_style_methods!();
     open_gpui_macros::margin_style_methods!();
     open_gpui_macros::padding_style_methods!();
     open_gpui_macros::position_style_methods!();

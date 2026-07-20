@@ -51,6 +51,45 @@ fn assert_presentation_tooltip_open(cx: &mut VisualTestContext) {
     assert_eq!(layer.phase(), OverlayLayerPhase::Open);
 }
 
+fn set_presentation_state(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    presentation: SubtreePresentation,
+) {
+    cx.update(|_, app| {
+        shell.update(app, |shell, cx| {
+            shell.set_presentation_state(presentation, cx)
+        })
+    });
+    settle(cx);
+}
+
+fn set_presentation_progress(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    progress: f32,
+) {
+    cx.update(|_, app| {
+        shell.update(app, |shell, cx| {
+            shell.set_presentation_progress(progress, cx)
+        })
+    });
+    settle(cx);
+}
+
+fn presentation_popover_is_open(cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, app| {
+        WindowOverlayRuntime::for_window(window, app)
+            .snapshot(window, app)
+            .is_ok_and(|snapshot| {
+                snapshot.layers().iter().any(|layer| {
+                    layer.id().as_str() == "popover:presentation-popover"
+                        && layer.phase() == OverlayLayerPhase::Open
+                })
+            })
+    })
+}
+
 fn assert_presentation_input_accessibility_selection(cx: &mut VisualTestContext) {
     assert!(cx.activate_accessibility());
     let tree = cx
@@ -108,6 +147,63 @@ fn open_presentation_action_tooltip(shell: &Entity<GalleryShell>, cx: &mut Visua
     assert_presentation_tooltip_open(cx);
 }
 
+#[allow(clippy::too_many_arguments)]
+fn assert_presentation_channels_suppressed(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    action: Bounds<Pixels>,
+    popover: Bounds<Pixels>,
+    scroll_position: open_gpui::Point<Pixels>,
+    drag_source: Bounds<Pixels>,
+    drop_target: Bounds<Pixels>,
+    stale_button: accesskit::NodeId,
+    expected_action_count: usize,
+    expected_scroll: open_gpui::Point<Pixels>,
+    expected_drag_status: &str,
+) {
+    cx.simulate_click(action.center(), Default::default());
+    drag(cx, drag_source.center(), drop_target.center());
+    cx.simulate_click(popover.center(), Default::default());
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: stale_button,
+        data: None,
+    }));
+    // Keep wheel input last because a parent scroll surface may also consume it and move the page.
+    cx.simulate_event(ScrollWheelEvent {
+        position: scroll_position,
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-48.0))),
+        ..Default::default()
+    });
+    settle(cx);
+
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_action_count()),
+        expected_action_count
+    );
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_scroll_handle().offset()),
+        expected_scroll
+    );
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_drag_status().to_owned()),
+        expected_drag_status
+    );
+    assert!(!cx.update(|_, app| app.has_active_drag()));
+    assert!(!presentation_popover_is_open(cx));
+}
+
+fn restore_page_scroll(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    offset: open_gpui::Point<Pixels>,
+) {
+    let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
+    handle.set_offset(offset);
+    redraw(cx);
+}
+
 #[open_gpui::test]
 fn presentation_page_commits_geometry_and_routes_transformed_interactions(
     cx: &mut open_gpui::TestAppContext,
@@ -119,11 +215,14 @@ fn presentation_page_commits_geometry_and_routes_transformed_interactions(
         "gallery:presentation-page",
         "gallery:presentation-stage",
         "gallery:presentation-inner",
+        "gallery:presentation-popover",
         "gallery:presentation-action",
         "gallery:presentation-input",
         "gallery:presentation-scroll",
         "gallery:presentation-drag-source",
         "gallery:presentation-drop-target",
+        "gallery:presentation-flow-sentinel",
+        "gallery:presentation-matrix",
         "gallery:presentation-readout",
     ] {
         assert!(
@@ -216,14 +315,10 @@ fn presentation_page_commits_geometry_and_routes_transformed_interactions(
     let drag_source = bounds(cx, "gallery:presentation-drag-source");
     let drop_target = bounds(cx, "gallery:presentation-drop-target");
     drag(cx, drag_source.center(), drop_target.center());
+    let drag_status = cx.update(|_, app| shell.read(app).presentation_drag_status().to_owned());
     assert!(
-        cx.update(|_, app| {
-            shell
-                .read(app)
-                .presentation_drag_status()
-                .starts_with("Dropped Payload at local")
-        }),
-        "the transformed drop target should receive its target-local drop geometry"
+        drag_status.starts_with("Dropped Payload at local"),
+        "the transformed drop target should receive its target-local drop geometry; status={drag_status:?}"
     );
 
     scroll_page_selector_into_view(&shell, cx, "gallery:presentation-mode:final");
@@ -423,4 +518,268 @@ fn presentation_page_inspector_picks_projected_and_identity_geometry(
         .global_id
         .to_string();
     assert_eq!(projected_id, final_id);
+}
+
+#[open_gpui::test]
+fn presentation_page_three_state_matrix_preserves_layout_and_requires_fresh_intent(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Presentation);
+    cx.simulate_resize(size(px(1800.0), px(1000.0)));
+    settle(cx);
+    assert!(cx.activate_accessibility());
+    scroll_page_selector_into_view(&shell, cx, "gallery:presentation-slot");
+
+    let page_scroll = cx.update(|_, app| shell.read(app).page_scroll_handle().offset());
+    let slot = bounds(cx, "gallery:presentation-slot");
+    let flow_sentinel = bounds(cx, "gallery:presentation-flow-sentinel");
+    let matrix_visible_slot = bounds(cx, "gallery:presentation-matrix:visible:slot");
+    let matrix_inert_slot = bounds(cx, "gallery:presentation-matrix:inert:slot");
+    let matrix_hidden_slot = bounds(cx, "gallery:presentation-matrix:hidden:slot");
+    assert_eq!(matrix_visible_slot.size, matrix_inert_slot.size);
+    assert_eq!(matrix_visible_slot.size, matrix_hidden_slot.size);
+    let matrix_visible_sentinel = bounds(cx, "gallery:presentation-matrix:visible:sentinel");
+    let matrix_inert_sentinel = bounds(cx, "gallery:presentation-matrix:inert:sentinel");
+    let matrix_hidden_sentinel = bounds(cx, "gallery:presentation-matrix:hidden:sentinel");
+    assert_eq!(
+        matrix_visible_sentinel.origin.y,
+        matrix_inert_sentinel.origin.y
+    );
+    assert_eq!(
+        matrix_visible_sentinel.origin.y, matrix_hidden_sentinel.origin.y,
+        "the simultaneous Hidden lane must preserve the same child-driven flow height"
+    );
+
+    let projected_action = bounds(cx, "button:presentation-action:root");
+    let projected_popover = bounds(cx, "popover:presentation-popover:trigger");
+    let projected_input = bounds(cx, "gallery:presentation-input");
+    let projected_scroll_position =
+        visible_page_interaction_point(cx, "gallery:presentation-scroll");
+    let projected_drag_source = bounds(cx, "gallery:presentation-drag-source");
+    let projected_drop_target = bounds(cx, "gallery:presentation-drop-target");
+    let projected_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("visible Presentation page should publish accessibility");
+    let (projected_button_id, _) = presentation_a11y_node_with_role_and_label(
+        &projected_tree,
+        accesskit::Role::Button,
+        "Run action",
+    );
+    let action_count = cx.update(|_, app| shell.read(app).presentation_action_count());
+    let projected_scroll =
+        cx.update(|_, app| shell.read(app).presentation_scroll_handle().offset());
+    let projected_drag_status =
+        cx.update(|_, app| shell.read(app).presentation_drag_status().to_owned());
+
+    cx.simulate_click(projected_input.center(), Default::default());
+    settle(cx);
+    cx.simulate_marked_text(None, "gate", Some(0..4));
+    settle(cx);
+    assert!(cx.update(|_, app| {
+        shell
+            .read(app)
+            .presentation_text_input()
+            .read(app)
+            .marked_range_utf16()
+            .is_some()
+    }));
+
+    set_presentation_state(&shell, cx, SubtreePresentation::Inert);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_state()),
+        SubtreePresentation::Inert
+    );
+    assert_eq!(bounds(cx, "gallery:presentation-slot"), slot);
+    assert_eq!(
+        bounds(cx, "gallery:presentation-flow-sentinel"),
+        flow_sentinel
+    );
+    assert!(cx.update(|window, app| window.focused(app).is_none()));
+    assert!(cx.update(|_, app| {
+        shell
+            .read(app)
+            .presentation_text_input()
+            .read(app)
+            .marked_range_utf16()
+            .is_none()
+    }));
+    assert_presentation_channels_suppressed(
+        &shell,
+        cx,
+        projected_action,
+        projected_popover,
+        projected_scroll_position,
+        projected_drag_source,
+        projected_drop_target,
+        projected_button_id,
+        action_count,
+        projected_scroll,
+        &projected_drag_status,
+    );
+    restore_page_scroll(&shell, cx, page_scroll);
+    let inert_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("inert Presentation page should publish its remaining tree");
+    assert!(
+        inert_tree
+            .nodes
+            .iter()
+            .all(|(_, node)| node.label() != Some("Run action"))
+    );
+    cx.simulate_mouse_move(projected_action.center(), None, Default::default());
+    advance_and_redraw(cx, Duration::from_millis(500));
+    let inert_tooltip_open = cx.update(|window, app| {
+        WindowOverlayRuntime::for_window(window, app)
+            .snapshot(window, app)
+            .unwrap()
+            .layers()
+            .iter()
+            .any(|layer| {
+                layer.id().as_str() == "tooltip:tooltip" && layer.phase() == OverlayLayerPhase::Open
+            })
+    });
+    assert!(!inert_tooltip_open);
+
+    cx.update(|window, app| window.toggle_inspector(app));
+    redraw(cx);
+    cx.simulate_mouse_move(projected_action.center(), None, Default::default());
+    cx.simulate_click(projected_action.center(), Default::default());
+    redraw(cx);
+    let inert_pick = cx
+        .update(|window, app| window.inspector_active_element_id_for_test(app))
+        .map(|id| id.path.global_id.to_string());
+    assert!(
+        inert_pick
+            .as_deref()
+            .is_none_or(|id| !id.ends_with("presentation-action")),
+        "Inspector must not pick an inert descendant: {inert_pick:?}"
+    );
+    cx.update(|window, app| window.toggle_inspector(app));
+    redraw(cx);
+
+    set_presentation_state(&shell, cx, SubtreePresentation::Hidden);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_state()),
+        SubtreePresentation::Hidden
+    );
+    assert_eq!(bounds(cx, "gallery:presentation-slot"), slot);
+    assert_eq!(
+        bounds(cx, "gallery:presentation-flow-sentinel"),
+        flow_sentinel
+    );
+    assert!(cx.debug_bounds("gallery:presentation-stage").is_none());
+    assert_presentation_channels_suppressed(
+        &shell,
+        cx,
+        projected_action,
+        projected_popover,
+        projected_scroll_position,
+        projected_drag_source,
+        projected_drop_target,
+        projected_button_id,
+        action_count,
+        projected_scroll,
+        &projected_drag_status,
+    );
+    restore_page_scroll(&shell, cx, page_scroll);
+
+    set_presentation_state(&shell, cx, SubtreePresentation::Visible);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_state()),
+        SubtreePresentation::Visible
+    );
+    assert_eq!(bounds(cx, "gallery:presentation-slot"), slot);
+    assert_eq!(
+        bounds(cx, "gallery:presentation-flow-sentinel"),
+        flow_sentinel
+    );
+    assert!(!cx.debug_selector_is_focused("text-input:presentation-text-input:root"));
+    click(cx, "button:presentation-action:root");
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_action_count()),
+        action_count + 1,
+        "restoration should accept only a fresh activation"
+    );
+    click(cx, "popover:presentation-popover:trigger");
+    settle(cx);
+    assert!(presentation_popover_is_open(cx));
+    click(cx, "popover:presentation-popover:trigger");
+    settle(cx);
+    assert!(!presentation_popover_is_open(cx));
+
+    set_presentation_progress(&shell, cx, 1.0);
+    assert_eq!(bounds(cx, "gallery:presentation-slot"), slot);
+    assert_eq!(
+        bounds(cx, "gallery:presentation-flow-sentinel"),
+        flow_sentinel
+    );
+    let identity_action = bounds(cx, "button:presentation-action:root");
+    let identity_popover = bounds(cx, "popover:presentation-popover:trigger");
+    let identity_scroll_position =
+        visible_page_interaction_point(cx, "gallery:presentation-scroll");
+    let identity_drag_source = bounds(cx, "gallery:presentation-drag-source");
+    let identity_drop_target = bounds(cx, "gallery:presentation-drop-target");
+    assert!(cx.activate_accessibility());
+    let identity_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("identity Presentation page should publish accessibility");
+    let (identity_button_id, _) = presentation_a11y_node_with_role_and_label(
+        &identity_tree,
+        accesskit::Role::Button,
+        "Run action",
+    );
+    let identity_count = cx.update(|_, app| shell.read(app).presentation_action_count());
+    let identity_scroll = cx.update(|_, app| shell.read(app).presentation_scroll_handle().offset());
+    let identity_drag_status =
+        cx.update(|_, app| shell.read(app).presentation_drag_status().to_owned());
+
+    set_presentation_state(&shell, cx, SubtreePresentation::Inert);
+    assert_eq!(bounds(cx, "gallery:presentation-slot"), slot);
+    assert_eq!(
+        bounds(cx, "gallery:presentation-flow-sentinel"),
+        flow_sentinel
+    );
+    assert_presentation_channels_suppressed(
+        &shell,
+        cx,
+        identity_action,
+        identity_popover,
+        identity_scroll_position,
+        identity_drag_source,
+        identity_drop_target,
+        identity_button_id,
+        identity_count,
+        identity_scroll,
+        &identity_drag_status,
+    );
+    restore_page_scroll(&shell, cx, page_scroll);
+
+    set_presentation_state(&shell, cx, SubtreePresentation::Hidden);
+    assert_eq!(bounds(cx, "gallery:presentation-slot"), slot);
+    assert_eq!(
+        bounds(cx, "gallery:presentation-flow-sentinel"),
+        flow_sentinel
+    );
+    assert_presentation_channels_suppressed(
+        &shell,
+        cx,
+        identity_action,
+        identity_popover,
+        identity_scroll_position,
+        identity_drag_source,
+        identity_drop_target,
+        identity_button_id,
+        identity_count,
+        identity_scroll,
+        &identity_drag_status,
+    );
+    restore_page_scroll(&shell, cx, page_scroll);
+
+    set_presentation_state(&shell, cx, SubtreePresentation::Visible);
+    click(cx, "button:presentation-action:root");
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_action_count()),
+        identity_count + 1,
+        "identity restoration must also require a fresh activation"
+    );
 }

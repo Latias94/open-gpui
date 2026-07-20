@@ -10,7 +10,7 @@ use open_gpui::{
     AccessibilityTreeScope, AnyElement, AnyWeakEntity, App, Bounds, Element, ElementId, Entity,
     EntityId, FocusHandle, GlobalElementId, InspectorElementId, IntoElement, KeyDownEvent,
     LayoutId, MouseButton, MouseDownEvent, Pixels, Point, PointerCancelReason, PointerCapture,
-    PointerCaptureHandle, Subscription, Window, WindowId, WindowMouseEvent,
+    PointerCaptureHandle, Subscription, SubtreePresentation, Window, WindowId, WindowMouseEvent,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyResolution, FocusScopeId, FocusScopeMode, FocusScopePolicy,
@@ -429,6 +429,7 @@ pub struct OverlayLayerRegistration {
     tab_behavior: OverlayTabBehavior,
     on_open_change: Option<OpenChangeCallback>,
     uncontrolled_commit: Option<UncontrolledCommitCallback>,
+    presentation: SubtreePresentation,
 }
 
 impl OverlayLayerRegistration {
@@ -469,6 +470,7 @@ impl OverlayLayerRegistration {
             tab_behavior,
             on_open_change: None,
             uncontrolled_commit: None,
+            presentation: SubtreePresentation::Visible,
         }
     }
 
@@ -712,6 +714,7 @@ pub struct OverlayLayerSnapshot {
     kind: OverlayLayerKind,
     phase: OverlayLayerPhase,
     presence: OverlayPresence,
+    presentation: SubtreePresentation,
     pending_open: Option<bool>,
     pending_intent: Option<DismissReason>,
     pending_intent_revision: Option<OverlayOpenIntentRevision>,
@@ -742,6 +745,10 @@ impl OverlayLayerSnapshot {
     /// Returns the current presence projection.
     pub const fn presence(&self) -> OverlayPresence {
         self.presence
+    }
+    /// Returns the effective GPUI subtree presentation at the latest binding.
+    pub const fn presentation(&self) -> SubtreePresentation {
+        self.presentation
     }
     /// Returns the pending desired open value.
     pub const fn pending_open(&self) -> Option<bool> {
@@ -892,6 +899,26 @@ impl LayerLifecycle {
         self.next_intent_revision = next_intent_revision;
     }
 
+    fn discard_pending_for_suppression(&mut self) -> bool {
+        let state = match &self.state {
+            LayerLifecycleState::Hidden { pending: Some(_) } => {
+                Some(LayerLifecycleState::Hidden { pending: None })
+            }
+            LayerLifecycleState::CloseRequested { .. } => Some(LayerLifecycleState::Open),
+            LayerLifecycleState::Closing { pending: Some(_) } => {
+                Some(LayerLifecycleState::Closing { pending: None })
+            }
+            LayerLifecycleState::Hidden { pending: None }
+            | LayerLifecycleState::Open
+            | LayerLifecycleState::Closing { pending: None } => None,
+        };
+        let Some(state) = state else {
+            return false;
+        };
+        self.state = state;
+        true
+    }
+
     fn request_controlled(
         &mut self,
         open: bool,
@@ -982,6 +1009,8 @@ struct LayerEntry {
     uncontrolled_commit: Option<UncontrolledCommitCallback>,
     lease_token: u64,
     lifecycle: LayerLifecycle,
+    local_presentation: SubtreePresentation,
+    presentation: SubtreePresentation,
     generation: OverlayLayerGeneration,
     registration_revision: u64,
     open_change_revision: u64,
@@ -1006,6 +1035,7 @@ impl LayerEntry {
             self.lifecycle.phase(),
             OverlayLayerPhase::Open | OverlayLayerPhase::CloseRequested
         ) && self.lifecycle.presence().interactive()
+            && self.presentation.is_interactive()
     }
 
     fn projected_policy(&self) -> OverlayLayerPolicy {
@@ -1028,12 +1058,14 @@ impl LayerEntry {
             kind: self.policy.kind(),
             phase: self.lifecycle.phase(),
             presence: self.lifecycle.presence(),
+            presentation: self.presentation,
             pending_open: pending.map(|pending| pending.open),
             pending_intent: pending.map(|pending| pending.reason),
             pending_intent_revision: pending.map(|pending| pending.revision),
             keyboard_eligible: self.keyboard_eligible(),
             modal_pointer_barrier: self.policy.kind() == OverlayLayerKind::Modal
-                && self.lifecycle.presence().present(),
+                && self.lifecycle.presence().present()
+                && self.presentation.is_interactive(),
             focus_active: self.focus_active,
             focus_entered: self.focus_entered,
             generation: self.generation,
@@ -1065,21 +1097,28 @@ struct LayerFocusConfig {
 }
 
 struct RebindTransition {
-    focus_transition: FocusTransition,
+    focus_transitions: Vec<PlannedFocusTransition>,
     generation: OverlayLayerGeneration,
 }
 
 struct RebindPlan {
     generation: OverlayLayerGeneration,
     cancel_focus_claims: Vec<FocusScopeId>,
-    root_transition: FocusTransition,
+    focus_transitions: Vec<FocusTransition>,
     descendant_dispatches: Vec<OpenChangeDispatch>,
+}
+
+struct PlannedFocusTransition {
+    layer_id: OverlayLayerId,
+    transition: FocusTransition,
+    depth: usize,
 }
 
 #[derive(Clone)]
 enum FocusTransition {
     None,
     Activate(FocusScopeId),
+    Resume(FocusScopeId),
     Deactivate { scope: FocusScopeId, restore: bool },
 }
 
@@ -1252,7 +1291,18 @@ struct MouseAuthorityProfile {
 }
 
 impl MouseAuthorityProfile {
-    fn from_policy(policy: &OverlayLayerPolicy, phase: OverlayLayerPhase) -> Self {
+    fn from_policy(
+        policy: &OverlayLayerPolicy,
+        phase: OverlayLayerPhase,
+        presentation: SubtreePresentation,
+    ) -> Self {
+        if !presentation.is_interactive() {
+            return Self {
+                surface_owner: false,
+                outside_press: None,
+                modal_pointer_barrier: false,
+            };
+        }
         Self::new(
             policy.kind(),
             policy.outside_press_participation(),

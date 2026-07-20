@@ -4,7 +4,8 @@ use crate::{
     AccessibilityTreeScope, AnyElement, AnyTooltip, App, AtlasAccessDiagnostic, CursorStyle,
     DispatchNodeId, DispatchTree, ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior,
     HitboxId, LineLayoutIndex, Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene,
-    SubtreeTransformDiagnostic, TabStopMap, TextStyleRefinement, Window, WindowControlArea,
+    SubtreePresentation, SubtreeTransformDiagnostic, TabStopMap, TextStyleRefinement, Window,
+    WindowControlArea,
     geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
 };
 use itertools::FoldWhile::{Continue, Done};
@@ -31,6 +32,7 @@ pub(crate) struct FrameOutput<T> {
 #[derive(Clone)]
 pub(crate) struct PrepaintCommit {
     pub(super) publication: Option<PrepaintPublicationId>,
+    pub(super) presentation: SubtreePresentation,
     pub(super) commit: Rc<dyn Fn(u64, &mut Window, &mut App)>,
     pub(super) discard: Option<Rc<dyn Fn(u64, &mut Window, &mut App)>>,
 }
@@ -61,11 +63,11 @@ pub(crate) struct DeferredDraw {
     pub(super) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(super) text_style_stack: Vec<TextStyleRefinement>,
     pub(super) accessibility_tree_scope: AccessibilityTreeScope,
-    pub(super) accessibility_hidden: bool,
     pub(super) content_mask: Option<ContentMask<Pixels>>,
     pub(super) rem_size: Pixels,
     pub(super) element: Option<AnyElement>,
     pub(super) absolute_offset: Point<Pixels>,
+    pub(super) subtree_presentation: SubtreePresentation,
     pub(super) subtree_transform: ResolvedSubtreeTransform,
     pub(super) subtree_transform_validity: Option<SubtreeTransformValidity>,
     pub(super) prepaint_range: Range<PrepaintStateIndex>,

@@ -171,6 +171,17 @@ impl ActivationHandle {
             dispatcher: Rc::downgrade(dispatcher),
         });
     }
+
+    fn unbind(&self, window_id: WindowId) {
+        let should_clear = self
+            .binding
+            .borrow()
+            .as_ref()
+            .is_some_and(|binding| binding.window_id == window_id);
+        if should_clear {
+            self.binding.borrow_mut().take();
+        }
+    }
 }
 
 struct ArmedKeyActivation {
@@ -272,6 +283,7 @@ pub(crate) struct ActivationBinding {
     dispatcher: SharedActivationDispatcher,
     runtime: Entity<ActivationRuntime>,
     window_id: WindowId,
+    presentation_interactive: bool,
     programmatic_handle: Option<ActivationHandle>,
 }
 
@@ -284,14 +296,17 @@ impl ActivationBinding {
         keys: ActivationKeyPolicy,
         transaction: impl Fn(Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
+        let presentation_interactive = window.subtree_presentation().is_interactive();
+        let effective_enabled = enabled && presentation_interactive;
         let runtime = window.use_keyed_state(state_key, cx, |_, _| ActivationRuntime::default());
-        runtime.read(cx).rebind(enabled);
+        runtime.read(cx).rebind(effective_enabled);
 
         Self {
             keys,
-            dispatcher: Rc::new(ActivationDispatcher::new(enabled, transaction)),
+            dispatcher: Rc::new(ActivationDispatcher::new(effective_enabled, transaction)),
             runtime,
             window_id: window.window_handle().window_id(),
+            presentation_interactive,
             programmatic_handle: None,
         }
     }
@@ -468,6 +483,10 @@ impl ActivationBinding {
         let Some(handle) = self.programmatic_handle.as_ref() else {
             return false;
         };
+        if !self.presentation_interactive {
+            handle.unbind(self.window_id);
+            return false;
+        }
         handle.bind(self.window_id, &self.dispatcher);
         true
     }

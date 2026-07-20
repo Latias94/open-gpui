@@ -5,13 +5,13 @@ use std::{
 };
 
 use crate::{
-    AnyView, App, AppContext, Bounds, Context, Entity, FocusHandle, Hitbox, HitboxBehavior,
-    InputHandler, InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement, Pixels,
-    Point, PointerCaptureHandle, PrepaintPublicationId, Render, Role, ScaledPixels, ScrollDelta,
-    ScrollWheelEvent, ScrollWheelIntent, StatefulInteractiveElement, StyleRefinement, Styled,
-    SubtreeTransform, SubtreeTransformError, SubtreeTransformExt, SubtreeTransformOrigin,
-    TestAppContext, UTF16Selection, VisualContext, Window, canvas, deferred, div, fill, point, px,
-    red, size, window_portal,
+    AnyView, App, AppContext, Bounds, Context, Entity, FocusClaimOutcome, FocusHandle, Hitbox,
+    HitboxBehavior, InputHandler, InteractiveElement, IntoElement, Modifiers, MouseButton,
+    ParentElement, Pixels, Point, PointerCaptureHandle, PrepaintPublicationId, Render, Role,
+    ScaledPixels, ScrollDelta, ScrollWheelEvent, ScrollWheelIntent, StatefulInteractiveElement,
+    StyleRefinement, Styled, SubtreeTransform, SubtreeTransformError, SubtreeTransformExt,
+    SubtreeTransformOrigin, TestAppContext, UTF16Selection, VisualContext, Window, canvas,
+    deferred, div, fill, point, px, red, size, window_portal,
 };
 
 struct TransformAccessibilityView;
@@ -38,6 +38,20 @@ struct DeferredTransformView {
 struct LateNumericFailureView {
     commits: Rc<Cell<usize>>,
     clicks: Rc<Cell<usize>>,
+}
+
+struct LateInvalidFocusFallbackView {
+    committed_focus: FocusHandle,
+    rejected_focus: FocusHandle,
+}
+
+struct LateInvalidDragSourceView {
+    fail_late: Rc<Cell<bool>>,
+    preview_paints: Rc<Cell<usize>>,
+}
+
+struct LateInvalidDragPreview {
+    paints: Rc<Cell<usize>>,
 }
 
 struct PrepaintWindowTransactionView {
@@ -408,6 +422,106 @@ impl Render for LateNumericFailureView {
                             Bounds::new(point(px(f32::MAX), px(0.0)), size(px(10.0), px(10.0))),
                             red(),
                         ));
+                    },
+                )
+                .size_full(),
+            )
+            .with_subtree_transform(
+                SubtreeTransform::try_new(
+                    size(2.0, 2.0),
+                    Point::default(),
+                    SubtreeTransformOrigin::TOP_LEFT,
+                )
+                .unwrap(),
+            )
+    }
+}
+
+impl Render for LateInvalidFocusFallbackView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .child(
+                div()
+                    .id("late-focus-fallback")
+                    .w(px(40.0))
+                    .h(px(20.0))
+                    .focusable()
+                    .track_focus(&self.committed_focus),
+            )
+            .child(
+                div()
+                    .id("late-invalid-focus-target")
+                    .w(px(40.0))
+                    .h(px(20.0))
+                    .focusable()
+                    .track_focus(&self.rejected_focus)
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            |bounds, _, window, _| {
+                                window.paint_quad(fill(bounds, red()));
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        point(px(f32::MAX), px(0.0)),
+                                        size(px(10.0), px(10.0)),
+                                    ),
+                                    red(),
+                                ));
+                            },
+                        )
+                        .size_full(),
+                    )
+                    .with_subtree_transform(
+                        SubtreeTransform::try_new(
+                            size(2.0, 2.0),
+                            Point::default(),
+                            SubtreeTransformOrigin::TOP_LEFT,
+                        )
+                        .unwrap(),
+                    ),
+            )
+    }
+}
+
+impl Render for LateInvalidDragPreview {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let paints = self.paints.clone();
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                paints.set(paints.get() + 1);
+                window.paint_quad(fill(bounds, red()));
+            },
+        )
+        .w(px(20.0))
+        .h(px(20.0))
+    }
+}
+
+impl Render for LateInvalidDragSourceView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let fail_late = self.fail_late.clone();
+        let preview_paints = self.preview_paints.clone();
+        div()
+            .id("late-invalid-drag-source")
+            .w(px(100.0))
+            .h(px(100.0))
+            .on_drag(17_u32, move |_, _, _, cx| {
+                let paints = preview_paints.clone();
+                cx.new(|_| LateInvalidDragPreview { paints })
+            })
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        window.paint_quad(fill(bounds, red()));
+                        if fail_late.get() {
+                            window.paint_quad(fill(
+                                Bounds::new(point(px(f32::MAX), px(0.0)), size(px(10.0), px(10.0))),
+                                red(),
+                            ));
+                        }
                     },
                 )
                 .size_full(),
@@ -983,6 +1097,8 @@ fn nonuniform_transform_keeps_drag_preview_and_target_geometry_distinct(cx: &mut
             drop,
         }
     });
+    visual.update(|window, _| window.activate_window());
+    visual.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear());
 
     let start = point(px(130.0), px(100.0));
@@ -1253,6 +1369,136 @@ fn paint_time_numeric_failure_suppresses_every_observable_subtree_channel(cx: &m
             .all(|(_, node)| node.label() != Some("Late transform failure"))
     );
     assert_eq!(commits.get(), 0);
+}
+
+#[open_gpui::test]
+fn paint_time_invalid_focus_claim_restores_the_committed_focus(cx: &mut TestAppContext) {
+    let window = cx.open_window(size(px(320.0), px(200.0)), |_, cx| {
+        LateInvalidFocusFallbackView {
+            committed_focus: cx.focus_handle(),
+            rejected_focus: cx.focus_handle(),
+        }
+    });
+    let view = window.root(cx).unwrap();
+    let any_window = window.into();
+    cx.run_until_parked();
+
+    let (committed_focus, rejected_focus) = cx.read(|cx| {
+        let view = view.read(cx);
+        (view.committed_focus.clone(), view.rejected_focus.clone())
+    });
+    cx.update_window(any_window, |_, window, cx| {
+        window.activate_window();
+        committed_focus.focus(window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let outcomes = Rc::new(RefCell::new(Vec::new()));
+    let completion_subscription = cx
+        .update_window(any_window, |_, window, cx| {
+            let outcomes = outcomes.clone();
+            assert!(!window.is_focus_handle_rendered(&rejected_focus));
+            let subscription =
+                window.focus_with_completion(&rejected_focus, cx, move |outcome, _, _| {
+                    outcomes.borrow_mut().push(outcome);
+                });
+            assert_eq!(window.retained_focus_claim_count_for_test(), 1);
+            assert_eq!(window.focused(cx).as_ref(), Some(&committed_focus));
+            subscription
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+    cx.update_window(any_window, |_, window, cx| {
+        assert_eq!(window.focused(cx).as_ref(), Some(&committed_focus));
+        assert!(!window.is_focus_handle_rendered(&rejected_focus));
+        assert_eq!(window.retained_focus_claim_count_for_test(), 0);
+    })
+    .unwrap();
+    assert_eq!(outcomes.borrow().as_slice(), &[FocusClaimOutcome::Rejected]);
+    drop(completion_subscription);
+}
+
+#[open_gpui::test]
+fn paint_time_invalid_drag_source_schedules_preview_removal(cx: &mut TestAppContext) {
+    let fail_late = Rc::new(Cell::new(false));
+    let preview_paints = Rc::new(Cell::new(0));
+    let window = cx.open_window(size(px(320.0), px(200.0)), {
+        let fail_late = fail_late.clone();
+        let preview_paints = preview_paints.clone();
+        move |_, _| LateInvalidDragSourceView {
+            fail_late,
+            preview_paints,
+        }
+    });
+    let any_window = window.into();
+    cx.update_window(any_window, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(any_window, |_, window, cx| {
+        window.draw(cx).clear();
+        window.dispatch_event(
+            crate::PlatformInput::MouseDown(crate::MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(10.0), px(10.0)),
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            crate::PlatformInput::MouseMove(crate::MouseMoveEvent {
+                position: point(px(30.0), px(10.0)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            cx,
+        );
+        assert!(cx.has_active_drag());
+        assert!(window.captured_pointer().is_some());
+    })
+    .unwrap();
+
+    fail_late.set(true);
+    cx.update_window(any_window, |_, window, cx| {
+        assert!(cx.has_active_drag());
+        window.refresh();
+        window.draw(cx).clear();
+        assert!(!cx.has_active_drag());
+        assert!(window.captured_pointer().is_none());
+        let frame_facts = (
+            window.invalidator.is_dirty(),
+            window.rendered_frame.scene.len(),
+            preview_paints.get(),
+        );
+        assert!(
+            frame_facts.2 > 0,
+            "the invalid source frame must paint the preview before late cleanup: {frame_facts:?}"
+        );
+        assert!(
+            frame_facts.0,
+            "late drag cleanup must schedule a preview-removal frame: {frame_facts:?}"
+        );
+        assert!(frame_facts.1 > 0);
+    })
+    .unwrap();
+    let late_frame_preview_paints = preview_paints.get();
+
+    cx.run_until_parked();
+    cx.update_window(any_window, |_, window, _| {
+        assert_eq!(window.rendered_frame.scene.len(), 0);
+    })
+    .unwrap();
+    assert_eq!(
+        preview_paints.get(),
+        late_frame_preview_paints,
+        "the canceled preview must not paint in the cleanup frame"
+    );
 }
 
 #[open_gpui::test]

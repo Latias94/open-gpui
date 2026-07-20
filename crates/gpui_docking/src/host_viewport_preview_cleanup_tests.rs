@@ -289,7 +289,7 @@ mod runtime_suite {
         );
 
         let update = runtime
-            .unregister_host_for_space_with_pointer_sync(&source_space, source_window.window_id());
+            .unregister_host_for_space_with_cleanup(&source_space, source_window.window_id());
 
         assert!(update.changed());
         assert_eq!(runtime.adapter().window_for_space(&source_space), None);
@@ -297,16 +297,10 @@ mod runtime_suite {
             runtime.adapter().window_for_space(&target_space),
             Some(target_window)
         );
-        let pointer_sync = update.pointer_input_sync();
         assert_eq!(
             update.into_windows(),
             vec![target_window],
             "unregistering the drag source should refresh the surviving routed-preview target"
-        );
-        assert_eq!(
-            pointer_sync.map(|request| request.window().window_id()),
-            Some(source_window.window_id()),
-            "unregistering the source should still restore its pointer-input state"
         );
         assert_eq!(
             runtime.routed_drop_preview_for(&target_space, target_window.window_id()),

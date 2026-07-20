@@ -18,11 +18,11 @@ use crate::{
     PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SubtreeTransform,
-    SubtreeTransformError, SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task,
-    TextRenderingMode, TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SubtreePresentation,
+    SubtreeTransform, SubtreeTransformError, SystemWindowTab, SystemWindowTabController,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
     point,
     prelude::*,
@@ -191,6 +191,8 @@ pub(crate) type AnyWindowFocusListener =
 pub(crate) struct WindowFocusEvent {
     pub(crate) previous_focus_path: SmallVec<[FocusId; 8]>,
     pub(crate) current_focus_path: SmallVec<[FocusId; 8]>,
+    pub(crate) previous_committed_focus_path: SmallVec<[FocusId; 8]>,
+    pub(crate) current_committed_focus_path: SmallVec<[FocusId; 8]>,
 }
 
 impl WindowFocusEvent {
@@ -201,12 +203,34 @@ impl WindowFocusEvent {
     pub fn is_focus_out(&self, focus_id: FocusId) -> bool {
         self.previous_focus_path.contains(&focus_id) && !self.current_focus_path.contains(&focus_id)
     }
+
+    pub fn is_focus_committed(&self, focus_id: FocusId) -> bool {
+        self.previous_committed_focus_path.last() != Some(&focus_id)
+            && self.current_committed_focus_path.last() == Some(&focus_id)
+    }
+
+    pub fn is_focus_committed_in(&self, focus_id: FocusId) -> bool {
+        !self.previous_committed_focus_path.contains(&focus_id)
+            && self.current_committed_focus_path.contains(&focus_id)
+    }
 }
 
 /// This is provided when subscribing for `Context::on_focus_out` events.
 pub struct FocusOutEvent {
     /// A weak focus handle representing what was blurred.
     pub blurred: WeakFocusHandle,
+}
+
+/// The terminal result of a focus authority request observed through
+/// [`Window::focus_with_completion`] or [`Window::blur_with_completion`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FocusClaimOutcome {
+    /// The requested exact or empty focus authority committed.
+    Committed,
+    /// The requested focus authority did not qualify in its candidate render generation.
+    Rejected,
+    /// A later focus mutation replaced the request before it committed.
+    Superseded,
 }
 
 slotmap::new_key_type! {
@@ -526,8 +550,15 @@ type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
-pub(crate) type AnyPointerCancelListener =
-    Box<dyn FnMut(&PointerCancelEvent, DispatchPhase, &mut Window, &mut App) + 'static>;
+pub(crate) type AnyPointerCancelListener = Rc<
+    RefCell<Box<dyn FnMut(&PointerCancelEvent, DispatchPhase, &mut Window, &mut App) + 'static>>,
+>;
+
+struct PendingPointerCancellation {
+    event: PointerCancelEvent,
+    target: Option<HitboxId>,
+    listeners: Vec<FrameOutput<Option<AnyPointerCancelListener>>>,
+}
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
@@ -660,6 +691,7 @@ pub struct Hitbox {
     validity: Option<SubtreeTransformValidity>,
     content_mask: ContentMask<Pixels>,
     behavior: HitboxBehavior,
+    active: bool,
 }
 
 impl Hitbox {
@@ -688,11 +720,14 @@ impl Hitbox {
         self.behavior
     }
 
-    /// Returns whether this geometry still belongs to a transform scope that survived the frame.
+    /// Returns whether this hitbox belongs to the current interactive presentation and a transform
+    /// scope that survived the frame.
     pub fn is_active(&self) -> bool {
-        self.validity
-            .as_ref()
-            .is_none_or(SubtreeTransformValidity::is_valid)
+        self.active
+            && self
+                .validity
+                .as_ref()
+                .is_none_or(SubtreeTransformValidity::is_valid)
     }
 
     fn retag_validity(&mut self, validity: Option<SubtreeTransformValidity>) {
@@ -1086,7 +1121,22 @@ struct SubtreeTransformScopeGuard {
     entered_depth: usize,
 }
 
+struct SubtreePresentationScopeGuard {
+    stack: Rc<RefCell<SmallVec<[SubtreePresentation; 8]>>>,
+    entered_depth: usize,
+}
+
 impl Drop for SubtreeTransformScopeGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        if !std::thread::panicking() {
+            debug_assert_eq!(stack.len(), self.entered_depth + 1);
+        }
+        stack.truncate(self.entered_depth);
+    }
+}
+
+impl Drop for SubtreePresentationScopeGuard {
     fn drop(&mut self) {
         let mut stack = self.stack.borrow_mut();
         if !std::thread::panicking() {
@@ -1120,6 +1170,7 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    subtree_presentation_stack: Rc<RefCell<SmallVec<[SubtreePresentation; 8]>>>,
     subtree_transform_stack: Rc<RefCell<SmallVec<[SubtreeTransformScope; 8]>>>,
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -1168,7 +1219,16 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    pending_focus_claim: Option<PendingFocusClaim>,
+    pending_blur_claim_generation: Option<u64>,
+    provisional_focus_claim: Option<ProvisionalFocusClaim>,
+    pending_focus_completion: Option<PendingFocusCompletion>,
+    focus_claim_resolutions: Vec<FocusClaimResolution>,
+    next_focus_claim_id: u64,
     focus_claim_revision: u64,
+    frame_focus_authority_sealed: bool,
+    focus_followup_requested: bool,
+    sealed_focus_retry_rejection: Option<FocusClaimTarget>,
     key_event_revision: u64,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
@@ -1179,6 +1239,7 @@ pub struct Window {
     pressed_mouse_buttons: PressedMouseButtons,
     /// The stable owner that has captured the pointer, if any.
     captured_pointer: Option<PointerCapture>,
+    pending_pointer_cancellation: Option<PendingPointerCancellation>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     pub(crate) a11y: A11y,
@@ -1189,6 +1250,41 @@ enum WindowRemovalState {
     Open,
     PendingAfterInput,
     Removing,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingFocusClaim {
+    target: FocusId,
+    target_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProvisionalFocusClaim {
+    target: FocusId,
+    fallback: Option<FocusId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FocusClaimTarget {
+    Exact(FocusId),
+    Empty,
+}
+
+type AnyFocusClaimCompletion = Box<dyn FnOnce(FocusClaimOutcome, &mut Window, &mut App) + 'static>;
+type SharedFocusClaimCompletion = Rc<RefCell<Option<AnyFocusClaimCompletion>>>;
+
+#[derive(Clone)]
+struct PendingFocusCompletion {
+    id: u64,
+    target: FocusClaimTarget,
+    target_generation: u64,
+    callback: SharedFocusClaimCompletion,
+}
+
+struct FocusClaimResolution {
+    id: u64,
+    outcome: FocusClaimOutcome,
+    callback: SharedFocusClaimCompletion,
 }
 
 struct InputTransactionGuard {
@@ -1888,6 +1984,7 @@ impl Window {
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            subtree_presentation_stack: Rc::new(RefCell::new(SmallVec::new())),
             subtree_transform_stack: Rc::new(RefCell::new(SmallVec::new())),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
@@ -1933,7 +2030,16 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            pending_focus_claim: None,
+            pending_blur_claim_generation: None,
+            provisional_focus_claim: None,
+            pending_focus_completion: None,
+            focus_claim_resolutions: Vec::new(),
+            next_focus_claim_id: 0,
             focus_claim_revision: 0,
+            frame_focus_authority_sealed: false,
+            focus_followup_requested: false,
+            sealed_focus_retry_rejection: None,
             key_event_revision: 0,
             focus_enabled: true,
             pending_input: None,
@@ -1944,6 +2050,7 @@ impl Window {
             image_cache_stack: Vec::new(),
             pressed_mouse_buttons: PressedMouseButtons::default(),
             captured_pointer: None,
+            pending_pointer_cancellation: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
             a11y: A11y::new(a11y_active_state, accessibility_force_disabled),
@@ -2126,9 +2233,33 @@ impl Window {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
-        if self.invalidator.not_drawing() {
+        if self.invalidator.can_schedule_refresh() {
             self.refreshing = true;
             self.invalidator.set_dirty(true);
+        }
+    }
+
+    fn refresh_focus_authority(&mut self) {
+        let needs_effect_wakeup =
+            self.frame_focus_authority_sealed || self.invalidator.is_focus_phase();
+        if needs_effect_wakeup {
+            // The current frame already sealed its input authority. Stage the request until every
+            // focus listener has run, then leave one candidate frame for the platform scheduler.
+            self.focus_followup_requested = true;
+        } else {
+            self.refresh();
+        }
+    }
+
+    fn focus_followup_frame_needed(&self) -> bool {
+        self.pending_focus_claim.is_some()
+            || self.pending_blur_claim_generation.is_some()
+            || self.focus != self.rendered_frame.focus_path().last().copied()
+    }
+
+    fn reconcile_focus_followup_refresh(&mut self) {
+        if !self.focus_followup_frame_needed() && self.invalidator.clear_focus_only_dirty() {
+            self.refreshing = false;
         }
     }
 
@@ -2199,12 +2330,30 @@ impl Window {
     fn finish_remove_window(&mut self, cx: &mut App) {
         self.removal_state = WindowRemovalState::Removing;
         self.cancel_pointer_session(PointerCancelReason::WindowClosed, cx);
+        self.pending_focus_completion = None;
+        self.focus_claim_resolutions.clear();
         self.removed = true;
     }
 
-    /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
+    /// Obtain the current requested [`FocusHandle`].
+    ///
+    /// During a candidate render this may expose provisional focus intent before it commits. Use
+    /// [`Self::committed_focus`] for the last committed window-local focus leaf, or a typed
+    /// completion when a retained transaction must know whether its own request committed.
     pub fn focused(&self, cx: &App) -> Option<FocusHandle> {
         self.focus
+            .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
+    }
+
+    /// Obtain the exact focus leaf from the last committed window-local focus tree.
+    ///
+    /// This is independent of platform-window activation and does not expose provisional focus
+    /// intent from the candidate frame.
+    pub fn committed_focus(&self, cx: &App) -> Option<FocusHandle> {
+        self.rendered_frame
+            .focus_path()
+            .last()
+            .copied()
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
     }
 
@@ -2215,6 +2364,15 @@ impl Window {
     /// not only a different final focus value.
     pub const fn focus_claim_revision(&self) -> u64 {
         self.focus_claim_revision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_focus_claim_count_for_test(&self) -> usize {
+        if self.pending_focus_claim.is_some() || self.pending_blur_claim_generation.is_some() {
+            1
+        } else {
+            0
+        }
     }
 
     /// Returns an opaque revision that advances before each key-down or key-up dispatch.
@@ -2287,17 +2445,235 @@ impl Window {
 
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle, cx: &mut App) {
-        if !self.focus_enabled {
-            return;
+        let _ = self.focus_impl(handle, None, cx);
+    }
+
+    /// Move focus and observe the terminal result of this specific request.
+    ///
+    /// The callback runs at most once and only after the request either appears in the committed
+    /// local focus tree, fails its candidate render generation, or is replaced by another focus
+    /// mutation. Dropping the returned subscription cancels callback observation without
+    /// cancelling the focus request.
+    pub fn focus_with_completion(
+        &mut self,
+        handle: &FocusHandle,
+        cx: &mut App,
+        listener: impl FnOnce(FocusClaimOutcome, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let callback = Rc::new(RefCell::new(Some(
+            Box::new(listener) as AnyFocusClaimCompletion
+        )));
+        let cancelled_callback = Rc::downgrade(&callback);
+        let subscription = Subscription::new(move || {
+            if let Some(callback) = cancelled_callback.upgrade() {
+                callback.borrow_mut().take();
+            }
+        });
+        self.next_focus_claim_id = self.next_focus_claim_id.wrapping_add(1).max(1);
+        let completion = PendingFocusCompletion {
+            id: self.next_focus_claim_id,
+            target: FocusClaimTarget::Exact(handle.id),
+            target_generation: 0,
+            callback,
+        };
+        let _ = self.focus_impl(handle, Some(completion), cx);
+        subscription
+    }
+
+    fn focus_impl(
+        &mut self,
+        handle: &FocusHandle,
+        completion: Option<PendingFocusCompletion>,
+        cx: &mut App,
+    ) -> bool {
+        if !self.focus_mutations_enabled() {
+            if let Some(completion) = completion {
+                self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Rejected);
+                self.schedule_focus_claim_resolution_dispatch(cx);
+            }
+            return false;
         }
+
+        if self.frame_focus_authority_sealed
+            && self.sealed_focus_retry_rejection == Some(FocusClaimTarget::Exact(handle.id))
+        {
+            if let Some(completion) = completion {
+                self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Rejected);
+                self.schedule_focus_claim_resolution_dispatch(cx);
+            }
+            return false;
+        }
+
+        self.supersede_pending_focus_completion();
+        self.restore_provisional_focus_claim();
         self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
-        if self.focus == Some(handle.id) {
+        self.pending_focus_claim = None;
+        self.pending_blur_claim_generation = None;
+
+        if self.frame_focus_authority_sealed {
+            let already_committed = self.focus == Some(handle.id)
+                && self.next_frame.focus == Some(handle.id)
+                && self
+                    .next_frame
+                    .dispatch_tree
+                    .valid_focusable_node_id(handle.id)
+                    .is_some();
+            if already_committed {
+                if let Some(completion) = completion {
+                    self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Committed);
+                }
+                self.schedule_focus_claim_resolution_dispatch(cx);
+                return true;
+            }
+
+            let target_generation = self.next_frame.generation.saturating_add(1);
+            self.pending_focus_claim = Some(PendingFocusClaim {
+                target: handle.id,
+                target_generation,
+            });
+            if let Some(mut completion) = completion {
+                completion.target_generation = target_generation;
+                self.pending_focus_completion = Some(completion);
+            }
+            self.refresh_focus_authority();
+            self.schedule_focus_claim_resolution_dispatch(cx);
+            return true;
+        }
+
+        let candidate_frame_in_progress =
+            self.next_frame.generation == self.rendered_frame.generation.saturating_add(1);
+        if !candidate_frame_in_progress
+            && self.focus == Some(handle.id)
+            && self.rendered_frame.focus_path().last() == Some(&handle.id)
+        {
+            if let Some(completion) = completion {
+                self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Committed);
+            }
+            self.schedule_focus_claim_resolution_dispatch(cx);
+            self.reconcile_focus_followup_refresh();
+            return true;
+        }
+
+        let bound_in_rendered_frame = !candidate_frame_in_progress
+            && self
+                .rendered_frame
+                .dispatch_tree
+                .focusable_node_id(handle.id)
+                .is_some();
+        let bound_in_candidate_frame = self.candidate_frame_contains_focus(handle.id);
+        let target_generation = if candidate_frame_in_progress {
+            self.next_frame.generation
+        } else {
+            self.rendered_frame.generation.saturating_add(1)
+        };
+        if let Some(mut completion) = completion {
+            completion.target_generation = target_generation;
+            self.pending_focus_completion = Some(completion);
+        }
+        if !bound_in_rendered_frame && !bound_in_candidate_frame {
+            self.pending_focus_claim = Some(PendingFocusClaim {
+                target: handle.id,
+                target_generation,
+            });
+            self.refresh_focus_authority();
+            self.schedule_focus_claim_resolution_dispatch(cx);
+            return true;
+        }
+
+        self.commit_focus(handle.id, bound_in_candidate_frame, cx);
+        self.schedule_focus_claim_resolution_dispatch(cx);
+        true
+    }
+
+    fn supersede_pending_focus_completion(&mut self) {
+        if let Some(completion) = self.pending_focus_completion.take() {
+            self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Superseded);
+        }
+    }
+
+    fn focus_mutations_enabled(&self) -> bool {
+        self.focus_enabled && self.subtree_presentation().is_interactive()
+    }
+
+    fn queue_focus_claim_resolution(
+        &mut self,
+        completion: PendingFocusCompletion,
+        outcome: FocusClaimOutcome,
+    ) {
+        debug_assert!(
+            self.focus_claim_resolutions
+                .iter()
+                .all(|resolution| resolution.id != completion.id),
+            "a focus claim must have exactly one terminal result"
+        );
+        self.focus_claim_resolutions.push(FocusClaimResolution {
+            id: completion.id,
+            outcome,
+            callback: completion.callback,
+        });
+    }
+
+    fn schedule_focus_claim_resolution_dispatch(&self, cx: &mut App) {
+        if self.focus_claim_resolutions.is_empty() {
             return;
         }
 
-        self.focus = Some(handle.id);
-        self.clear_pending_keystrokes();
+        let window_handle = self.handle;
+        cx.spawn(async move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.dispatch_focus_claim_resolutions(cx);
+                })
+                .ok();
+        })
+        .detach();
+    }
 
+    fn dispatch_focus_claim_resolutions(&mut self, cx: &mut App) {
+        let resolutions = mem::take(&mut self.focus_claim_resolutions);
+        for resolution in resolutions {
+            if self.removal_state != WindowRemovalState::Open {
+                break;
+            }
+            let callback = resolution.callback.borrow_mut().take();
+            if let Some(callback) = callback {
+                callback(resolution.outcome, self, cx);
+            }
+        }
+    }
+
+    fn candidate_frame_contains_focus(&self, focus: FocusId) -> bool {
+        self.next_frame.generation == self.rendered_frame.generation.saturating_add(1)
+            && self
+                .next_frame
+                .dispatch_tree
+                .focusable_node_id(focus)
+                .is_some()
+    }
+
+    fn commit_focus(&mut self, focus: FocusId, bind_candidate_frame: bool, cx: &mut App) {
+        if bind_candidate_frame {
+            self.next_frame.focus = Some(focus);
+            if self.focus != Some(focus) {
+                self.provisional_focus_claim = Some(ProvisionalFocusClaim {
+                    target: focus,
+                    fallback: self.focus,
+                });
+                self.focus = Some(focus);
+            }
+            return;
+        }
+        if self.focus == Some(focus) {
+            return;
+        }
+
+        self.focus = Some(focus);
+        self.clear_pending_keystrokes();
+        self.defer_pending_input_changed(cx);
+        self.refresh_focus_authority();
+    }
+
+    fn defer_pending_input_changed(&self, cx: &mut App) {
         // Avoid re-entrant entity updates by deferring observer notifications to the end of the
         // current effect cycle, and only for this window.
         let window_handle = self.handle;
@@ -2308,35 +2684,331 @@ impl Window {
                 })
                 .ok();
         });
-
-        self.refresh();
     }
 
-    /// Remove focus from all elements within this context's window.
-    pub fn blur(&mut self) {
-        if !self.focus_enabled {
+    fn promote_pending_focus_claim(&mut self) {
+        let Some(claim) = self.pending_focus_claim else {
+            return;
+        };
+        if claim.target_generation != self.next_frame.generation
+            || !self.candidate_frame_contains_focus(claim.target)
+        {
             return;
         }
 
-        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
-        self.focus = None;
-        self.refresh();
+        self.next_frame.focus = Some(claim.target);
+        if self.focus != Some(claim.target) {
+            self.provisional_focus_claim = Some(ProvisionalFocusClaim {
+                target: claim.target,
+                fallback: self.focus,
+            });
+            self.focus = Some(claim.target);
+        }
     }
 
-    pub(crate) fn clear_dropped_focus(&mut self) {
+    fn restore_provisional_focus_claim(&mut self) {
+        let Some(claim) = self.provisional_focus_claim.take() else {
+            return;
+        };
+        if self.focus == Some(claim.target) {
+            self.focus = claim.fallback;
+            if self.next_frame.generation == self.rendered_frame.generation.saturating_add(1) {
+                self.next_frame.focus = claim.fallback;
+            }
+        }
+    }
+
+    fn resolve_provisional_focus_claim(&mut self, cx: &mut App) {
+        let Some(claim) = self.provisional_focus_claim.take() else {
+            return;
+        };
+        if self.focus != Some(claim.target) {
+            return;
+        }
+
+        if self
+            .next_frame
+            .dispatch_tree
+            .valid_focusable_node_id(claim.target)
+            .is_some()
+        {
+            self.next_frame.focus = Some(claim.target);
+            self.clear_pending_keystrokes();
+            self.defer_pending_input_changed(cx);
+        } else {
+            let fallback = claim.fallback.filter(|focus| {
+                self.next_frame
+                    .dispatch_tree
+                    .valid_focusable_node_id(*focus)
+                    .is_some()
+            });
+            self.focus = fallback;
+            self.next_frame.focus = fallback;
+            if fallback != claim.fallback {
+                self.clear_pending_keystrokes();
+                self.defer_pending_input_changed(cx);
+            }
+        }
+    }
+
+    fn discard_resolved_candidate_focus_claim(&mut self) {
+        if self
+            .pending_focus_claim
+            .is_some_and(|claim| claim.target_generation <= self.next_frame.generation)
+        {
+            self.pending_focus_claim = None;
+        }
+        if self
+            .pending_blur_claim_generation
+            .is_some_and(|generation| generation <= self.next_frame.generation)
+        {
+            self.pending_blur_claim_generation = None;
+        }
+    }
+
+    fn settle_focus_claim_for_candidate_generation(&mut self) -> Option<FocusClaimTarget> {
+        let generation = self.next_frame.generation;
+        let due_claim = self
+            .pending_focus_claim
+            .filter(|claim| claim.target_generation <= generation);
+        let due_blur = self
+            .pending_blur_claim_generation
+            .filter(|target_generation| *target_generation <= generation);
+        let due_completion_target = self
+            .pending_focus_completion
+            .as_ref()
+            .filter(|completion| completion.target_generation <= generation)
+            .map(|completion| completion.target);
+        debug_assert!(
+            due_claim.is_none()
+                || due_completion_target.is_none()
+                || due_claim.map(|claim| FocusClaimTarget::Exact(claim.target))
+                    == due_completion_target,
+            "a pending focus claim and completion must describe the same target"
+        );
+        debug_assert!(
+            due_blur.is_none()
+                || due_completion_target.is_none()
+                || due_completion_target == Some(FocusClaimTarget::Empty),
+            "a pending blur claim and completion must describe the same target"
+        );
+
+        let target = due_claim
+            .map(|claim| FocusClaimTarget::Exact(claim.target))
+            .or(due_blur.map(|_| FocusClaimTarget::Empty))
+            .or(due_completion_target)?;
+        let committed = match target {
+            FocusClaimTarget::Exact(target) => {
+                self.next_frame.focus_path().last() == Some(&target)
+                    && self
+                        .next_frame
+                        .dispatch_tree
+                        .valid_focusable_node_id(target)
+                        .is_some()
+            }
+            FocusClaimTarget::Empty => self.next_frame.focus_path().is_empty(),
+        };
+
+        if due_claim.is_some() {
+            self.pending_focus_claim = None;
+        }
+        if due_blur.is_some() {
+            self.pending_blur_claim_generation = None;
+        }
+        if due_completion_target.is_some()
+            && let Some(completion) = self.pending_focus_completion.take()
+        {
+            self.queue_focus_claim_resolution(
+                completion,
+                if committed {
+                    FocusClaimOutcome::Committed
+                } else {
+                    FocusClaimOutcome::Rejected
+                },
+            );
+        }
+
+        (!committed).then_some(target)
+    }
+
+    fn promote_pending_blur_claim(&mut self) {
+        if self.pending_blur_claim_generation != Some(self.next_frame.generation) {
+            return;
+        }
+        self.provisional_focus_claim = None;
         self.focus = None;
-        self.refresh();
+        self.next_frame.focus = None;
+    }
+
+    /// Remove focus from all elements within this context's window.
+    pub fn blur(&mut self, cx: &mut App) {
+        let _ = self.blur_impl(None);
+        self.schedule_focus_claim_resolution_dispatch(cx);
+    }
+
+    /// Remove focus and observe the terminal result of this specific request.
+    ///
+    /// The callback runs at most once after empty focus commits, the request is rejected, or a
+    /// later focus mutation supersedes it. Dropping the returned subscription cancels callback
+    /// observation without cancelling the blur request.
+    pub fn blur_with_completion(
+        &mut self,
+        cx: &mut App,
+        listener: impl FnOnce(FocusClaimOutcome, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let callback = Rc::new(RefCell::new(Some(
+            Box::new(listener) as AnyFocusClaimCompletion
+        )));
+        let cancelled_callback = Rc::downgrade(&callback);
+        let subscription = Subscription::new(move || {
+            if let Some(callback) = cancelled_callback.upgrade() {
+                callback.borrow_mut().take();
+            }
+        });
+        self.next_focus_claim_id = self.next_focus_claim_id.wrapping_add(1).max(1);
+        let completion = PendingFocusCompletion {
+            id: self.next_focus_claim_id,
+            target: FocusClaimTarget::Empty,
+            target_generation: 0,
+            callback,
+        };
+        let _ = self.blur_impl(Some(completion));
+        self.schedule_focus_claim_resolution_dispatch(cx);
+        subscription
+    }
+
+    fn blur_impl(&mut self, completion: Option<PendingFocusCompletion>) -> bool {
+        if !self.focus_mutations_enabled() {
+            if let Some(completion) = completion {
+                self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Rejected);
+            }
+            return false;
+        }
+
+        if self.frame_focus_authority_sealed
+            && self.sealed_focus_retry_rejection == Some(FocusClaimTarget::Empty)
+        {
+            if let Some(completion) = completion {
+                self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Rejected);
+            }
+            return false;
+        }
+
+        self.supersede_pending_focus_completion();
+        self.restore_provisional_focus_claim();
+        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
+        self.pending_focus_claim = None;
+        self.pending_blur_claim_generation = None;
+        if self.frame_focus_authority_sealed {
+            let already_committed = self.focus.is_none() && self.next_frame.focus.is_none();
+            if already_committed {
+                if let Some(completion) = completion {
+                    self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Committed);
+                }
+                self.reconcile_focus_followup_refresh();
+                return true;
+            }
+            let target_generation = self.next_frame.generation.saturating_add(1);
+            self.pending_blur_claim_generation = Some(target_generation);
+            if let Some(mut completion) = completion {
+                completion.target_generation = target_generation;
+                self.pending_focus_completion = Some(completion);
+            }
+            self.refresh_focus_authority();
+            return true;
+        }
+
+        let candidate_frame_in_progress =
+            self.next_frame.generation == self.rendered_frame.generation.saturating_add(1);
+        if !candidate_frame_in_progress
+            && self.focus.is_none()
+            && self.rendered_frame.focus_path().is_empty()
+        {
+            if let Some(completion) = completion {
+                self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Committed);
+            }
+            self.reconcile_focus_followup_refresh();
+            return true;
+        }
+
+        let target_generation = if candidate_frame_in_progress {
+            self.next_frame.generation
+        } else {
+            self.rendered_frame.generation.saturating_add(1)
+        };
+        if let Some(mut completion) = completion {
+            completion.target_generation = target_generation;
+            self.pending_focus_completion = Some(completion);
+        }
+        self.focus = None;
+        if candidate_frame_in_progress {
+            self.next_frame.focus = None;
+        }
+        self.refresh_focus_authority();
+        true
+    }
+
+    pub(crate) fn clear_dropped_focus(&mut self, dropped: FocusId, cx: &mut App) {
+        let mut changed = false;
+        if self
+            .pending_focus_completion
+            .as_ref()
+            .is_some_and(|completion| completion.target == FocusClaimTarget::Exact(dropped))
+            && let Some(completion) = self.pending_focus_completion.take()
+        {
+            self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Rejected);
+            changed = true;
+        }
+        if self
+            .pending_focus_claim
+            .is_some_and(|claim| claim.target == dropped)
+        {
+            self.pending_focus_claim = None;
+            changed = true;
+        }
+        if let Some(mut claim) = self.provisional_focus_claim {
+            if claim.target == dropped {
+                self.provisional_focus_claim = None;
+                if self.focus == Some(dropped) {
+                    self.focus = claim.fallback;
+                }
+                if self.next_frame.focus == Some(dropped) {
+                    self.next_frame.focus = claim.fallback;
+                }
+                changed = true;
+            } else if claim.fallback == Some(dropped) {
+                claim.fallback = None;
+                self.provisional_focus_claim = Some(claim);
+                changed = true;
+            }
+        }
+        if self.focus == Some(dropped) {
+            self.focus = None;
+            self.pending_blur_claim_generation = None;
+            changed = true;
+        }
+        if self.next_frame.focus == Some(dropped) {
+            self.next_frame.focus = None;
+            changed = true;
+        }
+        if changed {
+            self.refresh();
+        }
+        self.schedule_focus_claim_resolution_dispatch(cx);
     }
 
     /// Blur the window and don't allow anything in it to be focused again.
-    pub fn disable_focus(&mut self) {
-        self.blur();
+    pub fn disable_focus(&mut self, cx: &mut App) {
+        if !self.focus_mutations_enabled() {
+            return;
+        }
+        self.blur(cx);
         self.focus_enabled = false;
     }
 
     /// Move focus to next tab stop.
     pub fn focus_next(&mut self, cx: &mut App) {
-        if !self.focus_enabled {
+        if !self.focus_mutations_enabled() {
             return;
         }
 
@@ -2360,16 +3032,18 @@ impl Window {
         predicate: impl Fn(&FocusHandle) -> bool,
         cx: &mut App,
     ) -> bool {
+        if !self.focus_mutations_enabled() {
+            return false;
+        }
         let Some(handle) = self.next_tab_stop_where_within(scope, false, predicate) else {
             return false;
         };
-        self.focus(&handle, cx);
-        true
+        self.focus_impl(&handle, None, cx)
     }
 
     /// Move focus to previous tab stop.
     pub fn focus_prev(&mut self, cx: &mut App) {
-        if !self.focus_enabled {
+        if !self.focus_mutations_enabled() {
             return;
         }
 
@@ -2394,11 +3068,13 @@ impl Window {
         predicate: impl Fn(&FocusHandle) -> bool,
         cx: &mut App,
     ) -> bool {
+        if !self.focus_mutations_enabled() {
+            return false;
+        }
         let Some(handle) = self.next_tab_stop_where_within(scope, true, predicate) else {
             return false;
         };
-        self.focus(&handle, cx);
-        true
+        self.focus_impl(&handle, None, cx)
     }
 
     fn next_tab_stop_where_within(
@@ -3171,10 +3847,15 @@ impl Window {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
+        debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
         debug_assert!(self.subtree_transform_stack.borrow().is_empty());
+        debug_assert!(!self.frame_focus_authority_sealed);
+        debug_assert!(!self.focus_followup_requested);
+        debug_assert!(self.sealed_focus_retry_rejection.is_none());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
         self.next_frame.generation = self.rendered_frame.generation.saturating_add(1);
+        self.promote_pending_blur_claim();
 
         // Restore the previously-used input handler.
         // Place it back into a None slot (left by a previous .take()) so that
@@ -3200,62 +3881,99 @@ impl Window {
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
         }
+        self.frame_focus_authority_sealed = true;
+        debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
         debug_assert!(self.subtree_transform_stack.borrow().is_empty());
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
-        // Register requested input handler with the platform window.
-        // Use .take() instead of .pop() to preserve Vec length, so that cached
-        // paint_range indices remain valid for reuse_paint on the next frame.
-        // Search backwards to find the last Some entry, since reuse_paint may
-        // have copied None slots from the previous frame. (Fixes #50456)
-        if let Some(input_handler) = self
+        // Keep the frame slots in place because cached paint ranges address them by index.
+        let mut rendered_input_handlers = self
+            .rendered_frame
+            .input_handlers
+            .iter_mut()
+            .map(|output| output.value.take())
+            .collect::<Vec<_>>();
+        let mut next_input_handlers = self
             .next_frame
             .input_handlers
             .iter_mut()
-            .rev()
-            .filter(|output| output.is_valid())
-            .find_map(|output| output.value.take())
-        {
+            .map(|output| (output.is_valid(), output.value.take()))
+            .collect::<Vec<_>>();
+
+        // Painting is complete. Cleanup callbacks may now schedule normal notifications.
+        self.refreshing = false;
+        self.invalidator.set_phase(DrawPhase::None);
+        if let Some(input_handler) = self.select_frame_input_handler_after_composition_cleanup(
+            &mut rendered_input_handlers,
+            &mut next_input_handlers,
+            cx,
+        ) {
             self.platform_window.set_input_handler(input_handler);
         }
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
-        // Painting is complete. Commits may publish state and schedule the frame that displays it.
-        self.refreshing = false;
-        self.invalidator.set_phase(DrawPhase::None);
-        self.commit_prepaint(cx);
         self.next_frame.finish(&mut self.rendered_frame);
 
-        self.invalidator.set_phase(DrawPhase::Focus);
-        let previous_focus_path = self.rendered_frame.focus_path();
-        let previous_window_active = self.rendered_frame.window_active;
-        mem::swap(&mut self.rendered_frame, &mut self.next_frame);
-        self.next_frame.clear();
-        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
-        if self.captured_pointer.is_some() && self.captured_pointer_hitbox().is_none() {
-            // Cancellation listeners may mutate the window, so leave the draw stack before dispatch.
+        let stale_capture_owner = self.captured_pointer.and_then(|captured| {
+            self.pointer_capture_hitbox_for_handle_in_frame(captured.handle(), &self.next_frame)
+                .is_none()
+                .then_some(captured.handle())
+        });
+        let stale_drag_owner = cx.active_drag.as_ref().and_then(|drag| {
+            (drag.window_id == self.handle.window_id())
+                .then_some(drag.source)
+                .flatten()
+                .filter(|owner| {
+                    self.pointer_capture_hitbox_for_handle_in_frame(*owner, &self.next_frame)
+                        .is_none()
+                })
+        });
+        if let Some(owner) = stale_capture_owner.or(stale_drag_owner) {
+            self.queue_pointer_session_cancellation(owner, PointerCancelReason::CaptureRevoked, cx);
+        }
+
+        if self.focus.is_some_and(|focus| {
+            self.next_frame
+                .dispatch_tree
+                .valid_focusable_node_id(focus)
+                .is_none()
+        }) {
+            self.focus = None;
+            self.clear_pending_keystrokes();
+            self.refresh();
             let window = self.handle;
             cx.defer(move |cx| {
                 window
-                    .update(cx, |_, window, cx| {
-                        if window.captured_pointer.is_some()
-                            && window.captured_pointer_hitbox().is_none()
-                        {
-                            window.cancel_pointer_session(PointerCancelReason::CaptureRevoked, cx);
-                        }
-                    })
+                    .update(cx, |_, window, cx| window.pending_input_changed(cx))
                     .ok();
             });
         }
-        let current_focus_path = self.rendered_frame.focus_path();
-        let current_window_active = self.rendered_frame.window_active;
 
-        if previous_focus_path != current_focus_path
+        // Settle one-generation focus authority before cached publications replay. A rejected
+        // publication may observe that result, but it cannot renew the same request indefinitely.
+        self.sealed_focus_retry_rejection = self.settle_focus_claim_for_candidate_generation();
+
+        // Publications must observe the input authority of the frame they publish.
+        self.commit_prepaint(cx);
+        self.sealed_focus_retry_rejection = None;
+        self.discard_resolved_candidate_focus_claim();
+
+        self.invalidator.set_phase(DrawPhase::Focus);
+        let previous_committed_focus_path = self.rendered_frame.focus_path();
+        let previous_window_active = self.rendered_frame.window_active;
+        mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.next_frame.clear();
+        self.frame_focus_authority_sealed = false;
+        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
+        let current_committed_focus_path = self.rendered_frame.focus_path();
+        let current_window_active = self.rendered_frame.window_active;
+        if previous_committed_focus_path != current_committed_focus_path
             || previous_window_active != current_window_active
         {
-            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+            if !previous_committed_focus_path.is_empty() && current_committed_focus_path.is_empty()
+            {
                 self.focus_lost_listeners
                     .clone()
                     .retain(&(), |listener| listener(self, cx));
@@ -3263,29 +3981,113 @@ impl Window {
 
             let event = WindowFocusEvent {
                 previous_focus_path: if previous_window_active {
-                    previous_focus_path
+                    previous_committed_focus_path.clone()
                 } else {
                     Default::default()
                 },
                 current_focus_path: if current_window_active {
-                    current_focus_path
+                    current_committed_focus_path.clone()
                 } else {
                     Default::default()
                 },
+                previous_committed_focus_path,
+                current_committed_focus_path,
             };
             self.focus_listeners
                 .clone()
                 .retain(&(), |listener| listener(&event, self, cx));
         }
+        self.schedule_focus_claim_resolution_dispatch(cx);
 
         self.update_ime_position_from_committed_handler(cx);
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
         self.invalidator.set_phase(DrawPhase::None);
+        if mem::take(&mut self.focus_followup_requested) && self.focus_followup_frame_needed() {
+            self.refreshing = true;
+            self.invalidator.set_focus_only_dirty();
+        }
         self.needs_present.set(true);
 
         ArenaClearNeeded::new(&cx.element_arena)
+    }
+
+    fn select_frame_input_handler_after_composition_cleanup(
+        &mut self,
+        rendered: &mut [Option<PlatformInputHandler>],
+        next: &mut [(bool, Option<PlatformInputHandler>)],
+        cx: &mut App,
+    ) -> Option<PlatformInputHandler> {
+        loop {
+            let selected = self.next_input_handler_index(next);
+            let selected_focus = selected.map(|index| {
+                next[index]
+                    .1
+                    .as_ref()
+                    .expect("selected input handler must remain available")
+                    .focus_id()
+            });
+
+            let mut selection_changed = false;
+            for handler in rendered.iter_mut() {
+                if handler
+                    .as_ref()
+                    .is_some_and(|handler| Some(handler.focus_id()) != selected_focus)
+                {
+                    handler
+                        .take()
+                        .expect("checked input handler must remain available")
+                        .finish_composition(self, cx);
+                    if self.next_input_handler_index(next) != selected {
+                        selection_changed = true;
+                        break;
+                    }
+                }
+            }
+            if selection_changed {
+                continue;
+            }
+
+            for index in 0..next.len() {
+                let handler = if Some(index) != selected {
+                    next[index].1.take()
+                } else {
+                    None
+                };
+                if let Some(mut handler) = handler {
+                    handler.finish_composition(self, cx);
+                    if self.next_input_handler_index(next) != selected {
+                        selection_changed = true;
+                        break;
+                    }
+                }
+            }
+            if selection_changed {
+                continue;
+            }
+
+            return selected.and_then(|index| next[index].1.take());
+        }
+    }
+
+    fn next_input_handler_index(
+        &self,
+        handlers: &[(bool, Option<PlatformInputHandler>)],
+    ) -> Option<usize> {
+        let focus = self.focus?;
+        self.next_frame.dispatch_tree.focusable_node_id(focus)?;
+        handlers
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, (valid, handler))| {
+                (*valid
+                    && handler
+                        .as_ref()
+                        .is_some_and(|handler| handler.focus_id() == focus))
+                .then_some(index)
+            })
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -3362,17 +4164,33 @@ impl Window {
         self.prepaint_deferred_draws(cx);
 
         let mut prompt_element = None;
-        let mut active_drag_element = None;
-        let mut tooltip_element = None;
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any();
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
-        } else if cx
-            .active_drag
-            .as_ref()
-            .is_some_and(|drag| drag.window_id == self.handle.window_id())
+        }
+
+        let stale_drag_owner = cx.active_drag.as_ref().and_then(|drag| {
+            (drag.window_id == self.handle.window_id())
+                .then_some(drag.source)
+                .flatten()
+                .filter(|owner| {
+                    self.pointer_capture_hitbox_for_handle_in_frame(*owner, &self.next_frame)
+                        .is_none()
+                })
+        });
+        if let Some(owner) = stale_drag_owner {
+            self.queue_pointer_session_cancellation(owner, PointerCancelReason::CaptureRevoked, cx);
+        }
+
+        let mut active_drag_element = None;
+        let mut tooltip_element = None;
+        if prompt_element.is_none()
+            && cx
+                .active_drag
+                .as_ref()
+                .is_some_and(|drag| drag.window_id == self.handle.window_id())
         {
             let active_drag = cx
                 .active_drag
@@ -3383,10 +4201,13 @@ impl Window {
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
             cx.active_drag = Some(active_drag);
-        } else {
+        } else if prompt_element.is_none() {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
+        // Cached subtrees replay dispatch nodes without calling `set_focus_handle`, so give a
+        // one-frame claim one final prepaint qualification point before paint installs handlers.
+        self.promote_pending_focus_claim();
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
@@ -3417,6 +4238,12 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        // Paint can invalidate a transform that qualified during prepaint. Commit focus only
+        // after those late validity results are known, then resolve accessibility from the same
+        // final authority.
+        self.resolve_provisional_focus_claim(cx);
+        self.a11y.resolve_focus(self.focus);
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
@@ -3465,14 +4292,21 @@ impl Window {
                 continue;
             }
             if let Some(discard) = output.value.discard {
-                discard(target_revision, self, cx);
+                self.with_subtree_presentation(SubtreePresentation::Hidden, |window| {
+                    discard(target_revision, window, cx)
+                });
             }
         }
         for output in commits {
             if output.is_valid() {
-                (output.value.commit)(target_revision, self, cx);
+                let presentation = output.value.presentation;
+                self.with_subtree_presentation(presentation, |window| {
+                    (output.value.commit)(target_revision, window, cx)
+                });
             } else if let Some(discard) = output.value.discard {
-                discard(target_revision, self, cx);
+                self.with_subtree_presentation(SubtreePresentation::Hidden, |window| {
+                    discard(target_revision, window, cx)
+                });
             }
         }
     }
@@ -3587,7 +4421,7 @@ impl Window {
             for deferred_draw_ix in traversal_order {
                 let deferred_draw = &mut deferred_draws[deferred_draw_ix];
                 let accessibility_tree_scope = deferred_draw.accessibility_tree_scope;
-                let accessibility_hidden = deferred_draw.accessibility_hidden;
+                let subtree_presentation = deferred_draw.subtree_presentation;
                 let subtree_transform = deferred_draw.subtree_transform;
                 let subtree_transform_validity = deferred_draw.subtree_transform_validity.clone();
                 self.element_id_stack
@@ -3608,43 +4442,38 @@ impl Window {
                     let result = self.transact_subtree_transform(
                         subtree_transform_validity.clone(),
                         |window| {
-                            window.with_resolved_subtree_transform(
-                                subtree_transform,
-                                subtree_transform_validity.clone(),
-                                |window| {
-                                    window.with_rendered_view(
-                                        deferred_draw.current_view,
-                                        |window| {
-                                            window.with_rem_size(
-                                                Some(deferred_draw.rem_size),
-                                                |window| {
-                                                    window.with_absolute_element_offset(
-                                                        deferred_draw.absolute_offset,
-                                                        |window| {
-                                                            window.with_content_mask(
+                            window.with_subtree_presentation(subtree_presentation, |window| {
+                                window.with_resolved_subtree_transform(
+                                    subtree_transform,
+                                    subtree_transform_validity.clone(),
+                                    |window| {
+                                        window.with_rendered_view(
+                                            deferred_draw.current_view,
+                                            |window| {
+                                                window.with_rem_size(
+                                                    Some(deferred_draw.rem_size),
+                                                    |window| {
+                                                        window.with_absolute_element_offset(
+                                                            deferred_draw.absolute_offset,
+                                                            |window| {
+                                                                window.with_content_mask(
                                                     deferred_draw.content_mask,
                                                     |window| {
-                                                        let _hidden_subtree = accessibility_hidden
-                                                            .then(|| {
-                                                                window
-                                                                    .a11y
-                                                                    .nodes
-                                                                    .enter_hidden_subtree()
-                                                            });
                                                         window.with_accessibility_tree_scope(
                                                             accessibility_tree_scope,
                                                             |window| element.prepaint(window, cx),
                                                         );
                                                     },
                                                 );
-                                                        },
-                                                    );
-                                                },
-                                            );
-                                        },
-                                    )
-                                },
-                            );
+                                                            },
+                                                        );
+                                                    },
+                                                );
+                                            },
+                                        )
+                                    },
+                                );
+                            });
                         },
                     );
                     if result.is_err()
@@ -3691,6 +4520,7 @@ impl Window {
 
             let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
+            let subtree_presentation = deferred_draw.subtree_presentation;
             if deferred_draw
                 .subtree_transform_validity
                 .as_ref()
@@ -3698,19 +4528,21 @@ impl Window {
             {
                 // The owning transform scope is layout-only for this frame.
             } else if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_resolved_subtree_transform(
-                    deferred_draw.subtree_transform,
-                    deferred_draw.subtree_transform_validity.clone(),
-                    |window| {
-                        window.with_rendered_view(deferred_draw.current_view, |window| {
-                            window.with_content_mask(content_mask, |window| {
-                                window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                                    element.paint(window, cx);
-                                });
+                self.with_subtree_presentation(subtree_presentation, |window| {
+                    window.with_resolved_subtree_transform(
+                        deferred_draw.subtree_transform,
+                        deferred_draw.subtree_transform_validity.clone(),
+                        |window| {
+                            window.with_rendered_view(deferred_draw.current_view, |window| {
+                                window.with_content_mask(content_mask, |window| {
+                                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                                        element.paint(window, cx);
+                                    });
+                                })
                             })
-                        })
-                    },
-                );
+                        },
+                    );
+                });
                 if let Some(validity) = deferred_draw.subtree_transform_validity.as_ref() {
                     self.record_subtree_transform_scope_diagnostic(validity);
                 }
@@ -3751,6 +4583,7 @@ impl Window {
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
         let validity = self.subtree_transform_validity();
+        let presentation = self.subtree_presentation();
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -3786,8 +4619,10 @@ impl Window {
                 [range.start.prepaint_commits_index..range.end.prepaint_commits_index]
                 .iter()
                 .map(|output| {
+                    let mut commit = output.value.clone();
+                    commit.presentation = commit.presentation.resolve_under(presentation);
                     FrameOutput::new(
-                        output.value.clone(),
+                        commit,
                         SubtreeTransformValidity::replayed_under(
                             output.validity.as_ref(),
                             validity.clone(),
@@ -3860,12 +4695,12 @@ impl Window {
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
                     accessibility_tree_scope: deferred_draw.accessibility_tree_scope,
-                    accessibility_hidden: deferred_draw.accessibility_hidden,
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
+                    subtree_presentation: deferred_draw.subtree_presentation,
                     subtree_transform: deferred_draw.subtree_transform,
                     subtree_transform_validity: SubtreeTransformValidity::replayed_under(
                         deferred_draw.subtree_transform_validity.as_ref(),
@@ -3997,7 +4832,7 @@ impl Window {
                 .iter_mut()
                 .map(|output| {
                     FrameOutput::new(
-                        output.value.take(),
+                        output.value.clone(),
                         SubtreeTransformValidity::replayed_under(
                             output.validity.as_ref(),
                             validity.clone(),
@@ -4106,6 +4941,9 @@ impl Window {
     /// during the paint phase of element drawing.
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         self.next_frame.cursor_styles.push(CursorStyleRequest {
             hitbox_id: Some(hitbox.id),
             style,
@@ -4119,6 +4957,9 @@ impl Window {
     /// phase of element drawing.
     pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         self.next_frame.cursor_styles.push(CursorStyleRequest {
             hitbox_id: None,
             style,
@@ -4131,6 +4972,9 @@ impl Window {
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
         self.invalidator.debug_assert_prepaint();
         let id = TooltipId(post_inc(&mut self.next_tooltip_id.0));
+        if !self.subtree_presentation().is_interactive() {
+            return id;
+        }
         self.next_frame.tooltip_requests.push(Some(TooltipRequest {
             id,
             tooltip,
@@ -4227,7 +5071,7 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_prepaint();
-        if !self.a11y.is_active() {
+        if !self.a11y.is_active() || !self.subtree_presentation().is_interactive() {
             return f(self);
         }
 
@@ -4263,7 +5107,14 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
-        let focus = self.next_frame.focus;
+        let candidate_focus = self.next_frame.focus;
+        let committed_focus = self.focus;
+        let pending_focus_claim = self.pending_focus_claim;
+        let pending_blur_claim_generation = self.pending_blur_claim_generation;
+        let provisional_focus_claim = self.provisional_focus_claim;
+        let pending_focus_completion = self.pending_focus_completion.clone();
+        let focus_claim_resolutions_len = self.focus_claim_resolutions.len();
+        let focus_claim_revision = self.focus_claim_revision;
         let requested_autoscroll = self.requested_autoscroll.clone();
         #[cfg(any(test, feature = "test-support"))]
         let debug_bounds = self.next_frame.debug_bounds.clone();
@@ -4281,7 +5132,15 @@ impl Window {
             .then(|| self.a11y.prepaint_checkpoint());
         let result = f(self);
         if result.is_err() {
-            self.next_frame.focus = focus;
+            self.next_frame.focus = candidate_focus;
+            self.focus = committed_focus;
+            self.pending_focus_claim = pending_focus_claim;
+            self.pending_blur_claim_generation = pending_blur_claim_generation;
+            self.provisional_focus_claim = provisional_focus_claim;
+            self.pending_focus_completion = pending_focus_completion;
+            self.focus_claim_resolutions
+                .truncate(focus_claim_resolutions_len);
+            self.focus_claim_revision = focus_claim_revision;
             self.requested_autoscroll = requested_autoscroll;
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
@@ -4367,6 +5226,9 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         if let Ok(bounds) = self.try_project_subtree_bounds(bounds) {
             self.requested_autoscroll = Some(AutoscrollIntent {
                 bounds,
@@ -4455,6 +5317,31 @@ impl Window {
             .last()
             .map(|scope| scope.transform)
             .unwrap_or(ResolvedSubtreeTransform::IDENTITY)
+    }
+
+    /// Returns the effective layout-preserving presentation state for the current element subtree.
+    pub fn subtree_presentation(&self) -> SubtreePresentation {
+        self.subtree_presentation_stack
+            .borrow()
+            .last()
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn with_subtree_presentation<R>(
+        &mut self,
+        requested: SubtreePresentation,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let stack = self.subtree_presentation_stack.clone();
+        let entered_depth = stack.borrow().len();
+        let effective = requested.resolve_under(self.subtree_presentation());
+        stack.borrow_mut().push(effective);
+        let _guard = SubtreePresentationScopeGuard {
+            stack,
+            entered_depth,
+        };
+        f(self)
     }
 
     pub(crate) fn resolve_subtree_transform(
@@ -4966,6 +5853,9 @@ impl Window {
     /// Executes the given closure within the context of a tab group.
     #[inline]
     pub fn with_tab_group<R>(&mut self, index: Option<isize>, f: impl FnOnce(&mut Self) -> R) -> R {
+        if !self.subtree_presentation().is_interactive() {
+            return f(self);
+        }
         if let Some(index) = index {
             self.next_frame.tab_stops.begin_group(index);
             let result = f(self);
@@ -5042,12 +5932,12 @@ impl Window {
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
             accessibility_tree_scope: self.a11y.current_tree_scope(),
-            accessibility_hidden: self.a11y.current_tree_hidden(),
             content_mask,
             rem_size: self.rem_size(),
             priority,
             element: Some(element),
             absolute_offset,
+            subtree_presentation: self.subtree_presentation(),
             subtree_transform,
             subtree_transform_validity,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
@@ -5743,7 +6633,8 @@ impl Window {
     ///
     /// Use this when a prepaint measurement must not become observable until painting confirms
     /// that its transformed subtree is representable. The callback runs after painting and may
-    /// request the follow-up frame that displays the committed state.
+    /// request the follow-up frame that displays the committed state. It runs under the effective
+    /// presentation state captured where the record was created.
     pub fn record_prepaint_window_commit(
         &mut self,
         commit: impl Fn(u64, &mut Window, &mut App) + 'static,
@@ -5752,6 +6643,7 @@ impl Window {
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
                 publication: None,
+                presentation: self.subtree_presentation(),
                 commit: Rc::new(commit),
                 discard: None,
             },
@@ -5769,6 +6661,8 @@ impl Window {
     ///
     /// Use one stable [`PrepaintPublicationId`] for each logical publication and record it at most
     /// once per frame. Cached subtrees retain both the ID and callbacks in their frame journal.
+    /// Valid commits run under their captured presentation state. Discards run suppressed because
+    /// their producer has no interactive authority in the committed frame.
     pub fn record_prepaint_window_transaction(
         &mut self,
         publication: PrepaintPublicationId,
@@ -5781,6 +6675,7 @@ impl Window {
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
                 publication: Some(publication),
+                presentation: self.subtree_presentation(),
                 commit,
                 discard: Some(discard),
             },
@@ -5797,6 +6692,7 @@ impl Window {
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
                 publication: None,
+                presentation: self.subtree_presentation(),
                 commit: Rc::new(commit),
                 discard: None,
             },
@@ -5848,10 +6744,20 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let presentation = self.subtree_presentation();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(
+                style,
+                rem_size,
+                scale_factor,
+                move |known_dimensions, available_space, window, cx| {
+                    window.with_subtree_presentation(presentation, |window| {
+                        measure(known_dimensions, available_space, window, cx)
+                    })
+                },
+            )
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -5903,6 +6809,7 @@ impl Window {
         let transform = self.subtree_transform();
         let validity = self.subtree_transform_validity();
         let geometry = self.try_element_geometry(bounds);
+        let active = geometry.is_ok() && self.subtree_presentation().is_interactive();
         let mut id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
         let hitbox = Hitbox {
@@ -5913,8 +6820,9 @@ impl Window {
             validity,
             content_mask,
             behavior,
+            active,
         };
-        if geometry.is_ok() {
+        if active {
             self.next_frame.hitboxes.push(hitbox.clone());
         }
         hitbox
@@ -5932,6 +6840,14 @@ impl Window {
         self.next_frame.generation
     }
 
+    pub(super) fn current_interaction_frame(&self) -> &Frame {
+        if self.next_frame.generation > self.rendered_frame.generation {
+            &self.next_frame
+        } else {
+            &self.rendered_frame
+        }
+    }
+
     pub(crate) fn prepared_hitbox(&self, id: HitboxId) -> Option<Hitbox> {
         self.next_frame
             .hitboxes
@@ -5945,6 +6861,9 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         self.next_frame.window_control_hitboxes.push((area, hitbox));
     }
 
@@ -5968,6 +6887,9 @@ impl Window {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn record_debug_focus(&mut self, selector: String, focus_id: FocusId) {
         self.invalidator.debug_assert_paint_or_prepaint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         self.next_frame
             .debug_focus_handles
             .insert(selector.clone(), focus_id);
@@ -5984,6 +6906,9 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn set_key_context(&mut self, context: KeyContext) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         self.next_frame.dispatch_tree.set_key_context(context);
     }
 
@@ -5993,10 +6918,14 @@ impl Window {
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle, _: &App) {
         self.invalidator.debug_assert_prepaint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
+        self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
+        self.promote_pending_focus_claim();
         if focus_handle.is_focused(self) {
             self.next_frame.focus = Some(focus_handle.id);
         }
-        self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
     }
 
     /// Sets the view id for the current element, which will be used to manage view caching.
@@ -6057,6 +6986,9 @@ impl Window {
         cx: &App,
     ) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
 
         if focus_handle.is_focused(self) {
             let cx = self.to_async(cx);
@@ -6065,6 +6997,7 @@ impl Window {
             self.next_frame.input_handlers.push(FrameOutput::new(
                 Some(PlatformInputHandler::new(
                     cx,
+                    focus_handle.id,
                     Box::new(input_handler),
                     transform,
                     validity.clone(),
@@ -6084,6 +7017,9 @@ impl Window {
         mut listener: impl FnMut(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
 
         self.next_frame.mouse_listeners.push(FrameOutput::new(
             Some(Box::new(
@@ -6106,10 +7042,13 @@ impl Window {
         listener: impl FnMut(&PointerCancelEvent, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         self.next_frame
             .pointer_cancel_listeners
             .push(FrameOutput::new(
-                Some(Box::new(listener)),
+                Some(Rc::new(RefCell::new(Box::new(listener)))),
                 self.subtree_transform_validity(),
             ));
     }
@@ -6120,7 +7059,7 @@ impl Window {
     /// bubble listeners. Stop propagation to keep the event from reaching those listeners;
     /// otherwise the original event continues once. Mouse-up cleanup, including active drag and
     /// captured-pointer release, still runs when an interceptor consumes the event.
-    pub fn intercept_mouse_events(
+    pub fn intercept_window_mouse_events(
         &mut self,
         mut listener: impl for<'a> FnMut(WindowMouseEvent<'a>, &mut Window, &mut App) + 'static,
     ) -> Subscription {
@@ -6148,6 +7087,9 @@ impl Window {
         listener: impl Fn(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
 
         self.next_frame.dispatch_tree.on_key_event(Rc::new(
             move |event: &dyn Any, phase, window: &mut Window, cx: &mut App| {
@@ -6161,7 +7103,7 @@ impl Window {
     /// Registers a persistent key-down interceptor owned by this window.
     ///
     /// Interceptors run before application interceptors, key bindings, actions, and node listeners.
-    pub fn intercept_key_down(
+    pub fn intercept_window_key_down(
         &mut self,
         mut listener: impl FnMut(&KeyDownEvent, &mut Window, &mut App) + 'static,
     ) -> Subscription {
@@ -6187,6 +7129,9 @@ impl Window {
         listener: impl Fn(&ModifiersChangedEvent, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
 
         self.next_frame.dispatch_tree.on_modifiers_changed(Rc::new(
             move |event: &ModifiersChangedEvent, window: &mut Window, cx: &mut App| {
@@ -6213,6 +7158,53 @@ impl Window {
                 true
             }));
         cx.defer(move |_| activate());
+        subscription
+    }
+
+    /// Register a listener for the given focus handle becoming the exact committed local focus.
+    ///
+    /// Unlike [`Self::on_focus_in`], this observes window-local focus independently of platform
+    /// window activation. It does not fire again when an already-committed focus path merely
+    /// becomes platform-active.
+    pub fn on_focus_committed(
+        &mut self,
+        handle: &FocusHandle,
+        _cx: &mut App,
+        mut listener: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.new_focus_listener(Box::new(move |event, window, cx| {
+                if event.is_focus_committed(focus_id) {
+                    listener(window, cx);
+                }
+                true
+            }));
+        activate();
+        subscription
+    }
+
+    /// Register a listener for the given focus handle or one of its descendants becoming part of
+    /// this window's committed local focus path.
+    ///
+    /// Unlike [`Self::on_focus_in`], this observes window-local focus independently of platform
+    /// window activation. It does not fire again when an already-committed focus path merely
+    /// becomes platform-active.
+    pub fn on_focus_committed_in(
+        &mut self,
+        handle: &FocusHandle,
+        _cx: &mut App,
+        mut listener: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.new_focus_listener(Box::new(move |event, window, cx| {
+                if event.is_focus_committed_in(focus_id) {
+                    listener(window, cx);
+                }
+                true
+            }));
+        activate();
         subscription
     }
 
@@ -6305,6 +7297,15 @@ impl Window {
     /// bypassing persistent interceptors or overwriting the outer event's shared dispatch state.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        let incoming_pointer_cancel = matches!(&event, PlatformInput::PointerCanceled(_));
+        if self.flush_pending_pointer_cancellation(cx) && incoming_pointer_cancel {
+            return self
+                .last_dispatch_event_result
+                .unwrap_or(DispatchEventResult {
+                    propagate: true,
+                    default_prevented: false,
+                });
+        }
         self.with_input_transaction(cx, move |window, cx| window.dispatch_event_inner(event, cx))
     }
 
@@ -6395,13 +7396,17 @@ impl Window {
         if let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
             let mut listeners = mem::take(&mut self.rendered_frame.pointer_cancel_listeners);
             for output in &mut listeners {
-                if output.is_valid() {
-                    output.value.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
+                if output.is_valid()
+                    && let Some(listener) = output.value.as_ref()
+                {
+                    listener.borrow_mut()(event, DispatchPhase::Capture, self, cx);
                 }
             }
             for output in listeners.iter_mut().rev() {
-                if output.is_valid() {
-                    output.value.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
+                if output.is_valid()
+                    && let Some(listener) = output.value.as_ref()
+                {
+                    listener.borrow_mut()(event, DispatchPhase::Bubble, self, cx);
                 }
             }
             self.rendered_frame.pointer_cancel_listeners = listeners;
@@ -6415,7 +7420,10 @@ impl Window {
                     if !output.is_valid() {
                         continue;
                     }
-                    output.value.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
+                    let Some(listener) = output.value.as_mut() else {
+                        continue;
+                    };
+                    listener(event, DispatchPhase::Capture, self, cx);
                     if !cx.propagate_event {
                         break;
                     }
@@ -6428,7 +7436,10 @@ impl Window {
                     if !output.is_valid() {
                         continue;
                     }
-                    output.value.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
+                    let Some(listener) = output.value.as_mut() else {
+                        continue;
+                    };
+                    listener(event, DispatchPhase::Bubble, self, cx);
                     if !cx.propagate_event {
                         break;
                     }
@@ -7191,6 +8202,9 @@ impl Window {
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
 
         self.next_frame
             .dispatch_tree
@@ -7212,6 +8226,9 @@ impl Window {
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
 
         if condition {
             self.next_frame
@@ -7292,6 +8309,9 @@ impl Window {
         action: accesskit::Action,
         listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
     ) {
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
         self.a11y
             .record_action_listener(node_id, action, Box::new(listener));
     }
@@ -7375,7 +8395,7 @@ impl Window {
                 }
             }
             accesskit::Action::Blur => {
-                self.blur();
+                self.blur(cx);
             }
             _ => {
                 log::debug!(
@@ -7502,7 +8522,7 @@ impl Window {
         cx: &App,
     ) {
         self.invalidator.debug_assert_paint_or_prepaint();
-        if !self.is_inspector_picking(cx) {
+        if !self.subtree_presentation().is_interactive() || !self.is_inspector_picking(cx) {
             return;
         }
         if let Some(inspector_id) = inspector_id {

@@ -238,11 +238,6 @@ fn try_expand_macro(macro_item: &syn::TraitItemMacro) -> Option<Vec<TraitItem>> 
             let expanded = crate::styles::style_helpers(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
-        "open_gpui_macros::visibility_style_methods" | "visibility_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::visibility_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
         "open_gpui_macros::margin_style_methods" | "margin_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::margin_style_methods(TokenStream::from(tokens));

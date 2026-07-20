@@ -3,8 +3,8 @@ mod support;
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     Anchor, Context, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, VisualContext,
-    Window, accesskit, actions, div, point, px,
+    Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, SubtreePresentation,
+    SubtreePresentationExt, VisualContext, Window, accesskit, actions, div, point, px,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, ButtonVariant,
@@ -16,7 +16,8 @@ use open_gpui_ui_components::{
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, FocusTargetRegistration, GpuiOverlayAdapterConfig,
         GpuiOverlayPlacement, OverlayLayerPhase, OverlayOpenIntent, WindowFocusFallbackLease,
-        WindowOverlayRuntime, default_deferred_priority, gpui_anchor, point_anchor_placement,
+        WindowOverlayRuntime, WindowOverlayRuntimeError, default_deferred_priority, gpui_anchor,
+        point_anchor_placement,
     },
     menu_navigation_target,
     theme::ThemeResolver,
@@ -1127,6 +1128,243 @@ fn controlled_dialog_refusal_keeps_modal_focus_authority(cx: &mut open_gpui::Tes
         .revision()
         .expect("a repeated controlled close should carry a revision");
     assert_ne!(first_revision, second_revision);
+}
+
+#[open_gpui::test]
+fn presentation_inert_dialog_keeps_open_lifecycle_but_releases_modal_input_authority(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        presentation: SubtreePresentation,
+        open_intents: Rc<RefCell<Vec<OverlayOpenIntent>>>,
+        underlay_clicks: Rc<Cell<usize>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let underlay_clicks = self.underlay_clicks.clone();
+            let open_intents = self.open_intents.clone();
+            div()
+                .relative()
+                .size_full()
+                .child(
+                    div()
+                        .id("inert-dialog-underlay")
+                        .debug_selector(|| "dialog-test:inert-underlay".to_owned())
+                        .absolute()
+                        .left(px(4.0))
+                        .top(px(180.0))
+                        .w(px(96.0))
+                        .h(px(32.0))
+                        .on_click(move |_, _, _| {
+                            underlay_clicks.set(underlay_clicks.get() + 1);
+                        })
+                        .child("Underlay"),
+                )
+                .child(
+                    Dialog::new("inert-dialog", "Open dialog", "Inert dialog", "Body")
+                        .open(true)
+                        .on_open_change(move |intent, _, _| {
+                            open_intents.borrow_mut().push(intent);
+                        })
+                        .with_subtree_presentation(self.presentation),
+                )
+        }
+    }
+
+    let open_intents = Rc::new(RefCell::new(Vec::new()));
+    let underlay_clicks = Rc::new(Cell::new(0));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        presentation: SubtreePresentation::Visible,
+        open_intents: open_intents.clone(),
+        underlay_clicks: underlay_clicks.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.debug_selector_is_focused("dialog:inert-dialog:surface"));
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.presentation = SubtreePresentation::Inert;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    let inert = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    let inert = inert
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "dialog:inert-dialog")
+        .expect("inert dialog should remain registered and open");
+    assert_eq!(inert.phase(), OverlayLayerPhase::Open);
+    assert_eq!(inert.presence(), OverlayPresence::open());
+    assert_eq!(inert.presentation(), SubtreePresentation::Inert);
+    assert!(!inert.keyboard_eligible());
+    assert!(!inert.modal_pointer_barrier());
+    assert!(!inert.focus_active());
+
+    let underlay = cx
+        .debug_bounds("dialog-test:inert-underlay")
+        .expect("visible underlay should remain mounted");
+    cx.simulate_click(underlay.center(), Default::default());
+    assert_eq!(underlay_clicks.get(), 1);
+    cx.simulate_keystrokes("escape");
+    assert!(
+        open_intents.borrow().is_empty(),
+        "an inert open dialog must not consume Escape or emit close intent"
+    );
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.presentation = SubtreePresentation::Visible;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    assert!(
+        !cx.debug_selector_is_focused("dialog:inert-dialog:surface"),
+        "restoring presentation must not replay the opening focus claim"
+    );
+    let restored = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    let restored = restored
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "dialog:inert-dialog")
+        .expect("restored dialog should remain registered");
+    assert!(restored.focus_active());
+    cx.simulate_keystrokes("tab");
+    assert!(
+        cx.debug_selector_is_focused("dialog:inert-dialog:surface"),
+        "user traversal should resume the visible modal focus loop"
+    );
+    cx.simulate_keystrokes("escape");
+    assert_eq!(open_intents.borrow().len(), 1);
+    assert_eq!(open_intents.borrow()[0].reason(), DismissReason::EscapeKey);
+}
+
+#[open_gpui::test]
+fn presentation_menu_releases_input_authority_without_replaying_opening_focus(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        presentation: SubtreePresentation,
+        open_intents: Rc<RefCell<Vec<OverlayOpenIntent>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let open_intents = self.open_intents.clone();
+            div().size_full().child(
+                Menu::new("presentation-menu", "Presentation menu")
+                    .open(true)
+                    .default_focused_value("action")
+                    .item(MenuItem::action("action", "Action"))
+                    .on_open_change(move |intent, _, _| {
+                        open_intents.borrow_mut().push(intent);
+                    })
+                    .with_subtree_presentation(self.presentation),
+            )
+        }
+    }
+
+    let open_intents = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        presentation: SubtreePresentation::Visible,
+        open_intents: open_intents.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.debug_bounds("menu:presentation-menu:content").is_some());
+
+    let trigger = cx
+        .debug_bounds("menu:presentation-menu:trigger")
+        .expect("the controlled menu trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    let stale_intent = open_intents
+        .borrow()
+        .first()
+        .expect("the visible trigger should request a controlled close")
+        .clone();
+    let stale_revision = stale_intent
+        .revision()
+        .expect("controlled close intents should carry a revision");
+    assert_eq!(stale_intent.reason(), DismissReason::Trigger);
+
+    let requested = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    let requested = requested
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "menu:presentation-menu")
+        .expect("the controlled menu should retain its requested registration");
+    assert_eq!(requested.phase(), OverlayLayerPhase::CloseRequested);
+    assert_eq!(requested.pending_intent(), Some(DismissReason::Trigger));
+
+    for presentation in [SubtreePresentation::Inert, SubtreePresentation::Hidden] {
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = presentation;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+
+        let snapshot = cx.update(|window, cx| {
+            WindowOverlayRuntime::for_window(window, cx)
+                .snapshot(window, cx)
+                .unwrap()
+        });
+        let layer = snapshot
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == "menu:presentation-menu")
+            .expect("the controlled menu should retain its reusable registration");
+        assert_eq!(layer.phase(), OverlayLayerPhase::Open);
+        assert_eq!(layer.pending_intent(), None);
+        assert_eq!(layer.presentation(), presentation);
+        assert!(!layer.keyboard_eligible());
+        assert!(!layer.focus_active());
+        cx.simulate_keystrokes("escape");
+        assert_eq!(open_intents.borrow().len(), 1);
+    }
+
+    let stale_rejection = cx.update(|window, cx| stale_intent.reject(window, cx));
+    assert!(matches!(
+        stale_rejection,
+        Err(WindowOverlayRuntimeError::StaleIntent(_))
+    ));
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.presentation = SubtreePresentation::Visible;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    assert!(cx.update(|window, cx| window.focused(cx).is_none()));
+
+    let restored = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    let restored = restored
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "menu:presentation-menu")
+        .expect("the restored menu should remain registered");
+    assert!(restored.keyboard_eligible());
+    assert!(restored.focus_active());
+    cx.simulate_click(trigger.center(), Default::default());
+    assert_eq!(open_intents.borrow().len(), 2);
+    assert_eq!(open_intents.borrow()[1].reason(), DismissReason::Trigger);
+    assert_ne!(open_intents.borrow()[1].revision(), Some(stale_revision));
 }
 
 #[open_gpui::test]
@@ -5458,7 +5696,9 @@ fn tooltip_and_hover_card_register_passive_window_layers_without_focus_authority
 }
 
 #[open_gpui::test]
-fn hidden_and_disabled_tooltips_do_not_build_deferred_surfaces(cx: &mut open_gpui::TestAppContext) {
+fn presentation_hidden_and_disabled_tooltips_do_not_build_deferred_surfaces(
+    cx: &mut open_gpui::TestAppContext,
+) {
     struct TestView;
 
     impl Render for TestView {

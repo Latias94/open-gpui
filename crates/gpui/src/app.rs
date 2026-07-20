@@ -50,11 +50,11 @@ use crate::{
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Point, Priority, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
-    WindowHandle, WindowId, WindowInvalidator,
+    PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Point, PointerCaptureHandle,
+    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window,
+    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -1484,7 +1484,8 @@ impl App {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_deref()?;
-                        window.invalidator.is_dirty().then_some(window.handle)
+                        (window.invalidator.is_dirty() && !window.invalidator.is_focus_only_dirty())
+                            .then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
@@ -1531,10 +1532,8 @@ impl App {
                 if focus.ref_count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
-                            .update(self, |_, window, _| {
-                                if window.focus == Some(handle_id) {
-                                    window.clear_dropped_focus();
-                                }
+                            .update(self, |_, window, cx| {
+                                window.clear_dropped_focus(handle_id, cx);
                             })
                             .unwrap();
                     }
@@ -2204,13 +2203,32 @@ impl App {
 
     /// Stops active drag and clears any related effects.
     pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
-        if self.active_drag.is_some() {
-            self.active_drag = None;
-            window.refresh();
-            true
-        } else {
-            false
+        let Some(active_drag) = self.active_drag.take() else {
+            return false;
+        };
+        if let Some(source) = active_drag.source {
+            if source.window_id() == window.window_handle().window_id() {
+                let _ = window.finish_drag_source(&source, active_drag.button);
+            } else {
+                let source_window_id = source.window_id();
+                let button = active_drag.button;
+                let release = self.update_window_id(source_window_id, |_, source_window, _| {
+                    let _ = source_window.finish_drag_source(&source, button);
+                    source_window.refresh();
+                });
+                if release.is_err() && self.windows.contains_key(source_window_id) {
+                    self.defer(move |cx| {
+                        cx.update_window_id(source_window_id, |_, source_window, _| {
+                            let _ = source_window.finish_drag_source(&source, button);
+                            source_window.refresh();
+                        })
+                        .ok();
+                    });
+                }
+            }
         }
+        window.refresh();
+        true
     }
 
     /// Sets the cursor style for the currently active drag operation.
@@ -2571,6 +2589,9 @@ impl<G: Global> DerefMut for GlobalLease<G> {
 pub struct AnyDrag {
     /// The window where this drag gesture started.
     pub window_id: WindowId,
+
+    /// Stable interactive owner for framework drags, or `None` for window-owned external drags.
+    pub source: Option<PointerCaptureHandle>,
 
     /// The view used to render this drag
     pub view: AnyView,

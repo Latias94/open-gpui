@@ -33,7 +33,8 @@ extent, and sibling flow do not change:
 
 ```rust
 use open_gpui::{
-    SubtreeTransform, SubtreeTransformExt as _, SubtreeTransformOrigin, div, point, px, size,
+    ParentElement as _, SubtreeTransform, SubtreeTransformExt as _, SubtreeTransformOrigin, div,
+    point, px, size,
 };
 
 let transform = SubtreeTransform::try_new(
@@ -54,6 +55,48 @@ window coordinates.
 
 See [ADR 0021](../../docs/adr/0021-open-gpui-interactive-subtree-transform-authority.md) for the
 cross-channel and numeric-failure contract.
+
+## Layout-Preserving Subtree Presentation
+
+Use `SubtreePresentation` when a whole subtree must retain its layout slot while changing its
+participation in rendering and interaction:
+
+```rust
+use open_gpui::{
+    ParentElement as _, SubtreePresentation, SubtreePresentationExt as _, div,
+};
+
+let inert_content = div()
+    .child("Painted, but excluded from input, focus, IME, and accessibility")
+    .with_subtree_presentation(SubtreePresentation::Inert);
+```
+
+`Visible` participates in every channel. `Inert` keeps layout and paint but suppresses input,
+focus, IME, tooltips, overlay intent, and accessibility. `Hidden` keeps layout only. A suppressive
+ancestor always wins, including through transforms, deferred elements, and cached views. Returning
+to `Visible` rebuilds current participation without replaying stale input or focus claims.
+
+Use `Display::None` when the subtree must leave layout. Use component disabled state when a control
+should remain discoverable with disabled semantics. See
+[ADR 0022](../../docs/adr/0022-open-gpui-subtree-presentation-authority.md) for the full matrix and
+committed-frame cleanup contract.
+
+### Focus Observation
+
+`on_focus_in` observes effective focus entering a handle or descendant while the platform window
+is active. `on_focus_committed` observes one handle becoming the exact committed local focus;
+`on_focus_committed_in` observes committed focus entering a handle or descendant. Both committed
+observers work while the platform window is inactive, and later platform activation does not
+replay them. `Window::focused` reads current intent and may be provisional during a candidate
+render; `Window::committed_focus` reads the exact leaf from the last committed window-local tree.
+
+Use `focus_with_completion` or `blur_with_completion` for a retained transaction that must settle
+one exact or empty focus-authority request. The callback receives `Committed`, `Rejected`, or
+`Superseded` after final rendered membership is known. A request issued after the current frame
+seals input and accessibility authority is qualified in one later platform frame, so late
+presentation failure cannot produce stale success bookkeeping and cached commit replay cannot
+recursively redraw inside one effect cycle. `Window::blur` and `Window::disable_focus` take `cx`
+so superseded completion callbacks are always scheduled.
 
 ### Dependencies
 

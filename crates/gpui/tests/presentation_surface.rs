@@ -1,7 +1,7 @@
 use open_gpui::{
     Bounds, ElementGeometry, Hitbox, MeasuredElementSnapshot, Pixels, Point, PrepaintPublicationId,
-    SubtreeTransform, SubtreeTransformExt as _, SubtreeTransformOrigin, TargetedEvent, div,
-    measured_element, point, px, size,
+    SubtreePresentation, SubtreePresentationExt as _, SubtreeTransform, SubtreeTransformExt as _,
+    SubtreeTransformOrigin, TargetedEvent, Window, div, measured_element, point, px, size,
 };
 use std::{ffi::OsStr, fs, path::Path};
 
@@ -21,7 +21,15 @@ fn checked_presentation_import_paths_compile() {
         let _: Bounds<Pixels> = geometry.displayed_bounds();
         let _: Result<Point<Pixels>, _> = geometry.window_to_local_point(Point::default());
     })
-    .with_subtree_transform(transform);
+    .with_subtree_transform(transform)
+    .with_subtree_presentation(SubtreePresentation::Inert);
+
+    assert!(SubtreePresentation::Visible.paints());
+    assert!(SubtreePresentation::Inert.paints());
+    assert!(!SubtreePresentation::Hidden.paints());
+    assert!(SubtreePresentation::Visible.is_interactive());
+    assert!(!SubtreePresentation::Inert.is_interactive());
+    let _ = Window::subtree_presentation as fn(&Window) -> SubtreePresentation;
 
     fn consume_snapshot(snapshot: &MeasuredElementSnapshot) -> (u64, ElementGeometry) {
         (snapshot.frame_generation(), snapshot.geometry())
@@ -63,6 +71,85 @@ fn legacy_transform_names_do_not_reenter_production_source() {
             "legacy transform name `{forbidden}` reappeared in {}",
             offenders.join(", ")
         );
+    }
+}
+
+#[test]
+fn legacy_presentation_authorities_do_not_reenter_production_source() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_roots = [manifest.join("src"), manifest.join("../gpui_macros/src")];
+    let mut sources = Vec::new();
+    for source_root in source_roots {
+        collect_rust_sources(&source_root, &mut sources);
+    }
+
+    for forbidden in [
+        concat!("Visibility", "::Hidden"),
+        concat!("visibility_", "style_methods"),
+        concat!(".invis", "ible()"),
+        concat!("a11y_", "hidden"),
+        concat!("aria_", "hidden"),
+        concat!("enter_", "hidden_subtree"),
+    ] {
+        let offenders = sources
+            .iter()
+            .filter_map(|path| {
+                let source = fs::read_to_string(path).ok()?;
+                source
+                    .contains(forbidden)
+                    .then(|| path.display().to_string())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            offenders.is_empty(),
+            "legacy presentation authority `{forbidden}` reappeared in {}",
+            offenders.join(", ")
+        );
+    }
+
+    let public_visibility_offenders = sources
+        .iter()
+        .filter_map(|path| {
+            let source = fs::read_to_string(path).ok()?;
+            source_has_public_visibility_surface(&source).then(|| path.display().to_string())
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        public_visibility_offenders.is_empty(),
+        "legacy public `Visibility` surface reappeared in {}",
+        public_visibility_offenders.join(", ")
+    );
+}
+
+fn source_has_public_visibility_surface(source: &str) -> bool {
+    syn::parse_file(source).is_ok_and(|file| items_have_public_visibility_surface(&file.items))
+}
+
+fn items_have_public_visibility_surface(items: &[syn::Item]) -> bool {
+    items.iter().any(|item| match item {
+        syn::Item::Enum(item) => is_public(&item.vis) && item.ident == "Visibility",
+        syn::Item::Struct(item) => is_public(&item.vis) && item.ident == "Visibility",
+        syn::Item::Type(item) => is_public(&item.vis) && item.ident == "Visibility",
+        syn::Item::Use(item) => is_public(&item.vis) && use_tree_exports_visibility(&item.tree),
+        syn::Item::Mod(item) => item
+            .content
+            .as_ref()
+            .is_some_and(|(_, items)| items_have_public_visibility_surface(items)),
+        _ => false,
+    })
+}
+
+fn is_public(visibility: &syn::Visibility) -> bool {
+    matches!(visibility, syn::Visibility::Public(_))
+}
+
+fn use_tree_exports_visibility(tree: &syn::UseTree) -> bool {
+    match tree {
+        syn::UseTree::Name(name) => name.ident == "Visibility",
+        syn::UseTree::Rename(rename) => rename.rename == "Visibility",
+        syn::UseTree::Path(path) => use_tree_exports_visibility(&path.tree),
+        syn::UseTree::Group(group) => group.items.iter().any(use_tree_exports_visibility),
+        syn::UseTree::Glob(_) => false,
     }
 }
 

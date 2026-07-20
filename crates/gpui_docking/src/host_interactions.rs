@@ -49,10 +49,11 @@ impl DockHost {
     pub(crate) fn begin_payload_drag_interaction(
         &mut self,
         payload: &DockDragPayload,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockRuntimeDragSession {
         self.viewport_runtime()
-            .begin_payload_drag_with_app(payload, cx)
+            .begin_payload_drag_from_window(payload, window, cx)
     }
 
     pub(crate) fn begin_tab_item_drag_interaction(
@@ -60,10 +61,11 @@ impl DockHost {
         tabs: DockNodeId,
         item: DockItemId,
         payload: &DockDragPayload,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostTabDragBegin {
         let outcome = self.select_tab_interaction(tabs, item, cx);
-        let drag_session = self.begin_payload_drag_interaction(payload, cx);
+        let drag_session = self.begin_payload_drag_interaction(payload, window, cx);
         DockHostTabDragBegin {
             outcome,
             drag_session,

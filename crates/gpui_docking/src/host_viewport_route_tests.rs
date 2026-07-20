@@ -2343,6 +2343,7 @@ mod handle_suite {
             })
             .expect("target host should handle uncached hovered release");
         cx.run_until_parked();
+        cx.set_platform_hovered_window(None);
 
         cx.read_entity(&controller, |controller, _| {
             assert_eq!(
@@ -2471,6 +2472,7 @@ mod handle_suite {
             })
             .expect("target host should handle hovered release after a cached preview");
         cx.run_until_parked();
+        cx.set_platform_hovered_window(None);
 
         cx.read_entity(&controller, |controller, _| {
             assert_eq!(

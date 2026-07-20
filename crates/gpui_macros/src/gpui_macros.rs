@@ -100,12 +100,6 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
     styles::style_helpers(input)
 }
 
-/// Generates methods for visibility styles.
-#[proc_macro]
-pub fn visibility_style_methods(input: TokenStream) -> TokenStream {
-    styles::visibility_style_methods(input)
-}
-
 /// Generates methods for margin styles.
 #[proc_macro]
 pub fn margin_style_methods(input: TokenStream) -> TokenStream {

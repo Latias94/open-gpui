@@ -3,8 +3,7 @@ use crate::{
     DockViewportPlatformSyncRequest, DockViewportPlatformSyncSkipped,
     DockViewportPlatformSyncSkippedReason, DockViewportPlatformSyncUnsupported,
     DockViewportPlatformSyncUnsupportedReason, DockViewportPlatformWindowState,
-    DockViewportPointerInputSyncRequest, DockViewportRuntime,
-    viewport_registry::DockViewportPlatformRequests,
+    DockViewportRuntime, viewport_registry::DockViewportPlatformRequests,
 };
 use open_gpui::WindowId;
 use open_gpui::{
@@ -58,34 +57,6 @@ fn unsupported_pointer_input_sync(
                 requested: no_inputs_requested,
             }),
         ],
-    }
-}
-
-pub(crate) fn apply_pointer_input_sync_request<C: open_gpui::AppContext>(
-    sync: Option<DockViewportPointerInputSyncRequest>,
-    cx: &mut C,
-) -> Option<DockViewportPlatformSyncRecord> {
-    let sync = sync?;
-    let window = sync.window();
-    let accepts_pointer_input = sync.requested_accepts_pointer_input();
-    let window_id = window.window_id();
-    Some(
-        window
-            .update(cx, |_, window, cx| {
-                let capabilities = cx.viewport_capabilities();
-                sync_pointer_input_window(window, accepts_pointer_input, capabilities)
-            })
-            .unwrap_or_else(|_| unsupported_pointer_input_sync(window_id, accepts_pointer_input)),
-    )
-}
-
-pub(crate) fn record_pointer_input_sync_request<C: open_gpui::AppContext>(
-    runtime: &mut DockViewportRuntime,
-    sync: Option<DockViewportPointerInputSyncRequest>,
-    cx: &mut C,
-) {
-    if let Some(sync_record) = apply_pointer_input_sync_request(sync, cx) {
-        runtime.record_platform_sync(sync_record);
     }
 }
 

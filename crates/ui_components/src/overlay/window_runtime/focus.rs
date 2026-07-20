@@ -312,6 +312,10 @@ impl WindowOverlayRuntime {
                 focus_runtime.activate_scope(scope, window, cx)?;
                 Ok(())
             }
+            FocusTransition::Resume(scope) => {
+                focus_runtime.resume_scope(scope, window, cx)?;
+                Ok(())
+            }
             FocusTransition::Deactivate { scope, restore } => {
                 focus_runtime.deactivate_scope_with_restore(scope, restore, window, cx)?;
                 Ok(())
@@ -723,24 +727,47 @@ impl WindowOverlayRuntimeState {
         old_phase: OverlayLayerPhase,
         next_phase: OverlayLayerPhase,
     ) -> FocusTransition {
+        let presentation = self.entries[id].presentation;
+        self.lifecycle_presentation_transition(
+            id,
+            old_phase,
+            next_phase,
+            presentation,
+            presentation,
+        )
+    }
+
+    pub(super) fn lifecycle_presentation_transition(
+        &self,
+        id: &OverlayLayerId,
+        old_phase: OverlayLayerPhase,
+        next_phase: OverlayLayerPhase,
+        old_presentation: SubtreePresentation,
+        next_presentation: SubtreePresentation,
+    ) -> FocusTransition {
         let entry = &self.entries[id];
         if entry.scope_id.is_none() {
             return FocusTransition::None;
         }
-        if !matches!(
+        let old_eligible = matches!(
             old_phase,
             OverlayLayerPhase::Open | OverlayLayerPhase::CloseRequested
-        ) && next_phase == OverlayLayerPhase::Open
+        ) && old_presentation.is_interactive();
+        let next_eligible = matches!(
+            next_phase,
+            OverlayLayerPhase::Open | OverlayLayerPhase::CloseRequested
+        ) && next_presentation.is_interactive();
+        if !old_eligible
+            && next_eligible
+            && old_phase != next_phase
+            && next_phase == OverlayLayerPhase::Open
         {
             return FocusTransition::Activate(entry.scope_id.clone().expect("scope checked"));
         }
-        if matches!(
-            old_phase,
-            OverlayLayerPhase::Open | OverlayLayerPhase::CloseRequested
-        ) && matches!(
-            next_phase,
-            OverlayLayerPhase::Closing | OverlayLayerPhase::Hidden
-        ) {
+        if !old_eligible && next_eligible {
+            return FocusTransition::Resume(entry.scope_id.clone().expect("scope checked"));
+        }
+        if old_eligible && !next_eligible {
             return FocusTransition::Deactivate {
                 scope: entry.scope_id.clone().expect("scope checked"),
                 restore: entry.should_restore_focus(),

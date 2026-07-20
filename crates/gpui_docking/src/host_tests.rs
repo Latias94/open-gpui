@@ -1,6 +1,6 @@
 use crate::{
-    DockController, DockGraph, DockNode, DockSpaceId, DockWorkspace, EditorDockLayoutSpec,
-    debug::DockDebugRegion, host_test_support::*,
+    DockController, DockGraph, DockNode, DockSpaceId, DockViewportRuntimeHandle, DockWorkspace,
+    EditorDockLayoutSpec, debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
@@ -203,16 +203,19 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
-    let (source_window, source_host, mut source_visual) = open_controller_space(
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         source_space.clone(),
         size(px(360.0), px(220.0)),
     );
-    let (target_window, target_host, mut target_visual) = open_controller_space(
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
+        runtime.clone(),
         target_space.clone(),
         size(px(360.0), px(220.0)),
     );
@@ -236,10 +239,12 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
     let threshold = point(start.x + px(24.0), start.y);
     let target = debug_bounds(&mut target_visual, &target_tabs_selector).center();
 
+    activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
+    cx.set_platform_hovered_window(Some(target_window.into()));
     target_visual.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
@@ -249,6 +254,7 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
 
     target_visual.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
     let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
