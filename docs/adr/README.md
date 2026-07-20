@@ -30,3 +30,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0020: Open GPUI DevTools Artifact Pipeline](0020-open-gpui-devtools-artifact-pipeline.md)
 - [ADR 0021: Open GPUI Interactive Subtree Transform Authority](0021-open-gpui-interactive-subtree-transform-authority.md)
 - [ADR 0022: Open GPUI Subtree Presentation Authority](0022-open-gpui-subtree-presentation-authority.md)
+- [ADR 0023: Open GPUI Live Region And Announcement Authority](0023-open-gpui-live-region-announcement-authority.md)

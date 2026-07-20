@@ -3,10 +3,11 @@
 use open_gpui::prelude::*;
 
 use open_gpui::{
-    Anchor, App, AppContext, BorrowAppContext, Bounds, Context, ElementGeometry, FocusHandle,
-    InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Pixels, Render,
-    ScrollHandle, StatefulInteractiveElement, Styled, SubtreePresentation, Window, WindowBounds,
-    WindowOptions, anchored, deferred, div, px, rgb, size,
+    AccessibilityAnnouncement, Anchor, App, AppContext, BorrowAppContext, Bounds, Context,
+    ElementGeometry, FocusHandle, InteractiveElement, IntoElement, ListAlignment, ListState,
+    ParentElement, Pixels, Render, ScrollHandle, StatefulInteractiveElement, Styled,
+    SubtreePresentation, Window, WindowBounds, WindowOptions, anchored, deferred, div, px, rgb,
+    size,
 };
 use open_gpui_devtools::DevtoolsInspectorController;
 
@@ -14,11 +15,12 @@ use open_gpui_ui_components::{
     AlertDialog, Avatar, AvatarGroup, AvatarState, BadgeState, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode,
     ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
-    CommandSelectionMode, CommandState, ContextMenu, Dialog, FieldState, FocusRing, HoverCard,
-    IconButtonState, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxState, Menu,
-    MenuItem, OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select,
-    SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState,
-    SwitchState, TextInputState, TextareaState, ThemeResolver, ToggleState, Tooltip,
+    CommandSelectionMode, CommandState, ContextMenu, Dialog, FeedbackIntent, FieldState, FocusRing,
+    HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup,
+    ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress, ProgressState,
+    ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton,
+    SkeletonState, StatusCue, SwitchState, TextInputState, TextareaState, ThemeResolver,
+    ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, WindowOverlayRuntime,
         focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui,
@@ -1306,6 +1308,11 @@ impl GalleryShell {
                     ),
             )
             .child(focus_a11y::render_focus_a11y_text_form_scenarios(
+                self,
+                snapshot.tokens,
+                cx,
+            ))
+            .child(focus_a11y::render_focus_a11y_live_region_scenario(
                 self,
                 snapshot.tokens,
                 cx,

@@ -120,6 +120,7 @@ pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
     failures.extend(presentation_documentation_failures(root));
     failures.extend(old_authority_residue_failures(root));
     failures.extend(presentation_authority_residue_failures(root));
+    failures.extend(transient_announcement_consumer_failures(root));
 
     if !failures.is_empty() {
         eprintln!("Federated UI contract scan failed:");
@@ -843,6 +844,36 @@ fn presentation_authority_residue_failures(root: &Path) -> Vec<String> {
     failures
 }
 
+fn transient_announcement_consumer_failures(root: &Path) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut files = Vec::new();
+    collect_rust_files(
+        &root.join("crates/ui_components/src"),
+        &mut files,
+        &mut failures,
+    );
+    for path in files {
+        let label = repo_relative_path(root, &path);
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                failures.push(format!("{label}: failed to read: {error}"));
+                continue;
+            }
+        };
+        if transient_announcement_source_violation(&source) {
+            failures.push(format!(
+                "{label}: component production code must not submit a transient window announcement"
+            ));
+        }
+    }
+    failures
+}
+
+fn transient_announcement_source_violation(source: &str) -> bool {
+    source.contains("AccessibilityAnnouncement") || source.contains(".announce(")
+}
+
 fn removed_presentation_authorities(source: &str) -> Vec<&'static str> {
     let mut removed = REMOVED_PRESENTATION_AUTHORITIES
         .iter()
@@ -1262,6 +1293,19 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn transient_announcement_scan_rejects_component_queue_submission() {
+        assert!(transient_announcement_source_violation(
+            "window.announce(AccessibilityAnnouncement::polite(message), cx);"
+        ));
+        assert!(transient_announcement_source_violation(
+            "use crate::AccessibilityAnnouncement;"
+        ));
+        assert!(!transient_announcement_source_violation(
+            "SemanticDescriptor::new(Role::Status).with_live_text(label)"
+        ));
     }
 
     #[test]

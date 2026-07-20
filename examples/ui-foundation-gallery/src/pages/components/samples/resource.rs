@@ -5,10 +5,10 @@ use open_gpui_resource::{
     MutationSnapshot, QueryKey, ResourceClient, ResourceRedactionPolicy, ResourceSnapshot,
 };
 use open_gpui_ui_components::{
-    ResourceAdapterLabels, ResourceCollectionProjection, ResourceMutationProjection,
-    TreeChildrenLoadState,
+    ResourceAdapterLabels, ResourceAdapterNamespace, ResourceCollectionProjection,
+    ResourceMutationProjection, TreeChildrenLoadState,
 };
-use open_gpui_ui_core::TableRowChildrenLoadState;
+use open_gpui_ui_core::{LivePoliteness, TableRowChildrenLoadState};
 
 /// One resource-adapter integration sample in the gallery.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +27,8 @@ pub struct ResourceAdapterSample {
     pub mutation: Option<ResourceMutationProjection>,
     /// Optional compact status cue projected from resource state.
     pub status_cue: Option<StatusCueState>,
+    /// Optional compact mutation status cue projected from resource state.
+    pub mutation_status_cue: Option<StatusCueState>,
     /// Optional full-surface empty/error state projected from resource state.
     pub empty_state: Option<EmptyStateState>,
     /// Virtualized-list descriptors projected from resource state and sample rows.
@@ -203,6 +205,7 @@ fn mutation_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
     let mutation_snapshot = mutation.clone();
     let mutation = Some(ResourceMutationProjection::resolve(
         &mutation,
+        ResourceAdapterNamespace::new("gallery-project-mutation").unwrap(),
         ResourceAdapterLabels::new("project"),
     ));
 
@@ -235,6 +238,7 @@ fn build_resource_adapter_sample(
 ) -> ResourceAdapterSample {
     let collection = ResourceCollectionProjection::resolve(
         &snapshot,
+        ResourceAdapterNamespace::new(format!("gallery-{id}-collection")).unwrap(),
         visible_item_count,
         ResourceAdapterLabels::new("projects"),
     );
@@ -244,7 +248,13 @@ fn build_resource_adapter_sample(
     } else {
         virtualized_items.extend(rows);
     }
-    let status_cue = collection.status_cue_state(tokens);
+    let status_cue = collection
+        .status_cue_state(tokens)
+        .map(|state| state.with_live(LivePoliteness::Off));
+    let mutation_status_cue = mutation
+        .as_ref()
+        .and_then(|state| state.status_cue_state(tokens))
+        .map(|state| state.with_live(LivePoliteness::Off));
     let empty_state = collection.empty_state(tokens);
     let command_loading_message = collection
         .command_loading_state()
@@ -269,6 +279,7 @@ fn build_resource_adapter_sample(
         collection,
         mutation,
         status_cue,
+        mutation_status_cue,
         empty_state,
         virtualized_items: Arc::from(virtualized_items.into_boxed_slice()),
         command_loading_message,

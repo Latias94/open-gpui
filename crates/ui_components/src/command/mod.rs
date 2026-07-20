@@ -46,8 +46,8 @@ pub use descriptor::{
     CommandMatchSource, CommandOpenMode, CommandPaletteController, CommandPaletteControllerUpdate,
     CommandPaletteKeymapPreflight, CommandPalettePendingProviderRequest, CommandPaletteProjection,
     CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode,
-    CommandShortcutInspectorCommand, CommandShortcutInspectorState, CommandStatusIntent,
-    CommandStatusItem,
+    CommandShortcutInspectorCommand, CommandShortcutInspectorState,
+    CommandStatusIdentityDiagnostic, CommandStatusIntent, CommandStatusItem,
 };
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandNavigationBehavior,

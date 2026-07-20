@@ -79,6 +79,7 @@ struct CachedModalAccessibilityChild {
 impl Render for CachedModalAccessibilityChild {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
+        let live_text = format!("Cached status {}", self.activations);
         accessibility_scope(
             AccessibilityTreeScope::ModalRoot,
             div()
@@ -86,6 +87,15 @@ impl Render for CachedModalAccessibilityChild {
                 .role(Role::Dialog)
                 .aria_label("Cached modal")
                 .aria_modal(true)
+                .child(
+                    div()
+                        .id("cached-modal-status")
+                        .role(Role::Status)
+                        .aria_label(live_text.clone())
+                        .aria_value(live_text)
+                        .aria_live(accesskit::Live::Polite)
+                        .aria_live_atomic(true),
+                )
                 .child(
                     div()
                         .id("cached-modal-action")
@@ -436,8 +446,12 @@ fn accessibility_harness_does_not_reuse_incomplete_cached_a11y_subtrees(cx: &mut
     let initial = cx.latest_accessibility_tree_update(window).unwrap();
     let (modal_id, modal) = node_with_label(&initial, "Cached modal");
     let (action_id, action) = node_with_label(&initial, "Cached modal action");
+    let (status_id, status) = node_with_label(&initial, "Cached status 0");
     assert!(modal.is_modal());
     assert_eq!(action.value(), Some("activation-0"));
+    assert_eq!(status.value(), Some("Cached status 0"));
+    assert_eq!(status.live(), Some(accesskit::Live::Polite));
+    assert!(status.is_live_atomic());
     assert!(
         !initial
             .nodes
@@ -468,6 +482,9 @@ fn accessibility_harness_does_not_reuse_incomplete_cached_a11y_subtrees(cx: &mut
         node_with_label(&refreshed, "Cached modal action");
     assert_eq!(refreshed_action_id, action_id);
     assert_eq!(refreshed_action.value(), Some("activation-1"));
+    let (refreshed_status_id, refreshed_status) = node_with_label(&refreshed, "Cached status 1");
+    assert_eq!(refreshed_status_id, status_id);
+    assert_eq!(refreshed_status.value(), Some("Cached status 1"));
     assert!(
         !refreshed
             .nodes

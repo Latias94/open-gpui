@@ -257,7 +257,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(status_cues.len(), 3);
     assert_eq!(status_cues[0].id, "sync-warning");
     assert_eq!(status_cues[0].state.intent(), FeedbackIntent::Warning);
-    assert_eq!(status_cues[0].state.role(), Role::Label);
+    assert_eq!(status_cues[0].state.role(), Role::Status);
     assert!(status_cues[0].state.display_only());
     assert_eq!(status_cues[0].state.size(), Size::Small);
     assert_eq!(status_cues[1].state.intent(), FeedbackIntent::Success);

@@ -1,4 +1,6 @@
 use crate::{
+    AccessibilityAnnouncement, AccessibilityAnnouncementClearReason,
+    AccessibilityAnnouncementDropReason, AccessibilityAnnouncementLifecycle,
     AccessibilityTreeScope, AccessibleAction, AnyElement, AnyView, App, AppContext as _, Bounds,
     Context, Element, ElementId, Entity, FocusHandle, GlobalElementId, InspectorElementId,
     InteractiveElement, IntoElement, LayoutId, ParentElement, Pixels, Render, Role,
@@ -135,6 +137,7 @@ fn assert_accessibility_tree_is_normalized_and_closed(update: &TreeUpdate) {
 }
 
 mod action_lifecycle;
+mod announcement_lifecycle;
 mod semantics;
 mod tree_lifecycle;
 mod tree_scope;

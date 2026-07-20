@@ -1498,6 +1498,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the ordering and interruption hint for changes to this live region.
+    fn aria_live(mut self, live: accesskit::Live) -> Self {
+        self.interactivity().accessibility.live = Some(live);
+        self
+    }
+
+    /// Set whether live-region changes announce the whole region.
+    fn aria_live_atomic(mut self, atomic: bool) -> Self {
+        self.interactivity().accessibility.live_atomic = Some(atomic);
+        self
+    }
+
     /// Set whether this element permits reading and selection but not mutation.
     fn aria_read_only(mut self, read_only: bool) -> Self {
         self.interactivity().accessibility.read_only = Some(read_only);

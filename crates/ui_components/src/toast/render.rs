@@ -56,7 +56,19 @@ impl RenderOnce for ToastStack {
                 let title = toast.title().to_owned();
                 let description = toast.description().map(str::to_owned);
                 let action_label = toast.action_label().map(str::to_owned);
-                let toast_semantics = SemanticDescriptor::new(toast.role()).with_label(&title);
+                let live_text = description
+                    .as_deref()
+                    .map(|description| format!("{title}. {description}"))
+                    .unwrap_or_else(|| title.clone());
+                let mut toast_semantics =
+                    SemanticDescriptor::new(toast.role())
+                        .with_live_text(&live_text)
+                        .with_live(toast.live())
+                        .with_live_atomic(toast.live_atomic())
+                        .with_busy(toast.busy());
+                if let Some(description) = description.as_deref() {
+                    toast_semantics = toast_semantics.with_description(description);
+                }
                 let action_actions: &[AccessibleAction] = if on_action.is_some() {
                     &[AccessibleAction::Click, AccessibleAction::Focus]
                 } else {
@@ -108,7 +120,7 @@ impl RenderOnce for ToastStack {
                                     .font_weight(open_gpui::FontWeight::BOLD)
                                     .child(title),
                             )
-                            .when_some(description, |this, description| {
+                            .when_some(description.clone(), |this, description| {
                                 this.child(
                                     div()
                                         .text_color(theme.resolve(colors.muted_foreground()))

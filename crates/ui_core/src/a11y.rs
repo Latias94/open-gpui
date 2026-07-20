@@ -61,6 +61,10 @@ pub enum Role {
     Dialog,
     /// An alert dialog surface.
     AlertDialog,
+    /// Advisory information that should be announced without moving focus.
+    Status,
+    /// Important, time-sensitive information that should be announced without moving focus.
+    Alert,
     /// A generic window-like overlay surface.
     Window,
     /// A progress indicator.
@@ -79,6 +83,17 @@ pub enum Role {
     Tab,
     /// A tab panel.
     TabPanel,
+}
+
+/// The ordering and interruption hint for changes to a live semantic region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LivePoliteness {
+    /// Do not treat changes as live announcements.
+    Off,
+    /// Announce changes at the next suitable opportunity.
+    Polite,
+    /// Announce changes with high priority; focus remains unchanged.
+    Assertive,
 }
 
 /// Pressed or checked state for controls with toggle semantics.
@@ -252,6 +267,8 @@ pub struct SemanticDescriptor<'a, NodeId = std::convert::Infallible> {
     required: Option<bool>,
     invalid: Option<bool>,
     busy: Option<bool>,
+    live: Option<LivePoliteness>,
+    live_atomic: Option<bool>,
     read_only: Option<bool>,
     omit_accessibility_node: Option<bool>,
     modal: Option<bool>,
@@ -278,6 +295,11 @@ pub struct SemanticDescriptor<'a, NodeId = std::convert::Infallible> {
 impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
     /// Creates an empty semantic projection for a role.
     pub const fn new(role: Role) -> Self {
+        let (live, live_atomic) = match role {
+            Role::Status => (Some(LivePoliteness::Polite), Some(true)),
+            Role::Alert => (Some(LivePoliteness::Assertive), Some(true)),
+            _ => (None, None),
+        };
         Self {
             role,
             label: None,
@@ -294,6 +316,8 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
             required: None,
             invalid: None,
             busy: None,
+            live,
+            live_atomic,
             read_only: None,
             omit_accessibility_node: None,
             modal: None,
@@ -391,6 +415,16 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
     /// Returns busy state when applicable.
     pub const fn busy(&self) -> Option<bool> {
         self.busy
+    }
+
+    /// Returns the live-region ordering and interruption hint when specified.
+    pub const fn live(&self) -> Option<LivePoliteness> {
+        self.live
+    }
+
+    /// Returns whether live-region changes announce the whole region when specified.
+    pub const fn live_atomic(&self) -> Option<bool> {
+        self.live_atomic
     }
 
     /// Returns read-only state when applicable.
@@ -526,6 +560,16 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
         self
     }
 
+    /// Applies the same portable text to both the accessible name and live value.
+    ///
+    /// Supported platform adapters derive live announcements from different AccessKit fields, so
+    /// live-region components should use this instead of projecting only a label or only a value.
+    pub const fn with_live_text(mut self, text: &'a str) -> Self {
+        self.label = Some(text);
+        self.value = Some(text);
+        self
+    }
+
     /// Applies placeholder guidance for an editable value.
     pub const fn with_placeholder(mut self, placeholder: &'a str) -> Self {
         self.placeholder = Some(placeholder);
@@ -592,6 +636,18 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
     /// Applies busy state.
     pub const fn with_busy(mut self, busy: bool) -> Self {
         self.busy = Some(busy);
+        self
+    }
+
+    /// Applies a live-region ordering and interruption hint.
+    pub const fn with_live(mut self, live: LivePoliteness) -> Self {
+        self.live = Some(live);
+        self
+    }
+
+    /// Applies whole-region announcement semantics to live changes.
+    pub const fn with_live_atomic(mut self, atomic: bool) -> Self {
+        self.live_atomic = Some(atomic);
         self
     }
 
@@ -844,5 +900,40 @@ mod tests {
                 .omit_accessibility_node(),
             Some(false)
         );
+    }
+
+    #[test]
+    fn live_region_roles_apply_renderer_neutral_defaults() {
+        let status: SemanticDescriptor<'_> = SemanticDescriptor::new(Role::Status);
+        let alert: SemanticDescriptor<'_> = SemanticDescriptor::new(Role::Alert);
+        let label: SemanticDescriptor<'_> = SemanticDescriptor::new(Role::Label);
+
+        assert_eq!(status.live(), Some(LivePoliteness::Polite));
+        assert_eq!(status.live_atomic(), Some(true));
+        assert_eq!(alert.live(), Some(LivePoliteness::Assertive));
+        assert_eq!(alert.live_atomic(), Some(true));
+        assert_eq!(label.live(), None);
+        assert_eq!(label.live_atomic(), None);
+    }
+
+    #[test]
+    fn live_region_defaults_allow_explicit_portable_overrides() {
+        let descriptor: SemanticDescriptor<'_> = SemanticDescriptor::new(Role::Status)
+            .with_live_text("Synchronization complete")
+            .with_live(LivePoliteness::Off)
+            .with_live_atomic(false)
+            .with_busy(true);
+
+        assert_eq!(descriptor.label(), Some("Synchronization complete"));
+        assert_eq!(descriptor.value(), Some("Synchronization complete"));
+        assert_eq!(descriptor.live(), Some(LivePoliteness::Off));
+        assert_eq!(descriptor.live_atomic(), Some(false));
+        assert_eq!(descriptor.busy(), Some(true));
+
+        let assertive: SemanticDescriptor<'_> = SemanticDescriptor::new(Role::Group)
+            .with_live(LivePoliteness::Assertive)
+            .with_live_atomic(true);
+        assert_eq!(assertive.live(), Some(LivePoliteness::Assertive));
+        assert_eq!(assertive.live_atomic(), Some(true));
     }
 }

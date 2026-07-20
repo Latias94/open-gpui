@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use open_gpui::{App, ElementId, IntoElement, SharedString, Window};
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{LivePoliteness, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::activation::{Activation, ActivationHandle};
 use crate::feedback::{FeedbackColors, FeedbackIntent};
@@ -30,6 +30,7 @@ pub struct Toast {
     title: String,
     description: Option<String>,
     intent: ToastIntent,
+    live: Option<LivePoliteness>,
     timeout: Option<Duration>,
     elapsed: Duration,
     action_label: Option<String>,
@@ -44,6 +45,7 @@ impl Toast {
             title: title.into(),
             description: None,
             intent: ToastIntent::Neutral,
+            live: None,
             timeout: Some(DEFAULT_TOAST_TIMEOUT),
             elapsed: Duration::ZERO,
             action_label: None,
@@ -60,6 +62,12 @@ impl Toast {
     /// Applies semantic feedback intent.
     pub fn intent(mut self, intent: ToastIntent) -> Self {
         self.intent = intent;
+        self
+    }
+
+    /// Overrides the default live-region priority for this toast.
+    pub fn live(mut self, live: LivePoliteness) -> Self {
+        self.live = Some(live);
         self
     }
 
@@ -325,6 +333,7 @@ pub struct ToastState {
     title: String,
     description: Option<String>,
     intent: ToastIntent,
+    live: LivePoliteness,
     timeout: Option<Duration>,
     remaining_timeout: Option<Duration>,
     action_label: Option<String>,
@@ -345,6 +354,11 @@ impl ToastState {
     ) -> Self {
         let remaining_timeout = toast.remaining_timeout();
         let colors = ThemeResolver::feedback_colors(tokens, toast.intent);
+        let default_live = if toast.intent == ToastIntent::Danger {
+            LivePoliteness::Assertive
+        } else {
+            LivePoliteness::Polite
+        };
 
         Self {
             source_index,
@@ -353,6 +367,7 @@ impl ToastState {
             title: toast.title,
             description: toast.description,
             intent: toast.intent,
+            live: toast.live.unwrap_or(default_live),
             timeout: toast.timeout,
             remaining_timeout,
             action_label: toast.action_label,
@@ -420,7 +435,28 @@ impl ToastState {
 
     /// Returns accessibility role.
     pub const fn role(&self) -> Role {
-        Role::Section
+        match self.intent {
+            ToastIntent::Danger => Role::Alert,
+            ToastIntent::Neutral
+            | ToastIntent::Info
+            | ToastIntent::Success
+            | ToastIntent::Warning => Role::Status,
+        }
+    }
+
+    /// Returns the live-region priority resolved for this toast.
+    pub const fn live(&self) -> LivePoliteness {
+        self.live
+    }
+
+    /// Returns whether the complete toast text is announced atomically.
+    pub const fn live_atomic(&self) -> bool {
+        true
+    }
+
+    /// Returns whether this toast represents pending work.
+    pub const fn busy(&self) -> bool {
+        false
     }
 
     /// Returns action button role.
@@ -792,6 +828,8 @@ mod tests {
         assert_eq!(state.visible_toasts().len(), 2);
         assert_eq!(state.visible_toasts()[0].id(), "three");
         assert_eq!(state.visible_toasts()[1].id(), "two");
+        assert_eq!(state.visible_toasts()[0].role(), Role::Status);
+        assert_eq!(state.visible_toasts()[0].live(), LivePoliteness::Polite);
         assert_eq!(state.overflow_count(), 1);
         assert_eq!(state.visible_toasts()[0].action().unwrap().label(), "Undo");
         assert_eq!(
@@ -805,6 +843,16 @@ mod tests {
             state.visible_toasts()[0].colors().marker().token(),
             semantic::TEXT_MUTED
         );
+
+        let danger = ToastState::resolve(
+            0,
+            0,
+            Toast::new("danger", "Connection failed").intent(ToastIntent::Danger),
+            Size::Medium,
+            ThemeTokens::default(),
+        );
+        assert_eq!(danger.role(), Role::Alert);
+        assert_eq!(danger.live(), LivePoliteness::Assertive);
     }
 
     #[test]

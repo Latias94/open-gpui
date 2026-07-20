@@ -245,7 +245,7 @@
               "probe_id": "accessibility",
               "snapshot_kind": "accessibility",
               "root_nodes": 1,
-              "redacted_values": 10
+              "redacted_values": 15
             },
             "snapshot": {
               "probe_id": "accessibility",
@@ -256,12 +256,13 @@
                     "id": "accessibility",
                     "label": "Resolved accessibility semantics",
                     "payload": {
-                      "node_count": 5,
-                      "scenario_count": 3,
+                      "node_count": 7,
+                      "scenario_count": 4,
                       "scenario_ids": [
                         "text-input-value-selection",
                         "textarea-field-relations",
-                        "password-free-text-redaction"
+                        "password-free-text-redaction",
+                        "live-regions-and-announcements"
                       ]
                     },
                     "children": [
@@ -331,6 +332,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -429,6 +432,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -461,7 +466,7 @@
                               "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002003",
-                              "role": "label",
+                              "role": "alert",
                               "text": {
                                 "label": {
                                   "kind": "redacted"
@@ -470,7 +475,7 @@
                                   "kind": "absent"
                                 },
                                 "value": {
-                                  "kind": "absent"
+                                  "kind": "redacted"
                                 },
                                 "placeholder": {
                                   "kind": "absent"
@@ -508,6 +513,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": "assertive",
+                                "live_atomic": true,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -587,6 +594,8 @@
                                 "required": true,
                                 "invalid": true,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -684,6 +693,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -712,13 +723,189 @@
                             "children": []
                           }
                         ]
+                      },
+                      {
+                        "id": "accessibility.scenario.live-regions-and-announcements",
+                        "label": "live-regions-and-announcements accessibility scenario",
+                        "payload": {
+                          "scenario_id": "live-regions-and-announcements",
+                          "component_ids": [
+                            "focus-a11y-live-status",
+                            "focus-a11y-live-alert"
+                          ],
+                          "semantic_node_count": 2
+                        },
+                        "children": [
+                          {
+                            "id": "accessibility.resolved.semantic-node-0000000000004001",
+                            "label": "StatusCue semantic node",
+                            "payload": {
+                              "contract_id": "StatusCue",
+                              "contract_revision": 1,
+                              "family": "feedback",
+                              "semantic_id": "semantic-node-0000000000004001",
+                              "role": "status",
+                              "text": {
+                                "label": {
+                                  "kind": "redacted"
+                                },
+                                "description": {
+                                  "kind": "absent"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "placeholder": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "numeric": {
+                                "value": {
+                                  "kind": "absent"
+                                },
+                                "minimum": {
+                                  "kind": "absent"
+                                },
+                                "maximum": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "text_structure": {
+                                "character_lengths": {
+                                  "kind": "absent"
+                                },
+                                "selection": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "relations": {
+                                "controls_count": 0,
+                                "labelled_by_count": 0,
+                                "described_by_count": 0,
+                                "error_message": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "state": {
+                                "selected": null,
+                                "required": null,
+                                "invalid": null,
+                                "busy": true,
+                                "live": "polite",
+                                "live_atomic": true,
+                                "read_only": null,
+                                "omit_accessibility_node": null,
+                                "modal": null,
+                                "disabled": null,
+                                "expanded": null,
+                                "toggled": null
+                              },
+                              "collection": {
+                                "level": null,
+                                "position_in_set": null,
+                                "size_of_set": null,
+                                "row_index": null,
+                                "column_index": null,
+                                "row_span": null,
+                                "column_span": null,
+                                "row_count": null,
+                                "column_count": null,
+                                "sort_direction": null,
+                                "orientation": null
+                              },
+                              "actions": []
+                            },
+                            "children": []
+                          },
+                          {
+                            "id": "accessibility.resolved.semantic-node-0000000000004002",
+                            "label": "StatusCue semantic node",
+                            "payload": {
+                              "contract_id": "StatusCue",
+                              "contract_revision": 1,
+                              "family": "feedback",
+                              "semantic_id": "semantic-node-0000000000004002",
+                              "role": "alert",
+                              "text": {
+                                "label": {
+                                  "kind": "redacted"
+                                },
+                                "description": {
+                                  "kind": "absent"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "placeholder": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "numeric": {
+                                "value": {
+                                  "kind": "absent"
+                                },
+                                "minimum": {
+                                  "kind": "absent"
+                                },
+                                "maximum": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "text_structure": {
+                                "character_lengths": {
+                                  "kind": "absent"
+                                },
+                                "selection": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "relations": {
+                                "controls_count": 0,
+                                "labelled_by_count": 0,
+                                "described_by_count": 0,
+                                "error_message": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "state": {
+                                "selected": null,
+                                "required": null,
+                                "invalid": null,
+                                "busy": null,
+                                "live": "assertive",
+                                "live_atomic": true,
+                                "read_only": null,
+                                "omit_accessibility_node": null,
+                                "modal": null,
+                                "disabled": null,
+                                "expanded": null,
+                                "toggled": null
+                              },
+                              "collection": {
+                                "level": null,
+                                "position_in_set": null,
+                                "size_of_set": null,
+                                "row_index": null,
+                                "column_index": null,
+                                "row_span": null,
+                                "column_span": null,
+                                "row_count": null,
+                                "column_count": null,
+                                "sort_direction": null,
+                                "orientation": null
+                              },
+                              "actions": []
+                            },
+                            "children": []
+                          }
+                        ]
                       }
                     ]
                   }
                 ]
               },
               "redaction": {
-                "redacted_values": 10,
+                "redacted_values": 15,
                 "notes": [
                   "resolved semantic accessible label redacted",
                   "resolved semantic value text redacted",
@@ -726,10 +913,15 @@
                   "resolved semantic accessible label redacted",
                   "resolved semantic accessible label redacted",
                   "resolved semantic value text redacted",
+                  "resolved semantic value text redacted",
                   "resolved semantic placeholder redacted",
                   "resolved semantic accessible label redacted",
                   "resolved semantic password [redacted] redacted",
-                  "resolved semantic placeholder redacted"
+                  "resolved semantic placeholder redacted",
+                  "resolved semantic accessible label redacted",
+                  "resolved semantic value text redacted",
+                  "resolved semantic accessible label redacted",
+                  "resolved semantic value text redacted"
                 ]
               }
             },
@@ -2434,12 +2626,13 @@
                   "id": "accessibility",
                   "label": "Resolved accessibility semantics",
                   "payload": {
-                    "node_count": 5,
-                    "scenario_count": 3,
+                    "node_count": 7,
+                    "scenario_count": 4,
                     "scenario_ids": [
                       "text-input-value-selection",
                       "textarea-field-relations",
-                      "password-free-text-redaction"
+                      "password-free-text-redaction",
+                      "live-regions-and-announcements"
                     ]
                   },
                   "children": [
@@ -2509,6 +2702,8 @@
                               "required": false,
                               "invalid": false,
                               "busy": false,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": false,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -2607,6 +2802,8 @@
                               "required": null,
                               "invalid": null,
                               "busy": null,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": null,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -2639,7 +2836,7 @@
                             "contract_revision": 1,
                             "family": "form",
                             "semantic_id": "semantic-node-0000000000002003",
-                            "role": "label",
+                            "role": "alert",
                             "text": {
                               "label": {
                                 "kind": "redacted"
@@ -2648,7 +2845,7 @@
                                 "kind": "absent"
                               },
                               "value": {
-                                "kind": "absent"
+                                "kind": "redacted"
                               },
                               "placeholder": {
                                 "kind": "absent"
@@ -2686,6 +2883,8 @@
                               "required": null,
                               "invalid": null,
                               "busy": null,
+                              "live": "assertive",
+                              "live_atomic": true,
                               "read_only": null,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -2765,6 +2964,8 @@
                               "required": true,
                               "invalid": true,
                               "busy": false,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": false,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -2862,6 +3063,8 @@
                               "required": false,
                               "invalid": false,
                               "busy": false,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": false,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -2890,13 +3093,189 @@
                           "children": []
                         }
                       ]
+                    },
+                    {
+                      "id": "accessibility.scenario.live-regions-and-announcements",
+                      "label": "live-regions-and-announcements accessibility scenario",
+                      "payload": {
+                        "scenario_id": "live-regions-and-announcements",
+                        "component_ids": [
+                          "focus-a11y-live-status",
+                          "focus-a11y-live-alert"
+                        ],
+                        "semantic_node_count": 2
+                      },
+                      "children": [
+                        {
+                          "id": "accessibility.resolved.semantic-node-0000000000004001",
+                          "label": "StatusCue semantic node",
+                          "payload": {
+                            "contract_id": "StatusCue",
+                            "contract_revision": 1,
+                            "family": "feedback",
+                            "semantic_id": "semantic-node-0000000000004001",
+                            "role": "status",
+                            "text": {
+                              "label": {
+                                "kind": "redacted"
+                              },
+                              "description": {
+                                "kind": "absent"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "placeholder": {
+                                "kind": "absent"
+                              }
+                            },
+                            "numeric": {
+                              "value": {
+                                "kind": "absent"
+                              },
+                              "minimum": {
+                                "kind": "absent"
+                              },
+                              "maximum": {
+                                "kind": "absent"
+                              }
+                            },
+                            "text_structure": {
+                              "character_lengths": {
+                                "kind": "absent"
+                              },
+                              "selection": {
+                                "kind": "absent"
+                              }
+                            },
+                            "relations": {
+                              "controls_count": 0,
+                              "labelled_by_count": 0,
+                              "described_by_count": 0,
+                              "error_message": {
+                                "kind": "absent"
+                              }
+                            },
+                            "state": {
+                              "selected": null,
+                              "required": null,
+                              "invalid": null,
+                              "busy": true,
+                              "live": "polite",
+                              "live_atomic": true,
+                              "read_only": null,
+                              "omit_accessibility_node": null,
+                              "modal": null,
+                              "disabled": null,
+                              "expanded": null,
+                              "toggled": null
+                            },
+                            "collection": {
+                              "level": null,
+                              "position_in_set": null,
+                              "size_of_set": null,
+                              "row_index": null,
+                              "column_index": null,
+                              "row_span": null,
+                              "column_span": null,
+                              "row_count": null,
+                              "column_count": null,
+                              "sort_direction": null,
+                              "orientation": null
+                            },
+                            "actions": []
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "accessibility.resolved.semantic-node-0000000000004002",
+                          "label": "StatusCue semantic node",
+                          "payload": {
+                            "contract_id": "StatusCue",
+                            "contract_revision": 1,
+                            "family": "feedback",
+                            "semantic_id": "semantic-node-0000000000004002",
+                            "role": "alert",
+                            "text": {
+                              "label": {
+                                "kind": "redacted"
+                              },
+                              "description": {
+                                "kind": "absent"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "placeholder": {
+                                "kind": "absent"
+                              }
+                            },
+                            "numeric": {
+                              "value": {
+                                "kind": "absent"
+                              },
+                              "minimum": {
+                                "kind": "absent"
+                              },
+                              "maximum": {
+                                "kind": "absent"
+                              }
+                            },
+                            "text_structure": {
+                              "character_lengths": {
+                                "kind": "absent"
+                              },
+                              "selection": {
+                                "kind": "absent"
+                              }
+                            },
+                            "relations": {
+                              "controls_count": 0,
+                              "labelled_by_count": 0,
+                              "described_by_count": 0,
+                              "error_message": {
+                                "kind": "absent"
+                              }
+                            },
+                            "state": {
+                              "selected": null,
+                              "required": null,
+                              "invalid": null,
+                              "busy": null,
+                              "live": "assertive",
+                              "live_atomic": true,
+                              "read_only": null,
+                              "omit_accessibility_node": null,
+                              "modal": null,
+                              "disabled": null,
+                              "expanded": null,
+                              "toggled": null
+                            },
+                            "collection": {
+                              "level": null,
+                              "position_in_set": null,
+                              "size_of_set": null,
+                              "row_index": null,
+                              "column_index": null,
+                              "row_span": null,
+                              "column_span": null,
+                              "row_count": null,
+                              "column_count": null,
+                              "sort_direction": null,
+                              "orientation": null
+                            },
+                            "actions": []
+                          },
+                          "children": []
+                        }
+                      ]
                     }
                   ]
                 }
               ]
             },
             "redaction": {
-              "redacted_values": 10,
+              "redacted_values": 15,
               "notes": [
                 "resolved semantic accessible label redacted",
                 "resolved semantic value text redacted",
@@ -2904,10 +3283,15 @@
                 "resolved semantic accessible label redacted",
                 "resolved semantic accessible label redacted",
                 "resolved semantic value text redacted",
+                "resolved semantic value text redacted",
                 "resolved semantic placeholder redacted",
                 "resolved semantic accessible label redacted",
                 "resolved semantic password [redacted] redacted",
-                "resolved semantic placeholder redacted"
+                "resolved semantic placeholder redacted",
+                "resolved semantic accessible label redacted",
+                "resolved semantic value text redacted",
+                "resolved semantic accessible label redacted",
+                "resolved semantic value text redacted"
               ]
             }
           },
@@ -4592,7 +4976,7 @@
               "probe_id": "accessibility",
               "snapshot_kind": "accessibility",
               "root_nodes": 1,
-              "redacted_values": 10
+              "redacted_values": 12
             },
             "snapshot": {
               "probe_id": "accessibility",
@@ -4603,12 +4987,13 @@
                     "id": "accessibility",
                     "label": "Resolved accessibility semantics",
                     "payload": {
-                      "node_count": 5,
-                      "scenario_count": 3,
+                      "node_count": 6,
+                      "scenario_count": 4,
                       "scenario_ids": [
                         "text-input-value-selection",
                         "textarea-field-relations",
-                        "password-free-text-redaction"
+                        "password-free-text-redaction",
+                        "live-regions-and-announcements"
                       ]
                     },
                     "children": [
@@ -4678,6 +5063,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -4776,6 +5163,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -4855,6 +5244,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -4934,6 +5325,8 @@
                                 "required": true,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -5031,6 +5424,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -5059,13 +5454,108 @@
                             "children": []
                           }
                         ]
+                      },
+                      {
+                        "id": "accessibility.scenario.live-regions-and-announcements",
+                        "label": "live-regions-and-announcements accessibility scenario",
+                        "payload": {
+                          "scenario_id": "live-regions-and-announcements",
+                          "component_ids": [
+                            "focus-a11y-live-status",
+                            "focus-a11y-live-alert"
+                          ],
+                          "semantic_node_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "accessibility.resolved.semantic-node-0000000000004001",
+                            "label": "StatusCue semantic node",
+                            "payload": {
+                              "contract_id": "StatusCue",
+                              "contract_revision": 1,
+                              "family": "feedback",
+                              "semantic_id": "semantic-node-0000000000004001",
+                              "role": "status",
+                              "text": {
+                                "label": {
+                                  "kind": "redacted"
+                                },
+                                "description": {
+                                  "kind": "absent"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "placeholder": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "numeric": {
+                                "value": {
+                                  "kind": "absent"
+                                },
+                                "minimum": {
+                                  "kind": "absent"
+                                },
+                                "maximum": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "text_structure": {
+                                "character_lengths": {
+                                  "kind": "absent"
+                                },
+                                "selection": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "relations": {
+                                "controls_count": 0,
+                                "labelled_by_count": 0,
+                                "described_by_count": 0,
+                                "error_message": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "state": {
+                                "selected": null,
+                                "required": null,
+                                "invalid": null,
+                                "busy": false,
+                                "live": "off",
+                                "live_atomic": true,
+                                "read_only": null,
+                                "omit_accessibility_node": null,
+                                "modal": null,
+                                "disabled": null,
+                                "expanded": null,
+                                "toggled": null
+                              },
+                              "collection": {
+                                "level": null,
+                                "position_in_set": null,
+                                "size_of_set": null,
+                                "row_index": null,
+                                "column_index": null,
+                                "row_span": null,
+                                "column_span": null,
+                                "row_count": null,
+                                "column_count": null,
+                                "sort_direction": null,
+                                "orientation": null
+                              },
+                              "actions": []
+                            },
+                            "children": []
+                          }
+                        ]
                       }
                     ]
                   }
                 ]
               },
               "redaction": {
-                "redacted_values": 10,
+                "redacted_values": 12,
                 "notes": [
                   "resolved semantic accessible label redacted",
                   "resolved semantic value text redacted",
@@ -5076,7 +5566,9 @@
                   "resolved semantic placeholder redacted",
                   "resolved semantic accessible label redacted",
                   "resolved semantic password [redacted] redacted",
-                  "resolved semantic placeholder redacted"
+                  "resolved semantic placeholder redacted",
+                  "resolved semantic accessible label redacted",
+                  "resolved semantic value text redacted"
                 ]
               }
             },
@@ -6828,12 +7320,13 @@
                   "id": "accessibility",
                   "label": "Resolved accessibility semantics",
                   "payload": {
-                    "node_count": 5,
-                    "scenario_count": 3,
+                    "node_count": 6,
+                    "scenario_count": 4,
                     "scenario_ids": [
                       "text-input-value-selection",
                       "textarea-field-relations",
-                      "password-free-text-redaction"
+                      "password-free-text-redaction",
+                      "live-regions-and-announcements"
                     ]
                   },
                   "children": [
@@ -6903,6 +7396,8 @@
                               "required": false,
                               "invalid": false,
                               "busy": false,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": false,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -7001,6 +7496,8 @@
                               "required": null,
                               "invalid": null,
                               "busy": null,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": null,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -7080,6 +7577,8 @@
                               "required": null,
                               "invalid": null,
                               "busy": null,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": null,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -7159,6 +7658,8 @@
                               "required": true,
                               "invalid": false,
                               "busy": false,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": false,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -7256,6 +7757,8 @@
                               "required": false,
                               "invalid": false,
                               "busy": false,
+                              "live": null,
+                              "live_atomic": null,
                               "read_only": false,
                               "omit_accessibility_node": null,
                               "modal": null,
@@ -7284,13 +7787,108 @@
                           "children": []
                         }
                       ]
+                    },
+                    {
+                      "id": "accessibility.scenario.live-regions-and-announcements",
+                      "label": "live-regions-and-announcements accessibility scenario",
+                      "payload": {
+                        "scenario_id": "live-regions-and-announcements",
+                        "component_ids": [
+                          "focus-a11y-live-status",
+                          "focus-a11y-live-alert"
+                        ],
+                        "semantic_node_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "accessibility.resolved.semantic-node-0000000000004001",
+                          "label": "StatusCue semantic node",
+                          "payload": {
+                            "contract_id": "StatusCue",
+                            "contract_revision": 1,
+                            "family": "feedback",
+                            "semantic_id": "semantic-node-0000000000004001",
+                            "role": "status",
+                            "text": {
+                              "label": {
+                                "kind": "redacted"
+                              },
+                              "description": {
+                                "kind": "absent"
+                              },
+                              "value": {
+                                "kind": "redacted"
+                              },
+                              "placeholder": {
+                                "kind": "absent"
+                              }
+                            },
+                            "numeric": {
+                              "value": {
+                                "kind": "absent"
+                              },
+                              "minimum": {
+                                "kind": "absent"
+                              },
+                              "maximum": {
+                                "kind": "absent"
+                              }
+                            },
+                            "text_structure": {
+                              "character_lengths": {
+                                "kind": "absent"
+                              },
+                              "selection": {
+                                "kind": "absent"
+                              }
+                            },
+                            "relations": {
+                              "controls_count": 0,
+                              "labelled_by_count": 0,
+                              "described_by_count": 0,
+                              "error_message": {
+                                "kind": "absent"
+                              }
+                            },
+                            "state": {
+                              "selected": null,
+                              "required": null,
+                              "invalid": null,
+                              "busy": false,
+                              "live": "off",
+                              "live_atomic": true,
+                              "read_only": null,
+                              "omit_accessibility_node": null,
+                              "modal": null,
+                              "disabled": null,
+                              "expanded": null,
+                              "toggled": null
+                            },
+                            "collection": {
+                              "level": null,
+                              "position_in_set": null,
+                              "size_of_set": null,
+                              "row_index": null,
+                              "column_index": null,
+                              "row_span": null,
+                              "column_span": null,
+                              "row_count": null,
+                              "column_count": null,
+                              "sort_direction": null,
+                              "orientation": null
+                            },
+                            "actions": []
+                          },
+                          "children": []
+                        }
+                      ]
                     }
                   ]
                 }
               ]
             },
             "redaction": {
-              "redacted_values": 10,
+              "redacted_values": 12,
               "notes": [
                 "resolved semantic accessible label redacted",
                 "resolved semantic value text redacted",
@@ -7301,7 +7899,9 @@
                 "resolved semantic placeholder redacted",
                 "resolved semantic accessible label redacted",
                 "resolved semantic password [redacted] redacted",
-                "resolved semantic placeholder redacted"
+                "resolved semantic placeholder redacted",
+                "resolved semantic accessible label redacted",
+                "resolved semantic value text redacted"
               ]
             }
           },
@@ -9366,7 +9966,7 @@
                 "probe_id": "accessibility",
                 "snapshot_kind": "accessibility",
                 "root_nodes": 1,
-                "redacted_values": 10
+                "redacted_values": 15
               },
               "snapshot": {
                 "probe_id": "accessibility",
@@ -9377,12 +9977,13 @@
                       "id": "accessibility",
                       "label": "Resolved accessibility semantics",
                       "payload": {
-                        "node_count": 5,
-                        "scenario_count": 3,
+                        "node_count": 7,
+                        "scenario_count": 4,
                         "scenario_ids": [
                           "text-input-value-selection",
                           "textarea-field-relations",
-                          "password-free-text-redaction"
+                          "password-free-text-redaction",
+                          "live-regions-and-announcements"
                         ]
                       },
                       "children": [
@@ -9452,6 +10053,8 @@
                                   "required": false,
                                   "invalid": false,
                                   "busy": false,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": false,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -9550,6 +10153,8 @@
                                   "required": null,
                                   "invalid": null,
                                   "busy": null,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": null,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -9582,7 +10187,7 @@
                                 "contract_revision": 1,
                                 "family": "form",
                                 "semantic_id": "semantic-node-0000000000002003",
-                                "role": "label",
+                                "role": "alert",
                                 "text": {
                                   "label": {
                                     "kind": "redacted"
@@ -9591,7 +10196,7 @@
                                     "kind": "absent"
                                   },
                                   "value": {
-                                    "kind": "absent"
+                                    "kind": "redacted"
                                   },
                                   "placeholder": {
                                     "kind": "absent"
@@ -9629,6 +10234,8 @@
                                   "required": null,
                                   "invalid": null,
                                   "busy": null,
+                                  "live": "assertive",
+                                  "live_atomic": true,
                                   "read_only": null,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -9708,6 +10315,8 @@
                                   "required": true,
                                   "invalid": true,
                                   "busy": false,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": false,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -9805,6 +10414,8 @@
                                   "required": false,
                                   "invalid": false,
                                   "busy": false,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": false,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -9833,13 +10444,189 @@
                               "children": []
                             }
                           ]
+                        },
+                        {
+                          "id": "accessibility.scenario.live-regions-and-announcements",
+                          "label": "live-regions-and-announcements accessibility scenario",
+                          "payload": {
+                            "scenario_id": "live-regions-and-announcements",
+                            "component_ids": [
+                              "focus-a11y-live-status",
+                              "focus-a11y-live-alert"
+                            ],
+                            "semantic_node_count": 2
+                          },
+                          "children": [
+                            {
+                              "id": "accessibility.resolved.semantic-node-0000000000004001",
+                              "label": "StatusCue semantic node",
+                              "payload": {
+                                "contract_id": "StatusCue",
+                                "contract_revision": 1,
+                                "family": "feedback",
+                                "semantic_id": "semantic-node-0000000000004001",
+                                "role": "status",
+                                "text": {
+                                  "label": {
+                                    "kind": "redacted"
+                                  },
+                                  "description": {
+                                    "kind": "absent"
+                                  },
+                                  "value": {
+                                    "kind": "redacted"
+                                  },
+                                  "placeholder": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "numeric": {
+                                  "value": {
+                                    "kind": "absent"
+                                  },
+                                  "minimum": {
+                                    "kind": "absent"
+                                  },
+                                  "maximum": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "text_structure": {
+                                  "character_lengths": {
+                                    "kind": "absent"
+                                  },
+                                  "selection": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "relations": {
+                                  "controls_count": 0,
+                                  "labelled_by_count": 0,
+                                  "described_by_count": 0,
+                                  "error_message": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "state": {
+                                  "selected": null,
+                                  "required": null,
+                                  "invalid": null,
+                                  "busy": true,
+                                  "live": "polite",
+                                  "live_atomic": true,
+                                  "read_only": null,
+                                  "omit_accessibility_node": null,
+                                  "modal": null,
+                                  "disabled": null,
+                                  "expanded": null,
+                                  "toggled": null
+                                },
+                                "collection": {
+                                  "level": null,
+                                  "position_in_set": null,
+                                  "size_of_set": null,
+                                  "row_index": null,
+                                  "column_index": null,
+                                  "row_span": null,
+                                  "column_span": null,
+                                  "row_count": null,
+                                  "column_count": null,
+                                  "sort_direction": null,
+                                  "orientation": null
+                                },
+                                "actions": []
+                              },
+                              "children": []
+                            },
+                            {
+                              "id": "accessibility.resolved.semantic-node-0000000000004002",
+                              "label": "StatusCue semantic node",
+                              "payload": {
+                                "contract_id": "StatusCue",
+                                "contract_revision": 1,
+                                "family": "feedback",
+                                "semantic_id": "semantic-node-0000000000004002",
+                                "role": "alert",
+                                "text": {
+                                  "label": {
+                                    "kind": "redacted"
+                                  },
+                                  "description": {
+                                    "kind": "absent"
+                                  },
+                                  "value": {
+                                    "kind": "redacted"
+                                  },
+                                  "placeholder": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "numeric": {
+                                  "value": {
+                                    "kind": "absent"
+                                  },
+                                  "minimum": {
+                                    "kind": "absent"
+                                  },
+                                  "maximum": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "text_structure": {
+                                  "character_lengths": {
+                                    "kind": "absent"
+                                  },
+                                  "selection": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "relations": {
+                                  "controls_count": 0,
+                                  "labelled_by_count": 0,
+                                  "described_by_count": 0,
+                                  "error_message": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "state": {
+                                  "selected": null,
+                                  "required": null,
+                                  "invalid": null,
+                                  "busy": null,
+                                  "live": "assertive",
+                                  "live_atomic": true,
+                                  "read_only": null,
+                                  "omit_accessibility_node": null,
+                                  "modal": null,
+                                  "disabled": null,
+                                  "expanded": null,
+                                  "toggled": null
+                                },
+                                "collection": {
+                                  "level": null,
+                                  "position_in_set": null,
+                                  "size_of_set": null,
+                                  "row_index": null,
+                                  "column_index": null,
+                                  "row_span": null,
+                                  "column_span": null,
+                                  "row_count": null,
+                                  "column_count": null,
+                                  "sort_direction": null,
+                                  "orientation": null
+                                },
+                                "actions": []
+                              },
+                              "children": []
+                            }
+                          ]
                         }
                       ]
                     }
                   ]
                 },
                 "redaction": {
-                  "redacted_values": 10,
+                  "redacted_values": 15,
                   "notes": [
                     "resolved semantic accessible label redacted",
                     "resolved semantic value text redacted",
@@ -9847,10 +10634,15 @@
                     "resolved semantic accessible label redacted",
                     "resolved semantic accessible label redacted",
                     "resolved semantic value text redacted",
+                    "resolved semantic value text redacted",
                     "resolved semantic placeholder redacted",
                     "resolved semantic accessible label redacted",
                     "resolved semantic password [redacted] redacted",
-                    "resolved semantic placeholder redacted"
+                    "resolved semantic placeholder redacted",
+                    "resolved semantic accessible label redacted",
+                    "resolved semantic value text redacted",
+                    "resolved semantic accessible label redacted",
+                    "resolved semantic value text redacted"
                   ]
                 }
               },
@@ -9865,7 +10657,7 @@
                 "probe_id": "accessibility",
                 "snapshot_kind": "accessibility",
                 "root_nodes": 1,
-                "redacted_values": 10
+                "redacted_values": 12
               },
               "snapshot": {
                 "probe_id": "accessibility",
@@ -9876,12 +10668,13 @@
                       "id": "accessibility",
                       "label": "Resolved accessibility semantics",
                       "payload": {
-                        "node_count": 5,
-                        "scenario_count": 3,
+                        "node_count": 6,
+                        "scenario_count": 4,
                         "scenario_ids": [
                           "text-input-value-selection",
                           "textarea-field-relations",
-                          "password-free-text-redaction"
+                          "password-free-text-redaction",
+                          "live-regions-and-announcements"
                         ]
                       },
                       "children": [
@@ -9951,6 +10744,8 @@
                                   "required": false,
                                   "invalid": false,
                                   "busy": false,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": false,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -10049,6 +10844,8 @@
                                   "required": null,
                                   "invalid": null,
                                   "busy": null,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": null,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -10128,6 +10925,8 @@
                                   "required": null,
                                   "invalid": null,
                                   "busy": null,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": null,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -10207,6 +11006,8 @@
                                   "required": true,
                                   "invalid": false,
                                   "busy": false,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": false,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -10304,6 +11105,8 @@
                                   "required": false,
                                   "invalid": false,
                                   "busy": false,
+                                  "live": null,
+                                  "live_atomic": null,
                                   "read_only": false,
                                   "omit_accessibility_node": null,
                                   "modal": null,
@@ -10332,13 +11135,108 @@
                               "children": []
                             }
                           ]
+                        },
+                        {
+                          "id": "accessibility.scenario.live-regions-and-announcements",
+                          "label": "live-regions-and-announcements accessibility scenario",
+                          "payload": {
+                            "scenario_id": "live-regions-and-announcements",
+                            "component_ids": [
+                              "focus-a11y-live-status",
+                              "focus-a11y-live-alert"
+                            ],
+                            "semantic_node_count": 1
+                          },
+                          "children": [
+                            {
+                              "id": "accessibility.resolved.semantic-node-0000000000004001",
+                              "label": "StatusCue semantic node",
+                              "payload": {
+                                "contract_id": "StatusCue",
+                                "contract_revision": 1,
+                                "family": "feedback",
+                                "semantic_id": "semantic-node-0000000000004001",
+                                "role": "status",
+                                "text": {
+                                  "label": {
+                                    "kind": "redacted"
+                                  },
+                                  "description": {
+                                    "kind": "absent"
+                                  },
+                                  "value": {
+                                    "kind": "redacted"
+                                  },
+                                  "placeholder": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "numeric": {
+                                  "value": {
+                                    "kind": "absent"
+                                  },
+                                  "minimum": {
+                                    "kind": "absent"
+                                  },
+                                  "maximum": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "text_structure": {
+                                  "character_lengths": {
+                                    "kind": "absent"
+                                  },
+                                  "selection": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "relations": {
+                                  "controls_count": 0,
+                                  "labelled_by_count": 0,
+                                  "described_by_count": 0,
+                                  "error_message": {
+                                    "kind": "absent"
+                                  }
+                                },
+                                "state": {
+                                  "selected": null,
+                                  "required": null,
+                                  "invalid": null,
+                                  "busy": false,
+                                  "live": "off",
+                                  "live_atomic": true,
+                                  "read_only": null,
+                                  "omit_accessibility_node": null,
+                                  "modal": null,
+                                  "disabled": null,
+                                  "expanded": null,
+                                  "toggled": null
+                                },
+                                "collection": {
+                                  "level": null,
+                                  "position_in_set": null,
+                                  "size_of_set": null,
+                                  "row_index": null,
+                                  "column_index": null,
+                                  "row_span": null,
+                                  "column_span": null,
+                                  "row_count": null,
+                                  "column_count": null,
+                                  "sort_direction": null,
+                                  "orientation": null
+                                },
+                                "actions": []
+                              },
+                              "children": []
+                            }
+                          ]
                         }
                       ]
                     }
                   ]
                 },
                 "redaction": {
-                  "redacted_values": 10,
+                  "redacted_values": 12,
                   "notes": [
                     "resolved semantic accessible label redacted",
                     "resolved semantic value text redacted",
@@ -10349,7 +11247,9 @@
                     "resolved semantic placeholder redacted",
                     "resolved semantic accessible label redacted",
                     "resolved semantic password [redacted] redacted",
-                    "resolved semantic placeholder redacted"
+                    "resolved semantic placeholder redacted",
+                    "resolved semantic accessible label redacted",
+                    "resolved semantic value text redacted"
                   ]
                 }
               },
@@ -13909,12 +14809,13 @@
                     "id": "accessibility",
                     "label": "Resolved accessibility semantics",
                     "payload": {
-                      "node_count": 5,
-                      "scenario_count": 3,
+                      "node_count": 7,
+                      "scenario_count": 4,
                       "scenario_ids": [
                         "text-input-value-selection",
                         "textarea-field-relations",
-                        "password-free-text-redaction"
+                        "password-free-text-redaction",
+                        "live-regions-and-announcements"
                       ]
                     },
                     "children": [
@@ -13984,6 +14885,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14082,6 +14985,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14114,7 +15019,7 @@
                               "contract_revision": 1,
                               "family": "form",
                               "semantic_id": "semantic-node-0000000000002003",
-                              "role": "label",
+                              "role": "alert",
                               "text": {
                                 "label": {
                                   "kind": "redacted"
@@ -14123,7 +15028,7 @@
                                   "kind": "absent"
                                 },
                                 "value": {
-                                  "kind": "absent"
+                                  "kind": "redacted"
                                 },
                                 "placeholder": {
                                   "kind": "absent"
@@ -14161,6 +15066,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": "assertive",
+                                "live_atomic": true,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14240,6 +15147,8 @@
                                 "required": true,
                                 "invalid": true,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14337,6 +15246,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14365,13 +15276,189 @@
                             "children": []
                           }
                         ]
+                      },
+                      {
+                        "id": "accessibility.scenario.live-regions-and-announcements",
+                        "label": "live-regions-and-announcements accessibility scenario",
+                        "payload": {
+                          "scenario_id": "live-regions-and-announcements",
+                          "component_ids": [
+                            "focus-a11y-live-status",
+                            "focus-a11y-live-alert"
+                          ],
+                          "semantic_node_count": 2
+                        },
+                        "children": [
+                          {
+                            "id": "accessibility.resolved.semantic-node-0000000000004001",
+                            "label": "StatusCue semantic node",
+                            "payload": {
+                              "contract_id": "StatusCue",
+                              "contract_revision": 1,
+                              "family": "feedback",
+                              "semantic_id": "semantic-node-0000000000004001",
+                              "role": "status",
+                              "text": {
+                                "label": {
+                                  "kind": "redacted"
+                                },
+                                "description": {
+                                  "kind": "absent"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "placeholder": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "numeric": {
+                                "value": {
+                                  "kind": "absent"
+                                },
+                                "minimum": {
+                                  "kind": "absent"
+                                },
+                                "maximum": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "text_structure": {
+                                "character_lengths": {
+                                  "kind": "absent"
+                                },
+                                "selection": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "relations": {
+                                "controls_count": 0,
+                                "labelled_by_count": 0,
+                                "described_by_count": 0,
+                                "error_message": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "state": {
+                                "selected": null,
+                                "required": null,
+                                "invalid": null,
+                                "busy": true,
+                                "live": "polite",
+                                "live_atomic": true,
+                                "read_only": null,
+                                "omit_accessibility_node": null,
+                                "modal": null,
+                                "disabled": null,
+                                "expanded": null,
+                                "toggled": null
+                              },
+                              "collection": {
+                                "level": null,
+                                "position_in_set": null,
+                                "size_of_set": null,
+                                "row_index": null,
+                                "column_index": null,
+                                "row_span": null,
+                                "column_span": null,
+                                "row_count": null,
+                                "column_count": null,
+                                "sort_direction": null,
+                                "orientation": null
+                              },
+                              "actions": []
+                            },
+                            "children": []
+                          },
+                          {
+                            "id": "accessibility.resolved.semantic-node-0000000000004002",
+                            "label": "StatusCue semantic node",
+                            "payload": {
+                              "contract_id": "StatusCue",
+                              "contract_revision": 1,
+                              "family": "feedback",
+                              "semantic_id": "semantic-node-0000000000004002",
+                              "role": "alert",
+                              "text": {
+                                "label": {
+                                  "kind": "redacted"
+                                },
+                                "description": {
+                                  "kind": "absent"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "placeholder": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "numeric": {
+                                "value": {
+                                  "kind": "absent"
+                                },
+                                "minimum": {
+                                  "kind": "absent"
+                                },
+                                "maximum": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "text_structure": {
+                                "character_lengths": {
+                                  "kind": "absent"
+                                },
+                                "selection": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "relations": {
+                                "controls_count": 0,
+                                "labelled_by_count": 0,
+                                "described_by_count": 0,
+                                "error_message": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "state": {
+                                "selected": null,
+                                "required": null,
+                                "invalid": null,
+                                "busy": null,
+                                "live": "assertive",
+                                "live_atomic": true,
+                                "read_only": null,
+                                "omit_accessibility_node": null,
+                                "modal": null,
+                                "disabled": null,
+                                "expanded": null,
+                                "toggled": null
+                              },
+                              "collection": {
+                                "level": null,
+                                "position_in_set": null,
+                                "size_of_set": null,
+                                "row_index": null,
+                                "column_index": null,
+                                "row_span": null,
+                                "column_span": null,
+                                "row_count": null,
+                                "column_count": null,
+                                "sort_direction": null,
+                                "orientation": null
+                              },
+                              "actions": []
+                            },
+                            "children": []
+                          }
+                        ]
                       }
                     ]
                   }
                 ]
               },
               "redaction": {
-                "redacted_values": 10,
+                "redacted_values": 15,
                 "notes": [
                   "resolved semantic accessible label redacted",
                   "resolved semantic value text redacted",
@@ -14379,10 +15466,15 @@
                   "resolved semantic accessible label redacted",
                   "resolved semantic accessible label redacted",
                   "resolved semantic value text redacted",
+                  "resolved semantic value text redacted",
                   "resolved semantic placeholder redacted",
                   "resolved semantic accessible label redacted",
                   "resolved semantic password [redacted] redacted",
-                  "resolved semantic placeholder redacted"
+                  "resolved semantic placeholder redacted",
+                  "resolved semantic accessible label redacted",
+                  "resolved semantic value text redacted",
+                  "resolved semantic accessible label redacted",
+                  "resolved semantic value text redacted"
                 ]
               }
             },
@@ -14395,12 +15487,13 @@
                     "id": "accessibility",
                     "label": "Resolved accessibility semantics",
                     "payload": {
-                      "node_count": 5,
-                      "scenario_count": 3,
+                      "node_count": 6,
+                      "scenario_count": 4,
                       "scenario_ids": [
                         "text-input-value-selection",
                         "textarea-field-relations",
-                        "password-free-text-redaction"
+                        "password-free-text-redaction",
+                        "live-regions-and-announcements"
                       ]
                     },
                     "children": [
@@ -14470,6 +15563,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14568,6 +15663,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14647,6 +15744,8 @@
                                 "required": null,
                                 "invalid": null,
                                 "busy": null,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": null,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14726,6 +15825,8 @@
                                 "required": true,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14823,6 +15924,8 @@
                                 "required": false,
                                 "invalid": false,
                                 "busy": false,
+                                "live": null,
+                                "live_atomic": null,
                                 "read_only": false,
                                 "omit_accessibility_node": null,
                                 "modal": null,
@@ -14851,13 +15954,108 @@
                             "children": []
                           }
                         ]
+                      },
+                      {
+                        "id": "accessibility.scenario.live-regions-and-announcements",
+                        "label": "live-regions-and-announcements accessibility scenario",
+                        "payload": {
+                          "scenario_id": "live-regions-and-announcements",
+                          "component_ids": [
+                            "focus-a11y-live-status",
+                            "focus-a11y-live-alert"
+                          ],
+                          "semantic_node_count": 1
+                        },
+                        "children": [
+                          {
+                            "id": "accessibility.resolved.semantic-node-0000000000004001",
+                            "label": "StatusCue semantic node",
+                            "payload": {
+                              "contract_id": "StatusCue",
+                              "contract_revision": 1,
+                              "family": "feedback",
+                              "semantic_id": "semantic-node-0000000000004001",
+                              "role": "status",
+                              "text": {
+                                "label": {
+                                  "kind": "redacted"
+                                },
+                                "description": {
+                                  "kind": "absent"
+                                },
+                                "value": {
+                                  "kind": "redacted"
+                                },
+                                "placeholder": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "numeric": {
+                                "value": {
+                                  "kind": "absent"
+                                },
+                                "minimum": {
+                                  "kind": "absent"
+                                },
+                                "maximum": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "text_structure": {
+                                "character_lengths": {
+                                  "kind": "absent"
+                                },
+                                "selection": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "relations": {
+                                "controls_count": 0,
+                                "labelled_by_count": 0,
+                                "described_by_count": 0,
+                                "error_message": {
+                                  "kind": "absent"
+                                }
+                              },
+                              "state": {
+                                "selected": null,
+                                "required": null,
+                                "invalid": null,
+                                "busy": false,
+                                "live": "off",
+                                "live_atomic": true,
+                                "read_only": null,
+                                "omit_accessibility_node": null,
+                                "modal": null,
+                                "disabled": null,
+                                "expanded": null,
+                                "toggled": null
+                              },
+                              "collection": {
+                                "level": null,
+                                "position_in_set": null,
+                                "size_of_set": null,
+                                "row_index": null,
+                                "column_index": null,
+                                "row_span": null,
+                                "column_span": null,
+                                "row_count": null,
+                                "column_count": null,
+                                "sort_direction": null,
+                                "orientation": null
+                              },
+                              "actions": []
+                            },
+                            "children": []
+                          }
+                        ]
                       }
                     ]
                   }
                 ]
               },
               "redaction": {
-                "redacted_values": 10,
+                "redacted_values": 12,
                 "notes": [
                   "resolved semantic accessible label redacted",
                   "resolved semantic value text redacted",
@@ -14868,7 +16066,9 @@
                   "resolved semantic placeholder redacted",
                   "resolved semantic accessible label redacted",
                   "resolved semantic password [redacted] redacted",
-                  "resolved semantic placeholder redacted"
+                  "resolved semantic placeholder redacted",
+                  "resolved semantic accessible label redacted",
+                  "resolved semantic value text redacted"
                 ]
               }
             },

@@ -386,7 +386,9 @@ fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
         "expected diagnostics Command sample to render component-owned status list"
     );
     assert!(
-        cx.debug_bounds("command:component-command:diagnostics-empty:status:0")
+        cx.debug_bounds(
+            "command:component-command:diagnostics-empty:status:provider-failed:diagnostics-provider",
+        )
             .is_some(),
         "expected diagnostics Command sample to render a provider error status item"
     );

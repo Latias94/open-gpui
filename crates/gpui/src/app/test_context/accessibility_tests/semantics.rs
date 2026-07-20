@@ -152,6 +152,16 @@ impl Render for RolelessHiddenAccessibilityProbeView {
                                 .ok();
                         }),
                 )
+                .child(
+                    div()
+                        .id("roleless-hidden-live-direct")
+                        .role(Role::Status)
+                        .aria_label("Roleless hidden direct status")
+                        .aria_value("Roleless hidden direct status")
+                        .aria_live(accesskit::Live::Polite)
+                        .aria_live_atomic(true)
+                        .aria_busy(true),
+                )
                 .child(deferred(
                     div()
                         .id("roleless-hidden-deferred")
@@ -165,6 +175,15 @@ impl Render for RolelessHiddenAccessibilityProbeView {
                                 })
                                 .ok();
                         }),
+                ))
+                .child(deferred(
+                    div()
+                        .id("roleless-hidden-live-deferred")
+                        .role(Role::Alert)
+                        .aria_label("Roleless hidden deferred alert")
+                        .aria_value("Roleless hidden deferred alert")
+                        .aria_live(accesskit::Live::Assertive)
+                        .aria_live_atomic(true),
                 ))
                 .with_subtree_presentation(if self.hidden {
                     SubtreePresentation::Inert
@@ -314,6 +333,14 @@ fn accessibility_harness_excludes_roleless_hidden_direct_and_deferred_subtrees(
     let visible = cx.latest_accessibility_tree_update(window).unwrap();
     let (direct_id, _) = node_with_label(&visible, "Roleless hidden direct action");
     let (deferred_id, _) = node_with_label(&visible, "Roleless hidden deferred action");
+    let (direct_live_id, direct_live) = node_with_label(&visible, "Roleless hidden direct status");
+    let (deferred_live_id, deferred_live) =
+        node_with_label(&visible, "Roleless hidden deferred alert");
+    assert_eq!(direct_live.live(), Some(accesskit::Live::Polite));
+    assert!(direct_live.is_live_atomic());
+    assert!(direct_live.is_busy());
+    assert_eq!(deferred_live.live(), Some(accesskit::Live::Assertive));
+    assert!(deferred_live.is_live_atomic());
 
     view.update(cx, |view, cx| {
         view.hidden = true;
@@ -321,7 +348,7 @@ fn accessibility_harness_excludes_roleless_hidden_direct_and_deferred_subtrees(
     });
     cx.run_until_parked();
     let hidden = cx.latest_accessibility_tree_update(window).unwrap();
-    for id in [direct_id, deferred_id] {
+    for id in [direct_id, deferred_id, direct_live_id, deferred_live_id] {
         assert!(!hidden.nodes.iter().any(|(candidate, _)| *candidate == id));
     }
 
@@ -357,6 +384,14 @@ fn accessibility_harness_excludes_roleless_hidden_direct_and_deferred_subtrees(
     assert_eq!(
         node_with_label(&restored, "Roleless hidden deferred action").0,
         deferred_id
+    );
+    assert_eq!(
+        node_with_label(&restored, "Roleless hidden direct status").0,
+        direct_live_id
+    );
+    assert_eq!(
+        node_with_label(&restored, "Roleless hidden deferred alert").0,
+        deferred_live_id
     );
 }
 

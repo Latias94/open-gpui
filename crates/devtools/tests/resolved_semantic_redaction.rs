@@ -30,6 +30,7 @@ const USER_INPUT_CANARY: &str = "u5-user-input-canary-history";
 const USER_INPUT_NEXT_CANARY: &str = "u5-user-input-canary-diff";
 const CLIPBOARD_CANARY: &str = "u5-clipboard-canary-export";
 const TEXT_RUN_VALUE_CANARY: &str = "u5-text-run-canary-character-lengths";
+const LIVE_REGION_CANARY: &str = "u14-live-region-canary-final-tree-only";
 const NUMERIC_VALUE_CANARY: f64 = 9_876_543_210.125;
 const NUMERIC_MINIMUM_CANARY: f64 = -8_765_432_109.25;
 const NUMERIC_MAXIMUM_CANARY: f64 = 7_654_321_098.5;
@@ -47,7 +48,7 @@ fn resolved_semantic_canaries_never_cross_any_devtools_artifact_boundary() {
     let fixture_value: serde_json::Value = serde_json::from_str(fixture_json).unwrap();
     let actual_fixture_value = resolved_semantic_fixture_value(&fixture_snapshot);
     assert_eq!(actual_fixture_value, fixture_value);
-    assert_eq!(fixture_snapshot.redaction().redacted_values, 11);
+    assert_eq!(fixture_snapshot.redaction().redacted_values, 13);
     assert!(ComponentSemanticIdentity::for_component("NotAComponent").is_none());
     for node in &fixture_snapshot.tree().nodes[0].children {
         let payload = node.payload.as_ref().expect("resolved semantic payload");
@@ -120,6 +121,14 @@ fn resolved_semantic_canaries_never_cross_any_devtools_artifact_boundary() {
         text_run_payload["text_structure"]["character_lengths"]["kind"],
         "present"
     );
+    let live_payload = fixture_snapshot.tree().nodes[0].children[7]
+        .payload
+        .as_ref()
+        .expect("live-region semantic payload");
+    assert_eq!(live_payload["role"], "status");
+    assert_eq!(live_payload["state"]["live"], "polite");
+    assert_eq!(live_payload["state"]["live_atomic"], true);
+    assert_eq!(live_payload["state"]["busy"], false);
 
     let invocation = Arc::new(AtomicUsize::new(0));
     let mut registry = DevtoolsRegistry::default();
@@ -217,6 +226,7 @@ fn resolved_semantic_canaries_never_cross_any_devtools_artifact_boundary() {
         USER_INPUT_NEXT_CANARY,
         CLIPBOARD_CANARY,
         TEXT_RUN_VALUE_CANARY,
+        LIVE_REGION_CANARY,
     ]
     .into_iter()
     .chain(numeric_canaries.iter().map(String::as_str))
@@ -237,7 +247,7 @@ fn resolved_semantic_canaries_never_cross_any_devtools_artifact_boundary() {
     assert!(capture_json.contains("\"family\":\"form\""));
     assert!(capture_json.contains("\"kind\":\"redacted\""));
     assert!(capture_json.contains("\"kind\":\"password-redacted\""));
-    assert_eq!(report.summary.redacted_value_count, 11);
+    assert_eq!(report.summary.redacted_value_count, 13);
 }
 
 fn resolved_semantic_fixture_value(
@@ -348,6 +358,9 @@ fn resolved_text_form_snapshot(changed: bool) -> open_gpui_devtools::SnapshotPro
     let text_run_semantics = SemanticDescriptor::<u64>::new(Role::TextRun)
         .with_value(TEXT_RUN_VALUE_CANARY)
         .with_character_lengths(&text_run_character_lengths);
+    let live_region_semantics = SemanticDescriptor::<u64>::new(Role::Status)
+        .with_live_text(LIVE_REGION_CANARY)
+        .with_busy(false);
 
     resolved_semantics_probe_snapshot([
         ResolvedSemanticNode::new(
@@ -384,6 +397,11 @@ fn resolved_text_form_snapshot(changed: bool) -> open_gpui_devtools::SnapshotPro
             ComponentSemanticIdentity::for_component("TextInput").unwrap(),
             OpaqueSemanticNodeId::new(50),
             text_run_semantics,
+        ),
+        ResolvedSemanticNode::new(
+            ComponentSemanticIdentity::for_component("StatusCue").unwrap(),
+            OpaqueSemanticNodeId::new(60),
+            live_region_semantics,
         ),
     ])
 }

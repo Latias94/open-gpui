@@ -23,8 +23,8 @@ pub mod tokens;
 pub mod virtualizer;
 
 pub use a11y::{
-    AccessibleAction, AccessibleTextPosition, AccessibleTextSelection, Orientation, Role,
-    SemanticDescriptor, SortDirection, Toggled,
+    AccessibleAction, AccessibleTextPosition, AccessibleTextSelection, LivePoliteness, Orientation,
+    Role, SemanticDescriptor, SortDirection, Toggled,
 };
 pub use active_descendant::ActiveDescendant;
 pub use adaptive::{

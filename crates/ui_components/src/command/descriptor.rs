@@ -15,7 +15,7 @@ use open_gpui_command::{
     CommandProviderState, CommandProviderStatus, CommandRegistryError, CommandRegistrySnapshot,
     CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, parse_command_key_sequence,
 };
-use open_gpui_ui_core::Role;
+use open_gpui_ui_core::{LivePoliteness, Role};
 
 /// Command dialog open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -130,32 +130,60 @@ pub enum CommandStatusIntent {
 /// UI-ready command palette status item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandStatusItem {
+    id: String,
     intent: CommandStatusIntent,
     message: String,
 }
 
+/// Why one or more command status identities were omitted from resolved state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandStatusIdentityDiagnostic {
+    /// Status items with an empty identity were omitted.
+    MissingId {
+        /// Number of omitted items with no usable identity.
+        occurrences: usize,
+    },
+    /// Every status item sharing this identity was omitted.
+    DuplicateId {
+        /// Stable, caller-owned, non-sensitive identity that collided.
+        id: String,
+        /// Number of candidate items that carried the identity.
+        occurrences: usize,
+    },
+}
+
 impl CommandStatusItem {
-    /// Creates a command status item.
-    pub fn new(intent: CommandStatusIntent, message: impl Into<String>) -> Self {
+    /// Creates a command status item with a stable, non-sensitive identity.
+    pub fn new(
+        id: impl Into<String>,
+        intent: CommandStatusIntent,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
+            id: id.into(),
             intent,
             message: message.into(),
         }
     }
 
     /// Creates an informational status item.
-    pub fn info(message: impl Into<String>) -> Self {
-        Self::new(CommandStatusIntent::Info, message)
+    pub fn info(id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(id, CommandStatusIntent::Info, message)
     }
 
     /// Creates a warning status item.
-    pub fn warning(message: impl Into<String>) -> Self {
-        Self::new(CommandStatusIntent::Warning, message)
+    pub fn warning(id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(id, CommandStatusIntent::Warning, message)
     }
 
     /// Creates an error status item.
-    pub fn error(message: impl Into<String>) -> Self {
-        Self::new(CommandStatusIntent::Error, message)
+    pub fn error(id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(id, CommandStatusIntent::Error, message)
+    }
+
+    /// Returns the stable, non-sensitive status identity.
+    pub fn id(&self) -> &str {
+        &self.id
     }
 
     /// Returns the item intent.
@@ -175,7 +203,28 @@ impl CommandStatusItem {
 
     /// Returns status item accessibility role.
     pub const fn role(&self) -> Role {
-        Role::Label
+        match self.intent {
+            CommandStatusIntent::Info | CommandStatusIntent::Warning => Role::Status,
+            CommandStatusIntent::Error => Role::Alert,
+        }
+    }
+
+    /// Returns the live-region priority for this status item.
+    pub const fn live(&self) -> LivePoliteness {
+        match self.intent {
+            CommandStatusIntent::Info | CommandStatusIntent::Warning => LivePoliteness::Polite,
+            CommandStatusIntent::Error => LivePoliteness::Assertive,
+        }
+    }
+
+    /// Returns whether the complete status text is announced atomically.
+    pub const fn live_atomic(&self) -> bool {
+        true
+    }
+
+    /// Returns whether this status item represents pending work.
+    pub const fn busy(&self) -> bool {
+        false
     }
 }
 
@@ -1496,11 +1545,14 @@ fn command_status_item_from_provider_status(
         let message = status
             .message()
             .unwrap_or("Provider failed to load commands");
-        CommandStatusItem::error(format!(
-            "Provider {} failed: {}",
-            status.provider_id().as_str(),
-            message
-        ))
+        CommandStatusItem::error(
+            format!("provider-failed:{}", status.provider_id().as_str()),
+            format!(
+                "Provider {} failed: {}",
+                status.provider_id().as_str(),
+                message
+            ),
+        )
     })
 }
 
@@ -1535,7 +1587,26 @@ fn command_status_item_from_shortcut_diagnostic(
             )
         }
     };
-    CommandStatusItem::warning(message)
+    let id = match diagnostic.kind() {
+        CommandShortcutDiagnosticKind::MissingAction => format!(
+            "missing-action:{}",
+            diagnostic.command_id().unwrap_or("unknown")
+        ),
+        CommandShortcutDiagnosticKind::OrphanAction => format!(
+            "orphan-action:{}:{}",
+            diagnostic.command_id().unwrap_or("unknown"),
+            diagnostic.action_name().unwrap_or("unknown")
+        ),
+        CommandShortcutDiagnosticKind::MissingShortcut => format!(
+            "missing-shortcut:{}",
+            diagnostic.command_id().unwrap_or("unknown")
+        ),
+        CommandShortcutDiagnosticKind::DuplicateShortcut => format!(
+            "duplicate-shortcut:{}",
+            diagnostic.shortcut().unwrap_or("unknown")
+        ),
+    };
+    CommandStatusItem::warning(id, message)
 }
 
 pub(super) fn count_command_status_items(

@@ -717,6 +717,8 @@ fn gpui_role_for_ui_role(role: Role) -> GpuiRole {
         Role::EditableComboBox => GpuiRole::EditableComboBox,
         Role::Dialog => GpuiRole::Dialog,
         Role::AlertDialog => GpuiRole::AlertDialog,
+        Role::Status => GpuiRole::Status,
+        Role::Alert => GpuiRole::Alert,
         Role::Window => GpuiRole::Window,
         Role::ProgressIndicator => GpuiRole::ProgressIndicator,
         Role::Separator => GpuiRole::Group,

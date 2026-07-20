@@ -134,8 +134,10 @@ when they rematerialize their resolved state. The
 owning form store, ticket generations, derived lifecycle, submission eligibility, and
 redaction-aware `FormSnapshot` stay in `open-gpui-form`.
 
-The resource adapter surface is `ResourceAdapterLabels`, `ResourceCollectionProjection`,
-`ResourceMutationProjection`, and `resource_query_key_label`. It consumes
+The resource adapter surface is `ResourceAdapterLabels`, `ResourceAdapterNamespace`,
+`ResourceCollectionProjection`, `ResourceMutationProjection`, and `resource_query_key_label`. Each
+projection requires a caller-owned diagnostic-safe namespace; its command status identity is
+derived from that namespace rather than a query key or mutation ID. It consumes
 `open_gpui_resource::ResourceSnapshot` and `open_gpui_resource::MutationSnapshot`, then resolves
 existing feedback, command, table/tree children-load, and virtualized-list status inputs. Fetchers,
 retry timers, cancellation, mutations, cache invalidation, pagination, and redacted
@@ -1429,9 +1431,14 @@ measurements but not captured scroll offsets. Sticky headers, dataset-wide exact
 orchestration, global faceting, richer editor families, synthetic summary rows, and deeper
 two-axis grid virtualization remain follow-up
 work.
-`StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
-intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
-rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.
+`StatusCue` and `EmptyState` are official feedback components. `StatusCue` exposes resolved
+feedback intent, size, role, live priority, atomicity, busy state, metrics, and token intents,
+while the GPUI adapter owns concrete styling and rendered debug selectors. It maps ordinary
+intents to `Role::Status` and danger to `Role::Alert`; callers may opt a static sample out with
+`LivePoliteness::Off`. `EmptyState` exposes its structural `Role::Section` plus feedback intent,
+size, metrics, and token intents; it is not a live region, so a page that needs an announcement
+uses `StatusCue` or an explicit window announcement. `Tree` is now an official rendered component
+backed by `TreeState`.
 Its adapter owns keyed GPUI runtime state, focus handles, expansion overrides, selection/toggle
 callbacks, and a persistent inner `ScrollHandle`. `TreeState` remains the renderer-neutral
 hierarchy contract and gallery readout for visible flattening, selected/focused metadata,

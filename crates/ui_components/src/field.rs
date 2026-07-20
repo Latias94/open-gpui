@@ -588,8 +588,11 @@ impl RenderOnce for Field {
                     } else {
                         help_id
                     };
-                    let message_semantics =
-                        SemanticDescriptor::new(Role::Label).with_label(message.text());
+                    let message_semantics = if message.is_error() {
+                        SemanticDescriptor::new(Role::Alert).with_live_text(message.text())
+                    } else {
+                        SemanticDescriptor::new(Role::Label).with_label(message.text())
+                    };
                     this.child(
                         div()
                             .id(message_id)

@@ -354,6 +354,67 @@ suppression. Strict DevTools payload consumers must likewise rename the semantic
 See [ADR 0022](../adr/0022-open-gpui-subtree-presentation-authority.md) for frame ordering,
 low-level registration gates, deferred/cache behavior, and overlay-root ownership.
 
+## Live Regions And Window Announcements
+
+Accessibility status updates now use the renderer-neutral live-region contract:
+
+```rust
+use open_gpui_ui_core::{LivePoliteness, Role, SemanticDescriptor};
+
+let status = SemanticDescriptor::new(Role::Status)
+    .with_live_text("Indexing complete")
+    .with_live(LivePoliteness::Polite)
+    .with_live_atomic(true)
+    .with_busy(false);
+```
+
+`Role::Status` defaults to polite and atomic; `Role::Alert` defaults to assertive and atomic.
+`with_live_text` writes the same value to the descriptor label and value for cross-platform
+AccessKit adapter behavior. `LivePoliteness::Off` is explicit and remains present in the final
+tree, which is useful for illustrative catalog examples. `StatusCue::live`,
+`StatusCue::live_atomic`, and `StatusCue::busy` expose the same policy without creating a second
+semantic assembly path. `EmptyState` remains a structural `Section` and is not a live region; use
+`StatusCue` or an explicit window announcement when an empty/error event should be spoken.
+Components must not call the window announcement queue from render, mount, remount, or timeout code.
+
+For a notification that is intentionally independent of an element lifecycle, use the window-owned
+queue:
+
+```rust
+use open_gpui::AccessibilityAnnouncement;
+
+let outcome = window.announce(AccessibilityAnnouncement::polite("Workspace saved"), cx);
+```
+
+The queue accepts at most 32 pending or one-generation-retained requests per window. It preserves
+order and gives repeated equal text a new sequence and node identity. At call time, `Accepted` means
+only that the request entered this queue. If its accessibility activation generation remains
+current, the node is committed in the final AccessKit tree, kept until one later matching generation
+commits its removal, and never moves focus or calls native speech. Deactivation, activation
+replacement, or window close can instead clear an accepted request before publication; the
+metadata-only diagnostic records that typed `Cleared` lifecycle and the request never replays.
+Requests submitted while accessibility is inactive or the window is closing, or rejected at
+capacity, return a typed `Dropped` outcome. GPUI guarantees that publication uses a committed tree
+update, not that every accepted request reaches publication or that a screen reader speaks it.
+Diagnostics never expose announcement text.
+
+The following public migrations are part of this contract:
+
+- `CommandStatusItem::new`, `info`, `warning`, and `error` now require a stable caller-provided id;
+  status node identity must not be derived from an array index. Duplicate or empty identities are
+  omitted from resolved `CommandState` with metadata-only diagnostics.
+- `ResourceCollectionProjection::resolve` and `ResourceMutationProjection::resolve` now require a
+  caller-owned `ResourceAdapterNamespace`; resource and mutation status IDs derive only from that
+  diagnostic-safe namespace and remain stable across lifecycle transitions. Query keys and
+  mutation IDs must never be used as status identities.
+- `StatusCue` ordinary intents resolve to `Status`, danger resolves to `Alert`.
+- Field validation errors resolve to an assertive atomic `Alert`; help text remains a `Label`.
+- VirtualizedList empty/exhausted rows resolve to `Status`, and inline error/retry rows resolve to
+  `Alert` rather than `AlertDialog`.
+
+See [ADR 0023](../adr/0023-open-gpui-live-region-announcement-authority.md) for lifecycle,
+privacy, and final-tree verification details.
+
 ## Semantic Activation Authority
 
 Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests

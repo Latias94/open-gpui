@@ -338,6 +338,7 @@ impl Render for TransactionalAccessibilityProbeView {
                         }
 
                         let node_id = NodeId(u64::MAX - 1);
+                        let live_node_id = NodeId(u64::MAX - 3);
                         let rejected: Result<(), ()> = window.transact(|window| {
                             window.with_accessibility_tree_scope(
                                 AccessibilityTreeScope::ModalRoot,
@@ -359,6 +360,14 @@ impl Render for TransactionalAccessibilityProbeView {
                                             .ok();
                                         },
                                     );
+                                    window.a11y.nodes.pop();
+
+                                    let mut live_node = Node::new(Role::Status);
+                                    live_node.set_label("Discarded transaction live region");
+                                    live_node.set_value("Discarded transaction live region");
+                                    live_node.set_live(accesskit::Live::Polite);
+                                    live_node.set_live_atomic();
+                                    assert!(window.a11y.nodes.push(live_node_id, live_node));
                                     window.a11y.nodes.pop();
                                     Err(())
                                 },
@@ -404,6 +413,12 @@ fn accessibility_harness_rolls_back_failed_prepaint_transactions(cx: &mut TestAp
             .nodes
             .iter()
             .any(|(_, node)| node.label() == Some("Discarded transaction node"))
+    );
+    assert!(
+        !update
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some("Discarded transaction live region"))
     );
     assert!(cx.dispatch_accessibility_action(
         window,

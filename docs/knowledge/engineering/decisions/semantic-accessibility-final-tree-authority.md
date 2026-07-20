@@ -44,6 +44,7 @@ flowchart LR
     Element --> Action[Real AccessKit action dispatch]
     Descriptor --> Redaction[Pre-capture allowlist and redaction]
     Redaction --> DevTools[DevTools semantic summary]
+    Descriptor --> Live[Final-tree live/atomic/busy facts]
     Tree --> Evidence[Executable tests]
     Action --> Evidence
 ```
@@ -51,6 +52,28 @@ flowchart LR
 Resolved state remains the durable authority for behavior. `SemanticDescriptor` exists only long
 enough to project that state into the current render. No adapter, Gallery surface, DevTools probe,
 or test fixture may feed semantic facts back into component state.
+
+## Live Regions And Window Announcements
+
+`Role::Status` and `Role::Alert` are declarative semantic regions. `LivePoliteness`, atomicity, and
+busy state are projected from resolved component state into the final `TreeUpdate`; they do not
+invoke a speech service or move focus. `with_live_text` writes the same text to label and value so
+the pinned Windows, macOS, and AT-SPI adapters observe portable content. Explicit `Live::Off` is
+preserved as a real value and must not be collapsed into inherited absence.
+
+An application-level notification that has no element owner uses `Window::announce`. The private
+per-window queue is bounded, activation-generation-aware, and committed at the same final-tree
+boundary as declarative nodes. Equal text requests receive distinct sequence and node identities.
+The queue retains an accepted node for one committed generation and then removes it; it never
+retains a message history. Requests are focus-independent and diagnostics contain only typed
+metadata. The test platform's captured `TreeUpdate` is intentionally the only history allowed to
+contain announcement text.
+
+DevTools consumes only the descriptor's allowlisted live priority, atomic, and busy facts. It has no
+`TreeUpdate` or queue reader, so announcement text cannot enter capture, session history, diffs,
+exports, inspector details, reports, artifacts, or fixtures. Components must use declarative regions
+for lifecycle-owned feedback and may call the transient queue only for an explicitly window-global
+domain event.
 
 # Final-Tree And Action Boundary
 

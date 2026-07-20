@@ -620,8 +620,8 @@ mod tests {
         }));
         assert_eq!(snapshot.rows()[0].role(), Role::ProgressIndicator);
         assert_eq!(snapshot.rows()[2].role(), Role::ProgressIndicator);
-        assert_eq!(snapshot.rows()[4].role(), Role::Section);
-        assert_eq!(snapshot.rows()[6].role(), Role::AlertDialog);
+        assert_eq!(snapshot.rows()[4].role(), Role::Status);
+        assert_eq!(snapshot.rows()[6].role(), Role::Alert);
         assert_eq!(
             snapshot.state().scroll_target_for_key(
                 "retry",
@@ -919,8 +919,8 @@ mod tests {
         assert_eq!(loading.rows()[0].role(), Role::ProgressIndicator);
         assert_eq!(loading.rows()[0].position_in_set(), None);
         assert_eq!(loading.rows()[0].size_of_set(), 0);
-        assert_eq!(empty.rows()[0].role(), Role::Section);
-        assert_eq!(error.rows()[0].role(), Role::AlertDialog);
+        assert_eq!(empty.rows()[0].role(), Role::Status);
+        assert_eq!(error.rows()[0].role(), Role::Alert);
     }
 
     #[test]

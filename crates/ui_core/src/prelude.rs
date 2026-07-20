@@ -2,8 +2,8 @@
 
 pub use crate::{
     a11y::{
-        AccessibleAction, AccessibleTextPosition, AccessibleTextSelection, Orientation, Role,
-        SemanticDescriptor, SortDirection, Toggled,
+        AccessibleAction, AccessibleTextPosition, AccessibleTextSelection, LivePoliteness,
+        Orientation, Role, SemanticDescriptor, SortDirection, Toggled,
     },
     active_descendant::ActiveDescendant,
     adaptive::{

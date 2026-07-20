@@ -9,7 +9,9 @@ use open_gpui::{
     ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
     div,
 };
-use open_gpui_ui_core::{Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    LivePoliteness, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
+};
 
 /// Semantic intent for quiet shell feedback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -149,6 +151,9 @@ impl StatusCueMetrics {
 pub struct StatusCueState {
     intent: FeedbackIntent,
     label: String,
+    live: LivePoliteness,
+    live_atomic: bool,
+    busy: bool,
     size: Size,
     metrics: StatusCueMetrics,
     colors: FeedbackColors,
@@ -162,9 +167,29 @@ impl StatusCueState {
         size: Size,
         tokens: ThemeTokens,
     ) -> Self {
+        Self::resolve_with_overrides(intent, label, size, tokens, None, None, false)
+    }
+
+    fn resolve_with_overrides(
+        intent: FeedbackIntent,
+        label: impl Into<String>,
+        size: Size,
+        tokens: ThemeTokens,
+        live: Option<LivePoliteness>,
+        live_atomic: Option<bool>,
+        busy: bool,
+    ) -> Self {
+        let default_live = if intent == FeedbackIntent::Danger {
+            LivePoliteness::Assertive
+        } else {
+            LivePoliteness::Polite
+        };
         Self {
             intent,
             label: label.into(),
+            live: live.unwrap_or(default_live),
+            live_atomic: live_atomic.unwrap_or(true),
+            busy,
             size,
             metrics: StatusCueMetrics::from_size(size),
             colors: ThemeResolver::feedback_colors(tokens, intent),
@@ -193,7 +218,46 @@ impl StatusCueState {
 
     /// Returns accessibility role.
     pub const fn role(&self) -> Role {
-        Role::Label
+        match self.intent {
+            FeedbackIntent::Danger => Role::Alert,
+            FeedbackIntent::Neutral
+            | FeedbackIntent::Info
+            | FeedbackIntent::Success
+            | FeedbackIntent::Warning => Role::Status,
+        }
+    }
+
+    /// Returns the live-region priority resolved for this cue.
+    pub const fn live(&self) -> LivePoliteness {
+        self.live
+    }
+
+    /// Returns whether the complete live-region value is announced atomically.
+    pub const fn live_atomic(&self) -> bool {
+        self.live_atomic
+    }
+
+    /// Returns this state with an explicit live-region priority.
+    pub fn with_live(mut self, live: LivePoliteness) -> Self {
+        self.live = live;
+        self
+    }
+
+    /// Returns this state with explicit live-region atomicity.
+    pub fn with_live_atomic(mut self, live_atomic: bool) -> Self {
+        self.live_atomic = live_atomic;
+        self
+    }
+
+    /// Returns this state with an explicit busy fact.
+    pub fn with_busy(mut self, busy: bool) -> Self {
+        self.busy = busy;
+        self
+    }
+
+    /// Returns whether the status region is waiting for a related operation to settle.
+    pub const fn busy(&self) -> bool {
+        self.busy
     }
 
     /// Returns resolved metrics.
@@ -213,6 +277,9 @@ pub struct StatusCue {
     id: ElementId,
     label: SharedString,
     intent: FeedbackIntent,
+    live: Option<LivePoliteness>,
+    live_atomic: Option<bool>,
+    busy: bool,
     size: Size,
     tokens: ThemeTokens,
 }
@@ -224,6 +291,9 @@ impl StatusCue {
             id: id.into(),
             label: label.into(),
             intent: FeedbackIntent::Neutral,
+            live: None,
+            live_atomic: None,
+            busy: false,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
         }
@@ -235,6 +305,24 @@ impl StatusCue {
         self
     }
 
+    /// Overrides the default live-region priority for this cue.
+    pub fn live(mut self, live: LivePoliteness) -> Self {
+        self.live = Some(live);
+        self
+    }
+
+    /// Overrides whether the complete live-region value is announced atomically.
+    pub fn live_atomic(mut self, live_atomic: bool) -> Self {
+        self.live_atomic = Some(live_atomic);
+        self
+    }
+
+    /// Marks the status region as waiting for a related operation to settle.
+    pub fn busy(mut self, busy: bool) -> Self {
+        self.busy = busy;
+        self
+    }
+
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
@@ -243,7 +331,15 @@ impl StatusCue {
 
     /// Returns resolved status-cue state.
     pub fn state(&self) -> StatusCueState {
-        StatusCueState::resolve(self.intent, self.label.to_string(), self.size, self.tokens)
+        StatusCueState::resolve_with_overrides(
+            self.intent,
+            self.label.to_string(),
+            self.size,
+            self.tokens,
+            self.live,
+            self.live_atomic,
+            self.busy,
+        )
     }
 }
 
@@ -261,7 +357,11 @@ impl RenderOnce for StatusCue {
         let metrics = state.metrics();
         let colors = state.colors();
         let debug_id = self.id.to_string();
-        let semantics = SemanticDescriptor::new(state.role()).with_label(state.label());
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_live_text(state.label())
+            .with_live(state.live())
+            .with_live_atomic(state.live_atomic())
+            .with_busy(state.busy());
 
         div()
             .id(self.id)
@@ -492,7 +592,12 @@ impl RenderOnce for EmptyState {
         let metrics = state.metrics();
         let colors = state.colors();
         let debug_id = self.id.to_string();
-        let semantics = SemanticDescriptor::new(state.role()).with_label(state.title());
+        let semantics = match state.description() {
+            Some(description) => SemanticDescriptor::new(state.role())
+                .with_label(state.title())
+                .with_description(description),
+            None => SemanticDescriptor::new(state.role()).with_label(state.title()),
+        };
 
         div()
             .id(self.id)
@@ -554,9 +659,28 @@ mod tests {
 
         assert_eq!(state.intent(), FeedbackIntent::Warning);
         assert_eq!(state.label(), "3 anchors need review");
-        assert_eq!(state.role(), Role::Label);
+        assert_eq!(state.role(), Role::Status);
+        assert_eq!(state.live(), LivePoliteness::Polite);
+        assert!(state.live_atomic());
+        assert!(!state.busy());
         assert!(state.display_only());
         assert_eq!(state.metrics().marker_size(), ui_px(7.0));
+
+        let danger = StatusCue::new("danger", "Connection failed")
+            .intent(FeedbackIntent::Danger)
+            .state();
+        assert_eq!(danger.role(), Role::Alert);
+        assert_eq!(danger.live(), LivePoliteness::Assertive);
+
+        let quiet = StatusCue::new("quiet", "Static example")
+            .live(LivePoliteness::Off)
+            .live_atomic(false)
+            .busy(true)
+            .state();
+        assert_eq!(quiet.role(), Role::Status);
+        assert_eq!(quiet.live(), LivePoliteness::Off);
+        assert!(!quiet.live_atomic());
+        assert!(quiet.busy());
     }
 
     #[test]

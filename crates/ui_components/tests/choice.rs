@@ -14,9 +14,10 @@ use open_gpui_ui_components::{
     CommandMatchSource, CommandOpenMode, CommandPaletteController, CommandPaletteKeymapPreflight,
     CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode, CommandSelection,
     CommandSelectionChange, CommandSelectionMode, CommandShortcutInspectorState,
-    CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
-    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
-    Popover, ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
+    CommandStatusIdentityDiagnostic, CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup,
+    ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection,
+    ListboxState, Menu, MenuItem, Popover, ScrollArea, ScrollResetPolicy, Select, SelectOpenMode,
+    SelectSelection,
     gpui_adapter::{OverlayLayerPhase, OverlayOpenIntent, WindowOverlayRuntime, init_text_input},
     listbox::ListboxOption,
 };
@@ -3491,10 +3492,19 @@ fn command_palette_projection_builds_status_items_from_provider_failures_and_dia
 #[test]
 fn command_state_accepts_explicit_status_items() {
     let state = Command::new("explicit-status-command", "Commands")
-        .status_item(CommandStatusItem::warning("Shortcut Ctrl+P is shared"))
-        .status_item(CommandStatusItem::info("   "))
-        .status_item(CommandStatusItem::info("Two providers returned results"))
-        .status_item(CommandStatusItem::error("Provider failed"))
+        .status_item(CommandStatusItem::warning(
+            "shared-shortcut",
+            "Shortcut Ctrl+P is shared",
+        ))
+        .status_item(CommandStatusItem::info("empty", "   "))
+        .status_item(CommandStatusItem::info(
+            "provider-count",
+            "Two providers returned results",
+        ))
+        .status_item(CommandStatusItem::error(
+            "provider-failed",
+            "Provider failed",
+        ))
         .item(CommandItem::new("open-file", "Open File"))
         .state();
 
@@ -3503,7 +3513,37 @@ fn command_state_accepts_explicit_status_items() {
     assert_eq!(state.status_warning_count(), 1);
     assert_eq!(state.status_error_count(), 1);
     assert_eq!(state.status_items()[1].intent(), CommandStatusIntent::Info);
-    assert_eq!(state.status_items()[1].role(), Role::Label);
+    assert_eq!(state.status_items()[1].role(), Role::Status);
+}
+
+#[test]
+fn command_state_omits_every_ambiguous_status_identity_and_preserves_unique_order() {
+    let state = Command::new("status-identity-command", "Commands")
+        .status_item(CommandStatusItem::info("duplicate", "First"))
+        .status_item(CommandStatusItem::error("duplicate", "Second"))
+        .status_item(CommandStatusItem::info("keep-a", "Keep A"))
+        .status_item(CommandStatusItem::warning("   ", "Missing identity"))
+        .status_item(CommandStatusItem::info("keep-b", "Keep B"))
+        .state();
+
+    assert_eq!(
+        state
+            .status_items()
+            .iter()
+            .map(CommandStatusItem::id)
+            .collect::<Vec<_>>(),
+        vec!["keep-a", "keep-b"]
+    );
+    assert_eq!(
+        state.status_identity_diagnostics(),
+        &[
+            CommandStatusIdentityDiagnostic::MissingId { occurrences: 1 },
+            CommandStatusIdentityDiagnostic::DuplicateId {
+                id: "duplicate".to_owned(),
+                occurrences: 2,
+            },
+        ]
+    );
 }
 
 #[test]
@@ -4346,6 +4386,17 @@ fn command_runtime_disabled_and_ambiguous_rows_reject_pointer_and_accesskit(
                                 .push(selection.value().to_owned());
                         }),
                 )
+                .child(
+                    Command::new("status-runtime-command", "Status runtime command")
+                        .open(true)
+                        .status_item(CommandStatusItem::info("duplicate-status", "First status"))
+                        .status_item(CommandStatusItem::error(
+                            "duplicate-status",
+                            "Second status",
+                        ))
+                        .status_item(CommandStatusItem::warning("kept-status", "Kept status"))
+                        .item(CommandItem::new("status-item", "Status item")),
+                )
         }
     }
 
@@ -4363,6 +4414,14 @@ fn command_runtime_disabled_and_ambiguous_rows_reject_pointer_and_accesskit(
     let ambiguous_bounds = cx
         .debug_bounds("listbox:ambiguous-runtime-command-listbox:option:duplicate")
         .expect("the filtered duplicate command item should remain rendered");
+    assert!(
+        cx.debug_bounds("command:status-runtime-command:status:kept-status")
+            .is_some()
+    );
+    assert!(
+        cx.debug_bounds("command:status-runtime-command:status:duplicate-status")
+            .is_none()
+    );
     cx.simulate_click(disabled_bounds.center(), Default::default());
     cx.simulate_click(ambiguous_bounds.center(), Default::default());
 

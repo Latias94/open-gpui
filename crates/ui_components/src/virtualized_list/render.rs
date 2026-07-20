@@ -5,7 +5,7 @@ use open_gpui::{
     AnyElement, App, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement, Pixels,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
-use open_gpui_ui_core::{AccessibleAction, SemanticDescriptor, Size, UiPx};
+use open_gpui_ui_core::{AccessibleAction, LivePoliteness, SemanticDescriptor, Size, UiPx};
 
 use super::descriptor::VirtualizedListRowKind;
 use super::model::{VirtualizedListActivation, VirtualizedListSelectionMode, VirtualizedListState};
@@ -205,12 +205,24 @@ fn render_virtualized_list_row(
     } else {
         &[]
     };
-    let mut semantics = SemanticDescriptor::new(row.role())
-        .with_label(&row_label)
-        .with_disabled(row.disabled())
-        .with_actions(row_actions);
+    let mut semantics = SemanticDescriptor::new(row.role()).with_actions(row_actions);
+    semantics = match row_kind {
+        VirtualizedListRowKind::Loading => semantics
+            .with_live_text(&row_label)
+            .with_live(LivePoliteness::Polite)
+            .with_live_atomic(true)
+            .with_busy(true),
+        VirtualizedListRowKind::Empty | VirtualizedListRowKind::Error => {
+            semantics.with_live_text(&row_label)
+        }
+        VirtualizedListRowKind::Item
+        | VirtualizedListRowKind::Section
+        | VirtualizedListRowKind::Separator => semantics.with_label(&row_label),
+    };
     if selectable {
-        semantics = semantics.with_selected(row.selected());
+        semantics = semantics
+            .with_disabled(row.disabled())
+            .with_selected(row.selected());
     }
     if let Some(position) = row.position_in_set() {
         semantics = semantics

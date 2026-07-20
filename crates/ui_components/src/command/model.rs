@@ -1,13 +1,13 @@
 //! Renderer-neutral command descriptors, state, and behavior inputs.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
     CommandLoadingState, CommandMatchRank, CommandMatchSource, CommandOpenMode, CommandQueryMode,
-    CommandSelectionMode, CommandStatusIntent, CommandStatusItem, command_choice_items,
-    command_choice_selection_mode, command_item_rank_for_source, command_open_mode_from_disclosure,
-    count_command_status_items,
+    CommandSelectionMode, CommandStatusIdentityDiagnostic, CommandStatusIntent, CommandStatusItem,
+    command_choice_items, command_choice_selection_mode, command_item_rank_for_source,
+    command_open_mode_from_disclosure, count_command_status_items,
 };
 use super::style::{CommandColors, CommandMetrics};
 use crate::action::ResolvedActionIcon;
@@ -513,6 +513,7 @@ pub struct CommandState {
     dialog: Option<CommandDialogState>,
     loading_state: Option<CommandLoadingState>,
     status_items: Vec<CommandStatusItem>,
+    status_identity_diagnostics: Vec<CommandStatusIdentityDiagnostic>,
     index_revision: Option<String>,
     index_mode: CommandIndexSnapshotMode,
     empty_label: String,
@@ -581,6 +582,55 @@ pub struct CommandStateRequest {
     pub focus_restore_intent: FocusRestoreIntent,
     /// Theme token bundle.
     pub tokens: ThemeTokens,
+}
+
+fn resolve_status_items(
+    items: impl IntoIterator<Item = CommandStatusItem>,
+) -> (Vec<CommandStatusItem>, Vec<CommandStatusIdentityDiagnostic>) {
+    let candidates = items
+        .into_iter()
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    let missing_id_count = candidates
+        .iter()
+        .filter(|item| item.id().trim().is_empty())
+        .count();
+    let mut identity_counts = BTreeMap::<String, usize>::new();
+    for item in candidates
+        .iter()
+        .filter(|item| !item.id().trim().is_empty())
+    {
+        *identity_counts.entry(item.id().to_owned()).or_default() += 1;
+    }
+
+    let mut diagnostics = Vec::new();
+    if missing_id_count > 0 {
+        diagnostics.push(CommandStatusIdentityDiagnostic::MissingId {
+            occurrences: missing_id_count,
+        });
+    }
+    diagnostics.extend(
+        identity_counts
+            .iter()
+            .filter(|(_, occurrences)| **occurrences > 1)
+            .map(
+                |(id, occurrences)| CommandStatusIdentityDiagnostic::DuplicateId {
+                    id: id.clone(),
+                    occurrences: *occurrences,
+                },
+            ),
+    );
+
+    let resolved = candidates
+        .into_iter()
+        .filter(|item| {
+            !item.id().trim().is_empty()
+                && identity_counts
+                    .get(item.id())
+                    .is_some_and(|occurrences| *occurrences == 1)
+        })
+        .collect();
+    (resolved, diagnostics)
 }
 
 impl CommandState {
@@ -984,6 +1034,7 @@ impl CommandState {
             dialog,
             loading_state,
             status_items: Vec::new(),
+            status_identity_diagnostics: Vec::new(),
             index_revision,
             index_mode,
             empty_label,
@@ -1102,6 +1153,11 @@ impl CommandState {
     /// Returns UI-ready command palette status items.
     pub fn status_items(&self) -> &[CommandStatusItem] {
         &self.status_items
+    }
+
+    /// Returns metadata-only diagnostics for omitted status identities.
+    pub fn status_identity_diagnostics(&self) -> &[CommandStatusIdentityDiagnostic] {
+        &self.status_identity_diagnostics
     }
 
     /// Returns whether provider or shortcut status should be displayed.
@@ -1271,7 +1327,7 @@ impl CommandState {
 
     /// Returns the same state with UI-ready status items.
     pub fn with_status_items(mut self, items: impl IntoIterator<Item = CommandStatusItem>) -> Self {
-        self.status_items = items.into_iter().filter(|item| !item.is_empty()).collect();
+        (self.status_items, self.status_identity_diagnostics) = resolve_status_items(items);
         self
     }
 

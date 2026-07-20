@@ -177,3 +177,117 @@ pub(super) fn render_focus_a11y_text_form_scenarios(
                 ),
         )
 }
+
+pub(super) fn render_focus_a11y_live_region_scenario(
+    shell: &GalleryShell,
+    tokens: ThemeTokens,
+    cx: &mut Context<GalleryShell>,
+) -> impl IntoElement {
+    let scenario = pages::focus_a11y::LIVE_REGIONS_AND_ANNOUNCEMENTS_SCENARIO;
+    let scenario_selector = scenario_debug_selector(scenario);
+    let status_text = shell.focus_a11y.live_status_text();
+    let status_busy = shell.focus_a11y.live_busy();
+    let alert_visible = shell.focus_a11y.live_alert_visible();
+
+    div()
+        .id(format!("focus-a11y-scenario:{}", scenario.id))
+        .debug_selector(move || scenario_selector)
+        .flex()
+        .flex_col()
+        .gap_3()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xd6d8ce))
+        .bg(rgb(0xffffff))
+        .p_3()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Live regions"),
+        )
+        .child(
+            StatusCue::new(pages::focus_a11y::LIVE_STATUS_COMPONENT_ID, status_text)
+                .intent(FeedbackIntent::Info)
+                .live(shell.focus_a11y.live_status_priority())
+                .busy(status_busy)
+                .tokens(tokens),
+        )
+        .when(alert_visible, |this| {
+            this.child(
+                StatusCue::new(
+                    pages::focus_a11y::LIVE_ALERT_COMPONENT_ID,
+                    pages::focus_a11y::LIVE_ALERT_TEXT,
+                )
+                .intent(FeedbackIntent::Danger)
+                .tokens(tokens),
+            )
+        })
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .child(
+                    Button::new(
+                        pages::focus_a11y::LIVE_STATUS_UPDATE_CONTROL_ID,
+                        "Update status",
+                    )
+                    .variant(ButtonVariant::Secondary)
+                    .with_size(Size::Small)
+                    .tokens(tokens)
+                    .on_activate(cx.processor(|this, _, _, cx| {
+                        this.mutate_focus_a11y(|state| state.update_live_status(), cx);
+                    })),
+                )
+                .child(
+                    Button::new(
+                        pages::focus_a11y::LIVE_BUSY_TOGGLE_CONTROL_ID,
+                        if status_busy {
+                            "Finish batch"
+                        } else {
+                            "Start batch"
+                        },
+                    )
+                    .variant(ButtonVariant::Secondary)
+                    .with_size(Size::Small)
+                    .tokens(tokens)
+                    .on_activate(cx.processor(|this, _, _, cx| {
+                        this.mutate_focus_a11y(|state| state.toggle_live_busy(), cx);
+                    })),
+                )
+                .child(
+                    Button::new(
+                        pages::focus_a11y::LIVE_ALERT_TOGGLE_CONTROL_ID,
+                        if alert_visible {
+                            "Clear alert"
+                        } else {
+                            "Show alert"
+                        },
+                    )
+                    .variant(ButtonVariant::Secondary)
+                    .with_size(Size::Small)
+                    .tokens(tokens)
+                    .on_activate(cx.processor(|this, _, _, cx| {
+                        this.mutate_focus_a11y(|state| state.toggle_live_alert(), cx);
+                    })),
+                )
+                .child(
+                    Button::new(
+                        pages::focus_a11y::WINDOW_ANNOUNCEMENT_CONTROL_ID,
+                        "Announce completion",
+                    )
+                    .variant(ButtonVariant::Secondary)
+                    .with_size(Size::Small)
+                    .tokens(tokens)
+                    .on_activate(cx.processor(|_, _, window, cx| {
+                        let _ = window.announce(
+                            AccessibilityAnnouncement::polite(
+                                pages::focus_a11y::WINDOW_ANNOUNCEMENT_TEXT,
+                            ),
+                            cx,
+                        );
+                    })),
+                ),
+        )
+}

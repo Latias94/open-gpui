@@ -48,7 +48,7 @@ declare_public_exports! {
         Command, CommandGroup, CommandGroupDescriptor, CommandItem, CommandItemDescriptor,
         CommandItemState, CommandLoadingState, CommandMetrics, CommandOpenMode, CommandSelection,
         CommandSelectionChange, CommandSelectionMode, CommandState, CommandStateRequest,
-        CommandStatusIntent, CommandStatusItem,
+        CommandStatusIdentityDiagnostic, CommandStatusIntent, CommandStatusItem,
     },
     crate::context_menu => { ContextMenu, ContextMenuState },
     crate::dialog => { Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState },

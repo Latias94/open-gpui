@@ -48,6 +48,8 @@ pub(super) struct InteractivityAccessibility {
     pub(super) required: Option<bool>,
     pub(super) invalid: Option<bool>,
     pub(super) busy: Option<bool>,
+    pub(super) live: Option<accesskit::Live>,
+    pub(super) live_atomic: Option<bool>,
     pub(super) read_only: Option<bool>,
     pub(super) omit_node: bool,
     pub(super) modal: Option<bool>,
@@ -144,6 +146,16 @@ impl InteractivityAccessibility {
                 node.set_busy();
             } else {
                 node.clear_busy();
+            }
+        }
+        if let Some(live) = self.live {
+            node.set_live(live);
+        }
+        if let Some(atomic) = self.live_atomic {
+            if atomic {
+                node.set_live_atomic();
+            } else {
+                node.clear_live_atomic();
             }
         }
         if let Some(read_only) = self.read_only {
@@ -358,5 +370,22 @@ mod tests {
 
         assert_eq!(text_run.character_lengths(), &[1, 4, 3]);
         assert_eq!(control.text_selection(), Some(&selection));
+    }
+
+    #[test]
+    fn live_region_properties_are_written_exactly() {
+        let accessibility = InteractivityAccessibility {
+            busy: Some(true),
+            live: Some(accesskit::Live::Assertive),
+            live_atomic: Some(true),
+            ..Default::default()
+        };
+        let mut node = accesskit::Node::new(accesskit::Role::Alert);
+
+        accessibility.write_node(&mut node, false, false);
+
+        assert!(node.is_busy());
+        assert_eq!(node.live(), Some(accesskit::Live::Assertive));
+        assert!(node.is_live_atomic());
     }
 }

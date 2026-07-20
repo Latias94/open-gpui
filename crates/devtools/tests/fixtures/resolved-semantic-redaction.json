@@ -1,5 +1,5 @@
 {
-  "node_count": 7,
+  "node_count": 8,
   "nodes": [
     {
       "semantic_id": "semantic-node-000000000000000b",
@@ -91,7 +91,28 @@
         "value": { "kind": "redacted" },
         "placeholder": { "kind": "absent" }
       }
+    },
+    {
+      "contract_id": "StatusCue",
+      "contract_revision": 1,
+      "family": "feedback",
+      "role": "status",
+      "semantic_id": "semantic-node-000000000000003c",
+      "text": {
+        "description": {
+          "kind": "absent"
+        },
+        "label": {
+          "kind": "redacted"
+        },
+        "placeholder": {
+          "kind": "absent"
+        },
+        "value": {
+          "kind": "redacted"
+        }
+      }
     }
   ],
-  "redacted_values": 11
+  "redacted_values": 13
 }

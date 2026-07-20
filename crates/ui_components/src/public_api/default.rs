@@ -23,8 +23,8 @@ declare_public_exports! {
     },
     crate::menu => { MenuSafeHoverCorridor, MenuSubmenuNavigation, MenuSubmenuSurface },
     crate::resource_adapter => {
-        ResourceAdapterLabels, ResourceCollectionProjection, ResourceMutationProjection,
-        resource_query_key_label,
+        ResourceAdapterLabels, ResourceAdapterNamespace, ResourceAdapterNamespaceError,
+        ResourceCollectionProjection, ResourceMutationProjection, resource_query_key_label,
     },
     crate::table => {
         TableColumnOrderChange, TableColumnOrderPlacement, TableColumnSizingChange,

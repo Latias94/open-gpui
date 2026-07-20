@@ -283,6 +283,8 @@ fn resolved_semantic_node<NodeId>(
                 "required": semantics.required(),
                 "invalid": semantics.invalid(),
                 "busy": semantics.busy(),
+                "live": semantics.live().map(debug_variant_label),
+                "live_atomic": semantics.live_atomic(),
                 "read_only": semantics.read_only(),
                 "omit_accessibility_node": semantics.omit_accessibility_node(),
                 "modal": semantics.modal(),

@@ -71,7 +71,13 @@ mod pointer_session;
 mod prompts;
 
 use self::a11y::A11y;
-pub use self::a11y::AccessibilityTreeScope;
+pub use self::a11y::{
+    AccessibilityAnnouncement, AccessibilityAnnouncementClearReason,
+    AccessibilityAnnouncementDiagnostic, AccessibilityAnnouncementDropReason,
+    AccessibilityAnnouncementLifecycle, AccessibilityAnnouncementOutcome,
+    AccessibilityAnnouncementPoliteness, AccessibilityAnnouncementRequestId,
+    AccessibilityAnnouncementSequence, AccessibilityTreeScope,
+};
 pub(crate) use self::frame_journal::{
     DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintStateIndex,
     TooltipRequest,
@@ -2053,7 +2059,11 @@ impl Window {
             pending_pointer_cancellation: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(a11y_active_state, accessibility_force_disabled),
+            a11y: A11y::new(
+                a11y_active_state,
+                accessibility_force_disabled,
+                handle.window_id(),
+            ),
         })
     }
 
@@ -2295,6 +2305,7 @@ impl Window {
         if self.removed || self.removal_state == WindowRemovalState::Removing {
             return;
         }
+        self.a11y.clear_announcements_for_window_close();
         if self.input_transaction_depth.get() > 0 {
             self.removal_state = WindowRemovalState::PendingAfterInput;
             return;
@@ -3526,6 +3537,36 @@ impl Window {
         self.a11y.is_active()
     }
 
+    /// Queues a transient, window-scoped accessibility announcement.
+    ///
+    /// An accepted outcome means only that the request entered the bounded queue. If its
+    /// accessibility activation generation remains current, the request enters the final AccessKit
+    /// tree without moving focus or invoking a native speech API. Deactivation, activation
+    /// replacement, or window close can clear an accepted request before publication; requests
+    /// made while accessibility is inactive or the window is closing are dropped and never replayed.
+    pub fn announce(
+        &mut self,
+        announcement: AccessibilityAnnouncement,
+        _cx: &mut App,
+    ) -> AccessibilityAnnouncementOutcome {
+        if self.removal_state != WindowRemovalState::Open || self.removed {
+            return self
+                .a11y
+                .reject_announcement_for_closed_window(announcement);
+        }
+
+        let outcome = self.a11y.enqueue_announcement(announcement);
+        if outcome.is_accepted() {
+            self.refresh();
+        }
+        outcome
+    }
+
+    /// Returns the bounded metadata-only announcement diagnostic history for this window.
+    pub fn accessibility_announcement_diagnostics(&self) -> &[AccessibilityAnnouncementDiagnostic] {
+        self.a11y.announcement_diagnostics()
+    }
+
     /// Returns whether this window is considered to be the window
     /// that currently owns the mouse cursor.
     /// On mac, this is equivalent to `is_window_active`.
@@ -4007,6 +4048,12 @@ impl Window {
         if mem::take(&mut self.focus_followup_requested) && self.focus_followup_frame_needed() {
             self.refreshing = true;
             self.invalidator.set_focus_only_dirty();
+        }
+        if self.a11y.take_announcement_followup_refresh_required() {
+            let window = self.handle;
+            cx.defer(move |cx| {
+                window.update(cx, |_, window, _| window.refresh()).ok();
+            });
         }
         self.needs_present.set(true);
 
@@ -7333,7 +7380,7 @@ impl Window {
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
             #[cfg(feature = "input-latency-histogram")]
-            if self.invalidator.not_drawing() {
+            if self.invalidator.can_schedule_refresh() && !self.invalidator.is_focus_phase() {
                 self.input_latency_tracker.record_input(dispatch_time);
             } else {
                 self.input_latency_tracker.record_mid_draw_input();

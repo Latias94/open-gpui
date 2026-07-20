@@ -1,7 +1,7 @@
 //! Focus and accessibility foundation page metadata.
 
 use open_gpui_ui_components::{FieldState, TextInputDisplayMode, TextInputState, TextareaState};
-use open_gpui_ui_core::{Role, Size, ThemeTokens, Toggled};
+use open_gpui_ui_core::{LivePoliteness, Role, Size, ThemeTokens, Toggled};
 
 use crate::story::{StoryContract, StoryProbeContract, StoryProbeOperation};
 
@@ -42,6 +42,16 @@ pub const TEXTAREA_FIELD_ERROR: &str = "Add a concise release note.";
 pub const PASSWORD_LABEL: &str = "Gallery password";
 /// Placeholder rendered by the password input.
 pub const PASSWORD_PLACEHOLDER: &str = "Password";
+/// Initial visible copy for the declarative status region before it becomes live.
+pub const LIVE_STATUS_IDLE_TEXT: &str = "Waiting for a status update.";
+/// First deterministic update copy for the declarative status region.
+pub const LIVE_STATUS_UPDATE_ONE_TEXT: &str = "Background synchronization update 1.";
+/// Second deterministic update copy for the declarative status region.
+pub const LIVE_STATUS_UPDATE_TWO_TEXT: &str = "Background synchronization update 2.";
+/// Assertive message rendered by the live-region scenario.
+pub const LIVE_ALERT_TEXT: &str = "Background synchronization failed.";
+/// Repeated application-global message submitted by the transient announcement control.
+pub const WINDOW_ANNOUNCEMENT_TEXT: &str = "Background synchronization completed.";
 
 /// Raw Focus/A11y story text that must never cross a DevTools artifact boundary.
 pub const FOCUS_A11Y_SENSITIVE_TEXT: &[&str] = &[
@@ -57,6 +67,11 @@ pub const FOCUS_A11Y_SENSITIVE_TEXT: &[&str] = &[
     PASSWORD_LABEL,
     PASSWORD_REDACTION_CANARY,
     PASSWORD_PLACEHOLDER,
+    LIVE_STATUS_IDLE_TEXT,
+    LIVE_STATUS_UPDATE_ONE_TEXT,
+    LIVE_STATUS_UPDATE_TWO_TEXT,
+    LIVE_ALERT_TEXT,
+    WINDOW_ANNOUNCEMENT_TEXT,
 ];
 
 const TEXT_INPUT_PROBES: &[StoryProbeContract] = &[
@@ -101,6 +116,24 @@ const PASSWORD_PROBES: &[StoryProbeContract] = &[
     ),
 ];
 
+const LIVE_REGION_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(
+        StoryProbeOperation::Activate,
+        "status controls",
+        "polite, busy, and assertive live-region transitions",
+    ),
+    StoryProbeContract::new(
+        StoryProbeOperation::Focus,
+        "announcement control",
+        "focus stability across semantic commits",
+    ),
+    StoryProbeContract::new(
+        StoryProbeOperation::ReadPublicPayload,
+        "final tree",
+        "live priority, atomicity, busy state, and transient generations",
+    ),
+];
+
 /// Component id for the editable account-name input scenario.
 pub const TEXT_INPUT_COMPONENT_ID: &str = "focus-a11y-text-input";
 /// Component id for the Field that owns the release-notes relations.
@@ -109,12 +142,33 @@ pub const TEXTAREA_FIELD_COMPONENT_ID: &str = "focus-a11y-textarea-field";
 pub const TEXTAREA_COMPONENT_ID: &str = "focus-a11y-field-textarea";
 /// Component id for the password-redaction input scenario.
 pub const PASSWORD_COMPONENT_ID: &str = "focus-a11y-password-input";
+/// Component id for the declarative polite status region.
+pub const LIVE_STATUS_COMPONENT_ID: &str = "focus-a11y-live-status";
+/// Component id for the conditional assertive alert region.
+pub const LIVE_ALERT_COMPONENT_ID: &str = "focus-a11y-live-alert";
+/// Component id for the polite status update control.
+pub const LIVE_STATUS_UPDATE_CONTROL_ID: &str = "focus-a11y-live-update";
+/// Component id for the status busy-state control.
+pub const LIVE_BUSY_TOGGLE_CONTROL_ID: &str = "focus-a11y-live-busy";
+/// Component id for the assertive alert control.
+pub const LIVE_ALERT_TOGGLE_CONTROL_ID: &str = "focus-a11y-live-alert-toggle";
+/// Component id for the application-global announcement control.
+pub const WINDOW_ANNOUNCEMENT_CONTROL_ID: &str = "focus-a11y-window-announce";
 /// Stable selector for the Textarea Field relation transition control.
 pub const TEXTAREA_FIELD_ERROR_TOGGLE_SELECTOR: &str = "gallery:focus-a11y-field-error-toggle";
+/// Stable selector for the polite status update control.
+pub const LIVE_STATUS_UPDATE_SELECTOR: &str = "button:focus-a11y-live-update:root";
+/// Stable selector for the status busy-state control.
+pub const LIVE_BUSY_TOGGLE_SELECTOR: &str = "button:focus-a11y-live-busy:root";
+/// Stable selector for the assertive alert control.
+pub const LIVE_ALERT_TOGGLE_SELECTOR: &str = "button:focus-a11y-live-alert-toggle:root";
+/// Stable selector for the application-global announcement control.
+pub const WINDOW_ANNOUNCEMENT_SELECTOR: &str = "button:focus-a11y-window-announce:root";
 
 const TEXT_INPUT_COMPONENT_IDS: &[&str] = &[TEXT_INPUT_COMPONENT_ID];
 const TEXTAREA_FIELD_COMPONENT_IDS: &[&str] = &[TEXTAREA_FIELD_COMPONENT_ID, TEXTAREA_COMPONENT_ID];
 const PASSWORD_COMPONENT_IDS: &[&str] = &[PASSWORD_COMPONENT_ID];
+const LIVE_REGION_COMPONENT_IDS: &[&str] = &[LIVE_STATUS_COMPONENT_ID, LIVE_ALERT_COMPONENT_ID];
 
 /// Typed identity for one real Focus/A11y Text/Form story.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -125,14 +179,17 @@ pub enum FocusA11yScenarioId {
     TextareaFieldRelations,
     /// Password free-text redaction story.
     PasswordFreeTextRedaction,
+    /// Declarative live regions and transient window announcement story.
+    LiveRegionsAndAnnouncements,
 }
 
 impl FocusA11yScenarioId {
     /// All real Focus/A11y Text/Form stories in canonical page order.
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 4] = [
         Self::TextInputValueSelection,
         Self::TextareaFieldRelations,
         Self::PasswordFreeTextRedaction,
+        Self::LiveRegionsAndAnnouncements,
     ];
 
     /// Returns the stable scenario id used by story contracts and artifacts.
@@ -141,6 +198,7 @@ impl FocusA11yScenarioId {
             Self::TextInputValueSelection => "text-input-value-selection",
             Self::TextareaFieldRelations => "textarea-field-relations",
             Self::PasswordFreeTextRedaction => "password-free-text-redaction",
+            Self::LiveRegionsAndAnnouncements => "live-regions-and-announcements",
         }
     }
 }
@@ -209,11 +267,23 @@ pub const PASSWORD_FREE_TEXT_REDACTION_SCENARIO: FocusA11yScenarioSpec = FocusA1
     probes: PASSWORD_PROBES,
 };
 
+/// Declarative live-region and transient window announcement scenario.
+pub const LIVE_REGIONS_AND_ANNOUNCEMENTS_SCENARIO: FocusA11yScenarioSpec = FocusA11yScenarioSpec {
+    scenario_id: FocusA11yScenarioId::LiveRegionsAndAnnouncements,
+    id: FocusA11yScenarioId::LiveRegionsAndAnnouncements.as_str(),
+    component_ids: LIVE_REGION_COMPONENT_IDS,
+    sample_selector: "status-cue:focus-a11y-live-status:root",
+    control_selector: Some(LIVE_STATUS_UPDATE_SELECTOR),
+    state: "StatusCueState + window announcement queue",
+    probes: LIVE_REGION_PROBES,
+};
+
 /// Real Text/Form scenarios rendered by the Focus/A11y page.
 pub const FOCUS_A11Y_SCENARIOS: &[FocusA11yScenarioSpec] = &[
     TEXT_INPUT_VALUE_SELECTION_SCENARIO,
     TEXTAREA_FIELD_RELATIONS_SCENARIO,
     PASSWORD_FREE_TEXT_REDACTION_SCENARIO,
+    LIVE_REGIONS_AND_ANNOUNCEMENTS_SCENARIO,
 ];
 
 /// Returns executable story contracts for the Focus/A11y Text/Form scenarios.
@@ -276,6 +346,9 @@ pub(crate) struct FocusA11yPageState {
     textarea_value: String,
     field_invalid: bool,
     password_value: String,
+    live_status_revision: u64,
+    live_busy: bool,
+    live_alert_visible: bool,
 }
 
 impl Default for FocusA11yPageState {
@@ -288,6 +361,9 @@ impl Default for FocusA11yPageState {
             textarea_value: TEXTAREA_INITIAL_VALUE.to_owned(),
             field_invalid: false,
             password_value: PASSWORD_REDACTION_CANARY.to_owned(),
+            live_status_revision: 0,
+            live_busy: false,
+            live_alert_visible: false,
         }
     }
 }
@@ -439,6 +515,63 @@ impl FocusA11yPageState {
         self.password_value = value;
         true
     }
+
+    /// Returns the visible and accessible text for the stable status region.
+    pub(crate) fn live_status_text(&self) -> String {
+        if self.live_status_revision == 0 {
+            LIVE_STATUS_IDLE_TEXT.to_owned()
+        } else if self.live_status_revision == 1 {
+            LIVE_STATUS_UPDATE_ONE_TEXT.to_owned()
+        } else if self.live_status_revision == 2 {
+            LIVE_STATUS_UPDATE_TWO_TEXT.to_owned()
+        } else {
+            format!(
+                "Background synchronization update {}.",
+                self.live_status_revision
+            )
+        }
+    }
+
+    /// Returns the live priority for the stable status region.
+    pub(crate) const fn live_status_priority(&self) -> LivePoliteness {
+        if self.live_status_revision == 0 {
+            LivePoliteness::Off
+        } else {
+            LivePoliteness::Polite
+        }
+    }
+
+    /// Returns whether the stable status region is busy.
+    pub(crate) const fn live_busy(&self) -> bool {
+        self.live_busy
+    }
+
+    /// Returns whether the assertive alert region is mounted.
+    pub(crate) const fn live_alert_visible(&self) -> bool {
+        self.live_alert_visible
+    }
+
+    /// Publishes the next declarative status value.
+    pub(crate) fn update_live_status(&mut self) -> bool {
+        let next_revision = self.live_status_revision.saturating_add(1);
+        if next_revision == self.live_status_revision {
+            return false;
+        }
+        self.live_status_revision = next_revision;
+        true
+    }
+
+    /// Toggles the declarative status busy state.
+    pub(crate) fn toggle_live_busy(&mut self) -> bool {
+        self.live_busy = !self.live_busy;
+        true
+    }
+
+    /// Toggles the assertive alert region.
+    pub(crate) fn toggle_live_alert(&mut self) -> bool {
+        self.live_alert_visible = !self.live_alert_visible;
+        true
+    }
 }
 
 /// Resolved component states shared by the Focus/A11y renderer and DevTools projection.
@@ -537,5 +670,20 @@ mod tests {
         assert_eq!(updated_story.textarea().value(), "Updated note");
         assert!(updated_story.field().invalid());
         assert_eq!(updated_story.password().value(), "updated secret");
+
+        assert_eq!(state.live_status_text(), LIVE_STATUS_IDLE_TEXT);
+        assert_eq!(state.live_status_priority(), LivePoliteness::Off);
+        assert!(!state.live_busy());
+        assert!(!state.live_alert_visible());
+        assert!(state.update_live_status());
+        assert_eq!(
+            state.live_status_text(),
+            "Background synchronization update 1."
+        );
+        assert_eq!(state.live_status_priority(), LivePoliteness::Polite);
+        assert!(state.toggle_live_busy());
+        assert!(state.live_busy());
+        assert!(state.toggle_live_alert());
+        assert!(state.live_alert_visible());
     }
 }

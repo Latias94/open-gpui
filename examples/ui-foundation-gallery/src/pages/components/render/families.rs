@@ -157,6 +157,9 @@ pub(super) fn component_feedback_samples_section(
                     .child(
                         StatusCue::new(format!("component-status-cue:{sample_id}"), label)
                             .intent(state.intent())
+                            .live(state.live())
+                            .live_atomic(state.live_atomic())
+                            .busy(state.busy())
                             .with_size(state.size())
                             .tokens(tokens),
                     )

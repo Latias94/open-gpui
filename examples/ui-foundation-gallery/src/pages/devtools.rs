@@ -263,6 +263,16 @@ impl GalleryDevtoolsWorkbench {
         self.workbench.inspector_state()
     }
 
+    /// Returns a sanitized export from this exact live shell-owned session.
+    pub fn session_export(&self) -> DevtoolsSessionExport {
+        self.workbench.export()
+    }
+
+    /// Returns artifacts derived from this exact live shell-owned session.
+    pub fn artifacts(&self) -> GalleryDevtoolsHeadlessArtifacts {
+        gallery_devtools_artifacts(self.session_export())
+    }
+
     /// Refreshes the shell-owned session with new allowlisted Gallery facts.
     pub fn refresh_with_facts(
         &mut self,
@@ -381,11 +391,16 @@ pub struct GalleryDevtoolsHeadlessArtifacts {
 
 /// Builds deterministic Gallery DevTools artifacts without launching a GUI window.
 pub fn devtools_gallery_headless_artifacts() -> GalleryDevtoolsHeadlessArtifacts {
+    gallery_devtools_artifacts(devtools_gallery_session_export())
+}
+
+fn gallery_devtools_artifacts(
+    session_export: DevtoolsSessionExport,
+) -> GalleryDevtoolsHeadlessArtifacts {
     let accessibility_scenarios = FOCUS_A11Y_SCENARIOS
         .iter()
         .map(|scenario| scenario.scenario_id)
         .collect();
-    let session_export = devtools_gallery_session_export();
     let report = DevtoolsReport::from_session_export(&session_export);
     let session_record = DevtoolsArtifactRecord::new(
         devtools_gallery_artifact_metadata(0, "fixture-session"),
@@ -727,6 +742,9 @@ fn accessibility_devtools_dogfood_snapshot(refresh_index: u64) -> SnapshotProbeS
     if refresh_index % 2 == 1 {
         page_state.set_text_input_value(TEXT_INPUT_CHANGED_VALUE.to_owned());
         page_state.toggle_field_invalid();
+        page_state.update_live_status();
+        page_state.toggle_live_busy();
+        page_state.toggle_live_alert();
     }
     let state = page_state.text_form_story_state(ThemeTokens::default());
     let scenario_snapshots = FOCUS_A11Y_SCENARIOS
@@ -742,6 +760,9 @@ fn accessibility_devtools_dogfood_snapshot(refresh_index: u64) -> SnapshotProbeS
                 }
                 FocusA11yScenarioId::PasswordFreeTextRedaction => {
                     password_devtools_snapshot(&state)
+                }
+                FocusA11yScenarioId::LiveRegionsAndAnnouncements => {
+                    live_regions_devtools_snapshot(&page_state)
                 }
             };
             (scenario, snapshot)
@@ -821,8 +842,12 @@ fn textarea_field_devtools_snapshot(state: &FocusA11yTextFormStoryState) -> Snap
     let labelled_by = [label_node_id];
     let described_by = [support_node_id];
     let label_semantics = SemanticDescriptor::<u64>::new(Role::Label).with_label(field.label());
-    let support_semantics = SemanticDescriptor::<u64>::new(Role::Label)
-        .with_label(field.support_text().expect("Focus/A11y Field support text"));
+    let support_text = field.support_text().expect("Focus/A11y Field support text");
+    let support_semantics = if field.invalid() {
+        SemanticDescriptor::<u64>::new(Role::Alert).with_live_text(support_text)
+    } else {
+        SemanticDescriptor::<u64>::new(Role::Label).with_label(support_text)
+    };
     let projection = state.textarea().semantic_projection::<u64>();
     let mut textarea_semantics = projection.descriptor().with_labelled_by(&labelled_by);
     if field.invalid() {
@@ -858,6 +883,29 @@ fn password_devtools_snapshot(state: &FocusA11yTextFormStoryState) -> SnapshotPr
         OpaqueSemanticNodeId::new(0x3001),
         semantics,
     )])
+}
+
+fn live_regions_devtools_snapshot(state: &FocusA11yPageState) -> SnapshotProbeSnapshot {
+    let status_text = state.live_status_text();
+    let status_semantics = SemanticDescriptor::<u64>::new(Role::Status)
+        .with_live_text(&status_text)
+        .with_live(state.live_status_priority())
+        .with_busy(state.live_busy());
+    let mut nodes = vec![ResolvedSemanticNode::new(
+        component_identity("StatusCue"),
+        OpaqueSemanticNodeId::new(0x4001),
+        status_semantics,
+    )];
+    if state.live_alert_visible() {
+        let alert_semantics = SemanticDescriptor::<u64>::new(Role::Alert)
+            .with_live_text(crate::pages::focus_a11y::LIVE_ALERT_TEXT);
+        nodes.push(ResolvedSemanticNode::new(
+            component_identity("StatusCue"),
+            OpaqueSemanticNodeId::new(0x4002),
+            alert_semantics,
+        ));
+    }
+    resolved_semantics_probe_snapshot(nodes)
 }
 
 fn command_registry_sample() -> CommandRegistrySnapshot {

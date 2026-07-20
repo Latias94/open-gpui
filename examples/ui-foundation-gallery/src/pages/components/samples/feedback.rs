@@ -52,6 +52,7 @@ pub fn status_cue_samples(tokens: ThemeTokens) -> [StatusCueSample; 3] {
         title,
         state: StatusCue::new(id, label)
             .intent(intent)
+            .live(open_gpui_ui_core::LivePoliteness::Off)
             .with_size(size)
             .tokens(tokens)
             .state(),

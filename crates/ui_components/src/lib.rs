@@ -83,8 +83,8 @@ pub mod virtualized_list;
 /// future headless crate should not depend on them as component contracts.
 pub mod gpui_adapter {
     pub use crate::a11y::{
-        UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui,
-        gpui_role_from_ui, gpui_toggled_from_ui,
+        UiA11yElementExt, gpui_accessible_action_from_ui, gpui_live_from_ui,
+        gpui_orientation_from_ui, gpui_role_from_ui, gpui_toggled_from_ui,
     };
     pub use crate::field::adapter::{FieldControl, FieldControlSemantics};
     pub use crate::focus::focus_ring_shadow_with_theme;

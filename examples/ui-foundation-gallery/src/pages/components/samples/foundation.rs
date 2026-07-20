@@ -541,16 +541,19 @@ pub fn toast_stack_samples(tokens: ThemeTokens) -> [ToastStackSample; 1] {
                 Toast::new("saved", "Saved")
                     .description("Settings are synced.")
                     .intent(FeedbackIntent::Success)
+                    .live(open_gpui_ui_core::LivePoliteness::Off)
                     .action("Undo"),
             )
             .toast(
                 Toast::new("queued", "Queued")
                     .description("Release job will start shortly.")
                     .intent(FeedbackIntent::Info)
+                    .live(open_gpui_ui_core::LivePoliteness::Off)
                     .timeout(Duration::from_secs(8)),
             )
             .toast(
                 Toast::new("expired", "Expired")
+                    .live(open_gpui_ui_core::LivePoliteness::Off)
                     .elapsed(Duration::from_secs(8))
                     .timeout(Duration::from_secs(2)),
             )

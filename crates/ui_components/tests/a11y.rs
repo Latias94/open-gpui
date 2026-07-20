@@ -11,11 +11,14 @@ use open_gpui::{
 use open_gpui_ui_components::gpui_adapter::UiA11yElementExt;
 use open_gpui_ui_components::{
     A11yContractError, A11yLabelSource, A11yValueKind, A11yValueMetadata, Button,
-    ComponentA11yContract, Dialog, Listbox, Menu, MenuItem, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListStatusKind, listbox::ListboxOption,
+    ComponentA11yContract, Dialog, EmptyState, FeedbackIntent, Listbox, Menu, MenuItem, Splitter,
+    SplitterPanel, SplitterPanelDescriptor, StatusCue, Toast, ToastStack, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListStatusKind,
+    listbox::ListboxOption,
 };
-use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Toggled, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, LivePoliteness, Role, SemanticDescriptor, Toggled, ui_px,
+};
 use std::{cell::RefCell, rc::Rc};
 
 use a11y_support::node_with_label as a11y_node_with_label;
@@ -169,6 +172,166 @@ fn semantic_descriptor_omission_keeps_descendant_projection(cx: &mut open_gpui::
     );
     let (_, descendant) = a11y_node_with_label(&update, "Projected omission descendant");
     assert_eq!(descendant.role(), accesskit::Role::Button);
+}
+
+#[open_gpui::test]
+fn live_region_descriptors_reach_the_final_tree_exactly(cx: &mut open_gpui::TestAppContext) {
+    struct LiveRegionProbe {
+        status_text: &'static str,
+        busy: bool,
+    }
+
+    impl Render for LiveRegionProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let status = SemanticDescriptor::new(Role::Status)
+                .with_live_text(self.status_text)
+                .with_busy(self.busy);
+            let alert = SemanticDescriptor::new(Role::Alert)
+                .with_label("Connection lost")
+                .with_value("Connection lost");
+            let quiet = SemanticDescriptor::new(Role::Status)
+                .with_label("Static catalog example")
+                .with_value("Static catalog example")
+                .with_live(LivePoliteness::Off)
+                .with_live_atomic(false);
+
+            div()
+                .child(div().id("live-status").ui_semantics(&status))
+                .child(div().id("live-alert").ui_semantics(&alert))
+                .child(div().id("live-off").ui_semantics(&quiet))
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| LiveRegionProbe {
+        status_text: "Background sync phase one",
+        busy: true,
+    });
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("live-region semantics should publish");
+
+    let (status_id, status) = a11y_node_with_label(&update, "Background sync phase one");
+    assert_eq!(status.role(), accesskit::Role::Status);
+    assert_eq!(status.value(), Some("Background sync phase one"));
+    assert_eq!(status.live(), Some(accesskit::Live::Polite));
+    assert!(status.is_live_atomic());
+    assert!(status.is_busy());
+
+    let (_, alert) = a11y_node_with_label(&update, "Connection lost");
+    assert_eq!(alert.role(), accesskit::Role::Alert);
+    assert_eq!(alert.value(), Some("Connection lost"));
+    assert_eq!(alert.live(), Some(accesskit::Live::Assertive));
+    assert!(alert.is_live_atomic());
+    assert!(!alert.is_busy());
+
+    let (_, quiet) = a11y_node_with_label(&update, "Static catalog example");
+    assert_eq!(quiet.role(), accesskit::Role::Status);
+    assert_eq!(quiet.live(), Some(accesskit::Live::Off));
+    assert!(!quiet.is_live_atomic());
+
+    view.update(cx, |probe, cx| {
+        probe.status_text = "Background sync phase two";
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let changed = cx.latest_accessibility_tree_update().unwrap();
+    let (changed_id, changed_status) = a11y_node_with_label(&changed, "Background sync phase two");
+    assert_eq!(changed_id, status_id);
+    assert!(changed_status.is_busy());
+
+    view.update(cx, |probe, cx| {
+        probe.busy = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let settled = cx.latest_accessibility_tree_update().unwrap();
+    let (settled_id, settled_status) = a11y_node_with_label(&settled, "Background sync phase two");
+    assert_eq!(settled_id, status_id);
+    assert!(!settled_status.is_busy());
+}
+
+#[open_gpui::test]
+fn feedback_components_use_declarative_live_nodes_without_submitting_window_announcements(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct FeedbackProbe {
+        show: bool,
+    }
+
+    impl Render for FeedbackProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().when(self.show, |this| {
+                this.child(StatusCue::new("sync-status", "Synchronization complete"))
+                    .child(
+                        ToastStack::new("toast-stack", "Notifications").toast(
+                            Toast::new("upload-error", "Upload failed")
+                                .description("Try again")
+                                .intent(FeedbackIntent::Danger),
+                        ),
+                    )
+                    .child(
+                        EmptyState::new("empty-state", "No results")
+                            .description("Try another search"),
+                    )
+            })
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| FeedbackProbe { show: true });
+    assert!(cx.activate_accessibility());
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("feedback live regions should publish");
+
+    let (status_id, status) = a11y_node_with_label(&initial, "Synchronization complete");
+    assert_eq!(status.role(), accesskit::Role::Status);
+    assert_eq!(status.value(), Some("Synchronization complete"));
+    assert_eq!(status.live(), Some(accesskit::Live::Polite));
+    assert!(status.is_live_atomic());
+
+    let (_, empty) = a11y_node_with_label(&initial, "No results");
+    assert_eq!(empty.role(), accesskit::Role::Section);
+    assert_eq!(empty.description(), Some("Try another search"));
+    assert_eq!(empty.live(), None);
+    assert!(!empty.is_live_atomic());
+    assert!(!empty.is_busy());
+
+    let (alert_id, alert) = a11y_node_with_label(&initial, "Upload failed. Try again");
+    assert_eq!(alert.role(), accesskit::Role::Alert);
+    assert_eq!(alert.value(), Some("Upload failed. Try again"));
+    assert_eq!(alert.description(), Some("Try again"));
+    assert_eq!(alert.live(), Some(accesskit::Live::Assertive));
+    assert!(alert.is_live_atomic());
+    assert!(cx.update(|window, _| { window.accessibility_announcement_diagnostics().is_empty() }));
+
+    view.update(cx, |probe, cx| {
+        probe.show = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let unmounted = cx
+        .latest_accessibility_tree_update()
+        .expect("feedback unmount should publish");
+    assert!(
+        !unmounted
+            .nodes
+            .iter()
+            .any(|(node_id, _)| { *node_id == status_id || *node_id == alert_id })
+    );
+    assert!(cx.update(|window, _| { window.accessibility_announcement_diagnostics().is_empty() }));
+
+    view.update(cx, |probe, cx| {
+        probe.show = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let remounted = cx
+        .latest_accessibility_tree_update()
+        .expect("feedback remount should publish");
+    let (remounted_status_id, _) = a11y_node_with_label(&remounted, "Synchronization complete");
+    assert_eq!(remounted_status_id, status_id);
+    assert!(cx.update(|window, _| { window.accessibility_announcement_diagnostics().is_empty() }));
 }
 
 #[open_gpui::test]

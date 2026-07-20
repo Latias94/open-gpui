@@ -1213,6 +1213,7 @@ fn ui_core_prelude_allowlist() -> BTreeSet<String> {
         "FocusTargetCandidate",
         "FocusTargetId",
         "InitialFocusIntent",
+        "LivePoliteness",
         "Orientation",
         "OutsidePressOutcome",
         "OutsidePressParticipation",

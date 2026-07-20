@@ -6,7 +6,7 @@ use open_gpui::{
     ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window, div, px, rgba,
 };
 use open_gpui_ui_core::{
-    AccessibleAction, Role, SemanticDescriptor, Sizable, ThemeTokens, UiPx, ui_px,
+    AccessibleAction, LivePoliteness, Role, SemanticDescriptor, Sizable, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -373,7 +373,17 @@ pub(super) fn command_content_element(
             ))
         })
         .when_some(state.loading().cloned(), |this, loading| {
-            let semantics = SemanticDescriptor::new(loading.role()).with_label(loading.message());
+            let mut semantics = SemanticDescriptor::new(loading.role())
+                .with_live_text(loading.message())
+                .with_live(LivePoliteness::Polite)
+                .with_live_atomic(true)
+                .with_busy(true);
+            if let Some(progress) = loading.progress_percent() {
+                semantics = semantics
+                    .with_numeric_value(f64::from(progress))
+                    .with_min_numeric_value(0.0)
+                    .with_max_numeric_value(100.0);
+            }
             this.child(
                 div()
                     .id(loading_id)
@@ -385,24 +395,30 @@ pub(super) fn command_content_element(
         .when(!status_items.is_empty(), |this| {
             let status_debug_id = debug_id.clone();
             this.child(
-                status_items.into_iter().enumerate().fold(
+                status_items.into_iter().fold(
                     div()
                         .id(status_id)
                         .debug_selector(move || format!("command:{status_debug_id}:status"))
                         .flex()
                         .flex_col()
                         .gap_1(),
-                    |list, (index, item)| {
+                    |list, item| {
                         let foreground =
                             theme.resolve(command_status_foreground(item.intent(), colors, tokens));
                         let item_debug_id = debug_id.clone();
+                        let item_id = item.id().to_owned();
+                        let item_selector_id = item_id.clone();
                         let message = item.message().to_owned();
-                        let semantics = SemanticDescriptor::new(item.role()).with_label(&message);
+                        let semantics = SemanticDescriptor::new(item.role())
+                            .with_live_text(&message)
+                            .with_live(item.live())
+                            .with_live_atomic(item.live_atomic())
+                            .with_busy(item.busy());
                         list.child(
                             div()
-                                .id(format!("command-status:{index}"))
+                                .id(format!("command-status:{item_id}"))
                                 .debug_selector(move || {
-                                    format!("command:{item_debug_id}:status:{index}")
+                                    format!("command:{item_debug_id}:status:{item_selector_id}")
                                 })
                                 .px(gpui_px_from_ui(metrics.padding()))
                                 .py(px(2.0))

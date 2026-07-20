@@ -90,8 +90,8 @@ impl VirtualizedListRowKind {
             Self::Section => Role::Group,
             Self::Separator => Role::Separator,
             Self::Loading => Role::ProgressIndicator,
-            Self::Empty => Role::Section,
-            Self::Error => Role::AlertDialog,
+            Self::Empty => Role::Status,
+            Self::Error => Role::Alert,
         }
     }
 }

@@ -659,8 +659,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let _prelude_scroll_strategy: prelude::VirtualizedListScrollStrategy =
         prelude::VirtualizedListScrollStrategy::Center;
 
-    assert_eq!(root_status_cue.state().role(), Role::Label);
-    assert_eq!(prelude_status_cue.state().role(), Role::Label);
+    assert_eq!(root_status_cue.state().role(), Role::Status);
+    assert_eq!(prelude_status_cue.state().role(), Role::Status);
     assert_eq!(root_empty_state.state().role(), Role::Section);
     assert_eq!(prelude_empty_state.state().role(), Role::Section);
     assert_eq!(root_tree_component_state.role(), Role::Tree);
@@ -728,7 +728,7 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(root_virtualized_status_kind.as_str(), "append-loading");
     assert_eq!(
         prelude_virtualized_status_kind.row_kind().role(),
-        Role::AlertDialog
+        Role::Alert
     );
     assert_eq!(root_virtualized_snapshot.role(), Role::ListBox);
     assert_eq!(prelude_virtualized_snapshot.row_role(), Role::ListBoxOption);

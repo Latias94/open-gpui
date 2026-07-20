@@ -29,6 +29,22 @@ fn a11y_node_with_role_and_label<'a>(
         .unwrap_or_else(|| panic!("missing {role:?} accessibility node labelled `{label}`"))
 }
 
+fn a11y_nodes_with_label(update: &accesskit::TreeUpdate, label: &str) -> Vec<accesskit::NodeId> {
+    update
+        .nodes
+        .iter()
+        .filter_map(|(node_id, node)| (node.label() == Some(label)).then_some(*node_id))
+        .collect()
+}
+
+fn accesskit_live_label(live: Option<accesskit::Live>) -> Option<&'static str> {
+    live.map(|live| match live {
+        accesskit::Live::Off => "off",
+        accesskit::Live::Polite => "polite",
+        accesskit::Live::Assertive => "assertive",
+    })
+}
+
 fn a11y_text_run_child(
     update: &accesskit::TreeUpdate,
     control: &accesskit::Node,
@@ -129,6 +145,14 @@ fn assert_devtools_semantics_match_final_node(
         node.is_busy()
     );
     assert_eq!(
+        payload["state"]["live"].as_str(),
+        accesskit_live_label(node.live())
+    );
+    assert_eq!(
+        payload["state"]["live_atomic"].as_bool().unwrap_or(false),
+        node.is_live_atomic()
+    );
+    assert_eq!(
         payload["state"]["read_only"].as_bool().unwrap_or(false),
         node.is_read_only()
     );
@@ -216,8 +240,23 @@ fn focus_a11y_devtools_allowlist_matches_final_tree_structure(cx: &mut open_gpui
         "TextInput",
     );
     assert_devtools_semantics_match_final_node(&password_payload, "password-input", password);
-    let serialized = serde_json::to_string(&[input_payload, textarea_payload, password_payload])
-        .expect("DevTools semantic payloads serialize");
+    let (_, status) = a11y_node_with_role_and_label(
+        &update,
+        accesskit::Role::Status,
+        pages::focus_a11y::LIVE_STATUS_IDLE_TEXT,
+    );
+    let status_payload = devtools_semantic_payload(
+        pages::focus_a11y::FocusA11yScenarioId::LiveRegionsAndAnnouncements.as_str(),
+        "StatusCue",
+    );
+    assert_devtools_semantics_match_final_node(&status_payload, "status", status);
+    let serialized = serde_json::to_string(&[
+        input_payload,
+        textarea_payload,
+        password_payload,
+        status_payload,
+    ])
+    .expect("DevTools semantic payloads serialize");
     for sensitive_text in pages::focus_a11y::FOCUS_A11Y_SENSITIVE_TEXT {
         assert!(
             !serialized.contains(sensitive_text),
@@ -345,9 +384,13 @@ fn focus_a11y_textarea_field_switches_help_and_error_relations_on_the_same_final
     let invalid_textarea = a11y_node_by_id(&invalid, textarea_id);
     let (error_id, _) = a11y_node_with_role_and_label(
         &invalid,
-        accesskit::Role::Label,
+        accesskit::Role::Alert,
         "Add a concise release note.",
     );
+    let invalid_error = a11y_node_by_id(&invalid, error_id);
+    assert_eq!(invalid_error.value(), Some("Add a concise release note."));
+    assert_eq!(invalid_error.live(), Some(accesskit::Live::Assertive));
+    assert!(invalid_error.is_live_atomic());
     assert_eq!(invalid_textarea.labelled_by(), &[label_id]);
     assert!(invalid_textarea.described_by().is_empty());
     assert_eq!(invalid_textarea.error_message(), Some(error_id));
@@ -367,6 +410,269 @@ fn focus_a11y_textarea_field_switches_help_and_error_relations_on_the_same_final
     assert_eq!(restored_textarea.described_by(), &[help_id]);
     assert_eq!(restored_textarea.error_message(), None);
     assert!(!restored.nodes.iter().any(|(id, _)| *id == error_id));
+}
+
+#[open_gpui::test]
+fn focus_a11y_live_regions_commit_busy_content_and_alert_without_stealing_focus(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_gallery_page(cx, GalleryPage::FocusAccessibility);
+    let story = focus_a11y_story("live-regions-and-announcements");
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.assert_story_declares(&story, StoryProbeOperation::Activate);
+        probe.assert_story_declares(&story, StoryProbeOperation::Focus);
+        probe.assert_story_declares(&story, StoryProbeOperation::ReadPublicPayload);
+        probe.scroll_page_to(pages::focus_a11y::LIVE_STATUS_UPDATE_SELECTOR);
+        probe.assert_rendered(
+            pages::focus_a11y::LIVE_STATUS_UPDATE_SELECTOR,
+            "live status update control",
+        );
+    }
+
+    assert!(cx.activate_accessibility());
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("initial live-region story tree");
+    let (status_id, initial_status) = a11y_node_with_role_and_label(
+        &initial,
+        accesskit::Role::Status,
+        pages::focus_a11y::LIVE_STATUS_IDLE_TEXT,
+    );
+    assert_eq!(
+        initial_status.value(),
+        Some(pages::focus_a11y::LIVE_STATUS_IDLE_TEXT)
+    );
+    assert_eq!(initial_status.live(), Some(accesskit::Live::Off));
+    assert!(initial_status.is_live_atomic());
+    assert!(!initial_status.is_busy());
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::LIVE_STATUS_UPDATE_SELECTOR);
+        probe.settle();
+    }
+    let first_update = cx.latest_accessibility_tree_update().unwrap();
+    let first_text = "Background synchronization update 1.";
+    let (first_id, first_status) =
+        a11y_node_with_role_and_label(&first_update, accesskit::Role::Status, first_text);
+    assert_eq!(first_id, status_id);
+    assert_eq!(first_status.value(), Some(first_text));
+    assert_eq!(first_status.live(), Some(accesskit::Live::Polite));
+    assert!(first_status.is_live_atomic());
+    assert!(!first_status.is_busy());
+    let (update_button_id, _) =
+        a11y_node_with_role_and_label(&first_update, accesskit::Role::Button, "Update status");
+    assert_eq!(first_update.focus, update_button_id);
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::LIVE_BUSY_TOGGLE_SELECTOR);
+        probe.settle();
+    }
+    let busy = cx.latest_accessibility_tree_update().unwrap();
+    let (busy_id, busy_status) =
+        a11y_node_with_role_and_label(&busy, accesskit::Role::Status, first_text);
+    assert_eq!(busy_id, status_id);
+    assert!(busy_status.is_busy());
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::LIVE_STATUS_UPDATE_SELECTOR);
+        probe.settle();
+    }
+    let busy_changed = cx.latest_accessibility_tree_update().unwrap();
+    let second_text = "Background synchronization update 2.";
+    let (busy_changed_id, busy_changed_status) =
+        a11y_node_with_role_and_label(&busy_changed, accesskit::Role::Status, second_text);
+    assert_eq!(busy_changed_id, status_id);
+    assert!(busy_changed_status.is_busy());
+    assert_eq!(busy_changed.focus, update_button_id);
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::LIVE_BUSY_TOGGLE_SELECTOR);
+        probe.settle();
+    }
+    let settled = cx.latest_accessibility_tree_update().unwrap();
+    let (settled_id, settled_status) =
+        a11y_node_with_role_and_label(&settled, accesskit::Role::Status, second_text);
+    assert_eq!(settled_id, status_id);
+    assert!(!settled_status.is_busy());
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::LIVE_ALERT_TOGGLE_SELECTOR);
+        probe.settle();
+    }
+    let alerted = cx.latest_accessibility_tree_update().unwrap();
+    let (alert_id, alert) = a11y_node_with_role_and_label(
+        &alerted,
+        accesskit::Role::Alert,
+        pages::focus_a11y::LIVE_ALERT_TEXT,
+    );
+    assert_eq!(alert.value(), Some(pages::focus_a11y::LIVE_ALERT_TEXT));
+    assert_eq!(alert.live(), Some(accesskit::Live::Assertive));
+    assert!(alert.is_live_atomic());
+    assert!(!alert.supports_action(accesskit::Action::Focus));
+    assert!(!alert.supports_action(accesskit::Action::Click));
+    assert!(!settled_status.supports_action(accesskit::Action::Focus));
+    assert!(!settled_status.supports_action(accesskit::Action::Click));
+    assert_ne!(alerted.focus, alert_id);
+    assert_ne!(alerted.focus, status_id);
+    let (alert_button_id, _) =
+        a11y_node_with_role_and_label(&alerted, accesskit::Role::Button, "Clear alert");
+    assert_eq!(alerted.focus, alert_button_id);
+}
+
+#[open_gpui::test]
+fn focus_a11y_same_text_window_announcements_commit_distinct_generations(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_gallery_page(cx, GalleryPage::FocusAccessibility);
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.scroll_page_to(pages::focus_a11y::WINDOW_ANNOUNCEMENT_SELECTOR);
+        probe.assert_rendered(
+            pages::focus_a11y::WINDOW_ANNOUNCEMENT_SELECTOR,
+            "window announcement control",
+        );
+    }
+    assert!(cx.activate_accessibility());
+    let history_start = cx.accessibility_tree_update_history().len();
+
+    for _ in 0..2 {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::WINDOW_ANNOUNCEMENT_SELECTOR);
+        probe.settle();
+    }
+
+    let committed_ids = cx.accessibility_tree_update_history()[history_start..]
+        .iter()
+        .flat_map(|update| {
+            a11y_nodes_with_label(update, pages::focus_a11y::WINDOW_ANNOUNCEMENT_TEXT)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        committed_ids.len(),
+        2,
+        "equal announcement text must receive a new semantic identity"
+    );
+
+    let diagnostics =
+        cx.update(|window, _| window.accessibility_announcement_diagnostics().to_vec());
+    let accepted_sequences = diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.lifecycle() == open_gpui::AccessibilityAnnouncementLifecycle::Accepted
+        })
+        .filter_map(|diagnostic| diagnostic.sequence())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(accepted_sequences.len(), 2);
+    assert!(!format!("{diagnostics:?}").contains(pages::focus_a11y::WINDOW_ANNOUNCEMENT_TEXT));
+
+    let latest = cx.latest_accessibility_tree_update().unwrap();
+    let (button_id, _) =
+        a11y_node_with_role_and_label(&latest, accesskit::Role::Button, "Announce completion");
+    assert_eq!(latest.focus, button_id);
+}
+
+#[open_gpui::test]
+fn focus_a11y_inactive_window_announcement_is_dropped_without_replay(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_gallery_page(cx, GalleryPage::FocusAccessibility);
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.scroll_page_to(pages::focus_a11y::WINDOW_ANNOUNCEMENT_SELECTOR);
+        probe.click(pages::focus_a11y::WINDOW_ANNOUNCEMENT_SELECTOR);
+        probe.settle();
+    }
+
+    let diagnostics =
+        cx.update(|window, _| window.accessibility_announcement_diagnostics().to_vec());
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.sequence().is_none()
+            && diagnostic.lifecycle()
+                == open_gpui::AccessibilityAnnouncementLifecycle::Dropped(
+                    open_gpui::AccessibilityAnnouncementDropReason::AccessibilityInactive,
+                )
+    }));
+    assert!(cx.activate_accessibility());
+    assert!(cx.accessibility_tree_update_history().iter().all(|update| {
+        a11y_nodes_with_label(update, pages::focus_a11y::WINDOW_ANNOUNCEMENT_TEXT).is_empty()
+    }));
+}
+
+#[open_gpui::test]
+fn focus_a11y_runtime_announcement_text_never_enters_devtools_artifacts(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const CANARY: &str = "u14-gallery-runtime-announcement-canary-019f4ad7";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::FocusAccessibility);
+    assert!(cx.activate_accessibility());
+    let history_start = cx.accessibility_tree_update_history().len();
+    let outcome = cx.update(|window, app| {
+        window.announce(open_gpui::AccessibilityAnnouncement::polite(CANARY), app)
+    });
+    assert!(outcome.is_accepted());
+    settle(cx);
+    assert!(
+        cx.accessibility_tree_update_history()[history_start..]
+            .iter()
+            .any(|update| !a11y_nodes_with_label(update, CANARY).is_empty()),
+        "the test harness must observe the canary in a committed final tree"
+    );
+
+    let diagnostics =
+        cx.update(|window, _| window.accessibility_announcement_diagnostics().to_vec());
+    assert!(!format!("{diagnostics:?}").contains(CANARY));
+
+    cx.update(|window, app| {
+        shell.update(app, |shell, cx| shell.refresh_devtools(window, cx));
+    });
+    settle(cx);
+    let inspector = cx.update(|_, app| shell.read(app).devtools_workbench().inspector_state());
+    let live_capture = serde_json::to_string(&inspector.current_capture()).unwrap();
+    let inspector_detail =
+        serde_json::to_string(&inspector.selected_detail_json().unwrap()).unwrap();
+    let inspector_copy = inspector.copy_selected_detail().unwrap().pretty_json;
+
+    let artifacts = cx.update(|_, app| shell.read(app).devtools_workbench().artifacts());
+    let session_export = serde_json::to_string(&artifacts.session_export).unwrap();
+    let report = serde_json::to_string(&artifacts.report).unwrap();
+    let report_markdown = artifacts.report.to_markdown();
+    let session_record = artifacts.session_record.to_pretty_json().unwrap();
+    let report_record = artifacts.report_record.to_pretty_json().unwrap();
+    let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("gallery crate is under examples")
+        .parent()
+        .expect("examples has a workspace parent")
+        .join("crates")
+        .join("devtools")
+        .join("tests")
+        .join("fixtures");
+    let session_fixture = std::fs::read_to_string(fixture_root.join("gallery-session.json"))
+        .expect("Gallery session fixture");
+    let report_fixture = std::fs::read_to_string(fixture_root.join("gallery-report.json"))
+        .expect("Gallery report fixture");
+
+    for (channel, output) in [
+        ("live capture", live_capture.as_str()),
+        ("Inspector detail", inspector_detail.as_str()),
+        ("Inspector copy", inspector_copy.as_str()),
+        ("session export", session_export.as_str()),
+        ("report", report.as_str()),
+        ("report markdown", report_markdown.as_str()),
+        ("session artifact", session_record.as_str()),
+        ("report artifact", report_record.as_str()),
+        ("session fixture", session_fixture.as_str()),
+        ("report fixture", report_fixture.as_str()),
+    ] {
+        assert!(!output.contains(CANARY), "{channel} leaked `{CANARY}`");
+    }
 }
 
 #[open_gpui::test]

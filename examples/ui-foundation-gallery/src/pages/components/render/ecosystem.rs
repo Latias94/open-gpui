@@ -184,10 +184,6 @@ fn render_resource_adapter_sample(
 ) -> impl IntoElement {
     let sample_id = sample.id;
     let debug_selector = sample.debug_selector();
-    let mutation_cue = sample
-        .mutation
-        .as_ref()
-        .and_then(|mutation| mutation.status_cue_state(tokens));
     let list = VirtualizedList::from_shared_items(
         format!("component-resource-adapter-list:{sample_id}"),
         sample.title,
@@ -233,6 +229,9 @@ fn render_resource_adapter_sample(
                 state.label(),
             )
             .intent(state.intent())
+            .live(state.live())
+            .live_atomic(state.live_atomic())
+            .busy(state.busy())
             .with_size(state.size())
             .tokens(tokens),
         )
@@ -252,13 +251,16 @@ fn render_resource_adapter_sample(
         };
         this.child(empty)
     })
-    .when_some(mutation_cue, |this, state| {
+    .when_some(sample.mutation_status_cue.clone(), |this, state| {
         this.child(
             StatusCue::new(
                 format!("component-resource-adapter-mutation:{sample_id}"),
                 state.label(),
             )
             .intent(state.intent())
+            .live(state.live())
+            .live_atomic(state.live_atomic())
+            .busy(state.busy())
             .with_size(state.size())
             .tokens(tokens),
         )

@@ -257,6 +257,7 @@ fn focus_a11y_scenarios_bind_story_contracts_to_unique_component_ids() {
         pages::focus_a11y::TEXT_INPUT_VALUE_SELECTION_SCENARIO,
         pages::focus_a11y::TEXTAREA_FIELD_RELATIONS_SCENARIO,
         pages::focus_a11y::PASSWORD_FREE_TEXT_REDACTION_SCENARIO,
+        pages::focus_a11y::LIVE_REGIONS_AND_ANNOUNCEMENTS_SCENARIO,
     ];
 
     assert_eq!(
@@ -303,6 +304,13 @@ fn focus_a11y_scenarios_bind_story_contracts_to_unique_component_ids() {
         &[pages::focus_a11y::PASSWORD_COMPONENT_ID]
     );
     assert_eq!(
+        pages::focus_a11y::LIVE_REGIONS_AND_ANNOUNCEMENTS_SCENARIO.component_ids,
+        &[
+            pages::focus_a11y::LIVE_STATUS_COMPONENT_ID,
+            pages::focus_a11y::LIVE_ALERT_COMPONENT_ID,
+        ]
+    );
+    assert_eq!(
         pages::focus_a11y::TEXT_INPUT_VALUE_SELECTION_SCENARIO.sample_selector,
         "text-input:focus-a11y-text-input:root"
     );
@@ -317,6 +325,14 @@ fn focus_a11y_scenarios_bind_story_contracts_to_unique_component_ids() {
     assert_eq!(
         pages::focus_a11y::PASSWORD_FREE_TEXT_REDACTION_SCENARIO.sample_selector,
         "text-input:focus-a11y-password-input:root"
+    );
+    assert_eq!(
+        pages::focus_a11y::LIVE_REGIONS_AND_ANNOUNCEMENTS_SCENARIO.sample_selector,
+        "status-cue:focus-a11y-live-status:root"
+    );
+    assert_eq!(
+        pages::focus_a11y::LIVE_REGIONS_AND_ANNOUNCEMENTS_SCENARIO.control_selector,
+        Some(pages::focus_a11y::LIVE_STATUS_UPDATE_SELECTOR)
     );
     assert_eq!(stories.len(), scenarios.len());
 

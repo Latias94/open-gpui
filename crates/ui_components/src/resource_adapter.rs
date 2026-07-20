@@ -4,6 +4,7 @@ use open_gpui_resource::{
     MutationSnapshot, MutationStatus, QueryKey, QueryKeySegment, ResourceSnapshot, ResourceStatus,
 };
 use open_gpui_ui_core::{Size, TableRowChildrenLoadState, ThemeTokens};
+use std::fmt;
 
 use crate::{
     command::{CommandLoadingState, CommandStatusIntent, CommandStatusItem},
@@ -119,10 +120,64 @@ impl Default for ResourceAdapterLabels {
     }
 }
 
+/// Caller-owned identity namespace for resource-backed command status items.
+///
+/// The value must be stable for the lifetime of one command surface and must not contain query
+/// keys, mutation IDs, user content, or other sensitive runtime data. The adapter cannot infer
+/// that contract from a resource snapshot, so the caller supplies it explicitly.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ResourceAdapterNamespace(String);
+
+/// Why a resource adapter status namespace was rejected.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ResourceAdapterNamespaceError {
+    /// The namespace contained no non-whitespace characters.
+    Empty,
+    /// The namespace contained a control character.
+    ControlCharacter,
+}
+
+impl fmt::Display for ResourceAdapterNamespaceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("resource adapter status namespace is empty"),
+            Self::ControlCharacter => formatter
+                .write_str("resource adapter status namespace contains a control character"),
+        }
+    }
+}
+
+impl std::error::Error for ResourceAdapterNamespaceError {}
+
+impl ResourceAdapterNamespace {
+    /// Creates a stable, non-sensitive namespace.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResourceAdapterNamespaceError::Empty`] when the value contains only whitespace,
+    /// or [`ResourceAdapterNamespaceError::ControlCharacter`] when it contains a control character.
+    pub fn new(value: impl Into<String>) -> Result<Self, ResourceAdapterNamespaceError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(ResourceAdapterNamespaceError::Empty);
+        }
+        if value.chars().any(char::is_control) {
+            return Err(ResourceAdapterNamespaceError::ControlCharacter);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the caller-owned namespace value.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Projection from a headless query snapshot into concrete component state inputs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceCollectionProjection {
     key: QueryKey,
+    namespace: ResourceAdapterNamespace,
     status: ResourceStatus,
     visible_item_count: usize,
     has_data: bool,
@@ -136,11 +191,13 @@ impl ResourceCollectionProjection {
     /// Resolves projection state for one resource snapshot.
     pub fn resolve(
         snapshot: &ResourceSnapshot,
+        namespace: ResourceAdapterNamespace,
         visible_item_count: usize,
         labels: ResourceAdapterLabels,
     ) -> Self {
         Self {
             key: snapshot.key.clone(),
+            namespace,
             status: snapshot.status.clone(),
             visible_item_count,
             has_data: snapshot.data.is_some(),
@@ -154,6 +211,11 @@ impl ResourceCollectionProjection {
     /// Returns the resource query key.
     pub const fn key(&self) -> &QueryKey {
         &self.key
+    }
+
+    /// Returns the caller-owned status identity namespace.
+    pub fn namespace(&self) -> &ResourceAdapterNamespace {
+        &self.namespace
     }
 
     /// Returns the resource lifecycle status.
@@ -241,12 +303,18 @@ impl ResourceCollectionProjection {
             ResourceStatus::Error => FeedbackIntent::Danger,
             ResourceStatus::Idle | ResourceStatus::Success => return None,
         };
-        Some(StatusCueState::resolve(
-            intent,
-            self.status_message().unwrap_or_default(),
-            Size::Medium,
-            tokens,
-        ))
+        Some(
+            StatusCueState::resolve(
+                intent,
+                self.status_message().unwrap_or_default(),
+                Size::Medium,
+                tokens,
+            )
+            .with_busy(matches!(
+                self.status,
+                ResourceStatus::Loading | ResourceStatus::Refetching
+            )),
+        )
     }
 
     /// Returns an empty/error state suitable for full-surface fallback content.
@@ -322,13 +390,19 @@ impl ResourceCollectionProjection {
     }
 
     /// Returns command status metadata for degraded resource-backed command providers.
+    ///
+    /// The stored namespace supplies a stable identity that is not derived from the resource query
+    /// key and remains unchanged across stale/error transitions.
     pub fn command_status_item(&self) -> Option<CommandStatusItem> {
+        let status_id = format!("resource:{}", self.namespace.as_str());
         match self.status {
             ResourceStatus::Stale => Some(CommandStatusItem::new(
+                status_id,
                 CommandStatusIntent::Warning,
                 self.labels.stale.clone(),
             )),
             ResourceStatus::Error => Some(CommandStatusItem::new(
+                status_id,
                 CommandStatusIntent::Error,
                 self.status_message()
                     .unwrap_or(self.labels.error_title.as_str())
@@ -385,6 +459,7 @@ impl ResourceCollectionProjection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceMutationProjection {
     id: String,
+    namespace: ResourceAdapterNamespace,
     status: MutationStatus,
     error: Option<String>,
     labels: ResourceAdapterLabels,
@@ -392,9 +467,14 @@ pub struct ResourceMutationProjection {
 
 impl ResourceMutationProjection {
     /// Resolves projection state for one mutation snapshot.
-    pub fn resolve(snapshot: &MutationSnapshot, labels: ResourceAdapterLabels) -> Self {
+    pub fn resolve(
+        snapshot: &MutationSnapshot,
+        namespace: ResourceAdapterNamespace,
+        labels: ResourceAdapterLabels,
+    ) -> Self {
         Self {
             id: snapshot.id.clone(),
+            namespace,
             status: snapshot.status.clone(),
             error: snapshot.error.clone(),
             labels,
@@ -404,6 +484,11 @@ impl ResourceMutationProjection {
     /// Returns the mutation id.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Returns the caller-owned status identity namespace.
+    pub fn namespace(&self) -> &ResourceAdapterNamespace {
+        &self.namespace
     }
 
     /// Returns the mutation lifecycle status.
@@ -447,23 +532,32 @@ impl ResourceMutationProjection {
             MutationStatus::Success => FeedbackIntent::Success,
             MutationStatus::Error => FeedbackIntent::Danger,
         };
-        Some(StatusCueState::resolve(
-            intent,
-            self.status_message().unwrap_or_default(),
-            Size::Medium,
-            tokens,
-        ))
+        Some(
+            StatusCueState::resolve(
+                intent,
+                self.status_message().unwrap_or_default(),
+                Size::Medium,
+                tokens,
+            )
+            .with_busy(matches!(self.status, MutationStatus::Pending)),
+        )
     }
 
     /// Returns command status metadata for mutation feedback.
+    ///
+    /// The stored namespace supplies a stable identity that is not derived from the mutation ID
+    /// and remains unchanged across pending/error transitions.
     pub fn command_status_item(&self) -> Option<CommandStatusItem> {
+        let status_id = format!("mutation:{}", self.namespace.as_str());
         match self.status {
             MutationStatus::Idle | MutationStatus::Success => None,
             MutationStatus::Pending => Some(CommandStatusItem::new(
+                status_id,
                 CommandStatusIntent::Info,
                 self.labels.mutation_pending.clone(),
             )),
             MutationStatus::Error => Some(CommandStatusItem::new(
+                status_id,
                 CommandStatusIntent::Error,
                 self.status_message()
                     .unwrap_or(self.labels.mutation_error_title.as_str())

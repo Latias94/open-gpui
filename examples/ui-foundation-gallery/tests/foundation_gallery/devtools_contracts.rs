@@ -539,7 +539,7 @@ fn devtools_gallery_accessibility_artifact_is_bound_to_focus_a11y_scenarios() {
             .map(|scenario| scenario.id)
             .collect::<Vec<_>>()
     );
-    assert_eq!(root.payload.as_ref().unwrap()["scenario_count"], 3);
+    assert_eq!(root.payload.as_ref().unwrap()["scenario_count"], 4);
 }
 
 #[test]

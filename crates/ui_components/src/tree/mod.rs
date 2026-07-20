@@ -488,6 +488,7 @@ fn render_tree_item(
         .with_label(&item_label)
         .with_selected(selected)
         .with_disabled(disabled)
+        .with_busy(children_load_state.is_loading())
         .with_level(item.depth() + 1)
         .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
     if has_children {
@@ -629,9 +630,17 @@ fn render_tree_item(
         .when_some(tree_children_load_hint(&children_load_state), {
             let tree_id = tree_id.clone();
             let item_value = item_value.clone();
+            let children_load_state = children_load_state.clone();
             move |this, hint| {
+                let role = if children_load_state.is_failed() {
+                    Role::Alert
+                } else {
+                    Role::Status
+                };
+                let semantics = SemanticDescriptor::new(role).with_live_text(&hint);
                 this.child(
                     div()
+                        .id(format!("tree:{tree_id}:load-state:{item_value}"))
                         .debug_selector({
                             let tree_id = tree_id.clone();
                             let item_value = item_value.clone();
@@ -640,7 +649,8 @@ fn render_tree_item(
                         .flex_none()
                         .text_xs()
                         .text_color(rgb(0x5a6472))
-                        .child(hint),
+                        .ui_semantics(&semantics)
+                        .child(hint.clone()),
                 )
             }
         })

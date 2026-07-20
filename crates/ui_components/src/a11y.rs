@@ -5,7 +5,7 @@ use open_gpui::{
     StatefulInteractiveElement, Toggled as GpuiToggled, accesskit,
 };
 use open_gpui_ui_core::{
-    AccessibleAction, Orientation, Role, SemanticDescriptor, SortDirection, Toggled,
+    AccessibleAction, LivePoliteness, Orientation, Role, SemanticDescriptor, SortDirection, Toggled,
 };
 
 mod text_control;
@@ -422,6 +422,8 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::EditableComboBox => GpuiRole::EditableComboBox,
         Role::Dialog => GpuiRole::Dialog,
         Role::AlertDialog => GpuiRole::AlertDialog,
+        Role::Status => GpuiRole::Status,
+        Role::Alert => GpuiRole::Alert,
         Role::Window => GpuiRole::Window,
         Role::ProgressIndicator => GpuiRole::ProgressIndicator,
         Role::Separator => GpuiRole::Group,
@@ -431,6 +433,15 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::TabList => GpuiRole::TabList,
         Role::Tab => GpuiRole::Tab,
         Role::TabPanel => GpuiRole::TabPanel,
+    }
+}
+
+/// Converts renderer-neutral live-region politeness into GPUI's AccessKit vocabulary.
+pub const fn gpui_live_from_ui(live: LivePoliteness) -> accesskit::Live {
+    match live {
+        LivePoliteness::Off => accesskit::Live::Off,
+        LivePoliteness::Polite => accesskit::Live::Polite,
+        LivePoliteness::Assertive => accesskit::Live::Assertive,
     }
 }
 
@@ -526,6 +537,12 @@ where
     }
     if let Some(busy) = descriptor.busy() {
         element = StatefulInteractiveElement::aria_busy(element, busy);
+    }
+    if let Some(live) = descriptor.live() {
+        element = StatefulInteractiveElement::aria_live(element, gpui_live_from_ui(live));
+    }
+    if let Some(atomic) = descriptor.live_atomic() {
+        element = StatefulInteractiveElement::aria_live_atomic(element, atomic);
     }
     if let Some(read_only) = descriptor.read_only() {
         element = StatefulInteractiveElement::aria_read_only(element, read_only);
@@ -784,6 +801,21 @@ mod tests {
         assert_eq!(gpui_role_from_ui(Role::TabList), GpuiRole::TabList);
         assert_eq!(gpui_role_from_ui(Role::Tab), GpuiRole::Tab);
         assert_eq!(gpui_role_from_ui(Role::TabPanel), GpuiRole::TabPanel);
+    }
+
+    #[test]
+    fn gpui_adapter_maps_live_region_vocabulary_exactly() {
+        assert_eq!(gpui_role_from_ui(Role::Status), GpuiRole::Status);
+        assert_eq!(gpui_role_from_ui(Role::Alert), GpuiRole::Alert);
+        assert_eq!(gpui_live_from_ui(LivePoliteness::Off), accesskit::Live::Off);
+        assert_eq!(
+            gpui_live_from_ui(LivePoliteness::Polite),
+            accesskit::Live::Polite
+        );
+        assert_eq!(
+            gpui_live_from_ui(LivePoliteness::Assertive),
+            accesskit::Live::Assertive
+        );
     }
 
     #[test]

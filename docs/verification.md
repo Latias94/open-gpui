@@ -1410,6 +1410,37 @@ Serde/schema `StyleRefinement::visibility` field, `Visibility::{Visible, Hidden}
 surface. Review must separately confirm that no second ancestor presentation authority exists
 outside `SubtreePresentation`.
 
+## Committed Live Region And Announcement Gate
+
+Changes to `SemanticDescriptor` live facts, AccessKit live mapping, `StatusCue`/Toast/Field/
+Command/Tree/VirtualizedList status consumers, or `Window::announce` must run the U14 gate:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo fmt --all -- --check
+cargo check --locked -p open-gpui -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-devtools -p open-gpui-ui-foundation-gallery --all-features --tests
+cargo nextest run --locked -p open-gpui --features test-support,inspector --lib --no-fail-fast -E 'test(announcement) | test(live_region)'
+cargo nextest run --locked -p open-gpui-ui-components --test a11y --no-fail-fast
+cargo nextest run --locked -p open-gpui-devtools --test resolved_semantic_redaction --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery --no-fail-fast -E 'test(focus_a11y)'
+cargo run --locked -p xtask -- scan-ui-contract
+cargo run --locked -p xtask -- scan-public-api --check
+cargo run --locked -p xtask -- scan-doc-links
+cargo run --locked -p xtask -- verify-release-docs
+git diff --check
+```
+
+The GPUI tests must observe accepted announcements in a final `TreeUpdate`, one-generation
+retention and later removal, repeated equal text with distinct identities, activation-generation
+replacement, inactive/close drops, two-window isolation, and unchanged focus. Declarative tests
+must cover role defaults, explicit `Live::Off`, atomicity, busy transitions, rollback, deferred/cache
+replay, and `Visible`/`Inert`/`Hidden` membership. Component tests must prove rendering or remounting
+does not submit the transient queue. The Gallery drives the real status, busy, alert, same-text, and
+inactive controls. A unique runtime canary must occur in the test platform's final tree and be absent
+from typed diagnostics, DevTools capture/history/diff/export/inspector/report/artifact/fixture output.
+The platform promise is committed-tree publication; native adapters own whether and when a screen
+reader delivers the event.
+
 Run the full component and gallery package gates only after broad contract-table, theme, or gallery
 changes:
 

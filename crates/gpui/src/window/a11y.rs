@@ -88,12 +88,18 @@
 //! [`NodeId`]: accesskit::NodeId
 //! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
-use crate::{App, Bounds, FocusId, Pixels, Window, geometry::SubtreeTransformValidity};
+use crate::{
+    App, Bounds, FocusId, Pixels, SharedString, Window, WindowId,
+    geometry::SubtreeTransformValidity,
+};
 use accesskit::{Action, NodeId, TreeUpdate};
 use open_gpui_collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::{
     cell::RefCell,
+    collections::VecDeque,
+    fmt,
+    hash::{Hash, Hasher},
     rc::Rc,
     sync::{
         Arc,
@@ -103,6 +109,252 @@ use std::{
 
 /// The fixed AccessKit node ID used for the root of every window's a11y tree.
 pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
+
+const ANNOUNCEMENT_QUEUE_CAPACITY: usize = 32;
+const ANNOUNCEMENT_DIAGNOSTIC_CAPACITY: usize = 128;
+
+/// The priority hint for a window-scoped accessibility announcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessibilityAnnouncementPoliteness {
+    /// Announce at the next suitable opportunity.
+    Polite,
+    /// Announce with high priority; focus remains unchanged.
+    Assertive,
+}
+
+impl AccessibilityAnnouncementPoliteness {
+    const fn accesskit_live(self) -> accesskit::Live {
+        match self {
+            Self::Polite => accesskit::Live::Polite,
+            Self::Assertive => accesskit::Live::Assertive,
+        }
+    }
+
+    const fn accesskit_role(self) -> accesskit::Role {
+        match self {
+            Self::Polite => accesskit::Role::Status,
+            Self::Assertive => accesskit::Role::Alert,
+        }
+    }
+}
+
+/// A transient, window-scoped accessibility announcement request.
+#[derive(Clone)]
+pub struct AccessibilityAnnouncement {
+    message: SharedString,
+    politeness: AccessibilityAnnouncementPoliteness,
+}
+
+impl AccessibilityAnnouncement {
+    /// Creates a polite announcement request.
+    pub fn polite(message: impl Into<SharedString>) -> Self {
+        Self {
+            message: message.into(),
+            politeness: AccessibilityAnnouncementPoliteness::Polite,
+        }
+    }
+
+    /// Creates an assertive announcement request.
+    pub fn assertive(message: impl Into<SharedString>) -> Self {
+        Self {
+            message: message.into(),
+            politeness: AccessibilityAnnouncementPoliteness::Assertive,
+        }
+    }
+
+    /// Returns the request's priority hint.
+    pub const fn politeness(&self) -> AccessibilityAnnouncementPoliteness {
+        self.politeness
+    }
+}
+
+impl fmt::Debug for AccessibilityAnnouncement {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AccessibilityAnnouncement")
+            .field("message", &"<redacted>")
+            .field("politeness", &self.politeness)
+            .finish()
+    }
+}
+
+/// A per-window identity allocated for every announcement request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccessibilityAnnouncementRequestId(u64);
+
+impl AccessibilityAnnouncementRequestId {
+    /// Returns the numeric request identity.
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+/// A per-window sequence allocated only for accepted announcements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccessibilityAnnouncementSequence(u64);
+
+impl AccessibilityAnnouncementSequence {
+    /// Returns the numeric accepted-announcement sequence.
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+/// Why a transient announcement request was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessibilityAnnouncementDropReason {
+    /// The platform accessibility adapter is not active for this window.
+    AccessibilityInactive,
+    /// The fixed per-window queue already contains 32 pending or retained requests.
+    QueueFull,
+    /// The window has started closing or has already closed.
+    WindowClosed,
+}
+
+/// Why an accepted announcement was cleared before completing its lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessibilityAnnouncementClearReason {
+    /// Accessibility was deactivated for the window.
+    AccessibilityDeactivated,
+    /// A replacement accessibility activation generation superseded the request.
+    ActivationReplaced,
+    /// The window started closing.
+    WindowClosed,
+}
+
+/// The metadata-only lifecycle recorded for an announcement request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessibilityAnnouncementLifecycle {
+    /// The request entered the bounded queue.
+    Accepted,
+    /// The synthetic node entered a matching committed accessibility tree.
+    Committed,
+    /// A later matching tree committed removal of the synthetic node.
+    Removed,
+    /// The request was rejected before receiving an announcement sequence.
+    Dropped(AccessibilityAnnouncementDropReason),
+    /// An accepted request was cleared by a lifecycle boundary.
+    Cleared(AccessibilityAnnouncementClearReason),
+}
+
+/// A metadata-only accessibility announcement diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AccessibilityAnnouncementDiagnostic {
+    window_id: WindowId,
+    request_id: AccessibilityAnnouncementRequestId,
+    sequence: Option<AccessibilityAnnouncementSequence>,
+    politeness: AccessibilityAnnouncementPoliteness,
+    lifecycle: AccessibilityAnnouncementLifecycle,
+}
+
+impl AccessibilityAnnouncementDiagnostic {
+    /// Returns the window that owned the request.
+    pub const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
+    /// Returns the identity allocated for the request.
+    pub const fn request_id(self) -> AccessibilityAnnouncementRequestId {
+        self.request_id
+    }
+
+    /// Returns the accepted sequence, or `None` when the request was dropped.
+    pub const fn sequence(self) -> Option<AccessibilityAnnouncementSequence> {
+        self.sequence
+    }
+
+    /// Returns the request's priority hint.
+    pub const fn politeness(self) -> AccessibilityAnnouncementPoliteness {
+        self.politeness
+    }
+
+    /// Returns the recorded lifecycle transition.
+    pub const fn lifecycle(self) -> AccessibilityAnnouncementLifecycle {
+        self.lifecycle
+    }
+}
+
+/// The synchronous result of submitting a window-scoped announcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessibilityAnnouncementOutcome {
+    /// The request entered the bounded queue.
+    Accepted {
+        /// Identity allocated for this call.
+        request_id: AccessibilityAnnouncementRequestId,
+        /// Monotonic per-window accepted-announcement sequence.
+        sequence: AccessibilityAnnouncementSequence,
+    },
+    /// The request was rejected and will never replay.
+    Dropped {
+        /// Identity allocated for this call.
+        request_id: AccessibilityAnnouncementRequestId,
+        /// Typed rejection reason.
+        reason: AccessibilityAnnouncementDropReason,
+    },
+}
+
+impl AccessibilityAnnouncementOutcome {
+    /// Returns the identity allocated for this call.
+    pub const fn request_id(self) -> AccessibilityAnnouncementRequestId {
+        match self {
+            Self::Accepted { request_id, .. } | Self::Dropped { request_id, .. } => request_id,
+        }
+    }
+
+    /// Returns the accepted sequence, or `None` for a dropped request.
+    pub const fn sequence(self) -> Option<AccessibilityAnnouncementSequence> {
+        match self {
+            Self::Accepted { sequence, .. } => Some(sequence),
+            Self::Dropped { .. } => None,
+        }
+    }
+
+    /// Returns the rejection reason, or `None` for an accepted request.
+    pub const fn drop_reason(self) -> Option<AccessibilityAnnouncementDropReason> {
+        match self {
+            Self::Accepted { .. } => None,
+            Self::Dropped { reason, .. } => Some(reason),
+        }
+    }
+
+    /// Returns whether the request entered the queue.
+    pub const fn is_accepted(self) -> bool {
+        matches!(self, Self::Accepted { .. })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AnnouncementMetadata {
+    request_id: AccessibilityAnnouncementRequestId,
+    sequence: AccessibilityAnnouncementSequence,
+    activation_generation: u64,
+    node_id: NodeId,
+    node_probe: u64,
+    politeness: AccessibilityAnnouncementPoliteness,
+}
+
+struct PendingAnnouncement {
+    metadata: AnnouncementMetadata,
+    message: SharedString,
+}
+
+struct RetainedAnnouncement {
+    metadata: AnnouncementMetadata,
+}
+
+enum QueuedAnnouncement {
+    Pending(PendingAnnouncement),
+    Retained(RetainedAnnouncement),
+}
+
+impl QueuedAnnouncement {
+    const fn metadata(&self) -> AnnouncementMetadata {
+        match self {
+            Self::Pending(pending) => pending.metadata,
+            Self::Retained(retained) => retained.metadata,
+        }
+    }
+}
 
 /// Frame-local accessibility membership projected by a higher-level surface runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +435,7 @@ define_published_action_masks!(
 /// Manages the AccessKit tree that is built each frame and the mappings
 /// needed to dispatch incoming action requests back to the right elements.
 pub(crate) struct A11y {
+    window_id: WindowId,
     /// Whether accessibility has been [forcibly disabled] for this window.
     ///
     /// [forcibly disabled]: crate::Application::new_inaccessible
@@ -216,6 +469,13 @@ pub(crate) struct A11y {
     )>,
     published: Option<PublishedA11yDispatch>,
     next_published_revision: u64,
+    announcement_generation: Option<u64>,
+    next_announcement_request_id: u64,
+    next_announcement_sequence: u64,
+    announcements: VecDeque<QueuedAnnouncement>,
+    announcement_diagnostics: Vec<AccessibilityAnnouncementDiagnostic>,
+    staged_announcement_nodes: Vec<NodeId>,
+    announcement_followup_refresh_required: bool,
 }
 
 pub(crate) struct A11yPrepaintCheckpoint {
@@ -226,8 +486,13 @@ pub(crate) struct A11yPrepaintCheckpoint {
 }
 
 impl A11y {
-    pub(crate) fn new(active_state: Arc<AtomicU64>, force_disabled: bool) -> Self {
+    pub(crate) fn new(
+        active_state: Arc<AtomicU64>,
+        force_disabled: bool,
+        window_id: WindowId,
+    ) -> Self {
         Self {
+            window_id,
             force_disabled,
             active_state,
             active_this_frame: false,
@@ -238,6 +503,13 @@ impl A11y {
             candidate_action_listeners: Vec::new(),
             published: None,
             next_published_revision: 0,
+            announcement_generation: None,
+            next_announcement_request_id: 0,
+            next_announcement_sequence: 0,
+            announcements: VecDeque::with_capacity(ANNOUNCEMENT_QUEUE_CAPACITY),
+            announcement_diagnostics: Vec::with_capacity(ANNOUNCEMENT_DIAGNOSTIC_CAPACITY),
+            staged_announcement_nodes: Vec::with_capacity(ANNOUNCEMENT_QUEUE_CAPACITY),
+            announcement_followup_refresh_required: false,
         }
     }
 
@@ -249,6 +521,7 @@ impl A11y {
         let (active, generation) = requested_state(&self.active_state);
         self.active_this_frame = !self.force_disabled && active;
         self.activation_generation_this_frame = generation;
+        self.reconcile_announcement_generation(self.active_this_frame, generation);
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -264,12 +537,15 @@ impl A11y {
         self.candidate_focus_ids.clear();
         self.candidate_node_bounds.clear();
         self.candidate_action_listeners.clear();
+        self.staged_announcement_nodes.clear();
         self.nodes.begin_frame();
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
-        self.nodes.finalize()
+        let mut update = self.nodes.finalize();
+        self.stage_pending_announcements(&mut update);
+        update
     }
 
     /// Replace action routing with the exact tree and frame state delivered to the platform.
@@ -341,6 +617,269 @@ impl A11y {
         published.revision = self.next_published_revision;
         published.activation_generation = activation_generation;
         self.published = Some(published);
+        self.commit_announcements(activation_generation);
+    }
+
+    pub(crate) fn enqueue_announcement(
+        &mut self,
+        announcement: AccessibilityAnnouncement,
+    ) -> AccessibilityAnnouncementOutcome {
+        let request_id = self.next_request_id();
+        let (requested_active, generation) = requested_state(&self.active_state);
+        let active = !self.force_disabled && requested_active;
+        self.reconcile_announcement_generation(active, generation);
+
+        if !active {
+            return self.drop_announcement(
+                request_id,
+                announcement.politeness,
+                AccessibilityAnnouncementDropReason::AccessibilityInactive,
+            );
+        }
+        if self.announcements.len() >= ANNOUNCEMENT_QUEUE_CAPACITY {
+            return self.drop_announcement(
+                request_id,
+                announcement.politeness,
+                AccessibilityAnnouncementDropReason::QueueFull,
+            );
+        }
+
+        self.next_announcement_sequence = self.next_announcement_sequence.wrapping_add(1);
+        let sequence = AccessibilityAnnouncementSequence(self.next_announcement_sequence);
+        let metadata = AnnouncementMetadata {
+            request_id,
+            sequence,
+            activation_generation: generation,
+            node_id: announcement_node_id(self.window_id, sequence, 0),
+            node_probe: 0,
+            politeness: announcement.politeness,
+        };
+        self.announcements
+            .push_back(QueuedAnnouncement::Pending(PendingAnnouncement {
+                metadata,
+                message: announcement.message,
+            }));
+        self.record_announcement_diagnostic(metadata, AccessibilityAnnouncementLifecycle::Accepted);
+        self.announcement_followup_refresh_required = true;
+        AccessibilityAnnouncementOutcome::Accepted {
+            request_id,
+            sequence,
+        }
+    }
+
+    pub(crate) fn reject_announcement_for_closed_window(
+        &mut self,
+        announcement: AccessibilityAnnouncement,
+    ) -> AccessibilityAnnouncementOutcome {
+        let request_id = self.next_request_id();
+        self.drop_announcement(
+            request_id,
+            announcement.politeness,
+            AccessibilityAnnouncementDropReason::WindowClosed,
+        )
+    }
+
+    pub(crate) fn clear_announcements_for_window_close(&mut self) {
+        self.clear_announcements(AccessibilityAnnouncementClearReason::WindowClosed);
+        self.announcement_generation = None;
+    }
+
+    pub(crate) fn announcement_diagnostics(&self) -> &[AccessibilityAnnouncementDiagnostic] {
+        &self.announcement_diagnostics
+    }
+
+    pub(crate) fn take_announcement_followup_refresh_required(&mut self) -> bool {
+        std::mem::take(&mut self.announcement_followup_refresh_required)
+    }
+
+    fn stage_pending_announcements(&mut self, update: &mut TreeUpdate) {
+        if !self.active_this_frame
+            || self.announcement_generation != Some(self.activation_generation_this_frame)
+        {
+            return;
+        }
+
+        let mut used_ids = update
+            .nodes
+            .iter()
+            .map(|(node_id, _)| *node_id)
+            .collect::<FxHashSet<_>>();
+        let mut staged = Vec::with_capacity(self.announcements.len());
+        for queued in &mut self.announcements {
+            let QueuedAnnouncement::Pending(pending) = queued else {
+                continue;
+            };
+            if pending.metadata.activation_generation != self.activation_generation_this_frame {
+                continue;
+            }
+
+            while pending.metadata.node_id == ROOT_NODE_ID
+                || used_ids.contains(&pending.metadata.node_id)
+            {
+                pending.metadata.node_probe = pending.metadata.node_probe.wrapping_add(1);
+                pending.metadata.node_id = announcement_node_id(
+                    self.window_id,
+                    pending.metadata.sequence,
+                    pending.metadata.node_probe,
+                );
+            }
+
+            let node_id = pending.metadata.node_id;
+            used_ids.insert(node_id);
+            let text = pending.message.to_string();
+            let mut node = accesskit::Node::new(pending.metadata.politeness.accesskit_role());
+            node.set_label(text.clone());
+            node.set_value(text);
+            node.set_live(pending.metadata.politeness.accesskit_live());
+            node.set_live_atomic();
+            staged.push((node_id, node));
+        }
+
+        if staged.is_empty() {
+            return;
+        }
+        let root = update
+            .tree
+            .as_ref()
+            .map(|tree| tree.root)
+            .unwrap_or(ROOT_NODE_ID);
+        let Some((_, root_node)) = update
+            .nodes
+            .iter_mut()
+            .find(|(node_id, _)| *node_id == root)
+        else {
+            return;
+        };
+        for (node_id, _) in &staged {
+            root_node.push_child(*node_id);
+            self.staged_announcement_nodes.push(*node_id);
+        }
+        update.nodes.extend(staged);
+    }
+
+    fn commit_announcements(&mut self, activation_generation: u64) {
+        let staged = self
+            .staged_announcement_nodes
+            .drain(..)
+            .collect::<FxHashSet<_>>();
+        let mut remaining = VecDeque::with_capacity(ANNOUNCEMENT_QUEUE_CAPACITY);
+        while let Some(queued) = self.announcements.pop_front() {
+            match queued {
+                QueuedAnnouncement::Pending(pending)
+                    if pending.metadata.activation_generation == activation_generation
+                        && staged.contains(&pending.metadata.node_id) =>
+                {
+                    self.record_announcement_diagnostic(
+                        pending.metadata,
+                        AccessibilityAnnouncementLifecycle::Committed,
+                    );
+                    remaining.push_back(QueuedAnnouncement::Retained(RetainedAnnouncement {
+                        metadata: pending.metadata,
+                    }));
+                }
+                QueuedAnnouncement::Pending(pending)
+                    if pending.metadata.activation_generation == activation_generation =>
+                {
+                    remaining.push_back(QueuedAnnouncement::Pending(pending));
+                }
+                QueuedAnnouncement::Retained(retained)
+                    if retained.metadata.activation_generation == activation_generation =>
+                {
+                    self.record_announcement_diagnostic(
+                        retained.metadata,
+                        AccessibilityAnnouncementLifecycle::Removed,
+                    );
+                }
+                stale => {
+                    self.record_announcement_diagnostic(
+                        stale.metadata(),
+                        AccessibilityAnnouncementLifecycle::Cleared(
+                            AccessibilityAnnouncementClearReason::ActivationReplaced,
+                        ),
+                    );
+                }
+            }
+        }
+        self.announcements = remaining;
+        self.announcement_followup_refresh_required = !self.announcements.is_empty();
+    }
+
+    fn reconcile_announcement_generation(&mut self, active: bool, generation: u64) {
+        if !active {
+            if self.announcement_generation.is_some() || !self.announcements.is_empty() {
+                self.clear_announcements(
+                    AccessibilityAnnouncementClearReason::AccessibilityDeactivated,
+                );
+            }
+            self.announcement_generation = None;
+            return;
+        }
+
+        if self
+            .announcement_generation
+            .is_some_and(|current| current != generation)
+        {
+            self.clear_announcements(AccessibilityAnnouncementClearReason::ActivationReplaced);
+        }
+        self.announcement_generation = Some(generation);
+    }
+
+    fn clear_announcements(&mut self, reason: AccessibilityAnnouncementClearReason) {
+        let metadata = self
+            .announcements
+            .drain(..)
+            .map(|queued| queued.metadata())
+            .collect::<Vec<_>>();
+        for metadata in metadata {
+            self.record_announcement_diagnostic(
+                metadata,
+                AccessibilityAnnouncementLifecycle::Cleared(reason),
+            );
+        }
+        self.staged_announcement_nodes.clear();
+        self.announcement_followup_refresh_required = false;
+    }
+
+    fn drop_announcement(
+        &mut self,
+        request_id: AccessibilityAnnouncementRequestId,
+        politeness: AccessibilityAnnouncementPoliteness,
+        reason: AccessibilityAnnouncementDropReason,
+    ) -> AccessibilityAnnouncementOutcome {
+        self.push_announcement_diagnostic(AccessibilityAnnouncementDiagnostic {
+            window_id: self.window_id,
+            request_id,
+            sequence: None,
+            politeness,
+            lifecycle: AccessibilityAnnouncementLifecycle::Dropped(reason),
+        });
+        AccessibilityAnnouncementOutcome::Dropped { request_id, reason }
+    }
+
+    fn next_request_id(&mut self) -> AccessibilityAnnouncementRequestId {
+        self.next_announcement_request_id = self.next_announcement_request_id.wrapping_add(1);
+        AccessibilityAnnouncementRequestId(self.next_announcement_request_id)
+    }
+
+    fn record_announcement_diagnostic(
+        &mut self,
+        metadata: AnnouncementMetadata,
+        lifecycle: AccessibilityAnnouncementLifecycle,
+    ) {
+        self.push_announcement_diagnostic(AccessibilityAnnouncementDiagnostic {
+            window_id: self.window_id,
+            request_id: metadata.request_id,
+            sequence: Some(metadata.sequence),
+            politeness: metadata.politeness,
+            lifecycle,
+        });
+    }
+
+    fn push_announcement_diagnostic(&mut self, diagnostic: AccessibilityAnnouncementDiagnostic) {
+        if self.announcement_diagnostics.len() == ANNOUNCEMENT_DIAGNOSTIC_CAPACITY {
+            self.announcement_diagnostics.remove(0);
+        }
+        self.announcement_diagnostics.push(diagnostic);
     }
 
     pub(crate) fn record_focus_id(&mut self, node_id: NodeId, focus_id: FocusId) {
@@ -520,6 +1059,19 @@ fn requested_state(state: &AtomicU64) -> (bool, u64) {
 
 pub(crate) fn requested_generation(state: &AtomicU64) -> u64 {
     requested_state(state).1
+}
+
+fn announcement_node_id(
+    window_id: WindowId,
+    sequence: AccessibilityAnnouncementSequence,
+    probe: u64,
+) -> NodeId {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    "open-gpui-accessibility-announcement".hash(&mut hasher);
+    window_id.hash(&mut hasher);
+    sequence.hash(&mut hasher);
+    probe.hash(&mut hasher);
+    NodeId(hasher.finish())
 }
 
 pub(crate) struct A11yNodeBuilder {
@@ -1224,9 +1776,223 @@ mod tests {
     }
 
     #[test]
+    fn transient_announcement_queue_is_bounded_and_commits_then_removes() {
+        let active_state = Arc::new(AtomicU64::new(0));
+        set_requested_active(&active_state, true);
+        let mut a11y = A11y::new(active_state, false, WindowId::from(7));
+        a11y.sync_active_flag();
+
+        for index in 0..ANNOUNCEMENT_QUEUE_CAPACITY {
+            let outcome = a11y.enqueue_announcement(AccessibilityAnnouncement::polite(format!(
+                "Announcement {index}"
+            )));
+            assert_eq!(
+                outcome.sequence().map(|sequence| sequence.as_u64()),
+                Some(index as u64 + 1)
+            );
+        }
+        let overflow = a11y.enqueue_announcement(AccessibilityAnnouncement::assertive(
+            "Rejected queue payload",
+        ));
+        assert_eq!(
+            overflow.drop_reason(),
+            Some(AccessibilityAnnouncementDropReason::QueueFull)
+        );
+        assert_eq!(overflow.sequence(), None);
+        assert_eq!(a11y.announcements.len(), ANNOUNCEMENT_QUEUE_CAPACITY);
+
+        a11y.begin_frame();
+        let committed = a11y.end_frame();
+        let generation = a11y.activation_generation();
+        let live_nodes = committed
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.live().is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(live_nodes.len(), ANNOUNCEMENT_QUEUE_CAPACITY);
+        assert_eq!(live_nodes[0].1.label(), Some("Announcement 0"));
+        assert_eq!(live_nodes[0].1.value(), Some("Announcement 0"));
+        assert_eq!(live_nodes[0].1.live(), Some(accesskit::Live::Polite));
+        assert!(live_nodes[0].1.is_live_atomic());
+        let root = committed
+            .nodes
+            .iter()
+            .find(|(node_id, _)| *node_id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .expect("the final accessibility tree must contain its root node");
+        let ordered_live_labels = root
+            .children()
+            .iter()
+            .filter_map(|child_id| {
+                committed
+                    .nodes
+                    .iter()
+                    .find(|(node_id, _)| node_id == child_id)
+                    .map(|(_, node)| node)
+            })
+            .filter(|node| node.live().is_some())
+            .map(|node| {
+                node.label()
+                    .expect("announcement nodes must expose a label")
+            })
+            .collect::<Vec<_>>();
+        let expected_labels = (0..ANNOUNCEMENT_QUEUE_CAPACITY)
+            .map(|index| format!("Announcement {index}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_live_labels,
+            expected_labels
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert!(live_nodes.iter().all(|(_, node)| {
+            ACCESSKIT_ACTIONS
+                .iter()
+                .all(|action| !node.supports_action(*action))
+        }));
+        a11y.publish(&committed, generation);
+        assert!(
+            a11y.announcements
+                .iter()
+                .all(|entry| matches!(entry, QueuedAnnouncement::Retained(_)))
+        );
+
+        let still_full = a11y.enqueue_announcement(AccessibilityAnnouncement::polite(
+            "Retained entries still own capacity",
+        ));
+        assert_eq!(
+            still_full.drop_reason(),
+            Some(AccessibilityAnnouncementDropReason::QueueFull)
+        );
+
+        a11y.begin_frame();
+        let removed = a11y.end_frame();
+        assert!(removed.nodes.iter().all(|(_, node)| node.live().is_none()));
+        a11y.publish(&removed, generation);
+        assert!(a11y.announcements.is_empty());
+        assert!(!a11y.take_announcement_followup_refresh_required());
+    }
+
+    #[test]
+    fn repeated_announcement_text_gets_distinct_sequence_and_node_identity() {
+        let active_state = Arc::new(AtomicU64::new(0));
+        set_requested_active(&active_state, true);
+        let mut a11y = A11y::new(active_state, false, WindowId::from(8));
+        a11y.sync_active_flag();
+
+        let first = a11y.enqueue_announcement(AccessibilityAnnouncement::polite("Repeated"));
+        let second = a11y.enqueue_announcement(AccessibilityAnnouncement::polite("Repeated"));
+        assert_ne!(first.sequence(), second.sequence());
+
+        a11y.begin_frame();
+        let update = a11y.end_frame();
+        let nodes = update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.label() == Some("Repeated"))
+            .map(|(node_id, _)| *node_id)
+            .collect::<Vec<_>>();
+        assert_eq!(nodes.len(), 2);
+        assert_ne!(nodes[0], nodes[1]);
+    }
+
+    #[test]
+    fn deactivation_clears_pending_and_retained_announcements_without_replay() {
+        const RETAINED: &str = "Retained announcement must not replay";
+        const PENDING: &str = "Pending announcement must not replay";
+
+        let active_state = Arc::new(AtomicU64::new(0));
+        set_requested_active(&active_state, true);
+        let mut a11y = A11y::new(active_state.clone(), false, WindowId::from(10));
+        a11y.sync_active_flag();
+
+        let retained = a11y.enqueue_announcement(AccessibilityAnnouncement::polite(RETAINED));
+        a11y.begin_frame();
+        let committed = a11y.end_frame();
+        let generation = a11y.activation_generation();
+        a11y.publish(&committed, generation);
+        assert!(matches!(
+            a11y.announcements.front(),
+            Some(QueuedAnnouncement::Retained(_))
+        ));
+
+        let pending = a11y.enqueue_announcement(AccessibilityAnnouncement::assertive(PENDING));
+        assert!(matches!(
+            a11y.announcements.back(),
+            Some(QueuedAnnouncement::Pending(_))
+        ));
+
+        set_requested_active(&active_state, false);
+        a11y.sync_active_flag();
+        assert!(a11y.announcements.is_empty());
+        assert!(!a11y.take_announcement_followup_refresh_required());
+
+        for outcome in [retained, pending] {
+            assert!(a11y.announcement_diagnostics().iter().any(|diagnostic| {
+                diagnostic.request_id() == outcome.request_id()
+                    && diagnostic.sequence() == outcome.sequence()
+                    && diagnostic.lifecycle()
+                        == AccessibilityAnnouncementLifecycle::Cleared(
+                            AccessibilityAnnouncementClearReason::AccessibilityDeactivated,
+                        )
+            }));
+        }
+        assert!(!format!("{:?}", a11y.announcement_diagnostics()).contains(RETAINED));
+        assert!(!format!("{:?}", a11y.announcement_diagnostics()).contains(PENDING));
+
+        set_requested_active(&active_state, true);
+        a11y.sync_active_flag();
+        a11y.begin_frame();
+        let reactivated = a11y.end_frame();
+        assert!(
+            reactivated.nodes.iter().all(|(_, node)| {
+                node.label() != Some(RETAINED) && node.label() != Some(PENDING)
+            })
+        );
+    }
+
+    #[test]
+    fn inactive_and_replacement_generation_requests_never_replay() {
+        const PRIVACY_CANARY: &str = "u14-announcement-private-canary";
+
+        let active_state = Arc::new(AtomicU64::new(0));
+        let mut a11y = A11y::new(active_state.clone(), false, WindowId::from(9));
+        let inactive = a11y.enqueue_announcement(AccessibilityAnnouncement::polite(PRIVACY_CANARY));
+        assert_eq!(
+            inactive.drop_reason(),
+            Some(AccessibilityAnnouncementDropReason::AccessibilityInactive)
+        );
+
+        set_requested_active(&active_state, true);
+        let accepted =
+            a11y.enqueue_announcement(AccessibilityAnnouncement::assertive(PRIVACY_CANARY));
+        assert!(accepted.is_accepted());
+        set_requested_active(&active_state, true);
+        a11y.sync_active_flag();
+        assert!(a11y.announcements.is_empty());
+
+        a11y.begin_frame();
+        let update = a11y.end_frame();
+        assert!(
+            update
+                .nodes
+                .iter()
+                .all(|(_, node)| node.label() != Some(PRIVACY_CANARY))
+        );
+        assert!(!format!("{:?}", a11y.announcement_diagnostics()).contains(PRIVACY_CANARY));
+        assert!(a11y.announcement_diagnostics().iter().any(|diagnostic| {
+            diagnostic.lifecycle()
+                == AccessibilityAnnouncementLifecycle::Cleared(
+                    AccessibilityAnnouncementClearReason::ActivationReplaced,
+                )
+        }));
+    }
+
+    #[test]
     fn published_action_authority_changes_only_after_matching_activation_delivery() {
         let active_state = Arc::new(AtomicU64::new(0));
-        let mut a11y = A11y::new(active_state.clone(), false);
+        let mut a11y = A11y::new(active_state.clone(), false, WindowId::from(1));
         let node_id = NodeId(1);
 
         let prepare_update = |a11y: &mut A11y| {
@@ -1319,7 +2085,7 @@ mod tests {
     fn stale_listener_restore_cannot_overwrite_a_new_publication() {
         let active_state = Arc::new(AtomicU64::new(0));
         set_requested_active(&active_state, true);
-        let mut a11y = A11y::new(active_state, false);
+        let mut a11y = A11y::new(active_state, false, WindowId::from(1));
         let node_id = NodeId(1);
 
         let begin_candidate = |a11y: &mut A11y| {
@@ -1359,7 +2125,7 @@ mod tests {
     fn stable_publication_reuses_dispatch_and_membership_capacity() {
         let active_state = Arc::new(AtomicU64::new(0));
         set_requested_active(&active_state, true);
-        let mut a11y = A11y::new(active_state, false);
+        let mut a11y = A11y::new(active_state, false, WindowId::from(1));
         let focus_id = FocusId::default();
 
         let publish_frame = |a11y: &mut A11y| {
@@ -1410,7 +2176,7 @@ mod tests {
     fn final_focus_resolution_uses_the_unique_committed_candidate() {
         let active_state = Arc::new(AtomicU64::new(0));
         set_requested_active(&active_state, true);
-        let mut a11y = A11y::new(active_state, false);
+        let mut a11y = A11y::new(active_state, false, WindowId::from(1));
         let previous_node = NodeId(1);
         let claimed_node = NodeId(2);
         let mut focus_ids = slotmap::SlotMap::<FocusId, ()>::with_key();
@@ -1437,7 +2203,7 @@ mod tests {
     fn final_focus_resolution_ignores_rolled_back_candidates() {
         let active_state = Arc::new(AtomicU64::new(0));
         set_requested_active(&active_state, true);
-        let mut a11y = A11y::new(active_state, false);
+        let mut a11y = A11y::new(active_state, false, WindowId::from(1));
         let rolled_back_node = NodeId(1);
         let focus = FocusId::default();
 
@@ -1458,7 +2224,7 @@ mod tests {
     fn nested_prepaint_checkpoints_restore_only_their_candidate_suffix() {
         let active_state = Arc::new(AtomicU64::new(0));
         set_requested_active(&active_state, true);
-        let mut a11y = A11y::new(active_state, false);
+        let mut a11y = A11y::new(active_state, false, WindowId::from(1));
         let outer_id = NodeId(1);
         let inner_id = NodeId(2);
         let focus_id = FocusId::default();
