@@ -10,32 +10,93 @@ use super::{
 use crate::theme::ThemeResolver;
 
 impl WindowOverlayRuntime {
-    /// Registers current-frame bounds as an inside region for the layer.
+    pub(crate) fn portal_anchor_generation(
+        &self,
+        binding: &OverlayLayerBinding,
+        window: &Window,
+        cx: &App,
+    ) -> Result<OverlayLayerGeneration, WindowOverlayRuntimeError> {
+        self.ensure_binding(binding, window)?;
+        self.state.read(cx).portal_anchor_generation(&binding.lease)
+    }
+
+    pub(crate) fn mark_portal_anchor_linked(
+        &self,
+        binding: &OverlayLayerBinding,
+        expected_generation: OverlayLayerGeneration,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        self.ensure_binding(binding, window)?;
+        let changed = self.state.update(cx, |state, _| {
+            state.mark_portal_anchor_linked(&binding.lease, expected_generation)
+        })?;
+        if changed {
+            window.refresh();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn mark_portal_anchor_unlinked(
+        &self,
+        binding: &OverlayLayerBinding,
+        expected_generation: OverlayLayerGeneration,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        self.ensure_binding(binding, window)?;
+        let Some(plan) = self.state.update(cx, |state, _| {
+            state.mark_portal_anchor_unlinked_plan(&binding.lease, expected_generation)
+        })?
+        else {
+            return Ok(());
+        };
+        binding.clear_opening_theme();
+        self.cancel_focus_claims(&plan.cancel_focus_claims, window, cx)?;
+        for dispatch in &plan.dispatches {
+            self.apply_focus_transition(dispatch.focus_transition.clone(), window, cx)?;
+        }
+        self.run_open_change_dispatches(plan.dispatches, window, cx, |_, _| {});
+        window.refresh();
+        Ok(())
+    }
+
+    /// Registers element layout bounds as an inside region for the layer.
     ///
     /// Call this during prepaint on every frame where the region is rendered. A region that is
-    /// not refreshed becomes stale after that frame and cannot claim an outside press.
-    pub fn set_inside_region(
+    /// not refreshed becomes stale after that frame and cannot claim an outside press. The runtime
+    /// projects through GPUI's active transform and intersects the effective content mask.
+    pub fn set_element_inside_region(
         &self,
         binding: &OverlayLayerBinding,
         region: OverlayInsideRegionId,
-        bounds: Bounds<Pixels>,
+        layout_bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &App,
     ) -> Result<(), WindowOverlayRuntimeError> {
-        self.set_inside_region_for_button(binding, region, bounds, None, window, cx)
+        self.set_element_inside_region_for_button(binding, region, layout_bounds, None, window, cx)
     }
 
-    fn set_inside_region_for_button(
+    fn set_element_inside_region_for_button(
         &self,
         binding: &OverlayLayerBinding,
         region: OverlayInsideRegionId,
-        bounds: Bounds<Pixels>,
+        layout_bounds: Bounds<Pixels>,
         button: Option<MouseButton>,
         window: &mut Window,
         cx: &App,
     ) -> Result<(), WindowOverlayRuntimeError> {
         self.ensure_binding(binding, window)?;
         self.state.read(cx).validate_mutable_lease(&binding.lease)?;
+        let Ok(geometry) = window.try_element_geometry(layout_bounds) else {
+            return Ok(());
+        };
+        let displayed_window_bounds = geometry
+            .displayed_bounds()
+            .intersect(&window.content_mask().bounds);
+        if displayed_window_bounds.is_empty() {
+            return Ok(());
+        }
         let weak_state = self.state.downgrade();
         let lease = binding.lease.clone();
         window.record_prepaint_commit(move |valid_through, cx| {
@@ -43,7 +104,7 @@ impl WindowOverlayRuntime {
                 let _ = state.refresh_inside_region(
                     &lease,
                     region.clone(),
-                    bounds,
+                    displayed_window_bounds,
                     button,
                     valid_through,
                 );
@@ -126,7 +187,6 @@ impl WindowOverlayRuntime {
         cx: &mut App,
     ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
         let frame_revision = window.rendered_frame_revision();
-        let presence = registration.policy.presence();
         if registration.parent.is_none()
             && let Some(parent) = self.current_parent_layer()
         {
@@ -134,6 +194,7 @@ impl WindowOverlayRuntime {
         }
         if let Some(binding) = binding {
             let generation = self.rebind_component_layer(binding, registration, window, cx)?;
+            let presence = self.state.read(cx).presence_for_lease(&binding.lease)?;
             binding.sync_opening_theme(generation, presence, || resolve_opening_theme(window, cx));
             self.state.update(cx, |state, _| {
                 state.record_component_bind(&binding.lease, frame_revision)
@@ -165,6 +226,7 @@ impl WindowOverlayRuntime {
             state.record_component_bind(&binding.lease, frame_revision)
         })?;
         let generation = self.state.read(cx).generation_for_lease(&binding.lease)?;
+        let presence = self.state.read(cx).presence_for_lease(&binding.lease)?;
         binding.sync_opening_theme(generation, presence, || resolve_opening_theme(window, cx));
         Ok(binding)
     }
@@ -395,7 +457,7 @@ impl Element for OverlaySurface {
             .is_ok();
         if binding_is_valid {
             if let Some(region) = self.region.as_ref() {
-                let _ = self.runtime.set_inside_region_for_button(
+                let _ = self.runtime.set_element_inside_region_for_button(
                     &self.binding,
                     region.clone(),
                     bounds,
@@ -457,11 +519,19 @@ impl WindowOverlayRuntimeState {
         Ok(self.entries[lease.layer_id()].generation)
     }
 
+    fn presence_for_lease(
+        &self,
+        lease: &OverlayLayerLease,
+    ) -> Result<open_gpui_ui_core::OverlayPresence, WindowOverlayRuntimeError> {
+        self.validate_mutable_lease(lease)?;
+        Ok(self.entries[lease.layer_id()].lifecycle.presence())
+    }
+
     pub(super) fn refresh_inside_region(
         &mut self,
         lease: &OverlayLayerLease,
         region: OverlayInsideRegionId,
-        bounds: Bounds<Pixels>,
+        displayed_window_bounds: Bounds<Pixels>,
         button: Option<MouseButton>,
         valid_through: u64,
     ) -> Result<(), WindowOverlayRuntimeError> {
@@ -472,7 +542,7 @@ impl WindowOverlayRuntimeState {
         entry.inside_regions.insert(
             region,
             LiveInsideRegion {
-                bounds,
+                window_bounds: displayed_window_bounds,
                 button,
                 valid_through,
             },

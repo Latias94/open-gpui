@@ -11,7 +11,7 @@ pub use adapter::{
     default_deferred_priority, gpui_overlay_state,
 };
 pub(crate) use adapter::{
-    gpui_full_window_overlay_layer, gpui_positioned_overlay_layer, gpui_relative_overlay_layer,
+    gpui_full_window_overlay_layer, gpui_portal_anchor_overlay_layer, gpui_positioned_overlay_layer,
 };
 pub use focus_scope::{FocusScopeRuntimeError, FocusTargetRegistration};
 pub use open_gpui_ui_core::OverlayResolvedState;

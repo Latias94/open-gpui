@@ -3,8 +3,10 @@ mod support;
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     Anchor, Context, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, SubtreePresentation,
-    SubtreePresentationExt, VisualContext, Window, accesskit, actions, div, point, px,
+    PortalAnchorExt as _, PortalAnchorHandle, Render, ScrollDelta, ScrollWheelEvent,
+    StatefulInteractiveElement, Styled, SubtreePresentation, SubtreePresentationExt,
+    SubtreeTransform, SubtreeTransformExt, VisualContext, Window, accesskit, actions, div, point,
+    px,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, ButtonVariant,
@@ -1249,7 +1251,7 @@ fn presentation_inert_dialog_keeps_open_lifecycle_but_releases_modal_input_autho
 }
 
 #[open_gpui::test]
-fn presentation_menu_releases_input_authority_without_replaying_opening_focus(
+fn presentation_menu_unlinks_restores_trigger_and_reopens_in_a_new_generation(
     cx: &mut open_gpui::TestAppContext,
 ) {
     struct TestView {
@@ -1326,14 +1328,25 @@ fn presentation_menu_releases_input_authority_without_replaying_opening_focus(
             .iter()
             .find(|layer| layer.id().as_str() == "menu:presentation-menu")
             .expect("the controlled menu should retain its reusable registration");
-        assert_eq!(layer.phase(), OverlayLayerPhase::Open);
-        assert_eq!(layer.pending_intent(), None);
+        assert_eq!(layer.phase(), OverlayLayerPhase::Hidden);
+        assert_eq!(layer.pending_intent(), Some(DismissReason::AnchorUnlinked));
         assert_eq!(layer.presentation(), presentation);
         assert!(!layer.keyboard_eligible());
         assert!(!layer.focus_active());
         cx.simulate_keystrokes("escape");
-        assert_eq!(open_intents.borrow().len(), 1);
+        assert_eq!(open_intents.borrow().len(), 2);
+        assert_eq!(
+            open_intents.borrow()[1].reason(),
+            DismissReason::AnchorUnlinked
+        );
     }
+    let focus_is_none = cx.update(|window, cx| window.focused(cx).is_none());
+    let trigger_is_focused = cx.debug_selector_is_focused("menu:presentation-menu:trigger");
+    let content_is_focused = cx.debug_selector_is_focused("menu:presentation-menu:content");
+    assert!(
+        focus_is_none,
+        "suppressed unlink focus: none={focus_is_none} trigger={trigger_is_focused} content={content_is_focused}"
+    );
 
     let stale_rejection = cx.update(|window, cx| stale_intent.reject(window, cx));
     assert!(matches!(
@@ -1347,7 +1360,10 @@ fn presentation_menu_releases_input_authority_without_replaying_opening_focus(
     });
     cx.update(|window, cx| window.draw(cx).clear());
     cx.run_until_parked();
-    assert!(cx.update(|window, cx| window.focused(cx).is_none()));
+    assert!(
+        cx.debug_selector_is_focused("menu:presentation-menu:content"),
+        "a newly linked opening generation should apply opening focus"
+    );
 
     let restored = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -1362,9 +1378,9 @@ fn presentation_menu_releases_input_authority_without_replaying_opening_focus(
     assert!(restored.keyboard_eligible());
     assert!(restored.focus_active());
     cx.simulate_click(trigger.center(), Default::default());
-    assert_eq!(open_intents.borrow().len(), 2);
-    assert_eq!(open_intents.borrow()[1].reason(), DismissReason::Trigger);
-    assert_ne!(open_intents.borrow()[1].revision(), Some(stale_revision));
+    assert_eq!(open_intents.borrow().len(), 3);
+    assert_eq!(open_intents.borrow()[2].reason(), DismissReason::Trigger);
+    assert_ne!(open_intents.borrow()[2].revision(), Some(stale_revision));
 }
 
 #[open_gpui::test]
@@ -4461,6 +4477,67 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
 }
 
 #[open_gpui::test]
+fn menu_four_level_submenu_chain_uses_one_deferred_round_per_follower(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Menu::new("deep-portal-submenu", "Deep submenu")
+                    .default_focused_value("one")
+                    .item(MenuItem::submenu(
+                        "one",
+                        "One",
+                        [MenuItem::submenu(
+                            "two",
+                            "Two",
+                            [MenuItem::submenu(
+                                "three",
+                                "Three",
+                                [MenuItem::submenu(
+                                    "four",
+                                    "Four",
+                                    [MenuItem::action("leaf", "Leaf")],
+                                )],
+                            )],
+                        )],
+                    )),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| window.draw(cx).clear());
+    let trigger = cx
+        .debug_bounds("menu:deep-portal-submenu:trigger")
+        .expect("deep submenu trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    for selector in [
+        "menu:deep-portal-submenu:item:0:one/0:two",
+        "menu:deep-portal-submenu:item:0:one/0:two/0:three",
+        "menu:deep-portal-submenu:item:0:one/0:two/0:three/0:four",
+        "menu:deep-portal-submenu:item:0:one/0:two/0:three/0:four/0:leaf",
+    ] {
+        cx.simulate_keystrokes("right");
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "Right should render deep submenu target `{selector}`"
+        );
+    }
+
+    assert!(
+        cx.debug_bounds("menu:deep-portal-submenu:item:0:one/0:two/0:three/0:four/0:leaf")
+            .is_some(),
+        "four open submenu levels should render without exhausting deferred depth"
+    );
+}
+
+#[open_gpui::test]
 fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
 
@@ -5649,13 +5726,26 @@ fn context_menu_runtime_long_menu_scroll_stays_inside_surface(cx: &mut open_gpui
 fn tooltip_and_hover_card_register_passive_window_layers_without_focus_authority(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    struct TestView;
+    struct TestView {
+        tooltip_anchor: PortalAnchorHandle,
+    }
 
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
                 .size_full()
-                .child(Tooltip::new("passive-tooltip", "Tooltip body").open(true))
+                .child(
+                    div()
+                        .id("passive-tooltip-trigger")
+                        .w(px(80.0))
+                        .h(px(24.0))
+                        .track_portal_anchor(&self.tooltip_anchor),
+                )
+                .child(
+                    Tooltip::new("passive-tooltip", "Tooltip body")
+                        .portal_anchor(self.tooltip_anchor)
+                        .open(true),
+                )
                 .child(
                     HoverCard::new(
                         "passive-hover-card",
@@ -5667,7 +5757,9 @@ fn tooltip_and_hover_card_register_passive_window_layers_without_focus_authority
         }
     }
 
-    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    let (_, cx) = cx.add_window_view(|window, _| TestView {
+        tooltip_anchor: window.new_portal_anchor(),
+    });
     cx.update(|window, cx| window.draw(cx).clear());
 
     let snapshot = cx.update(|window, cx| {
@@ -5693,6 +5785,359 @@ fn tooltip_and_hover_card_register_passive_window_layers_without_focus_authority
     assert_eq!(hover_card.phase(), OverlayLayerPhase::Open);
     assert!(hover_card.keyboard_eligible());
     assert!(!hover_card.focus_active());
+}
+
+#[open_gpui::test]
+fn portal_anchor_drives_multiple_tooltips_across_transform_unlink_and_reopen(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        anchor: PortalAnchorHandle,
+        translation_x: f32,
+        presentation: SubtreePresentation,
+        first_intents: Rc<RefCell<Vec<(bool, DismissReason)>>>,
+        second_intents: Rc<RefCell<Vec<(bool, DismissReason)>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let transform =
+                SubtreeTransform::try_translation(point(px(self.translation_x), px(0.0)))
+                    .expect("test translation should remain representable");
+            let first_intents = self.first_intents.clone();
+            let second_intents = self.second_intents.clone();
+            div()
+                .relative()
+                .size_full()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(80.0))
+                        .top(px(72.0))
+                        .w(px(120.0))
+                        .h(px(28.0))
+                        .child(
+                            div()
+                                .id("portal-tooltip-target")
+                                .debug_selector(|| "portal-tooltip-target".to_owned())
+                                .size_full()
+                                .child("Portal target")
+                                .track_portal_anchor(&self.anchor),
+                        )
+                        .with_subtree_transform(transform)
+                        .with_subtree_presentation(self.presentation),
+                )
+                .child(
+                    Tooltip::new("portal-tooltip-a", "First follower")
+                        .portal_anchor(self.anchor)
+                        .placement_side(OverlayPlacementSide::Bottom)
+                        .placement_alignment(OverlayPlacementAlignment::Start)
+                        .on_open_change(move |intent, _, _| {
+                            first_intents
+                                .borrow_mut()
+                                .push((intent.desired_open(), intent.reason()));
+                        })
+                        .open(true),
+                )
+                .child(
+                    Tooltip::new("portal-tooltip-b", "Second follower")
+                        .portal_anchor(self.anchor)
+                        .placement_side(OverlayPlacementSide::Right)
+                        .placement_alignment(OverlayPlacementAlignment::Center)
+                        .on_open_change(move |intent, _, _| {
+                            second_intents
+                                .borrow_mut()
+                                .push((intent.desired_open(), intent.reason()));
+                        })
+                        .open(true),
+                )
+        }
+    }
+
+    let first_intents = Rc::new(RefCell::new(Vec::new()));
+    let second_intents = Rc::new(RefCell::new(Vec::new()));
+    let view_first_intents = first_intents.clone();
+    let view_second_intents = second_intents.clone();
+    let (view, cx) = cx.add_window_view(move |window, _| TestView {
+        anchor: window.new_portal_anchor(),
+        translation_x: 0.0,
+        presentation: SubtreePresentation::Visible,
+        first_intents: view_first_intents,
+        second_intents: view_second_intents,
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let target_before = cx.debug_bounds("portal-tooltip-target").unwrap_or_else(|| {
+        panic!(
+            "portal target should render; selectors: {:?}",
+            cx.debug_selectors_with_prefix("")
+        )
+    });
+    let first_before = cx
+        .debug_bounds("tooltip:portal-tooltip-a:content")
+        .expect("first follower should render in the target frame");
+    let second_before = cx
+        .debug_bounds("tooltip:portal-tooltip-b:content")
+        .expect("second follower should render from the same handle");
+    assert!(first_before.top() >= target_before.bottom());
+    assert!(second_before.left() >= target_before.right());
+
+    let opening_generations = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+            .layers()
+            .iter()
+            .filter(|layer| layer.id().as_str().starts_with("tooltip:portal-tooltip-"))
+            .map(|layer| (layer.id().clone(), layer.generation()))
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.translation_x = 96.0;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let target_after = cx
+        .debug_bounds("portal-tooltip-target")
+        .expect("translated target should remain rendered");
+    let first_after = cx
+        .debug_bounds("tooltip:portal-tooltip-a:content")
+        .expect("first follower should move in the same frame");
+    let second_after = cx
+        .debug_bounds("tooltip:portal-tooltip-b:content")
+        .expect("second follower should move in the same frame");
+    assert_eq!(target_after.left() - target_before.left(), px(96.0));
+    assert_eq!(first_after.left() - first_before.left(), px(96.0));
+    assert_eq!(second_after.left() - second_before.left(), px(96.0));
+
+    let moved_generations = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+            .layers()
+            .iter()
+            .filter(|layer| layer.id().as_str().starts_with("tooltip:portal-tooltip-"))
+            .map(|layer| (layer.id().clone(), layer.generation()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(moved_generations, opening_generations);
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.presentation = SubtreePresentation::Hidden;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("tooltip:portal-tooltip-a:content")
+            .is_none()
+    );
+    assert!(
+        cx.debug_bounds("tooltip:portal-tooltip-b:content")
+            .is_none()
+    );
+    let hidden = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    for id in ["tooltip:portal-tooltip-a", "tooltip:portal-tooltip-b"] {
+        let layer = hidden
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == id)
+            .unwrap_or_else(|| panic!("missing hidden layer `{id}`"));
+        assert_eq!(layer.phase(), OverlayLayerPhase::Hidden);
+        assert!(!layer.keyboard_eligible());
+    }
+    assert_eq!(
+        *first_intents.borrow(),
+        vec![(false, DismissReason::AnchorUnlinked)]
+    );
+    assert_eq!(
+        *second_intents.borrow(),
+        vec![(false, DismissReason::AnchorUnlinked)]
+    );
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(first_intents.borrow().len(), 1);
+    assert_eq!(second_intents.borrow().len(), 1);
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.presentation = SubtreePresentation::Visible;
+        cx.notify();
+    });
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    assert!(
+        cx.debug_bounds("tooltip:portal-tooltip-a:content")
+            .is_some()
+    );
+    assert!(
+        cx.debug_bounds("tooltip:portal-tooltip-b:content")
+            .is_some()
+    );
+    let reopened = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    for (id, opening_generation) in opening_generations {
+        let layer = reopened
+            .layers()
+            .iter()
+            .find(|layer| layer.id() == &id)
+            .unwrap_or_else(|| panic!("missing reopened layer `{}`", id.as_str()));
+        assert!(layer.generation().get() > opening_generation.get());
+        assert_eq!(layer.phase(), OverlayLayerPhase::Open);
+    }
+}
+
+#[open_gpui::test]
+fn controlled_anchor_unlink_clears_pending_after_owner_commits_closed(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        anchor: PortalAnchorHandle,
+        target_mounted: bool,
+        owner_open: Rc<Cell<bool>>,
+        intents: Rc<RefCell<Vec<(bool, DismissReason)>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let owner_open = self.owner_open.clone();
+            let intents = self.intents.clone();
+            div()
+                .when(self.target_mounted, |this| {
+                    this.child(
+                        div()
+                            .w(px(80.0))
+                            .h(px(24.0))
+                            .track_portal_anchor(&self.anchor),
+                    )
+                })
+                .child(
+                    Tooltip::new("owner-committed-tooltip", "Owner committed tooltip")
+                        .portal_anchor(self.anchor)
+                        .open(self.owner_open.get())
+                        .on_open_change(move |intent, _, _| {
+                            owner_open.set(intent.desired_open());
+                            intents
+                                .borrow_mut()
+                                .push((intent.desired_open(), intent.reason()));
+                        }),
+                )
+        }
+    }
+
+    let owner_open = Rc::new(Cell::new(true));
+    let intents = Rc::new(RefCell::new(Vec::new()));
+    let view_owner_open = owner_open.clone();
+    let view_intents = intents.clone();
+    let (view, cx) = cx.add_window_view(move |window, _| TestView {
+        anchor: window.new_portal_anchor(),
+        target_mounted: true,
+        owner_open: view_owner_open,
+        intents: view_intents,
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.target_mounted = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(!owner_open.get());
+    assert_eq!(
+        *intents.borrow(),
+        vec![(false, DismissReason::AnchorUnlinked)]
+    );
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let committed = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    let committed = committed
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "tooltip:owner-committed-tooltip")
+        .expect("owner-committed controlled tooltip should remain registered");
+    assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
+    assert_eq!(committed.pending_intent(), None);
+    assert_eq!(committed.pending_intent_revision(), None);
+    assert_eq!(intents.borrow().len(), 1);
+}
+
+#[open_gpui::test]
+fn window_point_and_full_window_overlays_ignore_ancestor_transform(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        translation_x: f32,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let transform =
+                SubtreeTransform::try_translation(point(px(self.translation_x), px(0.0)))
+                    .expect("test translation should remain representable");
+            div()
+                .size_full()
+                .child(
+                    ContextMenu::new("window-point-context", "Window point context")
+                        .open(true)
+                        .anchor_point(point(px(280.0), px(160.0)))
+                        .item(MenuItem::action("inspect", "Inspect")),
+                )
+                .child(
+                    Dialog::new(
+                        "window-portal-dialog",
+                        "Open dialog",
+                        "Window portal dialog",
+                        "Dialog content",
+                    )
+                    .open(true),
+                )
+                .child(
+                    Sheet::new(
+                        "window-portal-sheet",
+                        "Open sheet",
+                        "Window portal sheet",
+                        "Sheet content",
+                    )
+                    .open(true)
+                    .modal_mode(SheetModalMode::NonModal),
+                )
+                .with_subtree_transform(transform)
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| TestView { translation_x: 0.0 });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let selectors = [
+        "context-menu:window-point-context:surface",
+        "dialog:window-portal-dialog:surface",
+        "sheet:window-portal-sheet:surface",
+    ];
+    let before = selectors.map(|selector| {
+        cx.debug_bounds(selector)
+            .unwrap_or_else(|| panic!("missing window-space overlay `{selector}`"))
+    });
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.translation_x = 128.0;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let after = selectors.map(|selector| {
+        cx.debug_bounds(selector)
+            .unwrap_or_else(|| panic!("missing translated window-space overlay `{selector}`"))
+    });
+    assert_eq!(after, before);
 }
 
 #[open_gpui::test]
@@ -5723,16 +6168,76 @@ fn presentation_hidden_and_disabled_tooltips_do_not_build_deferred_surfaces(
             .expect("hidden tooltip snapshot should resolve")
     });
     for id in ["tooltip:hidden-tooltip", "tooltip:disabled-tooltip"] {
-        let layer = snapshot
-            .layers()
-            .iter()
-            .find(|layer| layer.id().as_str() == id)
-            .unwrap_or_else(|| panic!("{id} should remain registered"));
-        assert_eq!(layer.phase(), OverlayLayerPhase::Hidden);
+        assert!(
+            snapshot
+                .layers()
+                .iter()
+                .all(|layer| layer.id().as_str() != id),
+            "{id} should not establish an anchorless registration"
+        );
     }
     assert!(cx.debug_bounds("tooltip:hidden-tooltip:content").is_none());
     assert!(
         cx.debug_bounds("tooltip:disabled-tooltip:content")
+            .is_none()
+    );
+}
+
+#[open_gpui::test]
+fn standalone_tooltip_can_bind_its_stable_anchor_after_an_initial_closed_frame(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        anchor: PortalAnchorHandle,
+        open: bool,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let tooltip = Tooltip::new("late-bound-tooltip", "Late-bound tooltip").open(self.open);
+            let tooltip = if self.open {
+                tooltip.portal_anchor(self.anchor)
+            } else {
+                tooltip
+            };
+            div()
+                .child(
+                    div()
+                        .w(px(80.0))
+                        .h(px(24.0))
+                        .track_portal_anchor(&self.anchor),
+                )
+                .child(tooltip)
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|window, _| TestView {
+        anchor: window.new_portal_anchor(),
+        open: false,
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("tooltip:late-bound-tooltip:content")
+            .is_none()
+    );
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.open = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("tooltip:late-bound-tooltip:content")
+            .is_some()
+    );
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.open = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("tooltip:late-bound-tooltip:content")
             .is_none()
     );
 }

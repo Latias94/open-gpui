@@ -121,6 +121,13 @@ impl WindowInvalidator {
         self.inner.borrow().draw_phase == DrawPhase::Focus
     }
 
+    pub fn is_building_frame(&self) -> bool {
+        matches!(
+            self.inner.borrow().draw_phase,
+            DrawPhase::Prepaint | DrawPhase::Paint
+        )
+    }
+
     #[track_caller]
     pub fn debug_assert_paint(&self) {
         debug_assert!(

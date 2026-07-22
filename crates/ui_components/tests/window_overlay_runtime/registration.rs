@@ -789,7 +789,7 @@ fn unregister_is_terminal_for_the_incarnation_before_deferred_cleanup(
             window,
             cx,
         );
-        let inside = probe.runtime.set_inside_region(
+        let inside = probe.runtime.set_element_inside_region(
             &binding,
             OverlayInsideRegionId::new("terminal-inside"),
             rect(20.0, 20.0, 40.0, 40.0),

@@ -66,6 +66,17 @@ impl WindowOverlayRuntime {
         self.ensure_window(window)?;
         registration.presentation = presentation;
         validate_registration(&registration)?;
+        let portal_anchor_registration = registration.portal_anchor;
+        let portal_anchor = match portal_anchor_registration {
+            PortalAnchorRegistration::None => None,
+            PortalAnchorRegistration::RuntimeOwned => Some(window.new_portal_anchor()),
+            PortalAnchorRegistration::External(handle) => {
+                if handle.window_id() != self.window_id {
+                    return Err(WindowOverlayRuntimeError::WrongWindow);
+                }
+                Some(handle)
+            }
+        };
         let surface_focus = cx.focus_handle();
         let (lease, focus_config, activate) = self.state.update(cx, |state, _| {
             state.register_layer(registration, &trigger_focus, &surface_focus, self.window_id)
@@ -97,6 +108,10 @@ impl WindowOverlayRuntime {
             trigger_focus,
             surface_focus,
             opening_theme: Rc::new(RefCell::new(None)),
+            portal_anchor: portal_anchor.map(|handle| PortalOverlayAnchorBinding {
+                handle,
+                publication: open_gpui::PrepaintPublicationId::new(),
+            }),
         })
     }
 
@@ -462,7 +477,7 @@ impl WindowOverlayRuntime {
         Ok(plan.generation)
     }
 
-    fn run_open_change_dispatches(
+    pub(super) fn run_open_change_dispatches(
         &self,
         dispatches: Vec<OpenChangeDispatch>,
         window: &mut Window,

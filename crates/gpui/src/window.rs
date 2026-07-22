@@ -68,6 +68,7 @@ mod frame_pump;
 mod input_dispatch;
 mod invalidator;
 mod pointer_session;
+mod portal_anchor;
 mod prompts;
 
 use self::a11y::A11y;
@@ -88,6 +89,8 @@ use self::pointer_session::{InputDispatchGuard, MouseEventTargetGuard, PressedMo
 pub use self::pointer_session::{
     PointerCapture, PointerCaptureError, PointerCaptureHandle, PointerCaptureId,
 };
+use self::portal_anchor::{PortalAnchorCapture, PortalAnchorId};
+pub use self::portal_anchor::{PortalAnchorError, PortalAnchorHandle, PortalAnchorSnapshot};
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -1132,6 +1135,12 @@ struct SubtreePresentationScopeGuard {
     entered_depth: usize,
 }
 
+struct PrepaintLayoutScopeGuard {
+    current: Rc<Cell<Option<LayoutId>>>,
+    entered: LayoutId,
+    previous: Option<LayoutId>,
+}
+
 impl Drop for SubtreeTransformScopeGuard {
     fn drop(&mut self) {
         let mut stack = self.stack.borrow_mut();
@@ -1149,6 +1158,15 @@ impl Drop for SubtreePresentationScopeGuard {
             debug_assert_eq!(stack.len(), self.entered_depth + 1);
         }
         stack.truncate(self.entered_depth);
+    }
+}
+
+impl Drop for PrepaintLayoutScopeGuard {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            debug_assert_eq!(self.current.get(), Some(self.entered));
+        }
+        self.current.set(self.previous);
     }
 }
 
@@ -1176,6 +1194,7 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    current_prepaint_layout_id: Rc<Cell<Option<LayoutId>>>,
     subtree_presentation_stack: Rc<RefCell<SmallVec<[SubtreePresentation; 8]>>>,
     subtree_transform_stack: Rc<RefCell<SmallVec<[SubtreeTransformScope; 8]>>>,
     pub(crate) element_opacity: f32,
@@ -1189,6 +1208,8 @@ pub struct Window {
     atlas_remove_diagnostics: Vec<AtlasRemoveDiagnostic>,
     next_hitbox_id: HitboxId,
     next_pointer_capture_id: PointerCaptureId,
+    next_portal_anchor_id: PortalAnchorId,
+    portal_anchor_capture_stack: Rc<RefCell<Vec<PortalAnchorCapture>>>,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -1990,6 +2011,7 @@ impl Window {
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            current_prepaint_layout_id: Rc::new(Cell::new(None)),
             subtree_presentation_stack: Rc::new(RefCell::new(SmallVec::new())),
             subtree_transform_stack: Rc::new(RefCell::new(SmallVec::new())),
             content_mask_stack: Vec::new(),
@@ -2003,6 +2025,8 @@ impl Window {
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
             next_pointer_capture_id: PointerCaptureId(0),
+            next_portal_anchor_id: PortalAnchorId::default(),
+            portal_anchor_capture_stack: Rc::new(RefCell::new(Vec::new())),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -4453,13 +4477,13 @@ impl Window {
         // Each round processes all current deferred draws, which may produce new ones.
         let mut depth = 0;
         loop {
-            // Limit maximum nesting depth to prevent infinite loops.
-            assert!(depth < 10, "Exceeded maximum (10) deferred depth");
-            depth += 1;
             let deferred_count = self.next_frame.deferred_draws.len();
             if deferred_count == 0 {
                 break;
             }
+            // Limit maximum nesting depth to prevent infinite loops.
+            assert!(depth < 10, "Exceeded maximum (10) deferred depth");
+            depth += 1;
 
             // Sort by priority for this round
             let traversal_order = self.deferred_draw_traversal_order();
@@ -4503,7 +4527,7 @@ impl Window {
                                                         window.with_absolute_element_offset(
                                                             deferred_draw.absolute_offset,
                                                             |window| {
-                                                                window.with_content_mask(
+                                                                window.with_resolved_content_mask(
                                                     deferred_draw.content_mask,
                                                     |window| {
                                                         window.with_accessibility_tree_scope(
@@ -4581,7 +4605,7 @@ impl Window {
                         deferred_draw.subtree_transform_validity.clone(),
                         |window| {
                             window.with_rendered_view(deferred_draw.current_view, |window| {
-                                window.with_content_mask(content_mask, |window| {
+                                window.with_resolved_content_mask(content_mask, |window| {
                                     window.with_rem_size(Some(deferred_draw.rem_size), |window| {
                                         element.paint(window, cx);
                                     });
@@ -4614,6 +4638,7 @@ impl Window {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
             pointer_capture_bindings_index: self.next_frame.pointer_capture_bindings.len(),
+            portal_anchor_bindings_index: self.next_frame.portal_anchor_bindings.len(),
             retained_resources_index: self.next_frame.retained_resources.len(),
             prepaint_commits_index: self.next_frame.prepaint_commits.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
@@ -4654,6 +4679,23 @@ impl Window {
                 "a pointer capture handle or hitbox was bound more than once in one frame"
             );
             self.next_frame.pointer_capture_bindings.push(binding);
+        }
+        let frame_generation = self.next_frame.generation;
+        let reused_portal_anchor_bindings = self.rendered_frame.portal_anchor_bindings
+            [range.start.portal_anchor_bindings_index..range.end.portal_anchor_bindings_index]
+            .iter()
+            .map(|output| {
+                FrameOutput::new(
+                    output.value.replayed(frame_generation),
+                    SubtreeTransformValidity::replayed_under(
+                        output.validity.as_ref(),
+                        validity.clone(),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        for binding in reused_portal_anchor_bindings {
+            self.next_frame.record_portal_anchor_binding(binding);
         }
         self.next_frame.retained_resources.extend(
             self.rendered_frame.retained_resources
@@ -5058,6 +5100,18 @@ impl Window {
         }
     }
 
+    fn with_resolved_content_mask<R>(
+        &mut self,
+        mask: ContentMask<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        self.content_mask_stack.push(mask);
+        let result = f(self);
+        self.content_mask_stack.pop();
+        result
+    }
+
     /// Updates the global element offset relative to the current offset. This is used to implement
     /// scrolling. This method should only be called during the prepaint phase of element drawing.
     pub fn with_element_offset<R>(
@@ -5193,6 +5247,8 @@ impl Window {
             self.next_frame
                 .pointer_capture_bindings
                 .truncate(index.pointer_capture_bindings_index);
+            self.next_frame
+                .truncate_portal_anchor_bindings(index.portal_anchor_bindings_index);
             self.next_frame
                 .retained_resources
                 .truncate(index.retained_resources_index);
@@ -5357,6 +5413,26 @@ impl Window {
             .unwrap_or_default()
     }
 
+    pub(crate) fn with_prepaint_layout_id<R>(
+        &mut self,
+        layout_id: LayoutId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        let current = self.current_prepaint_layout_id.clone();
+        let previous = current.replace(Some(layout_id));
+        let _guard = PrepaintLayoutScopeGuard {
+            current,
+            entered: layout_id,
+            previous,
+        };
+        f(self)
+    }
+
+    pub(crate) fn current_prepaint_layout_id(&self) -> Option<LayoutId> {
+        self.current_prepaint_layout_id.get()
+    }
+
     pub(crate) fn subtree_transform(&self) -> ResolvedSubtreeTransform {
         self.invalidator.debug_assert_paint_or_prepaint();
         self.subtree_transform_stack
@@ -5423,6 +5499,9 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
+        if self.current_prepaint_layout_id().is_some() {
+            self.update_portal_anchor_transform(transform, validity.clone());
+        }
         let stack = self.subtree_transform_stack.clone();
         let entered_depth = stack.borrow().len();
         let _a11y_validity = self.a11y.nodes.enter_transform_validity(validity.clone());
@@ -5438,6 +5517,7 @@ impl Window {
     }
 
     fn record_subtree_transform_failure(&self, error: SubtreeTransformError) {
+        self.invalidate_portal_anchor_capture();
         if let Some(scope) = self.subtree_transform_stack.borrow().last()
             && let Some(validity) = scope.validity.as_ref()
         {
@@ -5476,7 +5556,12 @@ impl Window {
             .inspect_err(|error| self.record_subtree_transform_failure(*error))
     }
 
-    pub(crate) fn try_element_geometry(
+    /// Resolves layout bounds through the active checked subtree transform.
+    ///
+    /// Custom elements may call this during prepaint when they need the same immutable geometry
+    /// projection used by hitboxes, measurements, accessibility, and portal anchors. A failed
+    /// projection invalidates the active transform scope; callers must omit the dependent channel.
+    pub fn try_element_geometry(
         &self,
         layout_bounds: Bounds<Pixels>,
     ) -> Result<ElementGeometry, SubtreeTransformError> {
@@ -5917,8 +6002,8 @@ impl Window {
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
     ///
-    /// When `content_mask` is provided, the deferred element will be clipped to that region during
-    /// both prepaint and paint. When `None`, no additional clipping is applied.
+    /// When `content_mask` is provided, it is resolved under the current geometry and intersected
+    /// with the inherited clip. When `None`, the current effective clip is inherited unchanged.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn defer_draw(
@@ -5931,6 +6016,14 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         let transform = self.subtree_transform();
         let validity = self.subtree_transform_validity();
+        let content_mask = content_mask
+            .and_then(|mask| {
+                self.try_project_subtree_bounds(mask.bounds)
+                    .ok()
+                    .map(|bounds| ContentMask { bounds })
+            })
+            .map(|mask| mask.intersect(&self.content_mask()))
+            .unwrap_or_else(|| self.content_mask());
         self.defer_draw_with_transform(
             element,
             absolute_offset,
@@ -5943,8 +6036,9 @@ impl Window {
 
     /// Defers an element at a deliberate window-space portal boundary.
     ///
-    /// Unlike [`Self::defer_draw`], this resets inherited subtree geometry. Theme and presentation
-    /// inheritance are unaffected; callers must project portal anchors into window space first.
+    /// Unlike [`Self::defer_draw`], this resets inherited subtree geometry and clipping. Theme and
+    /// presentation inheritance are unaffected; callers must project portal anchors and optional
+    /// clip bounds into window space first. `None` restores the full viewport clip.
     pub fn defer_draw_in_window_space(
         &mut self,
         element: AnyElement,
@@ -5953,6 +6047,7 @@ impl Window {
         content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
+        let content_mask = self.window_portal_content_mask(content_mask);
         self.defer_draw_with_transform(
             element,
             absolute_offset,
@@ -5963,12 +6058,59 @@ impl Window {
         );
     }
 
+    pub(crate) fn with_window_space_portal_prepaint<R>(
+        &mut self,
+        absolute_offset: Point<Pixels>,
+        content_mask: Option<ContentMask<Pixels>>,
+        validity: Option<SubtreeTransformValidity>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        let content_mask = self.window_portal_content_mask(content_mask);
+        self.with_resolved_subtree_transform(
+            ResolvedSubtreeTransform::IDENTITY,
+            validity,
+            |window| {
+                window.with_absolute_element_offset(absolute_offset, |window| {
+                    window.with_resolved_content_mask(content_mask, f)
+                })
+            },
+        )
+    }
+
+    pub(crate) fn with_window_space_portal_paint<R>(
+        &mut self,
+        content_mask: Option<ContentMask<Pixels>>,
+        validity: Option<SubtreeTransformValidity>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint();
+        let content_mask = self.window_portal_content_mask(content_mask);
+        self.with_resolved_subtree_transform(
+            ResolvedSubtreeTransform::IDENTITY,
+            validity,
+            |window| window.with_resolved_content_mask(content_mask, f),
+        )
+    }
+
+    fn window_portal_content_mask(
+        &self,
+        content_mask: Option<ContentMask<Pixels>>,
+    ) -> ContentMask<Pixels> {
+        let viewport_mask = ContentMask {
+            bounds: Bounds::new(Point::default(), self.viewport_size),
+        };
+        content_mask
+            .map(|mask| mask.intersect(&viewport_mask))
+            .unwrap_or(viewport_mask)
+    }
+
     fn defer_draw_with_transform(
         &mut self,
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
-        content_mask: Option<ContentMask<Pixels>>,
+        content_mask: ContentMask<Pixels>,
         subtree_transform: ResolvedSubtreeTransform,
         subtree_transform_validity: Option<SubtreeTransformValidity>,
     ) {

@@ -195,24 +195,59 @@ reaching GPUI adapters. The shared contract distinguishes:
   `UiSize`, `UiRect`, and `UiEdges`) and do not store `Window`, `Context`, `FocusHandle`,
   `ElementId`, or callback types.
 
-GPUI placement adapters remain responsible for `deferred` and `anchored` rendering, hitboxes, and
+GPUI placement adapters remain responsible for deferred/window-portal rendering, hitboxes, and
 AccessKit relationship wiring. `WindowOverlayRuntime` is the sole per-window authority for live
 registration order, parentage, input subscriptions, controlled close intent, modal barriers, focus
-handles, focus claims, and restoration. `open_gpui_ui_components::gpui_adapter` also provides the
+handles, focus claims, and restoration. `open_gpui_ui_components::gpui_adapter` provides only the
 narrow placement mapping layer: deferred priority, snap-to-window margin, GPUI anchor mapping, and
-placement resolution. `open_gpui_ui_core::overlay` owns the
-renderer-neutral policy resolvers such as `resolve_escape_key` and `resolve_outside_press`; the
-window runtime consumes them for production arbitration rather than rebuilding stack ownership in
-each component.
-`open_gpui_ui_core::overlay::resolve_overlay_placement` is the shared anchored-placement solver for
-explicit neutral placement inputs. It returns `OverlayPlacementResolution` with fit and trace
-metadata, so point-anchored and render-plan overlays that provide anchor bounds, content size, and
-safe bounds use one flip/shift policy. `open_gpui_ui_components::overlay` owns the GPUI host
-mapping: `GpuiOverlayPlacement`, `gpui_relative_overlay_layer`, `gpui_positioned_overlay_layer`,
-and `gpui_full_window_overlay_layer` convert neutral placement and layer policy into concrete
-`anchored` / `deferred` / full-window elements. Trigger-anchored components that do not yet own
-measured trigger/content bounds still delegate final live positioning to GPUI's anchored layer; the
-neutral solver remains the testable policy boundary rather than a measured overlay runtime.
+placement resolution. `open_gpui_ui_core::overlay` owns renderer-neutral policy resolvers such as
+`resolve_escape_key`, `resolve_outside_press`, and `resolve_overlay_placement`; the window runtime
+consumes them for production arbitration rather than rebuilding stack ownership in each component.
+`open_gpui_ui_core::overlay::resolve_overlay_placement` is the shared placement solver for explicit
+neutral inputs. It returns `OverlayPlacementResolution` with fit and trace metadata, so portal,
+point-anchored, and render-plan overlays that provide anchor bounds, content size, and safe bounds
+use one flip/shift policy. `OverlayAnchorInput` remains a pure renderer-neutral snapshot; it is not
+a live target reference.
+
+GPUI owns live trigger geometry through `PortalAnchorHandle`. A handle belongs to one window, binds
+exactly one target per completed frame through `PortalAnchorExt::track_portal_anchor`, and may feed
+multiple followers. `PortalAnchorSnapshot` exposes only window identity, frame generation, opaque
+`ElementGeometry`, effective `SubtreePresentation`, and the target's effective clip AABB. During a
+draw, followers read only the current candidate; outside a draw they read only the last completed
+frame. Hidden, absent, unmounted, rolled-back, or numerically invalid targets resolve as unlinked;
+there is no last-known geometry fallback. Inert remains a linked GPUI fact.
+Presentation and transform wrappers on the tracked target root are order-independent relative to
+`track_portal_anchor`; builder order cannot bypass Hidden unlinking or publish untransformed bounds.
+When the tracked element is a cached `AnyView`, its cache layout and rendered root layout are one
+semantic anchor root. GPUI recaptures that root instead of replaying an inner cache journal, while
+ordinary descendant scopes remain outside the target facts.
+
+`portal_anchor_follower` resolves after ordinary prepaint and emits an explicit window-space portal.
+Views that resolve a portal anchor, including custom deferred work, are recorded as cross-view
+dependencies and are rebuilt on the next frame instead of replaying a stale cached deferred journal.
+Ordinary deferred content continues to inherit transform and clip. A window portal consumes the
+already projected target geometry and deliberately escapes the target clip while retaining theme
+and presentation inheritance.
+Every overlay inside region is committed in displayed window coordinates through
+`Window::try_element_geometry` and intersected with the effective content mask. Runtime
+outside-press arbitration never compares a window-space pointer against raw or clipped-away layout
+bounds, and an unrepresentable transform publishes no region.
+
+UI Components accepts only `SubtreePresentation::Visible` portal snapshots for interactive overlay
+followers. An ineligible or missing target forces the layer noninteractive and dispatches
+`DismissReason::AnchorUnlinked`: uncontrolled owners commit closed state, while controlled owners
+hide immediately and receive one typed open-change intent. If a controlled owner keeps requesting
+Open, the pending intent remains without being redispatched; committing Hidden clears it. A later
+eligible target can establish a new opening generation only after the owner requests Open again.
+
+Popover, Select, Combobox, HoverCard, Menu roots, and Menu submenu rows bind runtime-owned portal
+anchors. Standalone `Tooltip` accepts a caller-owned handle through `Tooltip::portal_anchor` and
+reports unlink through `Tooltip::on_open_change`; bind that same handle to the target every rendered
+frame. An initial closed, anchorless Tooltip establishes no registration, but once a retained
+Tooltip ID has bound a handle, later renders reuse that exact capability and reject replacement.
+GPUI-native delayed tooltips intentionally retain pointer-point anchoring. ContextMenu retains an
+explicit window point, and Dialog, AlertDialog, Sheet, and other viewport surfaces use a named
+window portal; neither path is converted into a trigger handle or transformed again by an ancestor.
 
 Interactive overlay adapters register stable logical layers and focus targets with
 `WindowOverlayRuntime`. Resolved state declares `InitialFocusIntent` and `FocusRestoreIntent`; the

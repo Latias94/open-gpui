@@ -1,7 +1,8 @@
 use open_gpui::{
     Bounds, ElementGeometry, Hitbox, MeasuredElementSnapshot, Pixels, Point, PrepaintPublicationId,
-    SubtreePresentation, SubtreePresentationExt as _, SubtreeTransform, SubtreeTransformExt as _,
-    SubtreeTransformOrigin, TargetedEvent, Window, div, measured_element, point, px, size,
+    SubtreePresentation, SubtreePresentationExt as _, SubtreeTransform, SubtreeTransformError,
+    SubtreeTransformExt as _, SubtreeTransformOrigin, TargetedEvent, Window, div, measured_element,
+    point, px, size,
 };
 use std::{ffi::OsStr, fs, path::Path};
 
@@ -44,6 +45,8 @@ fn checked_presentation_import_paths_compile() {
     let _ = consume_snapshot as fn(&MeasuredElementSnapshot) -> (u64, ElementGeometry);
     let _ = consume_hitbox as fn(&Hitbox) -> ElementGeometry;
     let _ = consume_targeted_event::<()> as fn(&TargetedEvent<()>) -> Bounds<Pixels>;
+    let _ = Window::try_element_geometry
+        as fn(&Window, Bounds<Pixels>) -> Result<ElementGeometry, SubtreeTransformError>;
 }
 
 #[test]

@@ -526,7 +526,7 @@ impl WindowOverlayRuntimeState {
                         && region.button.is_none_or(|inside_button| {
                             button.is_some_and(|button| button == inside_button)
                         })
-                        && region.bounds.contains(&point)
+                        && region.window_bounds.contains(&point)
                 });
             if !directly_inside {
                 continue;

@@ -1592,6 +1592,9 @@ mod accessibility_tests;
 mod pointer_session_tests;
 
 #[cfg(test)]
+mod portal_anchor_tests;
+
+#[cfg(test)]
 mod presentation_tests;
 
 #[cfg(test)]

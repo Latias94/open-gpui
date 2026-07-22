@@ -1,5 +1,26 @@
 use super::*;
 
+fn portal_anchor_demo_generations(cx: &mut VisualTestContext) -> [u64; 2] {
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("PortalAnchor Gallery snapshot should resolve")
+    });
+    [
+        "tooltip:gallery-portal-anchor-follower-bottom",
+        "tooltip:gallery-portal-anchor-follower-right",
+    ]
+    .map(|id| {
+        snapshot
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == id)
+            .unwrap_or_else(|| panic!("missing PortalAnchor Gallery layer `{id}`"))
+            .generation()
+            .get()
+    })
+}
+
 #[open_gpui::test]
 fn overlay_gallery_smoke_renders_catalog_entries_and_official_samples(
     cx: &mut open_gpui::TestAppContext,
@@ -25,7 +46,9 @@ fn overlay_gallery_smoke_renders_catalog_entries_and_official_samples(
 }
 
 #[open_gpui::test]
-fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui::TestAppContext) {
+fn overlay_gallery_smoke_dismisses_popover_without_stealing_pass_through_focus(
+    cx: &mut open_gpui::TestAppContext,
+) {
     let cx = open_overlay_gallery(cx);
     let story = overlay_story_contract("Popover");
     let trigger = story
@@ -36,6 +59,10 @@ fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui
         .selectors()
         .surface_selector()
         .expect("Popover story should declare a surface selector");
+    let sample = story
+        .selectors()
+        .sample_selector()
+        .expect("Popover story should declare a sample selector");
 
     let mut probe = StoryRuntimeProbe::new(cx);
     probe.assert_story_declares(&story, StoryProbeOperation::Open);
@@ -50,16 +77,21 @@ fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui
     assert_eq!(popover_layer.kind(), OverlayLayerKind::NonModalDismissible);
     assert_eq!(popover_layer.phase(), OverlayLayerPhase::Open);
 
+    let popover_trigger = probe.render_bounds(trigger);
     let popover_content = probe.render_bounds(content);
+    let sample_bounds = probe.render_bounds(sample);
     let outside_target = point(
-        popover_content.right() + px(24.0),
-        popover_content.bottom() + px(24.0),
+        sample_bounds.left() + px(2.0),
+        sample_bounds.top() + px(2.0),
     );
+    assert!(sample_bounds.contains(&outside_target));
+    assert!(!popover_trigger.contains(&outside_target));
+    assert!(!popover_content.contains(&outside_target));
     probe.click_point(outside_target);
     probe.settle();
 
     probe.assert_not_rendered(content, "outside-dismissed Popover content");
-    probe.assert_focused(trigger, "outside-dismissed Popover trigger");
+    probe.assert_focused("gallery:shell", "outside-dismissed Popover underlay");
 }
 
 #[open_gpui::test]
@@ -121,6 +153,128 @@ fn overlay_gallery_smoke_renders_manual_tooltip_from_state(cx: &mut open_gpui::T
         "tooltip:overlay-tooltip-content:delayed-manual:content",
         "manual Tooltip content",
     );
+}
+
+#[open_gpui::test]
+fn overlay_gallery_portal_anchor_follows_transform_scroll_and_controlled_unlink(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Overlay);
+    scroll_page_selector_into_view(&shell, cx, "gallery:portal-anchor-demo");
+    settle(cx);
+
+    let target_selector = "gallery:portal-anchor-target";
+    let bottom_selector = "tooltip:gallery-portal-anchor-follower-bottom:content";
+    let right_selector = "tooltip:gallery-portal-anchor-follower-right:content";
+    let target_initial = bounds(cx, target_selector);
+    let bottom_initial = bounds(cx, bottom_selector);
+    let right_initial = bounds(cx, right_selector);
+    assert!(bottom_initial.top() >= target_initial.bottom());
+    assert!(right_initial.left() >= target_initial.right());
+    let opening_generations = portal_anchor_demo_generations(cx);
+
+    click(cx, "button:gallery-portal-anchor-translate:root");
+    let target_moved = bounds(cx, target_selector);
+    let bottom_moved = bounds(cx, bottom_selector);
+    let right_moved = bounds(cx, right_selector);
+    assert_eq!(target_moved.left() - target_initial.left(), px(84.0));
+    assert_eq!(bottom_moved.left() - bottom_initial.left(), px(84.0));
+    assert_eq!(right_moved.left() - right_initial.left(), px(84.0));
+    assert_eq!(portal_anchor_demo_generations(cx), opening_generations);
+
+    let page_scroll = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
+    let offset = page_scroll.offset();
+    page_scroll.set_offset(point(offset.x, offset.y - px(24.0)));
+    redraw(cx);
+    let target_scrolled = bounds(cx, target_selector);
+    let bottom_scrolled = bounds(cx, bottom_selector);
+    let right_scrolled = bounds(cx, right_selector);
+    let target_scroll_delta = target_scrolled.top() - target_moved.top();
+    assert_ne!(target_scroll_delta, px(0.0));
+    assert_eq!(
+        bottom_scrolled.top() - bottom_moved.top(),
+        target_scroll_delta
+    );
+    assert_eq!(
+        right_scrolled.top() - right_moved.top(),
+        target_scroll_delta
+    );
+    assert_eq!(portal_anchor_demo_generations(cx), opening_generations);
+
+    click(cx, "button:gallery-portal-anchor-hide:root");
+    settle(cx);
+    assert!(cx.debug_bounds(target_selector).is_none());
+    assert!(cx.debug_bounds(bottom_selector).is_none());
+    assert!(cx.debug_bounds(right_selector).is_none());
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).portal_anchor_demo_unlink_intents()),
+        [1, 1]
+    );
+    redraw(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).portal_anchor_demo_unlink_intents()),
+        [1, 1],
+        "repeated Hidden frames must not emit duplicate owner intents"
+    );
+    let hidden = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .unwrap()
+    });
+    for id in [
+        "tooltip:gallery-portal-anchor-follower-bottom",
+        "tooltip:gallery-portal-anchor-follower-right",
+    ] {
+        let layer = hidden
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == id)
+            .unwrap_or_else(|| panic!("missing hidden PortalAnchor Gallery layer `{id}`"));
+        assert_eq!(layer.phase(), OverlayLayerPhase::Hidden);
+        assert_eq!(layer.pending_intent(), None);
+    }
+
+    click(cx, "button:gallery-portal-anchor-hide:root");
+    settle(cx);
+    assert!(cx.debug_bounds(target_selector).is_some());
+    assert!(cx.debug_bounds(bottom_selector).is_none());
+    assert!(cx.debug_bounds(right_selector).is_none());
+    click(cx, "button:gallery-portal-anchor-reopen:root");
+    settle(cx);
+    assert!(cx.debug_bounds(bottom_selector).is_some());
+    assert!(cx.debug_bounds(right_selector).is_some());
+    let reopened_generations = portal_anchor_demo_generations(cx);
+    assert!(reopened_generations[0] > opening_generations[0]);
+    assert!(reopened_generations[1] > opening_generations[1]);
+
+    click(cx, "button:gallery-portal-anchor-mount:root");
+    settle(cx);
+    assert!(cx.debug_bounds(target_selector).is_none());
+    assert!(cx.debug_bounds(bottom_selector).is_none());
+    assert!(cx.debug_bounds(right_selector).is_none());
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).portal_anchor_demo_unlink_intents()),
+        [2, 2]
+    );
+    redraw(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).portal_anchor_demo_unlink_intents()),
+        [2, 2],
+        "repeated unmounted frames must not emit duplicate owner intents"
+    );
+
+    click(cx, "button:gallery-portal-anchor-mount:root");
+    settle(cx);
+    assert!(cx.debug_bounds(target_selector).is_some());
+    assert!(cx.debug_bounds(bottom_selector).is_none());
+    assert!(cx.debug_bounds(right_selector).is_none());
+    click(cx, "button:gallery-portal-anchor-reopen:root");
+    settle(cx);
+    assert!(cx.debug_bounds(bottom_selector).is_some());
+    assert!(cx.debug_bounds(right_selector).is_some());
+    let remounted_generations = portal_anchor_demo_generations(cx);
+    assert!(remounted_generations[0] > reopened_generations[0]);
+    assert!(remounted_generations[1] > reopened_generations[1]);
 }
 
 #[open_gpui::test]

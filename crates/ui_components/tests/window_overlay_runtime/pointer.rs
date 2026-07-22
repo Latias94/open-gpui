@@ -63,6 +63,73 @@ fn outside_policies_preserve_exactly_once_intent_and_dispatch_outcomes(
 }
 
 #[open_gpui::test]
+fn transformed_and_clipped_surface_inside_region_uses_visible_window_bounds(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    draw(cx);
+    register_layer(
+        cx,
+        &view,
+        controlled_registration(
+            "transformed-inside-region",
+            policy(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::open(),
+                OutsidePressPolicy::DismissAndConsume,
+            ),
+            events.clone(),
+        ),
+    );
+    cx.update_window_entity(&view, |probe, _, cx| {
+        probe.set_surface_transform(
+            "transformed-inside-region",
+            SubtreeTransform::try_translation(point(px(300.0), px(200.0)))
+                .expect("the inside-region translation should be valid"),
+        );
+        probe.set_surface_clipped("transformed-inside-region");
+        cx.notify();
+    });
+    draw(cx);
+
+    let displayed = cx
+        .debug_bounds("window-overlay-runtime:transformed-inside-region:surface")
+        .expect("the transformed overlay surface should render");
+    let visible_point = point(displayed.origin.x + px(10.0), displayed.center().y);
+    let clipped_point = point(displayed.right() - px(10.0), displayed.center().y);
+    assert!(displayed.contains(&visible_point));
+    assert!(displayed.contains(&clipped_point));
+    assert!(visible_point.x < px(600.0));
+    assert!(clipped_point.x > px(600.0));
+
+    cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
+        position: visible_point,
+        modifiers: Default::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+        first_mouse: false,
+    });
+    assert!(
+        events.borrow().is_empty(),
+        "displayed inside geometry must not dispatch an outside close intent"
+    );
+
+    cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
+        position: clipped_point,
+        modifiers: Default::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+        first_mouse: false,
+    });
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[false],
+        "geometry outside the effective clip must remain an outside press"
+    );
+}
+
+#[open_gpui::test]
 fn parent_and_child_inside_regions_resolve_one_layer_without_breaking_modal_pass_through(
     cx: &mut open_gpui::TestAppContext,
 ) {

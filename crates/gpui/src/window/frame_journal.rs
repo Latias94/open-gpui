@@ -10,7 +10,7 @@ use crate::{
 };
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
-use open_gpui_collections::FxHashMap;
+use open_gpui_collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -21,7 +21,14 @@ use std::{
 use super::{
     AnyMouseListener, AnyPointerCancelListener, ContentMask, CursorStyleRequest, ElementStateBox,
     FocusId, HitTest, ImagePaintDiagnostic, PrepaintPublicationId, TooltipId,
+    portal_anchor::{PortalAnchorBinding, PortalAnchorId},
 };
+
+#[derive(Clone, Copy)]
+enum PortalAnchorBindingLocation {
+    Unique(usize),
+    Duplicate,
+}
 
 #[derive(Clone)]
 pub(crate) struct FrameOutput<T> {
@@ -63,7 +70,7 @@ pub(crate) struct DeferredDraw {
     pub(super) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(super) text_style_stack: Vec<TextStyleRefinement>,
     pub(super) accessibility_tree_scope: AccessibilityTreeScope,
-    pub(super) content_mask: Option<ContentMask<Pixels>>,
+    pub(super) content_mask: ContentMask<Pixels>,
     pub(super) rem_size: Pixels,
     pub(super) element: Option<AnyElement>,
     pub(super) absolute_offset: Point<Pixels>,
@@ -93,6 +100,9 @@ pub(crate) struct Frame {
     pub(crate) subtree_transform_diagnostics: Vec<SubtreeTransformDiagnostic>,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) pointer_capture_bindings: Vec<(PointerCaptureId, HitboxId)>,
+    pub(super) portal_anchor_bindings: Vec<FrameOutput<PortalAnchorBinding>>,
+    portal_anchor_binding_locations: FxHashMap<PortalAnchorId, PortalAnchorBindingLocation>,
+    pub(super) portal_anchor_dependent_views: FxHashSet<EntityId>,
     pub(crate) retained_resources: Vec<Rc<dyn Any>>,
     pub(crate) prepaint_commits: Vec<FrameOutput<PrepaintCommit>>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
@@ -120,6 +130,7 @@ pub(crate) struct Frame {
 pub(crate) struct PrepaintStateIndex {
     pub(super) hitboxes_index: usize,
     pub(super) pointer_capture_bindings_index: usize,
+    pub(super) portal_anchor_bindings_index: usize,
     pub(super) retained_resources_index: usize,
     pub(super) prepaint_commits_index: usize,
     pub(super) tooltips_index: usize,
@@ -170,6 +181,9 @@ impl Frame {
             subtree_transform_diagnostics: Vec::new(),
             hitboxes: Vec::new(),
             pointer_capture_bindings: Vec::new(),
+            portal_anchor_bindings: Vec::new(),
+            portal_anchor_binding_locations: FxHashMap::default(),
+            portal_anchor_dependent_views: FxHashSet::default(),
             retained_resources: Vec::new(),
             prepaint_commits: Vec::new(),
             window_control_hitboxes: Vec::new(),
@@ -215,6 +229,9 @@ impl Frame {
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.pointer_capture_bindings.clear();
+        self.portal_anchor_bindings.clear();
+        self.portal_anchor_binding_locations.clear();
+        self.portal_anchor_dependent_views.clear();
         self.retained_resources.clear();
         self.prepaint_commits.clear();
         self.window_control_hitboxes.clear();
@@ -260,6 +277,60 @@ impl Frame {
                 })),
             })
             .into_inner()
+    }
+
+    pub(super) fn has_portal_anchor_binding(&self, id: PortalAnchorId) -> bool {
+        self.portal_anchor_binding_locations.contains_key(&id)
+    }
+
+    pub(super) fn portal_anchor_binding_is_duplicate(&self, id: PortalAnchorId) -> bool {
+        matches!(
+            self.portal_anchor_binding_locations.get(&id),
+            Some(PortalAnchorBindingLocation::Duplicate)
+        )
+    }
+
+    pub(super) fn portal_anchor_binding(
+        &self,
+        id: PortalAnchorId,
+    ) -> Option<&FrameOutput<PortalAnchorBinding>> {
+        let PortalAnchorBindingLocation::Unique(index) =
+            *self.portal_anchor_binding_locations.get(&id)?
+        else {
+            return None;
+        };
+        self.portal_anchor_bindings.get(index)
+    }
+
+    pub(super) fn record_portal_anchor_binding(
+        &mut self,
+        binding: FrameOutput<PortalAnchorBinding>,
+    ) {
+        let id = binding.value.id();
+        let index = self.portal_anchor_bindings.len();
+        self.portal_anchor_binding_locations
+            .entry(id)
+            .and_modify(|location| *location = PortalAnchorBindingLocation::Duplicate)
+            .or_insert(PortalAnchorBindingLocation::Unique(index));
+        self.portal_anchor_bindings.push(binding);
+    }
+
+    pub(super) fn truncate_portal_anchor_bindings(&mut self, len: usize) {
+        if len >= self.portal_anchor_bindings.len() {
+            return;
+        }
+        self.portal_anchor_bindings.truncate(len);
+        self.rebuild_portal_anchor_binding_locations();
+    }
+
+    fn rebuild_portal_anchor_binding_locations(&mut self) {
+        self.portal_anchor_binding_locations.clear();
+        for (index, binding) in self.portal_anchor_bindings.iter().enumerate() {
+            self.portal_anchor_binding_locations
+                .entry(binding.value.id())
+                .and_modify(|location| *location = PortalAnchorBindingLocation::Duplicate)
+                .or_insert(PortalAnchorBindingLocation::Unique(index));
+        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {

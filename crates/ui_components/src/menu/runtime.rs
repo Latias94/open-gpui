@@ -6,7 +6,6 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use open_gpui::{App, Context, Entity, Pixels, Point, ScrollHandle, Task, Window};
-use open_gpui_ui_core::Rect;
 
 use crate::collection_typeahead::CollectionTypeaheadSession;
 use crate::overlay::OverlayLayerBinding;
@@ -81,7 +80,6 @@ pub(crate) struct MenuRuntime {
     pub(crate) submenu_hover_task: Option<Rc<Task<()>>>,
     pub(crate) scroll_handle: ScrollHandle,
     pub(crate) submenu_scroll_handles: HashMap<String, ScrollHandle>,
-    pub(crate) submenu_trigger_bounds: HashMap<String, Rect>,
 }
 
 impl MenuRuntime {
@@ -100,7 +98,6 @@ impl MenuRuntime {
             submenu_hover_task: None,
             scroll_handle: ScrollHandle::new(),
             submenu_scroll_handles: HashMap::new(),
-            submenu_trigger_bounds: HashMap::new(),
         }
     }
 
@@ -184,7 +181,6 @@ impl MenuRuntime {
         self.submenu_hover_epoch = self.submenu_hover_epoch.wrapping_add(1);
         self.submenu_hover_task = None;
         self.submenu_scroll_handles.clear();
-        self.submenu_trigger_bounds.clear();
     }
 
     fn bump_submenu_hover_epoch(&mut self) {

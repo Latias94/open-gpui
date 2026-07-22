@@ -4,10 +4,11 @@ use open_gpui::prelude::*;
 
 use open_gpui::{
     AccessibilityAnnouncement, Anchor, App, AppContext, BorrowAppContext, Bounds, Context,
-    ElementGeometry, FocusHandle, InteractiveElement, IntoElement, ListAlignment, ListState,
-    ParentElement, Pixels, Render, ScrollHandle, StatefulInteractiveElement, Styled,
-    SubtreePresentation, Window, WindowBounds, WindowOptions, anchored, deferred, div, px, rgb,
-    size,
+    ElementGeometry, ElementId, FocusHandle, InteractiveElement, IntoElement, ListAlignment,
+    ListState, ParentElement, Pixels, PortalAnchorExt as _, PortalAnchorHandle, Render,
+    ScrollHandle, StatefulInteractiveElement, Styled, SubtreePresentation, SubtreeTransform,
+    SubtreeTransformExt as _, Window, WindowBounds, WindowOptions, anchored, deferred, div, point,
+    px, rgb, size,
 };
 use open_gpui_devtools::DevtoolsInspectorController;
 
@@ -20,7 +21,7 @@ use open_gpui_ui_components::{
     ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress, ProgressState,
     ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton,
     SkeletonState, StatusCue, SwitchState, TextInputState, TextareaState, ThemeResolver,
-    ToggleState, Tooltip,
+    ToggleState, Tooltip, TooltipOpenIntent,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, WindowOverlayRuntime,
         focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui,
@@ -144,6 +145,7 @@ pub struct GalleryShell {
     presentation_geometry: Option<ElementGeometry>,
     focus_controls: [FocusHandle; pages::focus_a11y::FOCUS_CONTROLS.len()],
     tooltip_focus_controls: [FocusHandle; 4],
+    portal_anchor_demo_anchor: PortalAnchorHandle,
     focus_a11y: FocusA11yPageState,
     overlay: OverlayPageState,
     components_focus: pages::components::ComponentFocusMode,
@@ -210,6 +212,7 @@ impl GalleryShell {
                 cx.focus_handle().tab_index(12).tab_stop(true),
                 cx.focus_handle().tab_index(13).tab_stop(true),
             ],
+            portal_anchor_demo_anchor: window.new_portal_anchor(),
             focus_a11y: FocusA11yPageState::default(),
             overlay: OverlayPageState::default(),
             components_focus: pages::components::ComponentFocusMode::All,
@@ -323,6 +326,17 @@ impl GalleryShell {
     /// Returns the page scroll handle used by gallery smoke tests and anchored jumps.
     pub fn page_scroll_handle(&self) -> &ScrollHandle {
         &self.page_scroll_handle
+    }
+
+    /// Returns the controlled unlink-intent counts for the PortalAnchor Gallery followers.
+    pub fn portal_anchor_demo_unlink_intents(&self) -> [usize; 2] {
+        [
+            self.overlay.portal_anchor_demo_unlink_intents(
+                pages::overlay::PortalAnchorDemoFollower::Bottom,
+            ),
+            self.overlay
+                .portal_anchor_demo_unlink_intents(pages::overlay::PortalAnchorDemoFollower::Right),
+        ]
     }
 
     /// Returns the Components page lazy section list state used by tests.
@@ -1690,6 +1704,7 @@ impl GalleryShell {
                             .children(overlay_catalog_cards),
                     ),
             )
+            .child(self.render_portal_anchor_demo(window, cx))
             .child(
 
                 div()
@@ -2251,6 +2266,226 @@ impl GalleryShell {
             )
     }
 
+    fn render_portal_anchor_demo(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let anchor = self.portal_anchor_demo_anchor;
+        let translated = self.overlay.portal_anchor_demo_translated();
+        let target_hidden = self.overlay.portal_anchor_demo_target_hidden();
+        let target_mounted = self.overlay.portal_anchor_demo_target_mounted();
+        let bottom_open = self
+            .overlay
+            .portal_anchor_demo_follower_open(pages::overlay::PortalAnchorDemoFollower::Bottom);
+        let right_open = self
+            .overlay
+            .portal_anchor_demo_follower_open(pages::overlay::PortalAnchorDemoFollower::Right);
+        let bottom_unlinks = self
+            .overlay
+            .portal_anchor_demo_unlink_intents(pages::overlay::PortalAnchorDemoFollower::Bottom);
+        let right_unlinks = self
+            .overlay
+            .portal_anchor_demo_unlink_intents(pages::overlay::PortalAnchorDemoFollower::Right);
+        let transform = SubtreeTransform::try_translation(point(
+            px(if translated { 84.0 } else { 0.0 }),
+            px(0.0),
+        ))
+        .expect("Gallery portal-anchor translation must remain representable");
+        let presentation = if target_hidden {
+            SubtreePresentation::Hidden
+        } else {
+            SubtreePresentation::Visible
+        };
+
+        let target = div()
+            .id("gallery-portal-anchor-target")
+            .debug_selector(|| "gallery:portal-anchor-target".to_owned())
+            .absolute()
+            .left(px(32.0))
+            .top(px(18.0))
+            .w(px(144.0))
+            .h(px(36.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0x2f6f62))
+            .bg(rgb(0xe7f3ef))
+            .text_sm()
+            .child("Portal target")
+            .track_portal_anchor(&anchor)
+            .with_subtree_transform(transform)
+            .with_subtree_presentation(presentation);
+
+        let bottom_shell = cx.entity().downgrade();
+        let bottom_follower =
+            Tooltip::new("gallery-portal-anchor-follower-bottom", "Bottom follower")
+                .portal_anchor(anchor)
+                .open(bottom_open)
+                .open_intent(TooltipOpenIntent::Manual)
+                .placement_side(OverlayPlacementSide::Bottom)
+                .placement_alignment(OverlayPlacementAlignment::Start)
+                .on_open_change(move |intent, _, cx| {
+                    bottom_shell
+                        .update(cx, |this, cx| {
+                            this.mutate_overlay(
+                                |state| {
+                                    state.apply_portal_anchor_demo_intent(
+                                        pages::overlay::PortalAnchorDemoFollower::Bottom,
+                                        intent.desired_open(),
+                                        intent.reason(),
+                                    )
+                                },
+                                cx,
+                            )
+                        })
+                        .ok();
+                });
+
+        let right_shell = cx.entity().downgrade();
+        let right_follower = Tooltip::new("gallery-portal-anchor-follower-right", "Right follower")
+            .portal_anchor(anchor)
+            .open(right_open)
+            .open_intent(TooltipOpenIntent::Manual)
+            .placement_side(OverlayPlacementSide::Right)
+            .placement_alignment(OverlayPlacementAlignment::Center)
+            .on_open_change(move |intent, _, cx| {
+                right_shell
+                    .update(cx, |this, cx| {
+                        this.mutate_overlay(
+                            |state| {
+                                state.apply_portal_anchor_demo_intent(
+                                    pages::overlay::PortalAnchorDemoFollower::Right,
+                                    intent.desired_open(),
+                                    intent.reason(),
+                                )
+                            },
+                            cx,
+                        )
+                    })
+                    .ok();
+            });
+
+        let translate_next = !translated;
+        let hidden_next = !target_hidden;
+        let mounted_next = !target_mounted;
+        div()
+            .id("gallery-portal-anchor-demo")
+            .debug_selector(|| "gallery:portal-anchor-demo".to_owned())
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_4()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(open_gpui::FontWeight::BOLD)
+                    .child("Portal anchor lifecycle"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .child(
+                        Button::new(
+                            "gallery-portal-anchor-translate",
+                            if translated {
+                                "Reset position"
+                            } else {
+                                "Move target"
+                            },
+                        )
+                        .variant(ButtonVariant::Secondary)
+                        .with_size(Size::Small)
+                        .on_activate(cx.processor(
+                            move |this, _, _, cx| {
+                                this.mutate_overlay(
+                                    |state| state.set_portal_anchor_demo_translated(translate_next),
+                                    cx,
+                                );
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new(
+                            "gallery-portal-anchor-hide",
+                            if target_hidden {
+                                "Show target"
+                            } else {
+                                "Hide target"
+                            },
+                        )
+                        .variant(ButtonVariant::Secondary)
+                        .with_size(Size::Small)
+                        .on_activate(cx.processor(
+                            move |this, _, _, cx| {
+                                this.mutate_overlay(
+                                    |state| state.set_portal_anchor_demo_target_hidden(hidden_next),
+                                    cx,
+                                );
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new(
+                            "gallery-portal-anchor-mount",
+                            if target_mounted {
+                                "Unmount target"
+                            } else {
+                                "Mount target"
+                            },
+                        )
+                        .variant(ButtonVariant::Secondary)
+                        .with_size(Size::Small)
+                        .on_activate(cx.processor(
+                            move |this, _, _, cx| {
+                                this.mutate_overlay(
+                                    |state| {
+                                        state.set_portal_anchor_demo_target_mounted(mounted_next)
+                                    },
+                                    cx,
+                                );
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new("gallery-portal-anchor-reopen", "Reopen followers")
+                            .variant(ButtonVariant::Secondary)
+                            .with_size(Size::Small)
+                            .on_activate(cx.processor(|this, _, _, cx| {
+                                this.mutate_overlay(
+                                    |state| state.reopen_portal_anchor_demo_followers(),
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .relative()
+                    .h(px(72.0))
+                    .when(target_mounted, |slot| slot.child(target)),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "gallery:portal-anchor-status".to_owned())
+                    .text_xs()
+                    .text_color(rgb(0x5a6472))
+                    .child(format!(
+                        "unlink intents: bottom {bottom_unlinks}, right {right_unlinks}"
+                    )),
+            )
+            .child(bottom_follower)
+            .child(right_follower)
+    }
+
     fn render_tooltip_sample_card(
         &self,
 
@@ -2273,6 +2508,11 @@ impl GalleryShell {
         let label = sample.label;
 
         let tooltip_text = sample.tooltip_text;
+        let anchor_key: ElementId =
+            (ElementId::from("gallery-tooltip-portal-anchor"), sample_id).into();
+        let portal_anchor =
+            window.use_keyed_state(anchor_key, cx, |window, _| window.new_portal_anchor());
+        let portal_anchor = *portal_anchor.read(cx);
 
         let focused =
             focus_handle_is_focused && state.open_intent().opens_on_focus() && !state.disabled();
@@ -2330,7 +2570,8 @@ impl GalleryShell {
                         cx,
                     );
                 }))
-                .child(label),
+                .child(label)
+                .track_portal_anchor(&portal_anchor),
         )
         .when(open, |card| {
             card.child(
@@ -2338,6 +2579,7 @@ impl GalleryShell {
                     format!("overlay-tooltip-content:{}", sample_id),
                     tooltip_text,
                 )
+                .portal_anchor(portal_anchor)
                 .open(true)
                 .open_intent(state.open_intent())
                 .placement_side(state.placement_side())

@@ -5,24 +5,24 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div,
+    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement,
+    PortalAnchorExt as _, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
+    div,
 };
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role,
-    SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
+    SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    FocusTargetRegistration, GpuiOverlayPlacement, OverlayDisclosureConfig,
-    OverlayDisclosureOpenMode, OverlayFocusTargetSet, OverlayInsideRegionId, OverlayLayerBinding,
-    OverlayLayerRegistration, OverlayOpenIntent, OverlayOwnership, OverlayResolvedState,
-    WindowOverlayRuntime, gpui_overlay_state, gpui_relative_overlay_layer,
-    resolve_overlay_open_state,
+    FocusTargetRegistration, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayFocusTargetSet, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration,
+    OverlayOpenIntent, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
+    gpui_overlay_state, gpui_portal_anchor_overlay_layer, resolve_overlay_open_state,
 };
 use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
 
@@ -557,7 +557,8 @@ impl RenderOnce for Popover {
             format!("popover:{debug_id}"),
             state.overlay().policy().clone(),
             ownership,
-        );
+        )
+        .portal_anchored();
         if let Some(on_open_change) = on_open_change {
             registration = registration.on_open_change(move |intent, window, cx| {
                 on_open_change(intent, window, cx);
@@ -611,19 +612,12 @@ impl RenderOnce for Popover {
         let disabled = state.disabled();
         let open = state.open();
         let overlay_adapter = gpui_overlay_state(state.overlay());
-        let placement = GpuiOverlayPlacement::resolve(
-            OverlayPlacementInput::new(
-                open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
-                    ui_point(ui_px(0.0), ui_px(0.0)),
-                    ui_size(metrics.min_width(), metrics.trigger_height()),
-                )),
-                ui_size(metrics.min_width(), metrics.trigger_height()),
-            )
-            .with_side(state.placement_side())
-            .with_alignment(state.placement_alignment())
-            .with_offset(ui_px(6.0)),
-            overlay_adapter.snap_margin(),
-        );
+        let placement_content_size = ui_size(metrics.min_width(), metrics.trigger_height());
+        let placement_side = state.placement_side();
+        let placement_alignment = state.placement_alignment();
+        let portal_anchor = overlay_binding
+            .portal_anchor()
+            .expect("popover registration must own a portal anchor");
         let trigger_semantics = SemanticDescriptor::new(state.trigger_role())
             .with_label(trigger_label.as_ref())
             .with_selected(state.trigger_selected())
@@ -642,43 +636,44 @@ impl RenderOnce for Popover {
             .flex_col()
             .items_start()
             .child(
-                window_overlay_runtime.inside_region(
-                    &overlay_binding,
-                    OverlayInsideRegionId::new("trigger"),
-                    format!("popover:{debug_id}:trigger-region"),
-                    div()
-                        .id(trigger_id)
-                        .debug_selector({
-                            let debug_id = debug_id.clone();
-                            move || format!("popover:{debug_id}:trigger")
-                        })
-                        .min_h(gpui_px_from_ui(metrics.trigger_height()))
-                        .px(gpui_px_from_ui(metrics.trigger_padding_x()))
-                        .py(gpui_px_from_ui(metrics.trigger_padding_y()))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(gpui_px_from_ui(metrics.radius()))
-                        .border_1()
-                        .border_color(trigger_border)
-                        .bg(trigger_background)
-                        .text_color(trigger_foreground)
-                        .text_size(gpui_px_from_ui(metrics.text_size()))
-                        .line_height(gpui_px_from_ui(metrics.text_size()))
-                        .focusable()
-                        .tab_stop(!disabled)
-                        .ui_semantics(&trigger_semantics)
-                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
-                        .track_focus(overlay_binding.trigger_focus())
-                        .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                        .when(!disabled, |this| {
-                            let window_overlay_runtime = window_overlay_runtime.clone();
-                            let overlay_binding = overlay_binding.clone();
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(trigger_hover_background))
-                                .on_click(move |_event, window, cx| {
-                                    cx.stop_propagation();
-                                    window_overlay_runtime
+                window_overlay_runtime
+                    .inside_region(
+                        &overlay_binding,
+                        OverlayInsideRegionId::new("trigger"),
+                        format!("popover:{debug_id}:trigger-region"),
+                        div()
+                            .id(trigger_id)
+                            .debug_selector({
+                                let debug_id = debug_id.clone();
+                                move || format!("popover:{debug_id}:trigger")
+                            })
+                            .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                            .px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                            .py(gpui_px_from_ui(metrics.trigger_padding_y()))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(gpui_px_from_ui(metrics.radius()))
+                            .border_1()
+                            .border_color(trigger_border)
+                            .bg(trigger_background)
+                            .text_color(trigger_foreground)
+                            .text_size(gpui_px_from_ui(metrics.text_size()))
+                            .line_height(gpui_px_from_ui(metrics.text_size()))
+                            .focusable()
+                            .tab_stop(!disabled)
+                            .ui_semantics(&trigger_semantics)
+                            .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
+                            .track_focus(overlay_binding.trigger_focus())
+                            .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                            .when(!disabled, |this| {
+                                let window_overlay_runtime = window_overlay_runtime.clone();
+                                let overlay_binding = overlay_binding.clone();
+                                this.cursor_pointer()
+                                    .hover(move |style| style.bg(trigger_hover_background))
+                                    .on_click(move |_event, window, cx| {
+                                        cx.stop_propagation();
+                                        window_overlay_runtime
                                         .request_open_change(
                                             &overlay_binding,
                                             !open,
@@ -689,25 +684,36 @@ impl RenderOnce for Popover {
                                         .expect(
                                             "popover trigger should own its overlay registration",
                                         );
-                                })
-                        })
-                        .child(trigger_label),
-                ),
+                                    })
+                            })
+                            .child(trigger_label),
+                    )
+                    .track_portal_anchor(&portal_anchor),
             )
             .when(open, |this| {
-                this.child(gpui_relative_overlay_layer(
+                let content_runtime = window_overlay_runtime.clone();
+                let content_binding = overlay_binding.clone();
+                this.child(gpui_portal_anchor_overlay_layer(
                     &overlay_adapter,
-                    &placement,
+                    &window_overlay_runtime,
                     &overlay_binding,
-                    |opening_theme| {
+                    window,
+                    cx,
+                    move |anchor| {
+                        OverlayPlacementInput::new(anchor, placement_content_size)
+                            .with_side(placement_side)
+                            .with_alignment(placement_alignment)
+                            .with_offset(ui_px(6.0))
+                    },
+                    move |opening_theme, _, _| {
                         popover_content_element(
                             content,
                             content_id.clone(),
                             debug_id.clone(),
                             state.clone(),
                             opening_theme,
-                            window_overlay_runtime.clone(),
-                            overlay_binding.clone(),
+                            content_runtime,
+                            content_binding,
                         )
                         .into_any_element()
                     },

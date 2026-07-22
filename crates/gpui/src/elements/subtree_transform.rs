@@ -24,6 +24,7 @@ impl SubtreeTransformElement {
     }
 
     fn report_failure(error: SubtreeTransformError, window: &mut Window) {
+        window.invalidate_portal_anchor_capture();
         window.record_subtree_transform_diagnostic(error);
     }
 }

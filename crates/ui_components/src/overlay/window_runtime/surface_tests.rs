@@ -1,9 +1,9 @@
 use super::*;
 
 use open_gpui::{
-    AccessibleAction, AnyView, AppContext as _, Bounds, Context, InteractiveElement, ParentElement,
-    Render, Role, StatefulInteractiveElement, Styled, SubtreePresentation, SubtreePresentationExt,
-    accesskit, deferred, div, point, px, size,
+    AccessibleAction, AnyView, AppContext as _, Bounds, Context, Empty, InteractiveElement,
+    ParentElement, Render, Role, StatefulInteractiveElement, Styled, SubtreePresentation,
+    SubtreePresentationExt, accesskit, deferred, div, point, px, size,
 };
 
 const PARENT_LAYER: &str = "surface-parent";
@@ -541,6 +541,144 @@ fn modal_registration(id: &'static str, presence: OverlayPresence) -> OverlayLay
 
 fn child_registration(id: &'static str, parent: &'static str) -> OverlayLayerRegistration {
     layer_registration(id).parent(parent)
+}
+
+#[open_gpui::test]
+fn portal_anchor_registration_is_window_bound_and_immutable(cx: &mut open_gpui::TestAppContext) {
+    let first_window: open_gpui::AnyWindowHandle = cx.add_window(|_, _| Empty).into();
+    let first_handle = cx
+        .update_window(first_window, |_, window, _| window.new_portal_anchor())
+        .unwrap();
+    let second_window: open_gpui::AnyWindowHandle = cx.add_window(|_, _| Empty).into();
+
+    let wrong_window = cx
+        .update_window(second_window, |_, window, cx| {
+            WindowOverlayRuntime::for_window(window, cx).register_layer(
+                layer_registration("foreign-portal-anchor").portal_anchor(first_handle),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    assert!(matches!(
+        wrong_window,
+        Err(WindowOverlayRuntimeError::WrongWindow)
+    ));
+
+    cx.update_window(first_window, |_, window, cx| {
+        let runtime = WindowOverlayRuntime::for_window(window, cx);
+        let replacement_handle = window.new_portal_anchor();
+        let binding = runtime
+            .register_layer(
+                layer_registration("stable-external-portal-anchor").portal_anchor(first_handle),
+                window,
+                cx,
+            )
+            .expect("same-window external anchor should register");
+        assert_eq!(binding.portal_anchor(), Some(first_handle));
+        runtime
+            .rebind_layer(
+                &binding,
+                layer_registration("stable-external-portal-anchor").portal_anchor(first_handle),
+                window,
+                cx,
+            )
+            .expect("the same external anchor should rebind");
+        assert_eq!(
+            runtime.rebind_layer(
+                &binding,
+                layer_registration("stable-external-portal-anchor")
+                    .portal_anchor(replacement_handle),
+                window,
+                cx,
+            ),
+            Err(WindowOverlayRuntimeError::PortalAnchorModeChanged(
+                OverlayLayerId::new("stable-external-portal-anchor")
+            ))
+        );
+
+        let plain = runtime
+            .register_layer(layer_registration("plain-portal-mode"), window, cx)
+            .expect("plain layer should register");
+        assert_eq!(
+            runtime.rebind_layer(
+                &plain,
+                layer_registration("plain-portal-mode").portal_anchor(first_handle),
+                window,
+                cx,
+            ),
+            Err(WindowOverlayRuntimeError::PortalAnchorModeChanged(
+                OverlayLayerId::new("plain-portal-mode")
+            ))
+        );
+    })
+    .unwrap();
+}
+
+#[open_gpui::test]
+fn portal_anchor_unlink_supersedes_an_older_controlled_close_reason(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let callback_events = events.clone();
+    let window = cx.add_window(SurfaceProjectionProbe::new);
+
+    let projection = window
+        .update(cx, |probe, window, cx| {
+            let runtime = probe.surface_runtime.clone();
+            let anchor = window.new_portal_anchor();
+            let binding = runtime
+                .register_layer(
+                    layer_registration("controlled-portal-reason")
+                        .portal_anchor(anchor)
+                        .on_open_change(move |intent, _, _| {
+                            callback_events
+                                .borrow_mut()
+                                .push((intent.desired_open(), intent.reason()));
+                        }),
+                    window,
+                    cx,
+                )
+                .expect("controlled portal layer should register");
+
+            runtime
+                .request_open_change(&binding, false, DismissReason::EscapeKey, window, cx)
+                .expect("controlled close should remain pending after owner refusal");
+            let opening_generation = runtime
+                .portal_anchor_generation(&binding, window, cx)
+                .expect("controlled portal layer should expose its generation");
+            runtime
+                .mark_portal_anchor_unlinked(&binding, opening_generation, window, cx)
+                .expect("portal unlink should force the layer hidden");
+
+            let hidden = runtime
+                .snapshot(window, cx)
+                .expect("controlled portal snapshot should resolve")
+                .layers()
+                .iter()
+                .find(|layer| layer.id().as_str() == "controlled-portal-reason")
+                .cloned()
+                .expect("controlled portal layer should remain registered");
+            runtime
+                .mark_portal_anchor_unlinked(&binding, hidden.generation(), window, cx)
+                .expect("repeated portal unlink should be an exact no-op");
+            hidden
+        })
+        .expect("controlled portal window should remain open");
+
+    assert_eq!(projection.phase(), OverlayLayerPhase::Hidden);
+    assert_eq!(projection.pending_open(), Some(false));
+    assert_eq!(
+        projection.pending_intent(),
+        Some(DismissReason::AnchorUnlinked)
+    );
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            (false, DismissReason::EscapeKey),
+            (false, DismissReason::AnchorUnlinked),
+        ]
+    );
 }
 
 fn rebind_with_presentation(

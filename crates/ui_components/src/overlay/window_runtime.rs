@@ -268,6 +268,10 @@ pub enum WindowOverlayRuntimeError {
     LayerUnregistering(OverlayLayerId),
     /// A rebind attempted to change whether the layer owns a focus scope.
     FocusModeChanged(OverlayLayerId),
+    /// A rebind attempted to change whether the layer requires a live portal anchor.
+    PortalAnchorModeChanged(OverlayLayerId),
+    /// An anchor-only operation targeted a layer without portal-anchor ownership.
+    NotPortalAnchored(OverlayLayerId),
     /// The layer does not own a focus scope for additional targets.
     MissingFocusScope(OverlayLayerId),
     /// The focus-target lease does not belong to this layer incarnation.
@@ -379,6 +383,16 @@ impl fmt::Display for WindowOverlayRuntimeError {
                 "overlay layer `{}` changed focus-scope ownership",
                 layer.as_str()
             ),
+            Self::PortalAnchorModeChanged(layer) => write!(
+                formatter,
+                "overlay layer `{}` changed portal-anchor ownership",
+                layer.as_str()
+            ),
+            Self::NotPortalAnchored(layer) => write!(
+                formatter,
+                "overlay layer `{}` does not own a portal anchor",
+                layer.as_str()
+            ),
             Self::MissingFocusScope(layer) => write!(
                 formatter,
                 "overlay layer `{}` has no focus scope",
@@ -430,6 +444,20 @@ pub struct OverlayLayerRegistration {
     on_open_change: Option<OpenChangeCallback>,
     uncontrolled_commit: Option<UncontrolledCommitCallback>,
     presentation: SubtreePresentation,
+    portal_anchor: PortalAnchorRegistration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PortalAnchorRegistration {
+    None,
+    RuntimeOwned,
+    External(open_gpui::PortalAnchorHandle),
+}
+
+impl PortalAnchorRegistration {
+    const fn required(self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 impl OverlayLayerRegistration {
@@ -471,6 +499,7 @@ impl OverlayLayerRegistration {
             on_open_change: None,
             uncontrolled_commit: None,
             presentation: SubtreePresentation::Visible,
+            portal_anchor: PortalAnchorRegistration::None,
         }
     }
 
@@ -522,6 +551,18 @@ impl OverlayLayerRegistration {
         callback: impl Fn(bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.uncontrolled_commit = Some(Rc::new(callback));
+        self
+    }
+
+    /// Declares that this layer is rendered only while a live portal anchor is eligible.
+    pub(crate) const fn portal_anchored(mut self) -> Self {
+        self.portal_anchor = PortalAnchorRegistration::RuntimeOwned;
+        self
+    }
+
+    /// Uses a caller-owned portal anchor for a surface rendered separately from its target.
+    pub(crate) const fn portal_anchor(mut self, handle: open_gpui::PortalAnchorHandle) -> Self {
+        self.portal_anchor = PortalAnchorRegistration::External(handle);
         self
     }
 
@@ -632,6 +673,13 @@ pub struct OverlayLayerBinding {
     trigger_focus: FocusHandle,
     surface_focus: FocusHandle,
     opening_theme: Rc<RefCell<Option<OverlayOpeningTheme>>>,
+    portal_anchor: Option<PortalOverlayAnchorBinding>,
+}
+
+#[derive(Clone)]
+struct PortalOverlayAnchorBinding {
+    handle: open_gpui::PortalAnchorHandle,
+    publication: open_gpui::PrepaintPublicationId,
 }
 
 #[derive(Clone)]
@@ -663,6 +711,14 @@ impl OverlayLayerBinding {
             .map(|capture| capture.context.clone())
     }
 
+    pub(crate) fn portal_anchor(&self) -> Option<open_gpui::PortalAnchorHandle> {
+        self.portal_anchor.as_ref().map(|anchor| anchor.handle)
+    }
+
+    pub(crate) fn portal_anchor_publication(&self) -> Option<open_gpui::PrepaintPublicationId> {
+        self.portal_anchor.as_ref().map(|anchor| anchor.publication)
+    }
+
     fn sync_opening_theme(
         &self,
         generation: OverlayLayerGeneration,
@@ -684,6 +740,10 @@ impl OverlayLayerBinding {
             OverlayPresence::Hidden => *capture = None,
             OverlayPresence::Open | OverlayPresence::Closing => {}
         }
+    }
+
+    fn clear_opening_theme(&self) {
+        *self.opening_theme.borrow_mut() = None;
     }
 }
 
@@ -823,6 +883,28 @@ enum LayerLifecycleState {
     Closing { pending: Option<PendingOpenIntent> },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PortalAnchorLinkState {
+    NotRequired,
+    Pending,
+    Linked,
+    Unlinked,
+}
+
+impl PortalAnchorLinkState {
+    const fn from_registration(registration: PortalAnchorRegistration) -> Self {
+        if registration.required() {
+            Self::Pending
+        } else {
+            Self::NotRequired
+        }
+    }
+
+    const fn required(self) -> bool {
+        !matches!(self, Self::NotRequired)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LayerLifecycle {
     state: LayerLifecycleState,
@@ -882,8 +964,8 @@ impl LayerLifecycle {
         )
     }
 
-    fn rebind_presence(&mut self, presence: OverlayPresence) {
-        if presence == self.presence() {
+    fn rebind_presence(&mut self, presence: OverlayPresence, replace_same_presence: bool) {
+        if presence == self.presence() && !replace_same_presence {
             return;
         }
         self.state = match presence {
@@ -961,10 +1043,13 @@ impl LayerLifecycle {
         &mut self,
         phase: OverlayLayerPhase,
         reason: DismissReason,
+        supersede_pending_reason: bool,
     ) -> PendingOpenIntent {
         let pending = self
             .pending()
-            .filter(|pending| !pending.open)
+            .filter(|pending| {
+                !pending.open && (!supersede_pending_reason || pending.reason == reason)
+            })
             .unwrap_or_else(|| self.allocate_intent(false, reason));
         self.transition_to_noninteractive(phase, Some(pending));
         pending
@@ -1027,6 +1112,8 @@ struct LayerEntry {
     component_bind_revision: Option<u64>,
     pending_unregister: bool,
     forced_by_ancestor: bool,
+    portal_anchor: PortalAnchorLinkState,
+    portal_anchor_registration: PortalAnchorRegistration,
 }
 
 impl LayerEntry {
@@ -1074,7 +1161,7 @@ impl LayerEntry {
 }
 
 struct LiveInsideRegion {
-    bounds: Bounds<Pixels>,
+    window_bounds: Bounds<Pixels>,
     button: Option<MouseButton>,
     valid_through: u64,
 }

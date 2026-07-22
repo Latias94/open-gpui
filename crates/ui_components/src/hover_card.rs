@@ -5,24 +5,25 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Task, Window, div,
+    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement,
+    PortalAnchorExt as _, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Task,
+    Window, div,
 };
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent,
     OutsidePressParticipation, OutsidePressPolicy, OverlayLayerKind, OverlayPlacementAlignment,
     OverlayPlacementInput, OverlayPlacementSide, Role, SemanticDescriptor, Sizable, Size,
-    ThemeTokens, UiPx, ui_point, ui_px, ui_size,
+    ThemeTokens, UiPx, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayFocusMode,
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayFocusMode,
     OverlayFocusRestoreCondition, OverlayInsideRegionId, OverlayLayerBinding,
     OverlayLayerRegistration, OverlayOpenIntent, OverlayOwnership, OverlayResolvedState,
-    WindowOverlayRuntime, gpui_overlay_state, gpui_relative_overlay_layer,
+    WindowOverlayRuntime, gpui_overlay_state, gpui_portal_anchor_overlay_layer,
     resolve_overlay_open_state,
 };
 use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
@@ -790,7 +791,8 @@ impl RenderOnce for HoverCard {
             ownership,
         )
         .focus_mode(OverlayFocusMode::None)
-        .focus_restore_condition(OverlayFocusRestoreCondition::Never);
+        .focus_restore_condition(OverlayFocusRestoreCondition::Never)
+        .portal_anchored();
         if let Some(on_open_change) = self.on_open_change {
             registration = registration.on_open_change(move |intent, window, cx| {
                 on_open_change(intent, window, cx);
@@ -834,19 +836,13 @@ impl RenderOnce for HoverCard {
         let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let overlay_adapter = gpui_overlay_state(state.overlay());
-        let placement = GpuiOverlayPlacement::resolve(
-            OverlayPlacementInput::new(
-                open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
-                    ui_point(ui_px(0.0), ui_px(0.0)),
-                    ui_size(metrics.min_width(), metrics.trigger_height()),
-                )),
-                ui_size(metrics.min_width(), metrics.trigger_height()),
-            )
-            .with_side(state.placement_side())
-            .with_alignment(state.placement_alignment())
-            .with_offset(metrics.offset()),
-            overlay_adapter.snap_margin(),
-        );
+        let placement_content_size = ui_size(metrics.min_width(), metrics.trigger_height());
+        let placement_side = state.placement_side();
+        let placement_alignment = state.placement_alignment();
+        let placement_offset = metrics.offset();
+        let portal_anchor = overlay_binding
+            .portal_anchor()
+            .expect("hover card registration must own a portal anchor");
         let trigger_actions: &[AccessibleAction] = if state.open_intent().opens_manually() {
             &[AccessibleAction::Click, AccessibleAction::Focus]
         } else {
@@ -870,88 +866,102 @@ impl RenderOnce for HoverCard {
             .flex_col()
             .items_start()
             .child(
-                window_overlay_runtime.inside_region(
-                    &overlay_binding,
-                    OverlayInsideRegionId::new("trigger"),
-                    format!("hover-card:{debug_id}:trigger-region"),
-                    div()
-                        .id(trigger_id)
-                        .debug_selector({
-                            let debug_id = debug_id.clone();
-                            move || format!("hover-card:{debug_id}:trigger")
-                        })
-                        .min_h(gpui_px_from_ui(metrics.trigger_height()))
-                        .px(gpui_px_from_ui(metrics.trigger_padding_x()))
-                        .py(gpui_px_from_ui(metrics.trigger_padding_y()))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(gpui_px_from_ui(metrics.radius()))
-                        .border_1()
-                        .border_color(trigger_border)
-                        .bg(trigger_background)
-                        .text_color(trigger_foreground)
-                        .text_size(gpui_px_from_ui(metrics.text_size()))
-                        .line_height(gpui_px_from_ui(metrics.text_size()))
-                        .focusable()
-                        .track_focus(overlay_binding.trigger_focus())
-                        .tab_stop(!disabled)
-                        .ui_semantics(&trigger_semantics)
-                        .focus_visible(move |style| style.shadow(trigger_focus_shadow))
-                        .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                        .when(!disabled, |this| {
-                            let window_overlay_runtime = window_overlay_runtime.clone();
-                            let runtime = runtime.clone();
-                            let delay = state.delay();
-                            let opens_on_hover = state.open_intent().opens_on_hover();
-                            let opens_manually = state.open_intent().opens_manually();
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(trigger_hover_background))
-                                .on_hover({
-                                    let window_overlay_runtime = window_overlay_runtime.clone();
-                                    let runtime = runtime.clone();
-                                    move |hovered, window, cx| {
-                                        if opens_on_hover {
-                                            handle_hover_card_trigger_hover(
+                window_overlay_runtime
+                    .inside_region(
+                        &overlay_binding,
+                        OverlayInsideRegionId::new("trigger"),
+                        format!("hover-card:{debug_id}:trigger-region"),
+                        div()
+                            .id(trigger_id)
+                            .debug_selector({
+                                let debug_id = debug_id.clone();
+                                move || format!("hover-card:{debug_id}:trigger")
+                            })
+                            .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                            .px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                            .py(gpui_px_from_ui(metrics.trigger_padding_y()))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(gpui_px_from_ui(metrics.radius()))
+                            .border_1()
+                            .border_color(trigger_border)
+                            .bg(trigger_background)
+                            .text_color(trigger_foreground)
+                            .text_size(gpui_px_from_ui(metrics.text_size()))
+                            .line_height(gpui_px_from_ui(metrics.text_size()))
+                            .focusable()
+                            .track_focus(overlay_binding.trigger_focus())
+                            .tab_stop(!disabled)
+                            .ui_semantics(&trigger_semantics)
+                            .focus_visible(move |style| style.shadow(trigger_focus_shadow))
+                            .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                            .when(!disabled, |this| {
+                                let window_overlay_runtime = window_overlay_runtime.clone();
+                                let runtime = runtime.clone();
+                                let delay = state.delay();
+                                let opens_on_hover = state.open_intent().opens_on_hover();
+                                let opens_manually = state.open_intent().opens_manually();
+                                this.cursor_pointer()
+                                    .hover(move |style| style.bg(trigger_hover_background))
+                                    .on_hover({
+                                        let window_overlay_runtime = window_overlay_runtime.clone();
+                                        let runtime = runtime.clone();
+                                        move |hovered, window, cx| {
+                                            if opens_on_hover {
+                                                handle_hover_card_trigger_hover(
+                                                    window_overlay_runtime.clone(),
+                                                    runtime.clone(),
+                                                    *hovered,
+                                                    delay,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }
+                                    })
+                                    .when(opens_manually, |this| {
+                                        let window_overlay_runtime = window_overlay_runtime.clone();
+                                        let runtime = runtime.clone();
+                                        this.on_click(move |_event, window, cx| {
+                                            cx.stop_propagation();
+                                            let next_open = !runtime.read(cx).open;
+                                            request_hover_card_open_change(
                                                 window_overlay_runtime.clone(),
                                                 runtime.clone(),
-                                                *hovered,
-                                                delay,
+                                                next_open,
+                                                DismissReason::Trigger,
                                                 window,
                                                 cx,
                                             );
-                                        }
-                                    }
-                                })
-                                .when(opens_manually, |this| {
-                                    let window_overlay_runtime = window_overlay_runtime.clone();
-                                    let runtime = runtime.clone();
-                                    this.on_click(move |_event, window, cx| {
-                                        cx.stop_propagation();
-                                        let next_open = !runtime.read(cx).open;
-                                        request_hover_card_open_change(
-                                            window_overlay_runtime.clone(),
-                                            runtime.clone(),
-                                            next_open,
-                                            DismissReason::Trigger,
-                                            window,
-                                            cx,
-                                        );
+                                        })
                                     })
-                                })
-                        })
-                        .child(trigger_label),
-                ),
+                            })
+                            .child(trigger_label),
+                    )
+                    .track_portal_anchor(&portal_anchor),
             )
             .when(open, |this| {
-                this.child(gpui_relative_overlay_layer(
+                let content_runtime = window_overlay_runtime.clone();
+                let content_binding = overlay_binding.clone();
+                let surface_runtime = content_runtime.clone();
+                let surface_binding = content_binding.clone();
+                this.child(gpui_portal_anchor_overlay_layer(
                     &overlay_adapter,
-                    &placement,
+                    &window_overlay_runtime,
                     &overlay_binding,
-                    |opening_theme| {
-                        window_overlay_runtime
+                    window,
+                    cx,
+                    move |anchor| {
+                        OverlayPlacementInput::new(anchor, placement_content_size)
+                            .with_side(placement_side)
+                            .with_alignment(placement_alignment)
+                            .with_offset(placement_offset)
+                    },
+                    move |opening_theme, _, _| {
+                        surface_runtime
                             .surface(
-                                &overlay_binding,
+                                &surface_binding,
                                 OverlayInsideRegionId::new("surface"),
                                 format!("hover-card:{debug_id}:surface-runtime"),
                                 hover_card_content_element(
@@ -959,8 +969,8 @@ impl RenderOnce for HoverCard {
                                     content_id.clone(),
                                     state.clone(),
                                     runtime.clone(),
-                                    window_overlay_runtime.clone(),
-                                    overlay_binding.clone(),
+                                    content_runtime,
+                                    content_binding,
                                     debug_id.clone(),
                                     opening_theme,
                                 ),

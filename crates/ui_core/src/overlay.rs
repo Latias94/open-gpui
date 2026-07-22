@@ -165,6 +165,8 @@ pub enum DismissReason {
     CloseAction,
     /// A menu or command selection requested closure.
     Selection,
+    /// The live trigger anchor became absent, hidden, invalid, or otherwise ineligible.
+    AnchorUnlinked,
     /// Application state requested closure directly.
     Programmatic,
 }

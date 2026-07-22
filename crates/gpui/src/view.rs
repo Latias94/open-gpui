@@ -165,6 +165,8 @@ impl Element for AnyView {
                         && element_state.cache_key.subtree_transform == subtree_transform
                         && !window.dirty_views.contains(&self.entity_id())
                         && !window.refreshing
+                        && !window.portal_anchor_dependency_invalidates_view(self.entity_id())
+                        && !window.portal_anchor_capture_requires_fresh_prepaint()
                     {
                         let prepaint_start = window.prepaint_index();
                         window.reuse_prepaint(element_state.prepaint_range.clone());
@@ -180,7 +182,9 @@ impl Element for AnyView {
                     let prepaint_start = window.prepaint_index();
                     let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                         let mut element = (self.render)(self, window, cx);
+                        let root_layout_id = element.request_layout(window, cx);
                         element.layout_as_root(bounds.size.into(), window, cx);
+                        window.register_portal_anchor_root_layout_alias(root_layout_id);
                         element.prepaint_at(bounds.origin, window, cx);
                         element
                     });

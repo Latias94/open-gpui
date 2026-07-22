@@ -88,6 +88,7 @@ impl Element for SubtreePresentationElement {
         cx: &mut App,
     ) -> Self::PrepaintState {
         window.with_subtree_presentation(self.presentation, |window| {
+            window.update_portal_anchor_presentation(window.subtree_presentation());
             if window.subtree_presentation().paints() {
                 child.prepaint(window, cx);
                 true

@@ -9,21 +9,21 @@ mod style;
 mod theme_tests;
 
 use crate::geometry::gpui_px_from_ui;
-use crate::geometry::{ui_point_from_gpui, ui_size_from_gpui_size};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, AnyView, App, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
-    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, AnyView, App, ElementId, IntoElement, KeyDownEvent, ParentElement,
+    PortalAnchorExt as _, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, px,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
-    OutsidePressPolicy, OverlayAnchorInput, OverlayLayerId, OverlayPlacementAlignment,
-    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Rect, Role, SemanticDescriptor,
-    Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px, ui_size,
+    OutsidePressPolicy, OverlayLayerId, OverlayPlacementAlignment, OverlayPlacementInput,
+    OverlayPlacementSide, OverlayPresence, Role, SemanticDescriptor, Sizable, Size, ThemeTokens,
+    Toggled, UiPx, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -32,10 +32,10 @@ use crate::collection_typeahead::CollectionTypeaheadInput;
 use crate::focus::focus_ring_shadow_with_theme;
 
 use crate::overlay::{
-    GpuiOverlayPlacement, GpuiOverlayState, OverlayInsideRegionId, OverlayLayerBinding,
-    OverlayLayerLeaseStatus, OverlayLayerPhase, OverlayLayerRegistration, OverlayOpenIntent,
-    OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state, gpui_positioned_overlay_layer,
-    gpui_relative_overlay_layer, resolve_overlay_open_state,
+    GpuiOverlayState, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerLeaseStatus,
+    OverlayLayerPhase, OverlayLayerRegistration, OverlayOpenIntent, OverlayOwnership,
+    WindowOverlayRuntime, gpui_overlay_state, gpui_portal_anchor_overlay_layer,
+    resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
@@ -140,6 +140,7 @@ fn menu_branch_registration<T: MenuBranchRuntime>(
         root_binding,
         &path,
     ))
+    .portal_anchored()
     .uncontrolled_commit(move |open, _, cx| {
         if open {
             return;
@@ -676,6 +677,9 @@ fn menu_item_element(
                 .into_any_element();
 
             if let Some(child_binding) = child_binding {
+                let portal_anchor = child_binding
+                    .portal_anchor()
+                    .expect("menu branch registration must own a portal anchor");
                 window_overlay_runtime
                     .inside_region(
                         &child_binding,
@@ -683,6 +687,7 @@ fn menu_item_element(
                         format!("menu:{debug_id}:branch:{item_path_key}:trigger-region"),
                         element,
                     )
+                    .track_portal_anchor(&portal_anchor)
                     .into_any_element()
             } else {
                 element
@@ -1165,7 +1170,8 @@ impl RenderOnce for Menu {
             format!("menu:{debug_id}"),
             state.overlay().policy().clone(),
             ownership,
-        );
+        )
+        .portal_anchored();
         if let Some(on_open_change) = on_open_change {
             registration = registration.on_open_change(move |intent, window, cx| {
                 on_open_change(intent, window, cx);
@@ -1222,19 +1228,12 @@ impl RenderOnce for Menu {
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_tooltip_theme = theme.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
-        let placement = GpuiOverlayPlacement::resolve(
-            OverlayPlacementInput::new(
-                open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
-                    ui_point(ui_px(0.0), ui_px(0.0)),
-                    ui_size(metrics.min_width(), metrics.trigger_height()),
-                )),
-                ui_size(metrics.min_width(), metrics.trigger_height()),
-            )
-            .with_side(state.placement_side())
-            .with_alignment(state.placement_alignment())
-            .with_offset(ui_px(4.0)),
-            overlay_adapter.snap_margin(),
-        );
+        let placement_content_size = ui_size(metrics.min_width(), metrics.trigger_height());
+        let placement_side = state.placement_side();
+        let placement_alignment = state.placement_alignment();
+        let portal_anchor = root_binding
+            .portal_anchor()
+            .expect("menu root registration must own a portal anchor");
         let overlay_children = overlay_children
             .into_iter()
             .enumerate()
@@ -1270,49 +1269,50 @@ impl RenderOnce for Menu {
             .flex_col()
             .items_start()
             .child(
-                window_overlay_runtime.inside_region(
-                    &root_binding,
-                    OverlayInsideRegionId::new("trigger"),
-                    format!("menu:{debug_id}:trigger-region"),
-                    div()
-                        .id(trigger_id)
-                        .debug_selector({
-                            let debug_id = debug_id.clone();
-                            move || format!("menu:{debug_id}:trigger")
-                        })
-                        .min_h(gpui_px_from_ui(metrics.trigger_height()))
-                        .when(!icon_only_trigger, |this| {
-                            this.px(gpui_px_from_ui(metrics.trigger_padding_x()))
-                        })
-                        .when(icon_only_trigger, |this| {
-                            this.w(gpui_px_from_ui(metrics.trigger_height()))
-                                .min_w(gpui_px_from_ui(metrics.trigger_height()))
-                        })
-                        .py(gpui_px_from_ui(metrics.trigger_padding_y()))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(gpui_px_from_ui(metrics.radius()))
-                        .border_1()
-                        .border_color(trigger_border)
-                        .bg(trigger_background)
-                        .text_color(trigger_foreground)
-                        .text_size(gpui_px_from_ui(metrics.text_size()))
-                        .line_height(gpui_px_from_ui(metrics.text_size()))
-                        .focusable()
-                        .tab_stop(!disabled)
-                        .ui_semantics(&trigger_semantics)
-                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
-                        .track_focus(root_binding.trigger_focus())
-                        .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                        .when(!disabled, |this| {
-                            let window_overlay_runtime = window_overlay_runtime.clone();
-                            let root_binding = root_binding.clone();
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(trigger_hover_background))
-                                .on_click(move |_event, window, cx| {
-                                    cx.stop_propagation();
-                                    window_overlay_runtime
+                window_overlay_runtime
+                    .inside_region(
+                        &root_binding,
+                        OverlayInsideRegionId::new("trigger"),
+                        format!("menu:{debug_id}:trigger-region"),
+                        div()
+                            .id(trigger_id)
+                            .debug_selector({
+                                let debug_id = debug_id.clone();
+                                move || format!("menu:{debug_id}:trigger")
+                            })
+                            .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                            .when(!icon_only_trigger, |this| {
+                                this.px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                            })
+                            .when(icon_only_trigger, |this| {
+                                this.w(gpui_px_from_ui(metrics.trigger_height()))
+                                    .min_w(gpui_px_from_ui(metrics.trigger_height()))
+                            })
+                            .py(gpui_px_from_ui(metrics.trigger_padding_y()))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(gpui_px_from_ui(metrics.radius()))
+                            .border_1()
+                            .border_color(trigger_border)
+                            .bg(trigger_background)
+                            .text_color(trigger_foreground)
+                            .text_size(gpui_px_from_ui(metrics.text_size()))
+                            .line_height(gpui_px_from_ui(metrics.text_size()))
+                            .focusable()
+                            .tab_stop(!disabled)
+                            .ui_semantics(&trigger_semantics)
+                            .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
+                            .track_focus(root_binding.trigger_focus())
+                            .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                            .when(!disabled, |this| {
+                                let window_overlay_runtime = window_overlay_runtime.clone();
+                                let root_binding = root_binding.clone();
+                                this.cursor_pointer()
+                                    .hover(move |style| style.bg(trigger_hover_background))
+                                    .on_click(move |_event, window, cx| {
+                                        cx.stop_propagation();
+                                        window_overlay_runtime
                                         .request_open_change(
                                             &root_binding,
                                             !open,
@@ -1323,39 +1323,53 @@ impl RenderOnce for Menu {
                                         .expect(
                                             "menu trigger should own its root overlay registration",
                                         );
-                                })
-                        })
-                        .when_some(trigger_tooltip, |this, tooltip| {
-                            this.tooltip(Tooltip::scoped(
-                                trigger_tooltip_theme,
-                                move |window, cx| tooltip(window, cx),
-                            ))
-                        })
-                        .child(trigger_content),
-                ),
+                                    })
+                            })
+                            .when_some(trigger_tooltip, |this, tooltip| {
+                                this.tooltip(Tooltip::scoped(
+                                    trigger_tooltip_theme,
+                                    move |window, cx| tooltip(window, cx),
+                                ))
+                            })
+                            .child(trigger_content),
+                    )
+                    .track_portal_anchor(&portal_anchor),
             )
             .children(overlay_children)
             .when(open, |this| {
-                this.child(gpui_relative_overlay_layer(
+                let content_runtime = window_overlay_runtime.clone();
+                let content_root_binding = root_binding.clone();
+                let snap_margin = overlay_adapter.snap_margin();
+                let deferred_priority = overlay_adapter.deferred_priority();
+                this.child(gpui_portal_anchor_overlay_layer(
                     &overlay_adapter,
-                    &placement,
+                    &window_overlay_runtime,
                     &root_binding,
-                    |opening_theme| {
+                    window,
+                    cx,
+                    move |anchor| {
+                        OverlayPlacementInput::new(anchor, placement_content_size)
+                            .with_side(placement_side)
+                            .with_alignment(placement_alignment)
+                            .with_offset(ui_px(4.0))
+                    },
+                    move |opening_theme, window, cx| {
                         menu_content_element(
                             items,
                             content_id.clone(),
                             debug_id.clone(),
                             state.clone(),
                             runtime.clone(),
-                            window_overlay_runtime.clone(),
-                            root_binding.clone(),
+                            content_runtime,
+                            content_root_binding,
                             branch_bindings.clone(),
                             scroll_handle.clone(),
                             on_select.clone(),
                             opening_theme,
+                            window,
                             cx,
-                            overlay_adapter.snap_margin(),
-                            overlay_adapter.deferred_priority(),
+                            snap_margin,
+                            deferred_priority,
                         )
                         .into_any_element()
                     },
@@ -1376,6 +1390,7 @@ fn menu_content_element(
     scroll_handle: ScrollHandle,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     theme: &ThemeContext,
+    window: &mut Window,
     cx: &mut App,
     snap_margin: open_gpui::Pixels,
     deferred_priority: usize,
@@ -1401,6 +1416,7 @@ fn menu_content_element(
         on_select.clone(),
         Some(scroll_handle),
         theme,
+        window,
         cx,
         snap_margin,
         deferred_priority,
@@ -1536,6 +1552,7 @@ fn menu_branch_surface(
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     scroll_handle: Option<ScrollHandle>,
     theme: &ThemeContext,
+    window: &mut Window,
     cx: &mut App,
     snap_margin: open_gpui::Pixels,
     deferred_priority: usize,
@@ -1572,37 +1589,19 @@ fn menu_branch_surface(
     } else {
         format!("menu:{debug_id}:submenu:{branch_key}:scroll")
     };
-    let row_path_keys: Vec<String> = branch_states.iter().map(MenuItemState::path_key).collect();
-    let rows = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .on_children_prepainted({
-            let runtime = runtime.clone();
-            let row_path_keys = row_path_keys.clone();
-            move |row_bounds, _window, cx| {
-                runtime.update(cx, |runtime, _| {
-                    for (path_key, bounds) in row_path_keys.iter().zip(row_bounds.into_iter()) {
-                        runtime
-                            .submenu_trigger_bounds
-                            .insert(path_key.clone(), menu_bounds_to_rect(bounds));
-                    }
-                });
-            }
-        })
-        .children(menu_item_elements(
-            branch_items,
-            branch_states.clone(),
-            debug_id.clone(),
-            metrics,
-            colors,
-            runtime.clone(),
-            window_overlay_runtime.clone(),
-            root_binding.clone(),
-            branch_bindings.clone(),
-            on_select.clone(),
-            theme,
-        ));
+    let rows = div().flex().flex_col().gap_1().children(menu_item_elements(
+        branch_items,
+        branch_states.clone(),
+        debug_id.clone(),
+        metrics,
+        colors,
+        runtime.clone(),
+        window_overlay_runtime.clone(),
+        root_binding.clone(),
+        branch_bindings.clone(),
+        on_select.clone(),
+        theme,
+    ));
     let submenu_layer = menu_submenu_layer(
         items,
         state,
@@ -1613,6 +1612,7 @@ fn menu_branch_surface(
         root_binding.clone(),
         branch_bindings.clone(),
         on_select.clone(),
+        window,
         cx,
         snap_margin,
         deferred_priority,
@@ -1701,6 +1701,7 @@ fn menu_submenu_layer(
     root_binding: OverlayLayerBinding,
     branch_bindings: MenuBranchBindings,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    window: &mut Window,
     cx: &mut App,
     snap_margin: open_gpui::Pixels,
     deferred_priority: usize,
@@ -1712,49 +1713,46 @@ fn menu_submenu_layer(
     let submenu_binding = branch_bindings
         .get(&menu_path_key(&child_branch_path))
         .cloned()?;
-    let trigger_bounds = runtime
-        .read(cx)
-        .submenu_trigger_bounds
-        .get(&open_child.path_key())
-        .copied()?;
-    let placement = GpuiOverlayPlacement::resolve(
-        OverlayPlacementInput::new(
-            OverlayAnchorInput::from_layout_bounds(trigger_bounds),
-            ui_size(
-                state.metrics().min_width(),
-                state.metrics().trigger_height(),
-            ),
-        )
-        .with_side(OverlayPlacementSide::Right)
-        .with_alignment(OverlayPlacementAlignment::Start)
-        .with_offset(UiPx::ZERO),
-        snap_margin,
+    let placement_content_size = ui_size(
+        state.metrics().min_width(),
+        state.metrics().trigger_height(),
     );
     let submenu_adapter = GpuiOverlayState::resolve(
         state.overlay().policy().clone(),
         deferred_priority,
         snap_margin,
     );
+    let items = items.to_vec();
+    let state = state.clone();
+    let content_runtime = window_overlay_runtime.clone();
 
-    Some(gpui_positioned_overlay_layer(
+    Some(gpui_portal_anchor_overlay_layer(
         &submenu_adapter,
-        &placement,
-        placement.position().unwrap_or_default(),
+        &window_overlay_runtime,
         &submenu_binding,
-        |opening_theme| {
+        window,
+        cx,
+        move |anchor| {
+            OverlayPlacementInput::new(anchor, placement_content_size)
+                .with_side(OverlayPlacementSide::Right)
+                .with_alignment(OverlayPlacementAlignment::Start)
+                .with_offset(UiPx::ZERO)
+        },
+        move |opening_theme, window, cx| {
             menu_branch_surface(
-                items,
-                state,
+                &items,
+                &state,
                 &child_branch_path,
                 None,
                 debug_id,
                 runtime,
-                window_overlay_runtime,
+                content_runtime,
                 root_binding,
                 branch_bindings,
                 on_select,
                 None,
                 opening_theme,
+                window,
                 cx,
                 snap_margin,
                 deferred_priority,
@@ -1829,13 +1827,6 @@ fn find_menu_item_by_path<'a>(items: &'a [MenuItem], path: &[String]) -> Option<
     }
 
     resolved
-}
-
-fn menu_bounds_to_rect(bounds: open_gpui::Bounds<open_gpui::Pixels>) -> Rect {
-    open_gpui_ui_core::rect(
-        ui_point_from_gpui(bounds.origin),
-        ui_size_from_gpui_size(bounds.size),
-    )
 }
 
 /// Returns concrete menu items that are visible for the current submenu path.

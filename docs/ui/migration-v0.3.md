@@ -256,6 +256,8 @@ For committed geometry, use `Hitbox::geometry()` or wrap content with `measured_
 listener is now `Fn(MeasuredElementSnapshot, &mut App)`: the snapshot carries frame generation,
 semantic/global identity, and one immutable `ElementGeometry` with layout bounds, displayed
 bounds, and checked local/layout/window conversions. Failed transform scopes publish no snapshot.
+Custom prepaint channels that already receive layout bounds may call `Window::try_element_geometry`
+and publish only its opaque result. Do not compare raw layout bounds with window-space input.
 
 Complex custom consumers must keep visual stacking and pointer ownership in the same committed
 coordinate model. Docking now resolves divider junctions separately for the root and each floating
@@ -865,6 +867,89 @@ continues receiving routed events outside its bounds. Visual hover, cursors, too
 feedback continue to use `is_hovered(window)`, which follows the physical pointer and input
 modality. Do not use physical hover to gate a captured mouse-up, and do not use the captured event
 target to paint hover outside the hitbox.
+
+## Typed Committed Portal Anchors
+
+Trigger-bound overlays no longer estimate a local rectangle at `(0, 0)` or retain raw submenu row
+bounds as live geometry. Popover, Select, Combobox, HoverCard, Menu, and submenu paths now bind a
+window-owned `PortalAnchorHandle` internally. Their public component APIs keep the same trigger
+shape, but placement now follows committed transform and scroll geometry in the same frame.
+
+Custom element followers retain one handle for the target instance, bind it exactly once in every
+frame where the target is present, and resolve it through the named follower helper:
+
+```rust
+use open_gpui::{
+    PortalAnchorExt as _, PortalAnchorHandle, portal_anchor_follower,
+};
+
+struct ViewState {
+    anchor: PortalAnchorHandle,
+}
+
+let target = trigger.track_portal_anchor(&state.anchor);
+let follower = portal_anchor_follower(&state.anchor, |snapshot, _window, _cx| {
+    snapshot.map(|snapshot| {
+        build_surface(snapshot.geometry().displayed_bounds()).into_any_element()
+    })
+});
+```
+
+Create the handle once with `window.new_portal_anchor()`; do not create it during each render. One
+handle may feed multiple followers, but binding it to two targets in one frame is an error. A handle
+cannot be used by another window. `PortalAnchorSnapshot` deliberately exposes opaque element
+geometry rather than a raw matrix or mutable rectangle.
+Target-root `with_subtree_transform` and `with_subtree_presentation` wrappers may appear before or
+after `track_portal_anchor`. GPUI resolves them by tracked layout identity, so builder order does
+not change displayed geometry, presentation, or Hidden unlink behavior. The same rule crosses a
+cached `AnyView` boundary: wrappers on the view's rendered root remain part of the target, while
+wrappers on ordinary descendants do not become anchor-wide facts.
+
+During a draw, resolution reads only the current candidate. Outside a draw it reads only the last
+completed frame. Hidden, absent, unmounted, rolled-back, or invalid targets resolve as `None`; do
+not add an application-owned last-known fallback. Inert is still a linked GPUI source fact, although
+interactive UI Components followers require Visible. Views that resolve an anchor are rebuilt on a
+later frame instead of replaying a cached linked surface after another view removes the target.
+Overlay inside regions now use the same checked displayed geometry, so transformed trigger or
+surface bounds are not misclassified as outside presses.
+The low-level `WindowOverlayRuntime::set_inside_region` entry point is replaced by
+`set_element_inside_region` without an alias. Pass element layout bounds during prepaint; the
+runtime now atomically applies `Window::try_element_geometry` and the effective content mask. The
+standard runtime surface wrapper remains preferred.
+
+Standalone Tooltip is the official component whose target and surface may be authored separately.
+Pass the same retained handle to both sides and observe controlled unlink through the new callback:
+
+```rust
+let target = trigger.track_portal_anchor(&state.anchor);
+let tooltip = Tooltip::new("save-help", "Save the current document")
+    .portal_anchor(state.anchor)
+    .open(state.tooltip_open)
+    .on_open_change(|intent, _window, _cx| {
+        // Commit intent.desired_open() in application state.
+        // intent.reason() may be DismissReason::AnchorUnlinked.
+    });
+```
+
+An initially closed Tooltip without a handle creates no overlay registration. Once a retained
+Tooltip ID binds an external handle, later renders reuse that exact capability; changing it is a
+typed `PortalAnchorModeChanged` error. Keep passing the stable handle whenever practical. Native
+GPUI tooltip builders retain their intentional pointer-point anchor and do not call
+`Tooltip::portal_anchor`.
+
+`DismissReason` now includes `AnchorUnlinked`; update exhaustive matches. The runtime hides a
+controlled follower immediately and emits one close intent. If the owner remains Open, the pending
+intent stays visible without being emitted again. If the owner commits Hidden, the pending intent
+and revision clear. Uncontrolled owners commit closed state automatically. Reopening after the
+target returns starts a new overlay generation.
+
+ContextMenu's explicit anchor point remains window-space. Dialog, AlertDialog, Sheet, and other
+viewport surfaces use a named full-window portal. Neither inherits an ancestor transform or clip,
+and neither should be converted into a fake element handle.
+
+The removed `gpui_relative_overlay_layer`, Menu `submenu_trigger_bounds`, and component-local raw
+trigger bounds have no compatibility aliases. Keep `OverlayAnchorInput` only as a pure placement
+snapshot after a live target has been resolved.
 
 ## Window Overlay Runtime
 

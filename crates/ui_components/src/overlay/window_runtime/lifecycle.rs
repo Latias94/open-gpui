@@ -120,6 +120,8 @@ impl WindowOverlayRuntimeState {
             component_bind_revision: None,
             pending_unregister: false,
             forced_by_ancestor: false,
+            portal_anchor: PortalAnchorLinkState::from_registration(registration.portal_anchor),
+            portal_anchor_registration: registration.portal_anchor,
         };
         self.entries.insert(id.clone(), entry);
         self.registration_order.push(id.clone());
@@ -197,6 +199,7 @@ impl WindowOverlayRuntimeState {
                 restore_owner.as_ref() == Some(&descendant_id),
                 requested_phase,
                 true,
+                false,
             )?);
         }
 
@@ -231,12 +234,28 @@ impl WindowOverlayRuntimeState {
 
         let root_id = registration.id.clone();
         let old_phase = self.entries[&root_id].lifecycle.phase();
+        let old_requested_presence = self.entries[&root_id].policy.presence();
+        let requested_presence = registration.policy.presence();
+        let requested_presence_changed = old_requested_presence != requested_presence;
         let ownership_changed = self.entries[&registration.id].ownership != registration.ownership;
+        let mut next_portal_anchor = self.entries[&registration.id].portal_anchor;
+        if next_portal_anchor.required()
+            && old_requested_presence != OverlayPresence::Open
+            && registration.policy.presence() == OverlayPresence::Open
+        {
+            next_portal_anchor = PortalAnchorLinkState::Pending;
+        }
+        let anchor_pending = self.entries[&registration.id].lifecycle.pending();
         let mut next_lifecycle = self.entries[&registration.id].lifecycle.clone();
         if ownership_changed {
-            next_lifecycle.rebind_ownership(registration.policy.presence());
+            next_lifecycle.rebind_ownership(requested_presence);
         } else {
-            next_lifecycle.rebind_presence(registration.policy.presence());
+            next_lifecycle.rebind_presence(requested_presence, requested_presence_changed);
+        }
+        if next_portal_anchor == PortalAnchorLinkState::Unlinked
+            && requested_presence == OverlayPresence::Open
+        {
+            next_lifecycle.transition_to_noninteractive(OverlayLayerPhase::Hidden, anchor_pending);
         }
 
         let mut affected = self
@@ -341,6 +360,7 @@ impl WindowOverlayRuntimeState {
         entry.tab_behavior = registration.tab_behavior;
         entry.on_open_change = registration.on_open_change;
         entry.uncontrolled_commit = registration.uncontrolled_commit;
+        entry.portal_anchor = next_portal_anchor;
         entry.registration_revision = entry.registration_revision.wrapping_add(1);
         entry.lifecycle = next_lifecycle;
         entry.local_presentation = registration.presentation;
@@ -444,6 +464,11 @@ impl WindowOverlayRuntimeState {
                 registration.id.clone(),
             ));
         }
+        if entry.portal_anchor_registration != registration.portal_anchor {
+            return Err(WindowOverlayRuntimeError::PortalAnchorModeChanged(
+                registration.id.clone(),
+            ));
+        }
         self.validate_parent(&registration.id, registration.parent.as_ref())?;
         if entry.parent != registration.parent {
             return Err(WindowOverlayRuntimeError::ParentChanged(
@@ -503,6 +528,7 @@ impl WindowOverlayRuntimeState {
                 restore_owner.as_ref() == Some(&layer_id),
                 OverlayLayerPhase::Closing,
                 !is_root,
+                false,
             )?;
             if is_root {
                 generation = dispatch.generation;
@@ -514,6 +540,109 @@ impl WindowOverlayRuntimeState {
             cancel_focus_claims,
             dispatches,
         })
+    }
+
+    pub(super) fn portal_anchor_generation(
+        &self,
+        lease: &OverlayLayerLease,
+    ) -> Result<OverlayLayerGeneration, WindowOverlayRuntimeError> {
+        self.validate_mutable_lease(lease)?;
+        let entry = &self.entries[lease.layer_id()];
+        if !entry.portal_anchor.required() {
+            return Err(WindowOverlayRuntimeError::NotPortalAnchored(
+                lease.layer_id.clone(),
+            ));
+        }
+        Ok(entry.generation)
+    }
+
+    pub(super) fn mark_portal_anchor_linked(
+        &mut self,
+        lease: &OverlayLayerLease,
+        expected_generation: OverlayLayerGeneration,
+    ) -> Result<bool, WindowOverlayRuntimeError> {
+        self.validate_mutable_lease(lease)?;
+        let entry = self
+            .entries
+            .get_mut(lease.layer_id())
+            .expect("overlay lease was validated before linking its portal anchor");
+        if !entry.portal_anchor.required() {
+            return Err(WindowOverlayRuntimeError::NotPortalAnchored(
+                lease.layer_id.clone(),
+            ));
+        }
+        if entry.generation != expected_generation
+            || entry.portal_anchor == PortalAnchorLinkState::Linked
+        {
+            return Ok(false);
+        }
+        entry.portal_anchor = PortalAnchorLinkState::Linked;
+        Ok(true)
+    }
+
+    pub(super) fn mark_portal_anchor_unlinked_plan(
+        &mut self,
+        lease: &OverlayLayerLease,
+        expected_generation: OverlayLayerGeneration,
+    ) -> Result<Option<OpenChangePlan>, WindowOverlayRuntimeError> {
+        self.validate_mutable_lease(lease)?;
+        let entry = &self.entries[lease.layer_id()];
+        if !entry.portal_anchor.required() {
+            return Err(WindowOverlayRuntimeError::NotPortalAnchored(
+                lease.layer_id.clone(),
+            ));
+        }
+        if entry.generation != expected_generation
+            || entry.portal_anchor == PortalAnchorLinkState::Unlinked
+        {
+            return Ok(None);
+        }
+
+        let root_id = lease.layer_id.clone();
+        let mut layer_ids = self
+            .registration_order
+            .iter()
+            .filter(|candidate| {
+                self.is_descendant_or_same(&root_id, candidate)
+                    && self.entries[*candidate].lifecycle.presence().present()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        layer_ids.sort_by(|left, right| {
+            self.teardown_order_key(right)
+                .cmp(&self.teardown_order_key(left))
+        });
+        let restore_owner = self.subtree_restore_owner(&root_id, &layer_ids);
+        let cancel_focus_claims =
+            self.subtree_focus_claim_cancellations(&layer_ids, restore_owner.as_ref());
+
+        self.entries
+            .get_mut(&root_id)
+            .expect("portal-anchor root remains registered while unlinking")
+            .portal_anchor = PortalAnchorLinkState::Unlinked;
+
+        let mut generation = expected_generation;
+        let mut dispatches = Vec::with_capacity(layer_ids.len());
+        for layer_id in layer_ids {
+            let is_root = layer_id == root_id;
+            let dispatch = self.force_close_for_ancestor(
+                &layer_id,
+                DismissReason::AnchorUnlinked,
+                restore_owner.as_ref() == Some(&layer_id),
+                OverlayLayerPhase::Hidden,
+                !is_root,
+                is_root,
+            )?;
+            if is_root {
+                generation = dispatch.generation;
+            }
+            dispatches.push(dispatch);
+        }
+        Ok(Some(OpenChangePlan {
+            generation,
+            cancel_focus_claims,
+            dispatches,
+        }))
     }
 
     pub(super) fn validate_request_target(
@@ -543,6 +672,15 @@ impl WindowOverlayRuntimeState {
         reason: DismissReason,
     ) -> Result<OpenChangeDispatch, WindowOverlayRuntimeError> {
         self.validate_request_target(id, lease_token)?;
+        if open {
+            let entry = self
+                .entries
+                .get_mut(id)
+                .expect("overlay request target was validated before opening");
+            if entry.portal_anchor.required() {
+                entry.portal_anchor = PortalAnchorLinkState::Pending;
+            }
+        }
         let entry = &self.entries[id];
         if open == entry.lifecycle.committed_open() || entry.lifecycle.pending_open() == Some(open)
         {
@@ -612,7 +750,9 @@ impl WindowOverlayRuntimeState {
             entry.generation = OverlayLayerGeneration(entry.generation.0.wrapping_add(1));
         }
         if open {
-            entry.lifecycle.rebind_presence(OverlayPresence::open());
+            entry
+                .lifecycle
+                .rebind_presence(OverlayPresence::open(), true);
         } else {
             entry
                 .lifecycle
@@ -661,6 +801,7 @@ impl WindowOverlayRuntimeState {
         allow_restore: bool,
         next_phase: OverlayLayerPhase,
         forced_by_ancestor: bool,
+        supersede_pending_reason: bool,
     ) -> Result<OpenChangeDispatch, WindowOverlayRuntimeError> {
         debug_assert!(matches!(
             next_phase,
@@ -690,7 +831,9 @@ impl WindowOverlayRuntimeState {
         }
 
         let ownership = entry.ownership;
-        let intent_already_pending = entry.lifecycle.pending_open() == Some(false);
+        let intent_already_pending = entry.lifecycle.pending().is_some_and(|pending| {
+            !pending.open && (!supersede_pending_reason || pending.reason == reason)
+        });
         let old_phase = entry.lifecycle.phase();
         let existing_pending = entry.lifecycle.pending();
         let mouse_authority_changed =
@@ -722,7 +865,7 @@ impl WindowOverlayRuntimeState {
             Some(
                 entry
                     .lifecycle
-                    .force_controlled_close(next_phase, reason)
+                    .force_controlled_close(next_phase, reason, supersede_pending_reason)
                     .revision,
             )
         } else if ownership == OverlayOwnership::Uncontrolled {

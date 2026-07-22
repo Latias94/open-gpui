@@ -41,6 +41,8 @@ untransformed layout bounds, displayed window bounds, zero-origin local bounds, 
 local/layout/window point and vector conversions. `Hitbox::geometry()` and
 `MeasuredElementSnapshot::geometry()` return the same value, so custom elements and measurement
 consumers do not reconstruct transform arithmetic.
+Custom prepaint channels that already own layout bounds use `Window::try_element_geometry`; it
+returns the same opaque value and invalidates the active transform scope on projection failure.
 
 Raw platform events remain window-space and are available through `TargetedEvent::window_event()`.
 High-level listeners use explicit target-local helpers. Click, pointer, wheel, drag-start,
@@ -120,7 +122,7 @@ source ratios.
 - The SVG-only `Transformation`, `TransformationMatrix`, and `with_transformation` APIs are
   deleted without aliases. SVG rotation has no replacement in this restricted contract.
 - Applications use `SubtreeTransform` for interactive axis-aligned presentation and
-  `ElementGeometry` or `TargetedEvent` for coordinate conversion.
+  `ElementGeometry`, `Window::try_element_geometry`, or `TargetedEvent` for coordinate conversion.
 - Backends, Motion, SVG, Canvas, Gallery, and components cannot introduce a second public subtree
   transform stack.
 - Rounded/path subtree clips, group opacity/compositing, and general affine transforms require

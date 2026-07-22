@@ -8,6 +8,7 @@ use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use open_gpui_refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::ops::Range;
@@ -4059,7 +4060,7 @@ pub(crate) struct SubtreeTransformValidity(Rc<SubtreeTransformValidityState>);
 
 #[derive(Debug)]
 struct SubtreeTransformValidityState {
-    parent: Option<SubtreeTransformValidity>,
+    parents: SmallVec<[SubtreeTransformValidity; 2]>,
     failure: Cell<Option<SubtreeTransformError>>,
     diagnostic_emitted: Cell<bool>,
 }
@@ -4067,19 +4068,34 @@ struct SubtreeTransformValidityState {
 impl SubtreeTransformValidity {
     pub(crate) fn new(parent: Option<Self>) -> Self {
         Self(Rc::new(SubtreeTransformValidityState {
-            parent,
+            parents: parent.into_iter().collect(),
             failure: Cell::new(None),
             diagnostic_emitted: Cell::new(false),
         }))
+    }
+
+    pub(crate) fn joined(first: Option<Self>, second: Option<Self>) -> Option<Self> {
+        match (first, second) {
+            (None, None) => None,
+            (Some(validity), None) | (None, Some(validity)) => Some(Self::new(Some(validity))),
+            (Some(first), Some(second)) if Rc::ptr_eq(&first.0, &second.0) => {
+                Some(Self::new(Some(first)))
+            }
+            (Some(first), Some(second)) => Some(Self(Rc::new(SubtreeTransformValidityState {
+                parents: smallvec![first, second],
+                failure: Cell::new(None),
+                diagnostic_emitted: Cell::new(false),
+            }))),
+        }
     }
 
     pub(crate) fn is_valid(&self) -> bool {
         self.0.failure.get().is_none()
             && self
                 .0
-                .parent
-                .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .parents
+                .iter()
+                .all(SubtreeTransformValidity::is_valid)
     }
 
     pub(crate) fn invalidate(&self, error: SubtreeTransformError) {
@@ -4095,9 +4111,9 @@ impl SubtreeTransformValidity {
     fn effective_failure(&self) -> Option<SubtreeTransformError> {
         self.failure().or_else(|| {
             self.0
-                .parent
-                .as_ref()
-                .and_then(SubtreeTransformValidity::effective_failure)
+                .parents
+                .iter()
+                .find_map(SubtreeTransformValidity::effective_failure)
         })
     }
 

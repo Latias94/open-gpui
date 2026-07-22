@@ -2,11 +2,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use open_gpui::{
-    AnyView, AppContext as _, Bounds, Context, DispatchPhase, Entity, FocusHandle, HitboxBehavior,
-    IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, PinchEvent, PointerCancelEvent, PointerCaptureHandle, Render,
-    ScrollDelta, ScrollWheelEvent, StyleRefinement, Styled, TouchPhase, VisualContext as _, Window,
-    canvas, div, point, prelude::*, px, size,
+    AnyElement, AnyView, AppContext as _, Bounds, Context, DispatchPhase, Entity, FocusHandle,
+    HitboxBehavior, IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent, PointerCancelEvent,
+    PointerCaptureHandle, Render, ScrollDelta, ScrollWheelEvent, StyleRefinement, Styled,
+    SubtreeTransform, SubtreeTransformExt as _, TouchPhase, VisualContext as _, Window, canvas,
+    div, point, prelude::*, px, size,
 };
 use open_gpui_ui_components::gpui_adapter::{
     FocusTargetRegistration, OverlayFocusMode, OverlayFocusRestoreCondition,
@@ -24,6 +25,8 @@ struct RenderedLayer {
     render_trigger: bool,
     render_surface: bool,
     capture_pointer: bool,
+    surface_transform: Option<SubtreeTransform>,
+    clip_surface: bool,
 }
 
 struct ProjectedInsideRegion {
@@ -182,6 +185,8 @@ impl RuntimeProbe {
             render_trigger: true,
             render_surface: true,
             capture_pointer: false,
+            surface_transform: None,
+            clip_surface: false,
         });
     }
 
@@ -223,6 +228,22 @@ impl RuntimeProbe {
             .find(|layer| layer.binding.lease().layer_id().as_str() == id)
             .unwrap_or_else(|| panic!("missing rendered layer `{id}`"))
             .capture_pointer = capture;
+    }
+
+    fn set_surface_transform(&mut self, id: &str, transform: SubtreeTransform) {
+        self.layers
+            .iter_mut()
+            .find(|layer| layer.binding.lease().layer_id().as_str() == id)
+            .unwrap_or_else(|| panic!("missing rendered layer `{id}`"))
+            .surface_transform = Some(transform);
+    }
+
+    fn set_surface_clipped(&mut self, id: &str) {
+        self.layers
+            .iter_mut()
+            .find(|layer| layer.binding.lease().layer_id().as_str() == id)
+            .unwrap_or_else(|| panic!("missing rendered layer `{id}`"))
+            .clip_surface = true;
     }
 }
 
@@ -428,12 +449,32 @@ impl Render for RuntimeProbe {
                         .size_full(),
                     );
                 }
-                root = root.child(self.runtime.surface(
+                let overlay_surface = self.runtime.surface(
                     &layer.binding,
                     OverlayInsideRegionId::new("surface"),
                     format!("window-overlay-runtime:{id}:surface-wrapper"),
                     surface,
-                ));
+                );
+                let mut overlay_surface: AnyElement =
+                    if let Some(transform) = layer.surface_transform {
+                        overlay_surface
+                            .with_subtree_transform(transform)
+                            .into_any_element()
+                    } else {
+                        overlay_surface.into_any_element()
+                    };
+                if layer.clip_surface {
+                    overlay_surface = div()
+                        .absolute()
+                        .left(px(0.0))
+                        .top(px(0.0))
+                        .w(px(600.0))
+                        .h(px(600.0))
+                        .overflow_hidden()
+                        .child(overlay_surface)
+                        .into_any_element();
+                }
+                root = root.child(overlay_surface);
             }
         }
 
@@ -614,6 +655,19 @@ fn mouse_down(x: f32, y: f32) -> MouseDownEvent {
         click_count: 1,
         first_mouse: false,
     }
+}
+
+#[test]
+fn element_inside_region_public_surface_owns_projection_and_clipping() {
+    let _ = WindowOverlayRuntime::set_element_inside_region
+        as fn(
+            &WindowOverlayRuntime,
+            &OverlayLayerBinding,
+            OverlayInsideRegionId,
+            Bounds<open_gpui::Pixels>,
+            &mut Window,
+            &open_gpui::App,
+        ) -> Result<(), WindowOverlayRuntimeError>;
 }
 
 #[path = "window_overlay_runtime/focus.rs"]

@@ -481,14 +481,16 @@ impl<E: Element> Drawable<E> {
                     .next_frame
                     .dispatch_tree
                     .push_node_scoped(window.subtree_transform_validity());
-                let prepaint = self.element.prepaint(
-                    global_id.as_ref(),
-                    inspector_id.as_ref(),
-                    bounds,
-                    &mut request_layout,
-                    window,
-                    cx,
-                );
+                let prepaint = window.with_prepaint_layout_id(layout_id, |window| {
+                    self.element.prepaint(
+                        global_id.as_ref(),
+                        inspector_id.as_ref(),
+                        bounds,
+                        &mut request_layout,
+                        window,
+                        cx,
+                    )
+                });
                 window.next_frame.dispatch_tree.pop_node();
 
                 if pushed_a11y_node {

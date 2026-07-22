@@ -2,13 +2,14 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ElementId, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div,
+    App, ElementId, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
+    PortalAnchorExt as _, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
+    div,
 };
 use open_gpui_ui_core::{
     AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    SemanticDescriptor, Sizable, Size, ThemeTokens, rect, ui_point, ui_px, ui_size,
+    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, SemanticDescriptor,
+    Sizable, Size, ThemeTokens, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -18,9 +19,9 @@ use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::{Listbox, ListboxGroup, ListboxOption};
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration,
-    OverlayOpenIntent, OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state,
-    gpui_relative_overlay_layer, resolve_overlay_open_state,
+    OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration, OverlayOpenIntent,
+    OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state, gpui_portal_anchor_overlay_layer,
+    resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
@@ -323,7 +324,8 @@ impl RenderOnce for Select {
             format!("select:{}", plan.debug_id),
             state.overlay().policy().clone(),
             ownership,
-        );
+        )
+        .portal_anchored();
         if let Some(on_open_change) = self.on_open_change.clone() {
             registration = registration.on_open_change(move |intent, window, cx| {
                 on_open_change(intent, window, cx);
@@ -363,19 +365,13 @@ impl RenderOnce for Select {
         let trigger_focus_shadow = focus_ring_shadow_with_theme(plan.focus_ring, &theme);
         let open = plan.open;
         let overlay_adapter = gpui_overlay_state(state.overlay());
-        let placement = GpuiOverlayPlacement::resolve(
-            OverlayPlacementInput::new(
-                OverlayAnchorInput::from_layout_bounds(rect(
-                    ui_point(ui_px(0.0), ui_px(0.0)),
-                    ui_size(plan.metrics.min_width(), plan.metrics.trigger_height()),
-                )),
-                ui_size(plan.metrics.min_width(), plan.metrics.trigger_height()),
-            )
-            .with_side(state.placement_side())
-            .with_alignment(state.placement_alignment())
-            .with_offset(ui_px(4.0)),
-            overlay_adapter.snap_margin(),
-        );
+        let placement_content_size =
+            ui_size(plan.metrics.min_width(), plan.metrics.trigger_height());
+        let placement_side = state.placement_side();
+        let placement_alignment = state.placement_alignment();
+        let portal_anchor = overlay_binding
+            .portal_anchor()
+            .expect("Select registration must own a portal anchor");
         let trigger_semantics = SemanticDescriptor::new(plan.trigger_role)
             .with_label(state.label())
             .with_selected(plan.trigger_selected)
@@ -396,53 +392,54 @@ impl RenderOnce for Select {
             .when(!self.full_width, |this| this.items_start())
             .when(self.full_width, |this| this.occlude())
             .child(
-                window_overlay_runtime.inside_region(
-                    &overlay_binding,
-                    OverlayInsideRegionId::new("trigger"),
-                    format!("select:{}:trigger-region", plan.debug_id),
-                    div()
-                        .id(plan.trigger_id)
-                        .debug_selector({
-                            let debug_id = plan.debug_id.clone();
-                            move || format!("select:{debug_id}:trigger")
-                        })
-                        .when(self.full_width, |this| this.w_full())
-                        .when(!self.full_width, |this| {
-                            this.min_w(gpui_px_from_ui(plan.metrics.min_width()))
-                                .max_w(gpui_px_from_ui(plan.metrics.max_width()))
-                        })
-                        .min_h(gpui_px_from_ui(plan.metrics.trigger_height()))
-                        .px(gpui_px_from_ui(plan.metrics.trigger_padding_x()))
-                        .py(gpui_px_from_ui(plan.metrics.trigger_padding_y()))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .rounded(gpui_px_from_ui(plan.metrics.radius()))
-                        .border_1()
-                        .border_color(trigger_border)
-                        .bg(trigger_background)
-                        .text_color(trigger_foreground)
-                        .text_size(gpui_px_from_ui(plan.metrics.text_size()))
-                        .line_height(gpui_px_from_ui(plan.metrics.text_size()))
-                        .focusable()
-                        .track_focus(overlay_binding.trigger_focus())
-                        .tab_stop(!plan.disabled)
-                        .ui_semantics(&trigger_semantics)
-                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
-                        .on_key_down({
-                            let window_overlay_runtime = window_overlay_runtime.clone();
-                            let overlay_binding = overlay_binding.clone();
-                            move |event: &KeyDownEvent, window, cx| {
-                                let key = event.keystroke.key.as_str();
-                                if !event.keystroke.modifiers.modified()
-                                    && !event.prefer_character_input
-                                    && matches!(key, "enter" | "space" | "down" | "up")
-                                {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-                                    if !open {
-                                        window_overlay_runtime
+                window_overlay_runtime
+                    .inside_region(
+                        &overlay_binding,
+                        OverlayInsideRegionId::new("trigger"),
+                        format!("select:{}:trigger-region", plan.debug_id),
+                        div()
+                            .id(plan.trigger_id)
+                            .debug_selector({
+                                let debug_id = plan.debug_id.clone();
+                                move || format!("select:{debug_id}:trigger")
+                            })
+                            .when(self.full_width, |this| this.w_full())
+                            .when(!self.full_width, |this| {
+                                this.min_w(gpui_px_from_ui(plan.metrics.min_width()))
+                                    .max_w(gpui_px_from_ui(plan.metrics.max_width()))
+                            })
+                            .min_h(gpui_px_from_ui(plan.metrics.trigger_height()))
+                            .px(gpui_px_from_ui(plan.metrics.trigger_padding_x()))
+                            .py(gpui_px_from_ui(plan.metrics.trigger_padding_y()))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .rounded(gpui_px_from_ui(plan.metrics.radius()))
+                            .border_1()
+                            .border_color(trigger_border)
+                            .bg(trigger_background)
+                            .text_color(trigger_foreground)
+                            .text_size(gpui_px_from_ui(plan.metrics.text_size()))
+                            .line_height(gpui_px_from_ui(plan.metrics.text_size()))
+                            .focusable()
+                            .track_focus(overlay_binding.trigger_focus())
+                            .tab_stop(!plan.disabled)
+                            .ui_semantics(&trigger_semantics)
+                            .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
+                            .on_key_down({
+                                let window_overlay_runtime = window_overlay_runtime.clone();
+                                let overlay_binding = overlay_binding.clone();
+                                move |event: &KeyDownEvent, window, cx| {
+                                    let key = event.keystroke.key.as_str();
+                                    if !event.keystroke.modifiers.modified()
+                                        && !event.prefer_character_input
+                                        && matches!(key, "enter" | "space" | "down" | "up")
+                                    {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        if !open {
+                                            window_overlay_runtime
                                         .request_open_change(
                                             &overlay_binding,
                                             true,
@@ -453,56 +450,67 @@ impl RenderOnce for Select {
                                         .expect(
                                             "Select keyboard trigger should own its registration",
                                         );
+                                        }
                                     }
                                 }
-                            }
-                        })
-                        .when(plan.disabled, |this| {
-                            this.opacity(0.56).cursor_not_allowed()
-                        })
-                        .when(!plan.disabled, |this| {
-                            let open = plan.open;
-                            let window_overlay_runtime = window_overlay_runtime.clone();
-                            let overlay_binding = overlay_binding.clone();
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(trigger_hover_background))
-                                .capture_any_mouse_up(move |_, window, cx| {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-                                    window_overlay_runtime
-                                        .request_open_change(
-                                            &overlay_binding,
-                                            !open,
-                                            DismissReason::Trigger,
-                                            window,
-                                            cx,
-                                        )
-                                        .expect("Select trigger should own its registration");
-                                })
-                        })
-                        .child(
-                            div()
-                                .flex_1()
-                                .overflow_hidden()
-                                .truncate()
-                                .child(plan.trigger_label),
-                        )
-                        .child(div().child(if plan.open { "^" } else { "v" })),
-                ),
+                            })
+                            .when(plan.disabled, |this| {
+                                this.opacity(0.56).cursor_not_allowed()
+                            })
+                            .when(!plan.disabled, |this| {
+                                let open = plan.open;
+                                let window_overlay_runtime = window_overlay_runtime.clone();
+                                let overlay_binding = overlay_binding.clone();
+                                this.cursor_pointer()
+                                    .hover(move |style| style.bg(trigger_hover_background))
+                                    .capture_any_mouse_up(move |_, window, cx| {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        window_overlay_runtime
+                                            .request_open_change(
+                                                &overlay_binding,
+                                                !open,
+                                                DismissReason::Trigger,
+                                                window,
+                                                cx,
+                                            )
+                                            .expect("Select trigger should own its registration");
+                                    })
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .truncate()
+                                    .child(plan.trigger_label),
+                            )
+                            .child(div().child(if plan.open { "^" } else { "v" })),
+                    )
+                    .track_portal_anchor(&portal_anchor),
             )
             .when(plan.open, |this| {
-                this.child(gpui_relative_overlay_layer(
+                let content_runtime = window_overlay_runtime.clone();
+                let content_binding = overlay_binding.clone();
+                this.child(gpui_portal_anchor_overlay_layer(
                     &overlay_adapter,
-                    &placement,
+                    &window_overlay_runtime,
                     &overlay_binding,
-                    |opening_theme| {
+                    window,
+                    cx,
+                    move |anchor| {
+                        OverlayPlacementInput::new(anchor, placement_content_size)
+                            .with_side(placement_side)
+                            .with_alignment(placement_alignment)
+                            .with_offset(ui_px(4.0))
+                    },
+                    move |opening_theme, _, _| {
                         select_content_element(
                             plan.content_id.clone(),
                             plan.listbox_id.clone(),
                             plan.debug_id.clone(),
                             state.clone(),
-                            window_overlay_runtime.clone(),
-                            overlay_binding.clone(),
+                            content_runtime,
+                            content_binding,
                             self.options,
                             self.groups,
                             runtime.clone(),

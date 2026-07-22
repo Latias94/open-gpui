@@ -2,25 +2,26 @@
 
 use crate::geometry::gpui_px_from_ui;
 use crate::kbd::Kbd;
+use std::rc::Rc;
 use std::time::Duration;
 
 use open_gpui::prelude::*;
 use open_gpui::{
     Action, AnyElement, AnyView, App, Context, ElementId, IntoElement, KeyBinding, KeyContext,
-    ParentElement, Render, RenderOnce, SharedString, Styled, Window, div,
+    ParentElement, PortalAnchorHandle, Render, RenderOnce, SharedString, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    InitialFocusIntent, OverlayAnchorInput, OverlayLayerKind, OverlayPlacementAlignment,
-    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, SemanticDescriptor,
-    Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
+    InitialFocusIntent, OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput,
+    OverlayPlacementSide, OverlayPresence, Role, SemanticDescriptor, Sizable, Size, ThemeTokens,
+    UiPx, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayInsideRegionId, OverlayLayerBinding,
-    OverlayLayerRegistration, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
-    gpui_overlay_state, gpui_relative_overlay_layer,
+    GpuiOverlayAdapterConfig, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration,
+    OverlayOpenIntent, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
+    gpui_overlay_state, gpui_portal_anchor_overlay_layer,
 };
 use crate::theme::{
     ThemeContext, ThemeResolver, ThemeScope, gpui_elevation_shadow, scoped_theme_view_builder,
@@ -337,6 +338,8 @@ pub struct Tooltip {
     delay: TooltipDelayPolicy,
     tokens: ThemeTokens,
     active_tooltip_surface: bool,
+    portal_anchor: Option<PortalAnchorHandle>,
+    on_open_change: Option<Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>>,
 }
 
 enum TooltipContent {
@@ -363,6 +366,8 @@ impl Tooltip {
             delay: TooltipDelayPolicy::default(),
             tokens: ThemeTokens::default(),
             active_tooltip_surface: false,
+            portal_anchor: None,
+            on_open_change: None,
         }
     }
 
@@ -380,6 +385,8 @@ impl Tooltip {
             delay: TooltipDelayPolicy::default(),
             tokens: ThemeTokens::default(),
             active_tooltip_surface: false,
+            portal_anchor: None,
+            on_open_change: None,
         }
     }
 
@@ -462,6 +469,25 @@ impl Tooltip {
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
+        self
+    }
+
+    /// Binds a standalone tooltip surface to a caller-owned live target.
+    ///
+    /// Bind the same handle to exactly one rendered target per frame with
+    /// [`open_gpui::PortalAnchorExt::track_portal_anchor`]. GPUI-native tooltip builders retain
+    /// their intentional pointer-point anchor and do not use this method.
+    pub fn portal_anchor(mut self, handle: PortalAnchorHandle) -> Self {
+        self.portal_anchor = Some(handle);
+        self
+    }
+
+    /// Registers the controlled owner's open-change handler.
+    pub fn on_open_change(
+        mut self,
+        handler: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_open_change = Some(Rc::new(handler));
         self
     }
 
@@ -584,50 +610,64 @@ impl RenderOnce for Tooltip {
         let state = self.state();
         let metrics = state.metrics();
         let active_tooltip_surface = self.active_tooltip_surface;
+        let on_open_change = self.on_open_change;
         let id = self.id;
         let debug_id = id.to_string();
         let accessible_label = accessible_label_for_content(&self.content);
         let children = children_from_content(self.content);
         let content_id: ElementId = (id.clone(), "content").into();
         let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
-        let registration = OverlayLayerRegistration::new(
-            format!("tooltip:{debug_id}"),
-            state.overlay().policy().clone(),
-            OverlayOwnership::Controlled,
-        );
         let existing_binding = runtime.read(cx).overlay_binding.clone();
-        let overlay_binding = window_overlay_runtime
-            .bind_component_layer(
-                &runtime,
-                existing_binding.as_ref(),
-                registration,
-                window,
-                cx,
-            )
-            .expect("tooltip overlay registration should remain valid");
-        if existing_binding.is_none() {
-            runtime.update(cx, |runtime, _| {
-                runtime.overlay_binding = Some(overlay_binding.clone());
-            });
-        }
-        let overlay_adapter = gpui_overlay_state(state.overlay());
-        let placement = GpuiOverlayPlacement::resolve(
-            OverlayPlacementInput::new(
-                OverlayAnchorInput::from_layout_bounds(rect(
-                    ui_point(UiPx::ZERO, UiPx::ZERO),
-                    ui_size(UiPx::ONE, UiPx::ONE),
-                )),
-                ui_size(
-                    metrics.max_width(),
-                    metrics.text_size() + metrics.padding_y() * 2.0,
-                ),
-            )
-            .with_side(state.placement_side())
-            .with_alignment(state.placement_alignment())
-            .with_offset(ui_px(4.0)),
-            overlay_adapter.snap_margin(),
+        let portal_anchor = self.portal_anchor.or_else(|| {
+            existing_binding
+                .as_ref()
+                .and_then(OverlayLayerBinding::portal_anchor)
+        });
+        assert!(
+            active_tooltip_surface || portal_anchor.is_some() || !state.open(),
+            "an open standalone Tooltip requires Tooltip::portal_anchor"
         );
+        let overlay_binding = (active_tooltip_surface || portal_anchor.is_some()).then(|| {
+            let mut registration = OverlayLayerRegistration::new(
+                format!("tooltip:{debug_id}"),
+                state.overlay().policy().clone(),
+                OverlayOwnership::Controlled,
+            );
+            if let Some(portal_anchor) = portal_anchor {
+                registration = registration.portal_anchor(portal_anchor);
+            }
+            if let Some(on_open_change) = on_open_change {
+                registration = registration.on_open_change(move |intent, window, cx| {
+                    on_open_change(intent, window, cx);
+                });
+            }
+            let overlay_binding = window_overlay_runtime
+                .bind_component_layer(
+                    &runtime,
+                    existing_binding.as_ref(),
+                    registration,
+                    window,
+                    cx,
+                )
+                .expect("tooltip overlay registration should remain valid");
+            if existing_binding.is_none() {
+                runtime.update(cx, |runtime, _| {
+                    runtime.overlay_binding = Some(overlay_binding.clone());
+                });
+            }
+            overlay_binding
+        });
+        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let placement_content_size = ui_size(
+            metrics.max_width(),
+            metrics.text_size() + metrics.padding_y() * 2.0,
+        );
+        let placement_side = state.placement_side();
+        let placement_alignment = state.placement_alignment();
+        let layer_debug_id = debug_id.clone();
         let layer = overlay_adapter.should_render_deferred_layer().then(|| {
+            let overlay_binding =
+                overlay_binding.expect("an open tooltip must have an active overlay registration");
             if active_tooltip_surface {
                 let opening_theme = overlay_binding
                     .opening_theme()
@@ -654,19 +694,29 @@ impl RenderOnce for Tooltip {
                 )
                 .into_any_element()
             } else {
-                gpui_relative_overlay_layer(
+                let surface_runtime = window_overlay_runtime.clone();
+                let surface_binding = overlay_binding.clone();
+                gpui_portal_anchor_overlay_layer(
                     &overlay_adapter,
-                    &placement,
+                    &window_overlay_runtime,
                     &overlay_binding,
-                    |opening_theme| {
-                        window_overlay_runtime
+                    window,
+                    cx,
+                    move |anchor| {
+                        OverlayPlacementInput::new(anchor, placement_content_size)
+                            .with_side(placement_side)
+                            .with_alignment(placement_alignment)
+                            .with_offset(ui_px(4.0))
+                    },
+                    move |opening_theme, _, _| {
+                        surface_runtime
                             .surface(
-                                &overlay_binding,
+                                &surface_binding,
                                 OverlayInsideRegionId::new("surface"),
-                                format!("tooltip:{debug_id}:surface-runtime"),
+                                format!("tooltip:{layer_debug_id}:surface-runtime"),
                                 tooltip_surface_element(
                                     content_id,
-                                    debug_id.clone(),
+                                    layer_debug_id.clone(),
                                     state,
                                     accessible_label,
                                     children,

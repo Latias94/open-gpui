@@ -14,7 +14,7 @@ use open_gpui_ui_components::{
     SheetSide, SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, OutsidePressPolicy, OverlayLayerKind, OverlayLayerPolicy,
+    DismissReason, EscapeKeyPolicy, OutsidePressPolicy, OverlayLayerKind, OverlayLayerPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, OverlayPresence, Rect, Sizable, Size,
     ThemeTokens, anchor_rect_from_point, outer_bounds_with_window_margin, prefer_visual_bounds,
     rect, ui_point, ui_px, ui_size,
@@ -375,6 +375,15 @@ pub(crate) enum OverlayControlledSample {
     NestedDialog,
 }
 
+const PORTAL_ANCHOR_DEMO_FOLLOWER_COUNT: usize = 2;
+
+#[repr(usize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PortalAnchorDemoFollower {
+    Bottom,
+    Right,
+}
+
 /// Mutable shell state for the overlay page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct OverlayPageState {
@@ -382,6 +391,28 @@ pub(crate) struct OverlayPageState {
     hovered_tooltip_sample: Option<&'static str>,
     overlay_controlled_open: OverlayControlledOpenState,
     refuse_dialog_close: bool,
+    portal_anchor_demo: PortalAnchorDemoState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PortalAnchorDemoState {
+    translated: bool,
+    target_hidden: bool,
+    target_mounted: bool,
+    follower_open: [bool; PORTAL_ANCHOR_DEMO_FOLLOWER_COUNT],
+    unlink_intents: [usize; PORTAL_ANCHOR_DEMO_FOLLOWER_COUNT],
+}
+
+impl Default for PortalAnchorDemoState {
+    fn default() -> Self {
+        Self {
+            translated: false,
+            target_hidden: false,
+            target_mounted: true,
+            follower_open: [true; PORTAL_ANCHOR_DEMO_FOLLOWER_COUNT],
+            unlink_intents: [0; PORTAL_ANCHOR_DEMO_FOLLOWER_COUNT],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -448,6 +479,32 @@ impl OverlayPageState {
         self.refuse_dialog_close
     }
 
+    pub(crate) fn portal_anchor_demo_translated(self) -> bool {
+        self.portal_anchor_demo.translated
+    }
+
+    pub(crate) fn portal_anchor_demo_target_hidden(self) -> bool {
+        self.portal_anchor_demo.target_hidden
+    }
+
+    pub(crate) fn portal_anchor_demo_target_mounted(self) -> bool {
+        self.portal_anchor_demo.target_mounted
+    }
+
+    pub(crate) fn portal_anchor_demo_follower_open(
+        self,
+        follower: PortalAnchorDemoFollower,
+    ) -> bool {
+        self.portal_anchor_demo.follower_open[follower as usize]
+    }
+
+    pub(crate) fn portal_anchor_demo_unlink_intents(
+        self,
+        follower: PortalAnchorDemoFollower,
+    ) -> usize {
+        self.portal_anchor_demo.unlink_intents[follower as usize]
+    }
+
     /// Opens or closes the demo overlay and returns whether the state changed.
     pub(crate) fn set_overlay_open(&mut self, open: bool) -> bool {
         if self.open == open {
@@ -487,6 +544,63 @@ impl OverlayPageState {
         true
     }
 
+    pub(crate) fn set_portal_anchor_demo_translated(&mut self, translated: bool) -> bool {
+        if self.portal_anchor_demo.translated == translated {
+            return false;
+        }
+        self.portal_anchor_demo.translated = translated;
+        true
+    }
+
+    pub(crate) fn set_portal_anchor_demo_target_hidden(&mut self, hidden: bool) -> bool {
+        if self.portal_anchor_demo.target_hidden == hidden {
+            return false;
+        }
+        self.portal_anchor_demo.target_hidden = hidden;
+        true
+    }
+
+    pub(crate) fn set_portal_anchor_demo_target_mounted(&mut self, mounted: bool) -> bool {
+        if self.portal_anchor_demo.target_mounted == mounted {
+            return false;
+        }
+        self.portal_anchor_demo.target_mounted = mounted;
+        true
+    }
+
+    pub(crate) fn reopen_portal_anchor_demo_followers(&mut self) -> bool {
+        let mut changed = false;
+        for open in &mut self.portal_anchor_demo.follower_open {
+            if !*open {
+                *open = true;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub(crate) fn apply_portal_anchor_demo_intent(
+        &mut self,
+        follower: PortalAnchorDemoFollower,
+        desired_open: bool,
+        reason: DismissReason,
+    ) -> bool {
+        let index = follower as usize;
+        let mut changed = false;
+        if !desired_open && reason == DismissReason::AnchorUnlinked {
+            self.portal_anchor_demo.unlink_intents[index] = self.portal_anchor_demo.unlink_intents
+                [index]
+                .checked_add(1)
+                .expect("portal-anchor demo unlink intent count overflowed");
+            changed = true;
+        }
+        if self.portal_anchor_demo.follower_open[index] != desired_open {
+            self.portal_anchor_demo.follower_open[index] = desired_open;
+            changed = true;
+        }
+        changed
+    }
+
     /// Clears page-local state when navigating away.
     pub(crate) fn reset_on_page_change(&mut self) -> bool {
         let mut changed = false;
@@ -496,6 +610,10 @@ impl OverlayPageState {
         changed |= self.overlay_controlled_open.reset();
         if self.refuse_dialog_close {
             self.refuse_dialog_close = false;
+            changed = true;
+        }
+        if self.portal_anchor_demo != PortalAnchorDemoState::default() {
+            self.portal_anchor_demo = PortalAnchorDemoState::default();
             changed = true;
         }
         changed
