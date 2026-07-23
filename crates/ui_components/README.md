@@ -74,13 +74,16 @@ sticky overlay and active indicator are paint-only chrome and must not mutate se
 order, roles, or row geometry.
 
 The public API is intentionally key-first. Applications should use `VirtualizedListState` methods
-such as `navigation_target`, `scroll_target_for_key`, and `scroll_target_for_key_with_snapshot`
-rather than index-first helper functions.
+such as `navigation_target`, `materialization_target_for_key`, and
+`materialization_target_for_key_with_snapshot` rather than index-first helper functions.
 
-Host code should compute reveal targets from stable keys and then drive the host-owned scroll
-handle. Nested row actions should use the component event containment APIs so click, key, and wheel
-behavior stay explicit without replacing the list's outer row focus, hit-testing, and selection
-contract.
+Use `VirtualizedList::bring_key_into_view` for the complete path. The list first materializes the
+stable logical row, binds its physical `RevealTargetHandle`, and then delegates final nested
+alignment to GPUI's window-owned bring-into-view authority. Custom adapters may inspect a
+`VirtualizedListMaterializationResult`, but must not treat its index or estimated mounting position
+as final reveal geometry. Nested row actions should use the component event containment APIs so
+click, key, and wheel behavior stay explicit without replacing the list's outer row focus,
+hit-testing, and selection contract.
 
 Internally, VirtualizedList is split by responsibility: descriptors describe rows, model/state owns
 semantic identity, runtime plans resolve input and viewport facts, render modules assemble GPUI

@@ -543,6 +543,15 @@ fn components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates(
     let row_8_before = bounds(cx, ROW_8);
     cx.simulate_keystrokes("pagedown");
     redraw(cx);
+    redraw(cx);
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued_callbacks > 0,
+        "expected the deferred VirtualizedList reveal to submit after target binding"
+    );
+    redraw(cx);
+    cx.run_until_parked();
+    redraw(cx);
 
     let row_8_after = bounds(cx, ROW_8);
     assert!(
@@ -611,12 +620,16 @@ fn components_gallery_smoke_virtualized_list_host_reveal_and_nested_action(
     scroll_page_selector_into_view(&shell, cx, ROW_ACTION);
     redraw(cx);
 
-    click(cx, ROOT);
+    let revealed_row = bounds(cx, REVEALED_ROW);
+    let row_point = visible_page_interaction_point(cx, REVEALED_ROW);
+    click_point(cx, point(revealed_row.left() + px(12.0), row_point.y));
     redraw(cx);
     assert!(
         cx.debug_selector_is_focused(ROOT),
-        "expected clicking the host-controlled sample root to focus the list"
+        "expected clicking a visible host-controlled row to focus the list"
     );
+    scroll_page_selector_into_view(&shell, cx, ROW_ACTION);
+    redraw(cx);
     cx.update_global::<pages::components::VirtualizedListSampleRuntimeLog, _>(|log, _| {
         log.clear();
     });

@@ -4074,6 +4074,7 @@ dependencies = [
  "open-gpui-http-client",
  "open-gpui-macros",
  "open-gpui-media",
+ "open-gpui-motion",
  "open-gpui-refineable",
  "open-gpui-scap",
  "open-gpui-scheduler",

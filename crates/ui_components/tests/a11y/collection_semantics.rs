@@ -1,11 +1,13 @@
 use std::{cell::RefCell, rc::Rc};
 
 use open_gpui::prelude::FluentBuilder;
-use open_gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, accesskit, div, px};
+use open_gpui::{
+    BringIntoViewAlignment, BringIntoViewOptions, Context, IntoElement, ParentElement, Render,
+    Styled, Window, accesskit, div, px,
+};
 use open_gpui_ui_components::{
     Listbox, Splitter, SplitterPanel, SplitterPanelDescriptor, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListScrollStrategy,
-    listbox::ListboxOption,
+    VirtualizedList, VirtualizedListItemDescriptor, listbox::ListboxOption,
 };
 use open_gpui_ui_core::ui_px;
 
@@ -380,6 +382,51 @@ fn tree_final_tree_focus_click_and_expansion_follow_resolved_state(
 }
 
 #[open_gpui::test]
+fn duplicate_tree_values_keep_distinct_render_and_accessibility_identity(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct DuplicateTreeProbe;
+
+    impl Render for DuplicateTreeProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Tree::new(
+                    "duplicate-tree",
+                    "Duplicate tree",
+                    [
+                        TreeItemDescriptor::new("duplicate", "First duplicate"),
+                        TreeItemDescriptor::new("duplicate", "Second duplicate"),
+                        TreeItemDescriptor::new("tail", "Tail"),
+                    ],
+                )
+                .default_focused("tail"),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| DuplicateTreeProbe);
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("duplicate tree accessibility tree should publish");
+    let (first_id, first) = node_with_label(&update, "First duplicate");
+    let (second_id, second) = node_with_label(&update, "Second duplicate");
+
+    assert_ne!(first_id, second_id);
+    assert_eq!(first.role(), accesskit::Role::TreeItem);
+    assert_eq!(second.role(), accesskit::Role::TreeItem);
+    assert!(first.is_disabled());
+    assert!(second.is_disabled());
+    let duplicate_selectors = cx
+        .debug_selectors_with_prefix("tree:duplicate-tree:item:")
+        .into_iter()
+        .filter(|selector| !selector.ends_with(":tail"))
+        .collect::<Vec<_>>();
+    assert_eq!(duplicate_selectors.len(), 2);
+    assert_ne!(duplicate_selectors[0], duplicate_selectors[1]);
+}
+
+#[open_gpui::test]
 fn virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_recycles_by_key(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -415,7 +462,10 @@ fn virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_re
                     activations.borrow_mut().push(activation.key().to_owned());
                 });
             if let Some(reveal_key) = self.reveal_key.as_ref() {
-                list = list.reveal_key(reveal_key.clone(), VirtualizedListScrollStrategy::Top);
+                list = list.bring_key_into_view(
+                    reveal_key.clone(),
+                    BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                );
             }
 
             div()

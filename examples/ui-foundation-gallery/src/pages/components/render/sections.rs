@@ -1307,7 +1307,7 @@ pub(super) fn render_components_section(
                                                     let state_summary = sample.state_summary();
                                                     let sample_id_for_activation = sample_id.to_owned();
                                                     let mut list = sample.build_list();
-                                                    if let Some(reveal_key) = sample.host_reveal_key {
+                                                    if let Some(bring_into_view) = sample.host_bring_into_view {
                                                         let host_scroll_handle = window
                                                             .use_keyed_state(
                                                                 format!(
@@ -1320,9 +1320,9 @@ pub(super) fn render_components_section(
                                                             .clone();
                                                         list = list
                                                             .scroll_handle(&host_scroll_handle)
-                                                            .reveal_key(
-                                                                reveal_key,
-                                                                sample.host_reveal_strategy,
+                                                            .bring_key_into_view(
+                                                                bring_into_view.key,
+                                                                bring_into_view.options,
                                                             );
                                                     }
                                                     let list = list.on_activate(

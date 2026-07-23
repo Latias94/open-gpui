@@ -1595,6 +1595,9 @@ mod pointer_session_tests;
 mod portal_anchor_tests;
 
 #[cfg(test)]
+mod bring_into_view_tests;
+
+#[cfg(test)]
 mod presentation_tests;
 
 #[cfg(test)]

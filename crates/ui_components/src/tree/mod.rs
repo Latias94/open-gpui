@@ -12,17 +12,18 @@ use crate::collection_typeahead::CollectionTypeaheadInput;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
 use crate::scroll_surface::{
-    ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, reveal_fixed_row, scroll_surface_handle,
-    vertical_scroll_offset, vertical_viewport_extent,
+    ScrollSurfaceRuntime, materialize_fixed_row, scroll_surface_handle, vertical_scroll_offset,
+    vertical_viewport_extent,
 };
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, CursorStyle, Empty, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, rgb, rgba,
+    AnyElement, App, BringIntoViewOptions, CursorStyle, Empty, Entity, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, RenderOnce, RevealTargetExt,
+    ScrollChainFence, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    px, rgb, rgba,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, UiPx, ui_px};
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
 pub(crate) use descriptor::apply_tree_expanded_overrides;
 pub use descriptor::{TreeChildrenLoadState, TreeItemDescriptor};
@@ -34,7 +35,7 @@ pub(crate) use model::{nonnegative_px, tree_children_load_hint};
 pub use movement::{TreeDropPosition, TreeMove, TreeMoveTarget, apply_tree_move};
 pub(crate) use render_plan::TreeRenderPlan;
 pub use render_plan::{TreeBehaviorSnapshot, TreeRowBehaviorSnapshot};
-use runtime::TreeRuntime;
+use runtime::{TreeFocusOperation, TreeFocusOperationStage, TreeRuntime};
 pub use style::TreeMetrics;
 
 type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
@@ -237,14 +238,19 @@ impl RenderOnce for Tree {
 
         window.with_id(id.clone(), |window| {
             let debug_id = id.clone();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| TreeRuntime {
-                scroll_surface: ScrollSurfaceRuntime::new(None),
-                selected_value: selected_value.clone(),
-                focused_value: focused_value.clone(),
-                expanded_values: BTreeMap::new(),
-                focus_handles: BTreeMap::new(),
-                typeahead: Default::default(),
+            let runtime = window.use_keyed_state("runtime", cx, |_, _| {
+                TreeRuntime::new(
+                    ScrollSurfaceRuntime::new(None),
+                    selected_value.clone(),
+                    focused_value.clone(),
+                )
             });
+            runtime.update(cx, |runtime, _| runtime.set_virtualized(virtualized));
+            let scroll_chain_anchor = if virtualized {
+                Some(runtime.update(cx, |runtime, _| runtime.scroll_chain_anchor(window)))
+            } else {
+                None
+            };
             let runtime_snapshot = runtime.read(cx).clone();
             let resolved_items =
                 apply_tree_expanded_overrides(&items, &runtime_snapshot.expanded_values);
@@ -262,6 +268,10 @@ impl RenderOnce for Tree {
                 resolved_items,
             );
             runtime.update(cx, |runtime, cx| runtime.sync(&state, cx));
+            let focus_claim_revision = window.focus_claim_revision();
+            runtime.update(cx, |runtime, _| {
+                runtime.retain_current_focus_claim(focus_claim_revision);
+            });
 
             let focus_handles = {
                 let runtime = runtime.read(cx);
@@ -275,7 +285,32 @@ impl RenderOnce for Tree {
                 .focused_index()
                 .and_then(|index| focus_handles.get(index).cloned().flatten());
             let scroll_handle = scroll_surface_handle(&runtime.read(cx).scroll_surface, None);
+            let pending_focus = runtime.read(cx).pending_focus(focus_claim_revision);
             let metrics = state.metrics();
+            let static_pending_focus = if virtualized {
+                None
+            } else {
+                pending_focus.as_ref().and_then(|operation| {
+                    (operation.stage == TreeFocusOperationStage::Materializing)
+                        .then(|| {
+                            state
+                                .item_by_value(&operation.value)
+                                .filter(|item| item.focusable())
+                                .and_then(|item| {
+                                    focus_handles.get(item.index()).cloned().flatten().map(
+                                        |handle| {
+                                            (
+                                                operation.sequence,
+                                                handle,
+                                                operation.materialization_fence(),
+                                            )
+                                        },
+                                    )
+                                })
+                        })
+                        .flatten()
+                })
+            };
             let content = if virtualized {
                 let viewport_extent = vertical_viewport_extent(&scroll_handle);
                 let scroll_offset = vertical_scroll_offset(&scroll_handle);
@@ -295,6 +330,8 @@ impl RenderOnce for Tree {
                     focus_handles.clone(),
                     runtime.clone(),
                     scroll_handle.clone(),
+                    scroll_chain_anchor.expect("virtual Tree should create a scroll-chain anchor"),
+                    pending_focus,
                     draggable,
                     on_select.clone(),
                     on_toggle.clone(),
@@ -307,7 +344,6 @@ impl RenderOnce for Tree {
                     focus_handles.clone(),
                     metrics,
                     runtime.clone(),
-                    scroll_handle.clone(),
                     state.clone(),
                     draggable,
                     on_select.clone(),
@@ -315,6 +351,16 @@ impl RenderOnce for Tree {
                     on_move.clone(),
                 )
             };
+            if let Some((sequence, focus_handle, scroll_fence)) = static_pending_focus {
+                submit_tree_focus_claim(
+                    runtime.clone(),
+                    sequence,
+                    focus_handle,
+                    scroll_fence,
+                    window,
+                    cx,
+                );
+            }
             let root_label = label.to_string();
             let root_semantics = SemanticDescriptor::new(state.role()).with_label(&root_label);
 
@@ -362,7 +408,6 @@ fn render_full_tree_body(
     focus_handles: Vec<Option<FocusHandle>>,
     metrics: TreeMetrics,
     runtime: Entity<TreeRuntime>,
-    scroll_handle: ScrollHandle,
     state: TreeState,
     draggable: bool,
     on_select: Option<TreeSelectHandler>,
@@ -385,7 +430,6 @@ fn render_full_tree_body(
                 focus_handles.get(index).cloned().flatten(),
                 metrics,
                 runtime.clone(),
-                scroll_handle.clone(),
                 state.clone(),
                 draggable,
                 on_select.clone(),
@@ -403,6 +447,8 @@ fn render_virtual_tree_body(
     focus_handles: Vec<Option<FocusHandle>>,
     runtime: Entity<TreeRuntime>,
     scroll_handle: ScrollHandle,
+    scroll_chain_anchor: open_gpui::RevealTargetHandle,
+    pending_focus: Option<TreeFocusOperation>,
     draggable: bool,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
@@ -412,33 +458,159 @@ fn render_virtual_tree_body(
     let state = plan.state().clone();
     let rows = plan.rows().to_vec();
     let total_size = plan.virtualizer().total_size();
-
-    div()
-        .debug_selector({
-            let tree_id = tree_id.clone();
-            move || format!("tree:{tree_id}:content")
+    let pending_focus_target = pending_focus.and_then(|operation| {
+        state.item_by_value(&operation.value).and_then(|item| {
+            item.focusable().then(|| {
+                (
+                    operation.sequence,
+                    operation.stage,
+                    item.index(),
+                    item.render_identity().to_owned(),
+                )
+            })
         })
-        .relative()
-        .w_full()
-        .h(gpui_px_from_ui(total_size))
-        .children(rows.into_iter().map(move |row| {
-            let index = row.index();
-            render_tree_item(
-                tree_id.clone(),
-                row.item().clone(),
-                focus_handles.get(index).cloned().flatten(),
-                metrics,
-                runtime.clone(),
-                scroll_handle.clone(),
-                state.clone(),
-                draggable,
-                on_select.clone(),
-                on_toggle.clone(),
-                on_move.clone(),
-                Some((row.virtual_start(), row.virtual_size())),
-            )
-        }))
-        .into_any_element()
+    });
+    let target_is_rendered =
+        pending_focus_target
+            .as_ref()
+            .is_some_and(|(_, _, target_index, target_identity)| {
+                rows.iter().any(|row| {
+                    row.index() == *target_index && row.item().render_identity() == target_identity
+                })
+            });
+
+    let mut body = div();
+    if let Some((sequence, stage, target_index, _)) = pending_focus_target {
+        match stage {
+            TreeFocusOperationStage::Materializing => {
+                let runtime_for_prepaint = runtime.clone();
+                let runtime_for_commit = runtime.clone();
+                let state_for_materialization = state.clone();
+                let scroll_handle = scroll_handle.clone();
+                body = body.on_children_prepainted(move |_, window, cx| {
+                    let prepared = runtime_for_prepaint.update(cx, |runtime, cx| {
+                        runtime.prepare_virtual_materialization(
+                            sequence,
+                            window.focus_claim_revision(),
+                            window,
+                            cx,
+                        )
+                    });
+                    if !prepared {
+                        return;
+                    }
+
+                    let runtime_for_commit = runtime_for_commit.clone();
+                    let state_for_materialization = state_for_materialization.clone();
+                    let scroll_handle = scroll_handle.clone();
+                    let scroll_chain_anchor = scroll_chain_anchor;
+                    window.record_prepaint_focus_stable_commit(move |_, window, cx| {
+                        let accepted = runtime_for_commit.update(cx, |runtime, cx| {
+                            runtime.commit_virtual_materialization(
+                                sequence,
+                                window.focus_claim_revision(),
+                                window,
+                                cx,
+                            )
+                        });
+                        if !accepted {
+                            return;
+                        }
+
+                        materialize_tree_item(
+                            &scroll_handle,
+                            &state_for_materialization,
+                            target_index,
+                        );
+                        let refreshed_fence = window
+                            .capture_committed_scroll_chain_fence(
+                                &scroll_chain_anchor,
+                                BringIntoViewOptions::nearest(),
+                            )
+                            .ok()
+                            .flatten();
+                        let refreshed = refreshed_fence.is_some_and(|fence| {
+                            runtime_for_commit.update(cx, |runtime, _| {
+                                runtime.refresh_virtual_materialization_fence(sequence, fence)
+                            })
+                        });
+                        if !refreshed {
+                            runtime_for_commit.update(cx, |runtime, cx| {
+                                runtime.abandon_virtual_focus(sequence, cx);
+                            });
+                        }
+                        window.refresh();
+                    });
+                });
+            }
+            TreeFocusOperationStage::AwaitingMount if target_is_rendered => {
+                let runtime_for_prepaint = runtime.clone();
+                let runtime_for_commit = runtime.clone();
+                body = body.on_children_prepainted(move |_, window, cx| {
+                    let prepared = runtime_for_prepaint.update(cx, |runtime, cx| {
+                        runtime.prepare_virtual_focus_submission(
+                            sequence,
+                            window.focus_claim_revision(),
+                            window,
+                            cx,
+                        )
+                    });
+                    if !prepared {
+                        return;
+                    }
+
+                    let runtime_for_commit = runtime_for_commit.clone();
+                    window.record_prepaint_window_commit(move |_, window, cx| {
+                        let focus_handle = runtime_for_commit.update(cx, |runtime, cx| {
+                            runtime.take_virtual_focus_submission(
+                                sequence,
+                                window.focus_claim_revision(),
+                                window,
+                                cx,
+                            )
+                        });
+                        if let Some((focus_handle, scroll_fence)) = focus_handle {
+                            submit_tree_focus_claim(
+                                runtime_for_commit.clone(),
+                                sequence,
+                                focus_handle,
+                                Some(scroll_fence),
+                                window,
+                                cx,
+                            );
+                        }
+                    });
+                });
+            }
+            TreeFocusOperationStage::AwaitingMount | TreeFocusOperationStage::InFlight => {}
+        }
+    }
+
+    body.debug_selector({
+        let tree_id = tree_id.clone();
+        move || format!("tree:{tree_id}:content")
+    })
+    .relative()
+    .w_full()
+    .h(gpui_px_from_ui(total_size))
+    .children(rows.into_iter().map(move |row| {
+        let index = row.index();
+        render_tree_item(
+            tree_id.clone(),
+            row.item().clone(),
+            focus_handles.get(index).cloned().flatten(),
+            metrics,
+            runtime.clone(),
+            state.clone(),
+            draggable,
+            on_select.clone(),
+            on_toggle.clone(),
+            on_move.clone(),
+            Some((row.virtual_start(), row.virtual_size())),
+        )
+    }))
+    .track_reveal_target(&scroll_chain_anchor)
+    .into_any_element()
 }
 
 fn render_tree_item(
@@ -447,7 +619,6 @@ fn render_tree_item(
     focus_handle: Option<FocusHandle>,
     metrics: TreeMetrics,
     runtime: Entity<TreeRuntime>,
-    scroll_handle: ScrollHandle,
     state: TreeState,
     draggable: bool,
     on_select: Option<TreeSelectHandler>,
@@ -456,8 +627,8 @@ fn render_tree_item(
     virtual_geometry: Option<(UiPx, UiPx)>,
 ) -> impl IntoElement {
     let item_value = item.value().to_owned();
+    let item_identity = item.render_identity().to_owned();
     let item_label = item.label().to_owned();
-    let item_index = item.index();
     let disabled = item.disabled();
     let selected = item.selected();
     let focused = item.focused();
@@ -501,11 +672,11 @@ fn render_tree_item(
     }
 
     div()
-        .id(format!("tree:{tree_id}:item:{item_value}"))
+        .id(format!("tree:{tree_id}:item:{item_identity}"))
         .debug_selector({
             let tree_id = tree_id.clone();
-            let item_value = item_value.clone();
-            move || format!("tree:{tree_id}:item:{item_value}")
+            let item_identity = item_identity.clone();
+            move || format!("tree:{tree_id}:item:{item_identity}")
         })
         .when_some(virtual_start, |this, start| {
             this.absolute()
@@ -566,8 +737,6 @@ fn render_tree_item(
             let on_select = on_select.clone();
             let selection = selection.clone();
             let focus_handle = focus_handle.clone();
-            let scroll_handle = scroll_handle.clone();
-            let state = state.clone();
             let item_value = item_value.clone();
             this.on_click(move |_event, window, cx| {
                 cx.stop_propagation();
@@ -579,7 +748,6 @@ fn render_tree_item(
                 if let Some(focus_handle) = focus_handle.as_ref() {
                     focus_handle.focus(window, cx);
                 }
-                scroll_tree_item_into_view(&scroll_handle, &state, item_index);
                 if let Some(selection) = selection.clone() {
                     if let Some(on_select) = on_select.as_ref() {
                         on_select(selection, window, cx);
@@ -589,7 +757,6 @@ fn render_tree_item(
         })
         .on_key_down({
             let runtime = runtime.clone();
-            let scroll_handle = scroll_handle.clone();
             let on_select = on_select.clone();
             let on_toggle = on_toggle.clone();
             let state = state.clone();
@@ -597,7 +764,6 @@ fn render_tree_item(
                 handle_tree_key_down(
                     &state,
                     runtime.clone(),
-                    scroll_handle.clone(),
                     on_select.clone(),
                     on_toggle.clone(),
                     event,
@@ -609,7 +775,7 @@ fn render_tree_item(
         .child(div().w(gpui_px_from_ui(indent)).flex_none())
         .child(tree_disclosure(
             tree_id.clone(),
-            item_value.clone(),
+            item_identity.clone(),
             item_label.clone(),
             has_children,
             children_load_state.clone(),
@@ -629,7 +795,7 @@ fn render_tree_item(
         )
         .when_some(tree_children_load_hint(&children_load_state), {
             let tree_id = tree_id.clone();
-            let item_value = item_value.clone();
+            let item_identity = item_identity.clone();
             let children_load_state = children_load_state.clone();
             move |this, hint| {
                 let role = if children_load_state.is_failed() {
@@ -640,11 +806,11 @@ fn render_tree_item(
                 let semantics = SemanticDescriptor::new(role).with_live_text(&hint);
                 this.child(
                     div()
-                        .id(format!("tree:{tree_id}:load-state:{item_value}"))
+                        .id(format!("tree:{tree_id}:load-state:{item_identity}"))
                         .debug_selector({
                             let tree_id = tree_id.clone();
-                            let item_value = item_value.clone();
-                            move || format!("tree:{tree_id}:load-state:{item_value}")
+                            let item_identity = item_identity.clone();
+                            move || format!("tree:{tree_id}:load-state:{item_identity}")
                         })
                         .flex_none()
                         .text_xs()
@@ -657,6 +823,7 @@ fn render_tree_item(
         .when(move_enabled, |this| {
             this.child(tree_drop_zone(
                 tree_id.clone(),
+                item_identity.clone(),
                 item_value.clone(),
                 state.clone(),
                 metrics,
@@ -665,6 +832,7 @@ fn render_tree_item(
             ))
             .child(tree_drop_zone(
                 tree_id.clone(),
+                item_identity.clone(),
                 item_value.clone(),
                 state.clone(),
                 metrics,
@@ -673,6 +841,7 @@ fn render_tree_item(
             ))
             .child(tree_drop_zone(
                 tree_id.clone(),
+                item_identity.clone(),
                 item_value.clone(),
                 state.clone(),
                 metrics,
@@ -684,6 +853,7 @@ fn render_tree_item(
 
 fn tree_drop_zone(
     tree_id: String,
+    target_identity: String,
     target_value: String,
     state: TreeState,
     metrics: TreeMetrics,
@@ -708,8 +878,8 @@ fn tree_drop_zone(
     div()
         .debug_selector({
             let tree_id = tree_id.clone();
-            let target_value = target_value.clone();
-            move || format!("tree:{tree_id}:drop:{position_key}:{target_value}")
+            let target_identity = target_identity.clone();
+            move || format!("tree:{tree_id}:drop:{position_key}:{target_identity}")
         })
         .absolute()
         .left(px(0.0))
@@ -770,7 +940,7 @@ fn tree_drop_zone(
 
 fn tree_disclosure(
     tree_id: String,
-    item_value: String,
+    item_identity: String,
     item_label: String,
     has_children: bool,
     children_load_state: TreeChildrenLoadState,
@@ -804,11 +974,11 @@ fn tree_disclosure(
         .with_disabled(disabled || !has_children || children_loading)
         .with_actions(&[AccessibleAction::Click]);
     div()
-        .id(format!("tree:{tree_id}:toggle:{item_value}"))
+        .id(format!("tree:{tree_id}:toggle:{item_identity}"))
         .debug_selector({
             let tree_id = tree_id.clone();
-            let item_value = item_value.clone();
-            move || format!("tree:{tree_id}:toggle:{item_value}")
+            let item_identity = item_identity.clone();
+            move || format!("tree:{tree_id}:toggle:{item_identity}")
         })
         .w(px(18.0))
         .h(px(18.0))
@@ -846,7 +1016,6 @@ fn tree_disclosure(
 fn handle_tree_key_down(
     state: &TreeState,
     runtime: Entity<TreeRuntime>,
-    scroll_handle: ScrollHandle,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
     event: &KeyDownEvent,
@@ -870,7 +1039,7 @@ fn handle_tree_key_down(
 
             match action {
                 TreeKeyboardAction::Focus(target) => {
-                    focus_tree_target(&runtime, &scroll_handle, state, &target, window, cx);
+                    focus_tree_target(&runtime, &target, window, cx);
                 }
                 TreeKeyboardAction::Toggle(toggle) => {
                     runtime.update(cx, |runtime, cx| {
@@ -882,12 +1051,10 @@ fn handle_tree_key_down(
                     }
                 }
                 TreeKeyboardAction::Select(selection) => {
-                    let selection_index = selection.index();
                     runtime.update(cx, |runtime, cx| {
-                        runtime.set_focused(selection.value(), cx);
                         runtime.set_selected(selection.value(), cx);
                     });
-                    scroll_tree_item_into_view(&scroll_handle, state, selection_index);
+                    queue_tree_focus(&runtime, selection.value(), window, cx);
                     if let Some(on_select) = on_select.as_ref() {
                         on_select(selection, window, cx);
                     }
@@ -917,31 +1084,80 @@ fn handle_tree_key_down(
         update.searches_after_current(),
     ) {
         let target = TreeFocusTarget::new(target.index(), target.value());
-        focus_tree_target(&runtime, &scroll_handle, state, &target, window, cx);
+        focus_tree_target(&runtime, &target, window, cx);
     }
 }
 
 fn focus_tree_target(
     runtime: &Entity<TreeRuntime>,
-    scroll_handle: &ScrollHandle,
-    state: &TreeState,
     target: &TreeFocusTarget,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let target_index = target.index();
-    let focus_handle = runtime.update(cx, |runtime, cx| runtime.set_focused(target.value(), cx));
-    if let Some(focus_handle) = focus_handle {
-        focus_handle.focus(window, cx);
-    }
-    scroll_tree_item_into_view(scroll_handle, state, target_index);
+    queue_tree_focus(runtime, target.value(), window, cx);
 }
 
-fn scroll_tree_item_into_view(scroll_handle: &ScrollHandle, state: &TreeState, index: usize) {
+fn queue_tree_focus(runtime: &Entity<TreeRuntime>, value: &str, window: &mut Window, cx: &mut App) {
+    let focus_revision = window.focus_claim_revision();
+    let materialization_fence = runtime.update(cx, |runtime, _| {
+        if !runtime.is_virtualized() {
+            return None;
+        }
+        let anchor = runtime.scroll_chain_anchor(window);
+        window
+            .capture_committed_scroll_chain_fence(&anchor, BringIntoViewOptions::nearest())
+            .ok()
+            .flatten()
+    });
+    let pending_focus = runtime.update(cx, |runtime, cx| {
+        runtime.queue_focus(value, focus_revision, materialization_fence, cx)
+    });
+    if let Some((sequence, focus_handle)) = pending_focus {
+        submit_tree_focus_claim(runtime.clone(), sequence, focus_handle, None, window, cx);
+    }
+}
+
+fn submit_tree_focus_claim(
+    runtime: Entity<TreeRuntime>,
+    sequence: u64,
+    focus_handle: FocusHandle,
+    scroll_fence: Option<ScrollChainFence>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let runtime_for_completion = runtime.clone();
+    let completion =
+        move |outcome: open_gpui::FocusClaimOutcome, window: &mut Window, cx: &mut App| {
+            let retry = runtime_for_completion.update(cx, |runtime, cx| {
+                runtime.finish_focus(sequence, outcome, window.focus_claim_revision(), cx)
+            });
+            if let Some((retry_sequence, retry_handle, retry_fence)) = retry {
+                submit_tree_focus_claim(
+                    runtime_for_completion.clone(),
+                    retry_sequence,
+                    retry_handle,
+                    retry_fence,
+                    window,
+                    cx,
+                );
+            }
+        };
+    let subscription = if let Some(scroll_fence) = scroll_fence {
+        window.focus_with_completion_and_scroll_fence(&focus_handle, scroll_fence, cx, completion)
+    } else {
+        window.focus_with_completion(&focus_handle, cx, completion)
+    };
+    subscription.detach();
+    let claim_revision = window.focus_claim_revision();
+    runtime.update(cx, |runtime, _| {
+        runtime.bind_focus_claim(sequence, claim_revision);
+    });
+}
+
+fn materialize_tree_item(scroll_handle: &ScrollHandle, state: &TreeState, index: usize) {
     let row_height = nonnegative_px(state.metrics().row_height());
-    reveal_fixed_row(
+    materialize_fixed_row(
         scroll_handle,
-        ScrollSurfaceRevealStrategy::Nearest,
         index,
         state.items().len(),
         row_height,

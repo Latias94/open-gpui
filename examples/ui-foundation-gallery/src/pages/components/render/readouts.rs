@@ -361,7 +361,7 @@ pub(super) fn component_tree_item_readout(item: &TreeItemState) -> impl IntoElem
 
 pub(crate) fn component_virtualized_list_state_contract_row(
     state: &VirtualizedListState,
-    scroll_strategy: VirtualizedListScrollStrategy,
+    bring_into_view_options: open_gpui::BringIntoViewOptions,
 ) -> impl IntoElement {
     let activation = state
         .activation_for_key("enter")
@@ -396,9 +396,9 @@ pub(crate) fn component_virtualized_list_state_contract_row(
             optional_index_label(state.navigation_target("pagedown"))
         ))
         .child(format!(
-            "activation {} / scroll {}",
+            "activation {} / reveal {:?}",
             activation,
-            scroll_strategy.as_str()
+            bring_into_view_options.vertical_axis()
         ))
 }
 

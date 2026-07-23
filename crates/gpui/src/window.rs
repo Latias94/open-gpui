@@ -63,6 +63,7 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+mod bring_into_view;
 mod frame_journal;
 mod frame_pump;
 mod input_dispatch;
@@ -79,9 +80,21 @@ pub use self::a11y::{
     AccessibilityAnnouncementPoliteness, AccessibilityAnnouncementRequestId,
     AccessibilityAnnouncementSequence, AccessibilityTreeScope,
 };
+pub use self::bring_into_view::ScrollDirectMutationRevision;
+use self::bring_into_view::{
+    ActiveBringIntoViewRequest, BringIntoViewResolution, RevealTargetCapture, RevealTargetId,
+    ScrollContainerBinding,
+};
+pub use self::bring_into_view::{
+    BringIntoViewAlignment, BringIntoViewAxis, BringIntoViewBehavior, BringIntoViewCancelReason,
+    BringIntoViewChainGeneration, BringIntoViewCompletion, BringIntoViewError,
+    BringIntoViewMargins, BringIntoViewMarginsError, BringIntoViewOptions, BringIntoViewOutcome,
+    BringIntoViewRequestId, DeferredBringIntoViewGuard, RevealTargetError, RevealTargetHandle,
+    ScrollChainFence,
+};
 pub(crate) use self::frame_journal::{
-    DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintStateIndex,
-    TooltipRequest,
+    DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintCommitPhase,
+    PrepaintStateIndex, TooltipRequest,
 };
 use self::frame_pump::{FrameThrottleFacts, PresentFacts, frame_should_wait};
 pub(crate) use self::invalidator::WindowInvalidator;
@@ -1141,6 +1154,12 @@ struct PrepaintLayoutScopeGuard {
     previous: Option<LayoutId>,
 }
 
+struct PrepaintCommitPhaseScopeGuard {
+    current: Rc<Cell<Option<PrepaintCommitPhase>>>,
+    entered: PrepaintCommitPhase,
+    previous: Option<PrepaintCommitPhase>,
+}
+
 impl Drop for SubtreeTransformScopeGuard {
     fn drop(&mut self) {
         let mut stack = self.stack.borrow_mut();
@@ -1162,6 +1181,15 @@ impl Drop for SubtreePresentationScopeGuard {
 }
 
 impl Drop for PrepaintLayoutScopeGuard {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            debug_assert_eq!(self.current.get(), Some(self.entered));
+        }
+        self.current.set(self.previous);
+    }
+}
+
+impl Drop for PrepaintCommitPhaseScopeGuard {
     fn drop(&mut self) {
         if !std::thread::panicking() {
             debug_assert_eq!(self.current.get(), Some(self.entered));
@@ -1210,6 +1238,13 @@ pub struct Window {
     next_pointer_capture_id: PointerCaptureId,
     next_portal_anchor_id: PortalAnchorId,
     portal_anchor_capture_stack: Rc<RefCell<Vec<PortalAnchorCapture>>>,
+    next_reveal_target_id: RevealTargetId,
+    reveal_target_capture_stack: Rc<RefCell<Vec<RevealTargetCapture>>>,
+    scroll_ancestry_stack: Rc<RefCell<SmallVec<[ScrollContainerBinding; 8]>>>,
+    next_bring_into_view_sequence: u64,
+    next_bring_into_view_chain_generation: u64,
+    active_bring_into_view_requests: Vec<ActiveBringIntoViewRequest>,
+    bring_into_view_resolutions: Vec<BringIntoViewResolution>,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -1247,12 +1282,14 @@ pub struct Window {
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     pending_focus_claim: Option<PendingFocusClaim>,
+    pending_focus_reveal_fence: Option<PendingFocusRevealFence>,
     pending_blur_claim_generation: Option<u64>,
     provisional_focus_claim: Option<ProvisionalFocusClaim>,
     pending_focus_completion: Option<PendingFocusCompletion>,
     focus_claim_resolutions: Vec<FocusClaimResolution>,
     next_focus_claim_id: u64,
     focus_claim_revision: u64,
+    prepaint_commit_phase: Rc<Cell<Option<PrepaintCommitPhase>>>,
     frame_focus_authority_sealed: bool,
     focus_followup_requested: bool,
     sealed_focus_retry_rejection: Option<FocusClaimTarget>,
@@ -1283,6 +1320,12 @@ enum WindowRemovalState {
 struct PendingFocusClaim {
     target: FocusId,
     target_generation: u64,
+}
+
+#[derive(Clone)]
+struct PendingFocusRevealFence {
+    target: FocusId,
+    fence: ScrollChainFence,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2027,6 +2070,13 @@ impl Window {
             next_pointer_capture_id: PointerCaptureId(0),
             next_portal_anchor_id: PortalAnchorId::default(),
             portal_anchor_capture_stack: Rc::new(RefCell::new(Vec::new())),
+            next_reveal_target_id: RevealTargetId::default(),
+            reveal_target_capture_stack: Rc::new(RefCell::new(Vec::new())),
+            scroll_ancestry_stack: Rc::new(RefCell::new(SmallVec::new())),
+            next_bring_into_view_sequence: 0,
+            next_bring_into_view_chain_generation: 0,
+            active_bring_into_view_requests: Vec::new(),
+            bring_into_view_resolutions: Vec::new(),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -2061,12 +2111,14 @@ impl Window {
             activation_observers: SubscriberSet::new(),
             focus: None,
             pending_focus_claim: None,
+            pending_focus_reveal_fence: None,
             pending_blur_claim_generation: None,
             provisional_focus_claim: None,
             pending_focus_completion: None,
             focus_claim_resolutions: Vec::new(),
             next_focus_claim_id: 0,
             focus_claim_revision: 0,
+            prepaint_commit_phase: Rc::new(Cell::new(None)),
             frame_focus_authority_sealed: false,
             focus_followup_requested: false,
             sealed_focus_retry_rejection: None,
@@ -2365,6 +2417,8 @@ impl Window {
     fn finish_remove_window(&mut self, cx: &mut App) {
         self.removal_state = WindowRemovalState::Removing;
         self.cancel_pointer_session(PointerCancelReason::WindowClosed, cx);
+        self.close_bring_into_view_authority(cx);
+        self.pending_focus_reveal_fence = None;
         self.pending_focus_completion = None;
         self.focus_claim_resolutions.clear();
         self.removed = true;
@@ -2480,7 +2534,7 @@ impl Window {
 
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle, cx: &mut App) {
-        let _ = self.focus_impl(handle, None, cx);
+        let _ = self.focus_impl(handle, None, None, cx);
     }
 
     /// Move focus and observe the terminal result of this specific request.
@@ -2511,7 +2565,40 @@ impl Window {
             target_generation: 0,
             callback,
         };
-        let _ = self.focus_impl(handle, Some(completion), cx);
+        let _ = self.focus_impl(handle, Some(completion), None, cx);
+        subscription
+    }
+
+    /// Moves focus with completion while preserving a prior scroll-input boundary for automatic
+    /// focus reveal.
+    ///
+    /// The focus claim follows ordinary arbitration. If the fence was interrupted or no longer
+    /// matches the committed focus target's scroll ancestry when that claim commits, focus still
+    /// settles normally but GPUI does not enqueue the implicit physical reveal.
+    pub fn focus_with_completion_and_scroll_fence(
+        &mut self,
+        handle: &FocusHandle,
+        fence: ScrollChainFence,
+        cx: &mut App,
+        listener: impl FnOnce(FocusClaimOutcome, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let callback = Rc::new(RefCell::new(Some(
+            Box::new(listener) as AnyFocusClaimCompletion
+        )));
+        let cancelled_callback = Rc::downgrade(&callback);
+        let subscription = Subscription::new(move || {
+            if let Some(callback) = cancelled_callback.upgrade() {
+                callback.borrow_mut().take();
+            }
+        });
+        self.next_focus_claim_id = self.next_focus_claim_id.wrapping_add(1).max(1);
+        let completion = PendingFocusCompletion {
+            id: self.next_focus_claim_id,
+            target: FocusClaimTarget::Exact(handle.id),
+            target_generation: 0,
+            callback,
+        };
+        let _ = self.focus_impl(handle, Some(completion), Some(fence), cx);
         subscription
     }
 
@@ -2519,6 +2606,7 @@ impl Window {
         &mut self,
         handle: &FocusHandle,
         completion: Option<PendingFocusCompletion>,
+        reveal_fence: Option<ScrollChainFence>,
         cx: &mut App,
     ) -> bool {
         if !self.focus_mutations_enabled() {
@@ -2543,6 +2631,7 @@ impl Window {
         self.restore_provisional_focus_claim();
         self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
         self.pending_focus_claim = None;
+        self.pending_focus_reveal_fence = None;
         self.pending_blur_claim_generation = None;
 
         if self.frame_focus_authority_sealed {
@@ -2561,6 +2650,10 @@ impl Window {
                 return true;
             }
 
+            self.pending_focus_reveal_fence = reveal_fence.map(|fence| PendingFocusRevealFence {
+                target: handle.id,
+                fence,
+            });
             let target_generation = self.next_frame.generation.saturating_add(1);
             self.pending_focus_claim = Some(PendingFocusClaim {
                 target: handle.id,
@@ -2589,6 +2682,10 @@ impl Window {
             return true;
         }
 
+        self.pending_focus_reveal_fence = reveal_fence.map(|fence| PendingFocusRevealFence {
+            target: handle.id,
+            fence,
+        });
         let bound_in_rendered_frame = !candidate_frame_in_progress
             && self
                 .rendered_frame
@@ -2627,7 +2724,9 @@ impl Window {
     }
 
     fn focus_mutations_enabled(&self) -> bool {
-        self.focus_enabled && self.subtree_presentation().is_interactive()
+        self.focus_enabled
+            && self.subtree_presentation().is_interactive()
+            && self.prepaint_commit_phase.get() != Some(PrepaintCommitPhase::FocusStable)
     }
 
     fn queue_focus_claim_resolution(
@@ -2706,6 +2805,22 @@ impl Window {
         self.clear_pending_keystrokes();
         self.defer_pending_input_changed(cx);
         self.refresh_focus_authority();
+    }
+
+    fn take_pending_focus_reveal_fence(
+        &mut self,
+        committed_focus: Option<FocusId>,
+    ) -> Option<ScrollChainFence> {
+        if self
+            .pending_focus_reveal_fence
+            .as_ref()
+            .is_none_or(|pending| committed_focus != Some(pending.target))
+        {
+            return None;
+        }
+        self.pending_focus_reveal_fence
+            .take()
+            .map(|pending| pending.fence)
     }
 
     fn defer_pending_input_changed(&self, cx: &mut App) {
@@ -2844,6 +2959,16 @@ impl Window {
             FocusClaimTarget::Empty => self.next_frame.focus_path().is_empty(),
         };
 
+        if !committed
+            && let FocusClaimTarget::Exact(target) = target
+            && self
+                .pending_focus_reveal_fence
+                .as_ref()
+                .is_some_and(|pending| pending.target == target)
+        {
+            self.pending_focus_reveal_fence = None;
+        }
+
         if due_claim.is_some() {
             self.pending_focus_claim = None;
         }
@@ -2933,6 +3058,7 @@ impl Window {
         self.restore_provisional_focus_claim();
         self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
         self.pending_focus_claim = None;
+        self.pending_focus_reveal_fence = None;
         self.pending_blur_claim_generation = None;
         if self.frame_focus_authority_sealed {
             let already_committed = self.focus.is_none() && self.next_frame.focus.is_none();
@@ -3073,7 +3199,7 @@ impl Window {
         let Some(handle) = self.next_tab_stop_where_within(scope, false, predicate) else {
             return false;
         };
-        self.focus_impl(&handle, None, cx)
+        self.focus_impl(&handle, None, None, cx)
     }
 
     /// Move focus to previous tab stop.
@@ -3109,7 +3235,7 @@ impl Window {
         let Some(handle) = self.next_tab_stop_where_within(scope, true, predicate) else {
             return false;
         };
-        self.focus_impl(&handle, None, cx)
+        self.focus_impl(&handle, None, None, cx)
     }
 
     fn next_tab_stop_where_within(
@@ -3914,6 +4040,7 @@ impl Window {
         debug_assert!(self.rendered_entity_stack.is_empty());
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
         debug_assert!(self.subtree_transform_stack.borrow().is_empty());
+        debug_assert!(self.scroll_ancestry_stack.borrow().is_empty());
         debug_assert!(!self.frame_focus_authority_sealed);
         debug_assert!(!self.focus_followup_requested);
         debug_assert!(self.sealed_focus_retry_rejection.is_none());
@@ -3949,6 +4076,7 @@ impl Window {
         self.frame_focus_authority_sealed = true;
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
         debug_assert!(self.subtree_transform_stack.borrow().is_empty());
+        debug_assert!(self.scroll_ancestry_stack.borrow().is_empty());
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
@@ -4033,7 +4161,15 @@ impl Window {
         self.frame_focus_authority_sealed = false;
         self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
         let current_committed_focus_path = self.rendered_frame.focus_path();
+        let previous_committed_focus = previous_committed_focus_path.last().copied();
+        let current_committed_focus = current_committed_focus_path.last().copied();
         let current_window_active = self.rendered_frame.window_active;
+        let focus_reveal_fence = self.take_pending_focus_reveal_fence(current_committed_focus);
+        if previous_committed_focus != current_committed_focus
+            && let Some(focus) = current_committed_focus
+        {
+            self.enqueue_focus_bring_into_view(focus, focus_reveal_fence, cx);
+        }
         if previous_committed_focus_path != current_committed_focus_path
             || previous_window_active != current_window_active
         {
@@ -4062,6 +4198,7 @@ impl Window {
                 .clone()
                 .retain(&(), |listener| listener(&event, self, cx));
         }
+        self.advance_bring_into_view_requests(cx);
         self.schedule_focus_claim_resolution_dispatch(cx);
 
         self.update_ime_position_from_committed_handler(cx);
@@ -4368,18 +4505,44 @@ impl Window {
                 });
             }
         }
-        for output in commits {
-            if output.is_valid() {
-                let presentation = output.value.presentation;
-                self.with_subtree_presentation(presentation, |window| {
-                    (output.value.commit)(target_revision, window, cx)
-                });
-            } else if let Some(discard) = output.value.discard {
-                self.with_subtree_presentation(SubtreePresentation::Hidden, |window| {
-                    discard(target_revision, window, cx)
-                });
+        for phase in [
+            PrepaintCommitPhase::Normal,
+            PrepaintCommitPhase::FocusStable,
+        ] {
+            for output in &commits {
+                if output.value.phase != phase {
+                    continue;
+                }
+                if output.is_valid() {
+                    let presentation = output.value.presentation;
+                    self.with_prepaint_commit_phase(phase, |window| {
+                        window.with_subtree_presentation(presentation, |window| {
+                            (output.value.commit)(target_revision, window, cx)
+                        })
+                    });
+                } else if let Some(discard) = output.value.discard.clone() {
+                    self.with_prepaint_commit_phase(phase, |window| {
+                        window.with_subtree_presentation(SubtreePresentation::Hidden, |window| {
+                            discard(target_revision, window, cx)
+                        })
+                    });
+                }
             }
         }
+    }
+
+    fn with_prepaint_commit_phase<T>(
+        &mut self,
+        phase: PrepaintCommitPhase,
+        callback: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let current = self.prepaint_commit_phase.clone();
+        let _guard = PrepaintCommitPhaseScopeGuard {
+            previous: current.replace(Some(phase)),
+            current,
+            entered: phase,
+        };
+        callback(self)
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<PreparedTooltip> {
@@ -4495,6 +4658,7 @@ impl Window {
                 let subtree_presentation = deferred_draw.subtree_presentation;
                 let subtree_transform = deferred_draw.subtree_transform;
                 let subtree_transform_validity = deferred_draw.subtree_transform_validity.clone();
+                let scroll_ancestry = deferred_draw.scroll_ancestry.clone();
                 self.element_id_stack
                     .clone_from(&deferred_draw.element_id_stack);
                 self.text_style_stack
@@ -4510,21 +4674,22 @@ impl Window {
                 {
                     // The owning transform scope already failed elsewhere in this frame.
                 } else if let Some(element) = deferred_draw.element.as_mut() {
-                    let result = self.transact_subtree_transform(
-                        subtree_transform_validity.clone(),
-                        |window| {
-                            window.with_subtree_presentation(subtree_presentation, |window| {
-                                window.with_resolved_subtree_transform(
-                                    subtree_transform,
-                                    subtree_transform_validity.clone(),
-                                    |window| {
-                                        window.with_rendered_view(
-                                            deferred_draw.current_view,
-                                            |window| {
-                                                window.with_rem_size(
-                                                    Some(deferred_draw.rem_size),
-                                                    |window| {
-                                                        window.with_absolute_element_offset(
+                    let result = self.with_scroll_ancestry(scroll_ancestry, |window| {
+                        window.transact_subtree_transform(
+                            subtree_transform_validity.clone(),
+                            |window| {
+                                window.with_subtree_presentation(subtree_presentation, |window| {
+                                    window.with_resolved_subtree_transform(
+                                        subtree_transform,
+                                        subtree_transform_validity.clone(),
+                                        |window| {
+                                            window.with_rendered_view(
+                                                deferred_draw.current_view,
+                                                |window| {
+                                                    window.with_rem_size(
+                                                        Some(deferred_draw.rem_size),
+                                                        |window| {
+                                                            window.with_absolute_element_offset(
                                                             deferred_draw.absolute_offset,
                                                             |window| {
                                                                 window.with_resolved_content_mask(
@@ -4538,15 +4703,16 @@ impl Window {
                                                 );
                                                             },
                                                         );
-                                                    },
-                                                );
-                                            },
-                                        )
-                                    },
-                                );
-                            });
-                        },
-                    );
+                                                        },
+                                                    );
+                                                },
+                                            )
+                                        },
+                                    );
+                                });
+                            },
+                        )
+                    });
                     if result.is_err()
                         && let Some(validity) = subtree_transform_validity.as_ref()
                     {
@@ -4639,6 +4805,7 @@ impl Window {
             hitboxes_index: self.next_frame.hitboxes.len(),
             pointer_capture_bindings_index: self.next_frame.pointer_capture_bindings.len(),
             portal_anchor_bindings_index: self.next_frame.portal_anchor_bindings.len(),
+            reveal_target_bindings_index: self.next_frame.reveal_target_bindings.len(),
             retained_resources_index: self.next_frame.retained_resources.len(),
             prepaint_commits_index: self.next_frame.prepaint_commits.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
@@ -4696,6 +4863,23 @@ impl Window {
             .collect::<Vec<_>>();
         for binding in reused_portal_anchor_bindings {
             self.next_frame.record_portal_anchor_binding(binding);
+        }
+        let frame_generation = self.next_frame.generation;
+        let reused_reveal_target_bindings = self.rendered_frame.reveal_target_bindings
+            [range.start.reveal_target_bindings_index..range.end.reveal_target_bindings_index]
+            .iter()
+            .map(|output| {
+                FrameOutput::new(
+                    output.value.replayed(frame_generation),
+                    SubtreeTransformValidity::replayed_under(
+                        output.validity.as_ref(),
+                        validity.clone(),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        for binding in reused_reveal_target_bindings {
+            self.next_frame.record_reveal_target_binding(binding);
         }
         self.next_frame.retained_resources.extend(
             self.rendered_frame.retained_resources
@@ -4795,6 +4979,7 @@ impl Window {
                         deferred_draw.subtree_transform_validity.as_ref(),
                         validity.clone(),
                     ),
+                    scroll_ancestry: deferred_draw.scroll_ancestry.clone(),
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
@@ -5186,6 +5371,11 @@ impl Window {
     }
 
     #[cfg(test)]
+    pub(crate) fn accessibility_activation_generation_for_test(&self) -> u64 {
+        self.a11y.activation_generation()
+    }
+
+    #[cfg(test)]
     pub(crate) fn install_tooltip_bounds_with_validity_for_test(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -5211,6 +5401,7 @@ impl Window {
         let candidate_focus = self.next_frame.focus;
         let committed_focus = self.focus;
         let pending_focus_claim = self.pending_focus_claim;
+        let pending_focus_reveal_fence = self.pending_focus_reveal_fence.clone();
         let pending_blur_claim_generation = self.pending_blur_claim_generation;
         let provisional_focus_claim = self.provisional_focus_claim;
         let pending_focus_completion = self.pending_focus_completion.clone();
@@ -5236,6 +5427,7 @@ impl Window {
             self.next_frame.focus = candidate_focus;
             self.focus = committed_focus;
             self.pending_focus_claim = pending_focus_claim;
+            self.pending_focus_reveal_fence = pending_focus_reveal_fence;
             self.pending_blur_claim_generation = pending_blur_claim_generation;
             self.provisional_focus_claim = provisional_focus_claim;
             self.pending_focus_completion = pending_focus_completion;
@@ -5249,6 +5441,8 @@ impl Window {
                 .truncate(index.pointer_capture_bindings_index);
             self.next_frame
                 .truncate_portal_anchor_bindings(index.portal_anchor_bindings_index);
+            self.next_frame
+                .truncate_reveal_target_bindings(index.reveal_target_bindings_index);
             self.next_frame
                 .retained_resources
                 .truncate(index.retained_resources_index);
@@ -5325,8 +5519,9 @@ impl Window {
     /// When you call this method during [`Element::prepaint`], containing elements will attempt to
     /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
     /// [`Element::prepaint`] again with a new set of bounds. See [`crate::List`] for an example of an element
-    /// that supports this method being called on the elements it contains. This method should only be
-    /// called during the prepaint phase of element drawing.
+    /// that supports this method being called on the elements it contains. This is a local direct-scroll
+    /// request, not a nested bring-into-view request; an accepted request supersedes older reveal work on
+    /// its container. This method should only be called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
         if !self.subtree_presentation().is_interactive() {
@@ -5501,6 +5696,7 @@ impl Window {
         self.invalidator.debug_assert_paint_or_prepaint();
         if self.current_prepaint_layout_id().is_some() {
             self.update_portal_anchor_transform(transform, validity.clone());
+            self.update_reveal_target_transform(transform, validity.clone());
         }
         let stack = self.subtree_transform_stack.clone();
         let entered_depth = stack.borrow().len();
@@ -5518,6 +5714,7 @@ impl Window {
 
     fn record_subtree_transform_failure(&self, error: SubtreeTransformError) {
         self.invalidate_portal_anchor_capture();
+        self.invalidate_reveal_target_capture();
         if let Some(scope) = self.subtree_transform_stack.borrow().last()
             && let Some(validity) = scope.validity.as_ref()
         {
@@ -6031,6 +6228,7 @@ impl Window {
             content_mask,
             transform,
             validity,
+            self.current_scroll_ancestry_for_deferred(),
         );
     }
 
@@ -6055,6 +6253,7 @@ impl Window {
             content_mask,
             ResolvedSubtreeTransform::IDENTITY,
             self.subtree_transform_validity(),
+            SmallVec::new(),
         );
     }
 
@@ -6067,15 +6266,17 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_prepaint();
         let content_mask = self.window_portal_content_mask(content_mask);
-        self.with_resolved_subtree_transform(
-            ResolvedSubtreeTransform::IDENTITY,
-            validity,
-            |window| {
-                window.with_absolute_element_offset(absolute_offset, |window| {
-                    window.with_resolved_content_mask(content_mask, f)
-                })
-            },
-        )
+        self.with_scroll_ancestry(SmallVec::new(), |window| {
+            window.with_resolved_subtree_transform(
+                ResolvedSubtreeTransform::IDENTITY,
+                validity,
+                |window| {
+                    window.with_absolute_element_offset(absolute_offset, |window| {
+                        window.with_resolved_content_mask(content_mask, f)
+                    })
+                },
+            )
+        })
     }
 
     pub(crate) fn with_window_space_portal_paint<R>(
@@ -6113,6 +6314,7 @@ impl Window {
         content_mask: ContentMask<Pixels>,
         subtree_transform: ResolvedSubtreeTransform,
         subtree_transform_validity: Option<SubtreeTransformValidity>,
+        scroll_ancestry: SmallVec<[ScrollContainerBinding; 8]>,
     ) {
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
@@ -6129,6 +6331,7 @@ impl Window {
             subtree_presentation: self.subtree_presentation(),
             subtree_transform,
             subtree_transform_validity,
+            scroll_ancestry,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
         });
@@ -6828,9 +7031,32 @@ impl Window {
         &mut self,
         commit: impl Fn(u64, &mut Window, &mut App) + 'static,
     ) {
+        self.record_prepaint_window_commit_in_phase(PrepaintCommitPhase::Normal, commit);
+    }
+
+    /// Records a validity-gated side effect after every normal prepaint commit for this frame.
+    ///
+    /// This callback observes focus and other window authority mutations made by
+    /// [`Self::record_prepaint_window_commit`] and
+    /// [`Self::record_prepaint_window_transaction`] in the same frame. Focus and blur mutations
+    /// made from this callback are rejected, which keeps the observed focus authority stable for
+    /// the callback's entire phase.
+    pub fn record_prepaint_focus_stable_commit(
+        &mut self,
+        commit: impl Fn(u64, &mut Window, &mut App) + 'static,
+    ) {
+        self.record_prepaint_window_commit_in_phase(PrepaintCommitPhase::FocusStable, commit);
+    }
+
+    fn record_prepaint_window_commit_in_phase(
+        &mut self,
+        phase: PrepaintCommitPhase,
+        commit: impl Fn(u64, &mut Window, &mut App) + 'static,
+    ) {
         self.invalidator.debug_assert_prepaint();
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
+                phase,
                 publication: None,
                 presentation: self.subtree_presentation(),
                 commit: Rc::new(commit),
@@ -6863,6 +7089,7 @@ impl Window {
         let discard: Rc<dyn Fn(u64, &mut Window, &mut App)> = Rc::new(discard);
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
+                phase: PrepaintCommitPhase::Normal,
                 publication: Some(publication),
                 presentation: self.subtree_presentation(),
                 commit,
@@ -6880,6 +7107,7 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
+                phase: PrepaintCommitPhase::Normal,
                 publication: None,
                 presentation: self.subtree_presentation(),
                 commit: Rc::new(commit),
@@ -7111,6 +7339,10 @@ impl Window {
             return;
         }
         self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
+        if let Some(layout_id) = self.current_prepaint_layout_id() {
+            let bounds = self.layout_bounds(layout_id);
+            self.bind_focus_reveal_target(focus_handle.id, bounds);
+        }
         self.promote_pending_focus_claim();
         if focus_handle.is_focused(self) {
             self.next_frame.focus = Some(focus_handle.id);
@@ -8585,6 +8817,35 @@ impl Window {
             }
             accesskit::Action::Blur => {
                 self.blur(cx);
+            }
+            accesskit::Action::ScrollIntoView => {
+                let options = match request.data.as_ref() {
+                    Some(accesskit::ActionData::ScrollHint(accesskit::ScrollHint::TopLeft)) => {
+                        BringIntoViewOptions::aligned(BringIntoViewAlignment::MinEdge)
+                    }
+                    Some(accesskit::ActionData::ScrollHint(accesskit::ScrollHint::BottomRight)) => {
+                        BringIntoViewOptions::aligned(BringIntoViewAlignment::MaxEdge)
+                    }
+                    Some(accesskit::ActionData::ScrollHint(accesskit::ScrollHint::TopEdge)) => {
+                        BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge)
+                    }
+                    Some(accesskit::ActionData::ScrollHint(accesskit::ScrollHint::BottomEdge)) => {
+                        BringIntoViewOptions::vertical(BringIntoViewAlignment::MaxEdge)
+                    }
+                    Some(accesskit::ActionData::ScrollHint(accesskit::ScrollHint::LeftEdge)) => {
+                        BringIntoViewOptions::horizontal(BringIntoViewAlignment::MinEdge)
+                    }
+                    Some(accesskit::ActionData::ScrollHint(accesskit::ScrollHint::RightEdge)) => {
+                        BringIntoViewOptions::horizontal(BringIntoViewAlignment::MaxEdge)
+                    }
+                    _ => BringIntoViewOptions::nearest(),
+                };
+                self.enqueue_accessibility_bring_into_view(
+                    request.target_node,
+                    request_activation_generation,
+                    options,
+                    cx,
+                );
             }
             _ => {
                 log::debug!(

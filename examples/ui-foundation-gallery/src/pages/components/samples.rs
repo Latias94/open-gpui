@@ -1,8 +1,8 @@
 //! Component sample descriptors and resolved-state builders for the foundation gallery.
 
 use open_gpui::{
-    AppContext, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled, div,
-    prelude::FluentBuilder, rgb,
+    AppContext, BringIntoViewAlignment, BringIntoViewOptions, InteractiveElement, ParentElement,
+    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, rgb,
 };
 use open_gpui_command::CommandContextStack;
 use open_gpui_ui_components::{
@@ -32,8 +32,8 @@ use open_gpui_ui_components::{
     TreeBehaviorSnapshot, TreeItemDescriptor, TreeState, VirtualizedList,
     VirtualizedListBehaviorSnapshot, VirtualizedListDataSource, VirtualizedListItemDescriptor,
     VirtualizedListMetrics, VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext,
-    VirtualizedListScrollStrategy, VirtualizedListSelectionMode, VirtualizedListState,
-    gpui_adapter::VirtualizedListGpuiExt, table::TableBehaviorSnapshot, toolbar::ToolbarItem,
+    VirtualizedListSelectionMode, VirtualizedListState, gpui_adapter::VirtualizedListGpuiExt,
+    table::TableBehaviorSnapshot, toolbar::ToolbarItem,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,

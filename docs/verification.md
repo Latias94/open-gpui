@@ -1441,6 +1441,49 @@ from typed diagnostics, DevTools capture/history/diff/export/inspector/report/ar
 The platform promise is committed-tree publication; native adapters own whether and when a screen
 reader delivers the event.
 
+## Window-Owned Bring Into View Gate
+
+Changes to reveal targets, scroll-container capture, focus or AccessKit reveal entry, direct-scroll
+cancellation, virtual collection materialization, or component reveal adapters must run the U16
+gate:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo fmt --all -- --check
+cargo nextest run --locked -p open-gpui bring_into_view --no-fail-fast
+cargo nextest run --locked -p open-gpui --test bring_into_view_surface --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components --test layout --test choice --test a11y --test public_surface --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery presentation_bring_into_view_unifies_all_entry_paths_and_virtual_materialization --no-fail-fast
+cargo run --locked -p xtask -- scan-ui-contract
+cargo run --locked -p xtask -- scan-public-api --check
+cargo run --locked -p xtask -- scan-doc-links
+cargo run --locked -p xtask -- verify-release-docs
+git diff --check
+```
+
+Core evidence must cover physical horizontal and vertical policies, margins, nested committed
+inner-to-outer traversal, saturated-container continuation, disjoint and overlapping chains,
+non-uniform transforms, device-pixel convergence, portals, cached/deferred bindings, suppression,
+unmount, close, user override, Motion and reduced motion, winning-focus arbitration, and real
+AccessKit actions. `bring_into_view_surface` keeps target, sequence, chain, and geometry identity
+opaque and rejects generic node or premature logical-axis APIs.
+
+Virtual collection evidence must prove stable-key materialization precedes physical reveal across
+fixed and measured rows, unavailable data, filtering, reorder, stale completion, and ABA
+replacement. The Gallery drives application, keyboard-focus, AccessKit, animation, wheel
+cancellation, and virtual materialization through one nested two-axis transformed scenario. A
+component-calculated final offset, index-based GPUI target, implicit portal ancestry, or focus-owned
+scrolling runtime fails this gate even if a single viewport appears to move correctly.
+The gate also covers direct-scroll interruption before next-frame physical submission and a
+same-frame geometry replacement plus user interruption after submission: neither may reissue a
+reveal or move a losing virtual Tree focus target.
+Virtual Tree materialization must observe the focus revision after all ordinary prepaint commits;
+the terminal focus-stable prepaint phase rejects focus and blur mutations so a callback cannot
+invalidate the claim after the Tree has moved its virtual viewport. Fenced focus handoffs settle
+their logical focus normally but must not perform an implicit reveal after input has interrupted
+their `ScrollChainFence`.
+
 Run the full component and gallery package gates only after broad contract-table, theme, or gallery
 changes:
 

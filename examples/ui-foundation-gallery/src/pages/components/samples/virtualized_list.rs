@@ -11,8 +11,8 @@ pub struct VirtualizedListStateContractSample {
     pub summary: &'static str,
     /// Resolved renderer-neutral virtualized-list state.
     pub state: VirtualizedListState,
-    /// Semantic scroll alignment the rendered adapter can apply when revealing the active row.
-    pub scroll_strategy: VirtualizedListScrollStrategy,
+    /// Physical reveal options delegated to the window-level authority after materialization.
+    pub bring_into_view_options: BringIntoViewOptions,
 }
 
 impl VirtualizedListStateContractSample {
@@ -23,6 +23,15 @@ impl VirtualizedListStateContractSample {
             self.id
         )
     }
+}
+
+/// One host-owned materialize-then-reveal request demonstrated by a gallery sample.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VirtualizedListBringIntoViewSampleIntent {
+    /// Stable logical key to materialize.
+    pub key: &'static str,
+    /// Final physical reveal options delegated to the window authority.
+    pub options: BringIntoViewOptions,
 }
 
 /// One virtualized list sample in the gallery.
@@ -54,10 +63,8 @@ pub struct VirtualizedListSample {
     pub row_measure_mode: VirtualizedListRowMeasureMode,
     /// Optional measured virtualizer restore payload.
     pub snapshot: Option<VirtualizerSnapshot>,
-    /// Optional stable key the rendered sample reveals through a host-owned scroll handle.
-    pub host_reveal_key: Option<&'static str>,
-    /// Reveal strategy used when `host_reveal_key` is present.
-    pub host_reveal_strategy: VirtualizedListScrollStrategy,
+    /// Optional host-owned materialize-then-reveal request.
+    pub host_bring_into_view: Option<VirtualizedListBringIntoViewSampleIntent>,
     /// Concrete content renderer variant used by this sample.
     pub renderer: VirtualizedListSampleRenderer,
     /// Precomputed state summary used by the gallery page.
@@ -199,7 +206,7 @@ pub fn virtualized_list_state_contract_samples() -> [VirtualizedListStateContrac
             VirtualizedListSelectionMode::Single,
             Some(12),
         ),
-        scroll_strategy: VirtualizedListScrollStrategy::Center,
+        bring_into_view_options: BringIntoViewOptions::vertical(BringIntoViewAlignment::Center),
     }]
 }
 
@@ -283,8 +290,7 @@ fn release_navigation_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
-        host_reveal_key: None,
-        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
+        host_bring_into_view: None,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -333,8 +339,7 @@ fn primary_options_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
-        host_reveal_key: None,
-        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
+        host_bring_into_view: None,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -415,8 +420,7 @@ fn section_status_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
-        host_reveal_key: None,
-        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
+        host_bring_into_view: None,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -475,8 +479,7 @@ fn custom_renderer_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
-        host_reveal_key: None,
-        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
+        host_bring_into_view: None,
         renderer: VirtualizedListSampleRenderer::CompactMetadata,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -528,8 +531,10 @@ fn host_controlled_actions_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
-        host_reveal_key: Some("host-action-0010"),
-        host_reveal_strategy: VirtualizedListScrollStrategy::Top,
+        host_bring_into_view: Some(VirtualizedListBringIntoViewSampleIntent {
+            key: "host-action-0010",
+            options: BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+        }),
         renderer: VirtualizedListSampleRenderer::NestedAction,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -600,8 +605,7 @@ fn measured_notes_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Measured,
         snapshot: Some(snapshot),
-        host_reveal_key: None,
-        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
+        host_bring_into_view: None,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }

@@ -78,6 +78,7 @@ raw-window-handle = "0.6"
 regex.workspace = true
 open_gpui_refineable.workspace = true
 open_gpui_scheduler.workspace = true
+open_gpui_motion.workspace = true
 resvg = { version = "0.46.0", default-features = false, features = [
     "text",
     "system-fonts",

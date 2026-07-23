@@ -10,10 +10,11 @@ use crate::scroll_surface::{
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, ScrollHandle, ScrollViewportChangeSource,
-    ScrollViewportProgrammaticSource, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, px,
+    AnyElement, App, BringIntoViewCancelReason, BringIntoViewChainGeneration, BringIntoViewOptions,
+    BringIntoViewOutcome, Context, DeferredBringIntoViewGuard, Entity, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, RenderOnce, RevealTargetHandle,
+    ScrollChainFence, ScrollHandle, ScrollViewportChangeSource, ScrollViewportProgrammaticSource,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_motion::{MotionFrameDriver, MotionPreference, advanced::MotionPreset};
 use open_gpui_ui_core::virtualizer::VirtualizerGeometryCache;
@@ -28,9 +29,9 @@ use std::time::Instant;
 use super::data::VirtualizedListDataSource;
 use super::descriptor::VirtualizedListItemDescriptor;
 use super::model::{
-    VirtualizedListActivation, VirtualizedListRevealResult, VirtualizedListScrollStrategy,
-    VirtualizedListSelectionChange, VirtualizedListSelectionMode, VirtualizedListState,
-    virtualized_list_state_items,
+    VirtualizedListActivation, VirtualizedListMaterializationResult,
+    VirtualizedListMaterializationTarget, VirtualizedListSelectionChange,
+    VirtualizedListSelectionMode, VirtualizedListState, virtualized_list_state_items,
 };
 use super::motion::VirtualizedListActiveIndicatorRuntime;
 use super::render::{render_virtualized_list_body, render_virtualized_list_sticky_overlay};
@@ -122,6 +123,172 @@ fn same_snapshot_measurements(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VirtualizedListBringIntoViewSource {
+    Active,
+    Builder,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct VirtualizedListBringIntoViewIntent {
+    key: String,
+    options: BringIntoViewOptions,
+}
+
+impl VirtualizedListBringIntoViewIntent {
+    fn new(key: impl Into<String>, options: BringIntoViewOptions) -> Self {
+        Self {
+            key: key.into(),
+            options,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct VirtualizedListBringIntoViewRequest {
+    sequence: u64,
+    source: VirtualizedListBringIntoViewSource,
+    intent: VirtualizedListBringIntoViewIntent,
+}
+
+impl VirtualizedListBringIntoViewRequest {
+    fn active(sequence: u64, key: impl Into<String>) -> Self {
+        Self {
+            sequence,
+            source: VirtualizedListBringIntoViewSource::Active,
+            intent: VirtualizedListBringIntoViewIntent::new(
+                key,
+                BringIntoViewOptions::vertical(open_gpui::BringIntoViewAlignment::Nearest),
+            ),
+        }
+    }
+
+    fn builder(sequence: u64, intent: VirtualizedListBringIntoViewIntent) -> Self {
+        Self {
+            sequence,
+            source: VirtualizedListBringIntoViewSource::Builder,
+            intent,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VirtualizedListBringIntoViewStage {
+    Materializing,
+    Ready,
+    Queued,
+    InFlight,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VirtualizedListBringIntoViewRetry {
+    GeometryChanged,
+    BuilderTargetUnlinked,
+}
+
+impl VirtualizedListBringIntoViewRetry {
+    fn accepts(self, outcome: BringIntoViewOutcome) -> bool {
+        match self {
+            Self::GeometryChanged => retry_after_geometry_change(outcome),
+            Self::BuilderTargetUnlinked => {
+                retry_after_geometry_change(outcome)
+                    || outcome
+                        == BringIntoViewOutcome::Cancelled(
+                            BringIntoViewCancelReason::TargetUnlinked,
+                        )
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct VirtualizedListBringIntoViewOperation {
+    request: VirtualizedListBringIntoViewRequest,
+    stage: VirtualizedListBringIntoViewStage,
+    materialization_revision: Option<u64>,
+    deferred_guard: Option<DeferredBringIntoViewGuard>,
+    materialization_fence: Option<ScrollChainFence>,
+    requires_input_fence: bool,
+    retry_after_completion: Option<VirtualizedListBringIntoViewRetry>,
+    submitted_authority_generation: Option<BringIntoViewChainGeneration>,
+    retry_authority_generation: Option<BringIntoViewChainGeneration>,
+}
+
+impl VirtualizedListBringIntoViewOperation {
+    fn scroll_was_overridden(&self, window: &Window) -> bool {
+        self.materialization_fence
+            .as_ref()
+            .is_some_and(|fence| window.scroll_chain_fence_was_interrupted(fence))
+    }
+
+    fn input_fence_is_missing(&self) -> bool {
+        self.requires_input_fence && self.materialization_fence.is_none()
+    }
+
+    fn retry_authority_was_replaced(&self, window: &Window) -> bool {
+        self.retry_authority_generation
+            .is_some_and(|generation| window.bring_into_view_authority_generation() != generation)
+    }
+
+    fn has_deferred_guard(&self) -> bool {
+        self.deferred_guard.is_some()
+    }
+
+    fn render_snapshot(&self, window: &Window) -> VirtualizedListBringIntoViewRenderOperation {
+        VirtualizedListBringIntoViewRenderOperation {
+            request: self.request.clone(),
+            stage: self.stage,
+            materialization_revision: self.materialization_revision,
+            has_deferred_guard: self.has_deferred_guard(),
+            input_fence_is_missing: self.input_fence_is_missing(),
+            direct_scroll_was_overridden: self.scroll_was_overridden(window),
+            retry_authority_was_replaced: self.retry_authority_was_replaced(window),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct VirtualizedListBringIntoViewRenderOperation {
+    request: VirtualizedListBringIntoViewRequest,
+    stage: VirtualizedListBringIntoViewStage,
+    materialization_revision: Option<u64>,
+    has_deferred_guard: bool,
+    input_fence_is_missing: bool,
+    direct_scroll_was_overridden: bool,
+    retry_authority_was_replaced: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct VirtualizedListDeferredMaterialization {
+    pub(super) sequence: u64,
+    pub(super) options: BringIntoViewOptions,
+    pub(super) geometry_revision: u64,
+    pub(super) target: VirtualizedListMaterializationTarget,
+    pub(super) state: VirtualizedListState,
+    pub(super) row_measure_mode: VirtualizedListRowMeasureMode,
+    pub(super) virtualizer_snapshot: VirtualizerSnapshot,
+    pub(super) target_is_rendered: bool,
+}
+
+fn retry_after_geometry_change(outcome: BringIntoViewOutcome) -> bool {
+    matches!(outcome, BringIntoViewOutcome::Completed(_))
+}
+
+#[cfg(test)]
+fn finish_in_flight_bring_into_view(
+    operation: &mut Option<VirtualizedListBringIntoViewOperation>,
+    sequence: u64,
+) -> bool {
+    if !operation.as_ref().is_some_and(|operation| {
+        operation.stage == VirtualizedListBringIntoViewStage::InFlight
+            && operation.request.sequence == sequence
+    }) {
+        return false;
+    }
+    *operation = None;
+    true
+}
+
 #[derive(Debug)]
 pub(super) struct VirtualizedListRuntime {
     pub(super) scroll_surface: ScrollSurfaceRuntime,
@@ -131,7 +298,10 @@ pub(super) struct VirtualizedListRuntime {
     pub(super) selection_anchor_key: Option<String>,
     pub(super) row_measurements: BTreeMap<String, UiPx>,
     geometry: VirtualizedListGeometryAuthority,
-    pub(super) pending_scroll_to_active: Option<String>,
+    bring_into_view: Option<VirtualizedListBringIntoViewOperation>,
+    scroll_chain_anchor: Option<RevealTargetHandle>,
+    last_builder_bring_into_view: Option<VirtualizedListBringIntoViewIntent>,
+    next_bring_into_view_sequence: u64,
     pub(super) typeahead: CollectionTypeaheadSession,
     pub(super) active_indicator: VirtualizedListActiveIndicatorRuntime,
     pub(super) active_indicator_frame_host: MotionFrameDriver,
@@ -143,17 +313,393 @@ struct VirtualizedListRuntimeRenderSnapshot {
     focus_handle: FocusHandle,
     active_key: Option<String>,
     selected_keys: BTreeSet<String>,
-    pending_scroll_to_active: Option<String>,
+    bring_into_view: Option<VirtualizedListBringIntoViewRenderOperation>,
 }
 
 impl VirtualizedListRuntime {
-    fn render_snapshot(&self) -> VirtualizedListRuntimeRenderSnapshot {
+    fn next_bring_into_view_sequence(&mut self) -> u64 {
+        self.next_bring_into_view_sequence = self
+            .next_bring_into_view_sequence
+            .checked_add(1)
+            .expect("virtualized-list bring-into-view sequence exhausted");
+        self.next_bring_into_view_sequence
+    }
+
+    fn request_for(
+        &mut self,
+        source: VirtualizedListBringIntoViewSource,
+        intent: VirtualizedListBringIntoViewIntent,
+    ) -> VirtualizedListBringIntoViewRequest {
+        let sequence = self.next_bring_into_view_sequence();
+        match source {
+            VirtualizedListBringIntoViewSource::Active => {
+                VirtualizedListBringIntoViewRequest::active(sequence, intent.key)
+            }
+            VirtualizedListBringIntoViewSource::Builder => {
+                VirtualizedListBringIntoViewRequest::builder(sequence, intent)
+            }
+        }
+    }
+
+    fn replace_with_pending_bring_into_view(
+        &mut self,
+        source: VirtualizedListBringIntoViewSource,
+        intent: VirtualizedListBringIntoViewIntent,
+        materialization_fence: Option<ScrollChainFence>,
+        requires_input_fence: bool,
+    ) {
+        let request = self.request_for(source, intent);
+        self.bring_into_view = Some(VirtualizedListBringIntoViewOperation {
+            request,
+            stage: VirtualizedListBringIntoViewStage::Materializing,
+            materialization_revision: None,
+            deferred_guard: None,
+            materialization_fence,
+            requires_input_fence,
+            retry_after_completion: None,
+            submitted_authority_generation: None,
+            retry_authority_generation: None,
+        });
+    }
+
+    fn retry_bring_into_view(
+        &mut self,
+        request: &VirtualizedListBringIntoViewRequest,
+        expected_stage: VirtualizedListBringIntoViewStage,
+    ) -> bool {
+        if !self.bring_into_view.as_ref().is_some_and(|operation| {
+            operation.request == *request && operation.stage == expected_stage
+        }) {
+            return false;
+        }
+        let operation = self
+            .bring_into_view
+            .as_mut()
+            .expect("matching virtualized-list reveal operation should remain present");
+        operation.stage = VirtualizedListBringIntoViewStage::Materializing;
+        operation.materialization_revision = None;
+        operation.deferred_guard = None;
+        operation.retry_after_completion = None;
+        operation.submitted_authority_generation = None;
+        true
+    }
+
+    fn transition_bring_into_view(
+        &mut self,
+        request: &VirtualizedListBringIntoViewRequest,
+        from: VirtualizedListBringIntoViewStage,
+        to: VirtualizedListBringIntoViewStage,
+    ) -> bool {
+        let Some(operation) = self.bring_into_view.as_mut() else {
+            return false;
+        };
+        if operation.request != *request || operation.stage != from {
+            return false;
+        }
+        operation.stage = to;
+        true
+    }
+
+    pub(super) fn publish_deferred_bring_into_view_guard(
+        &mut self,
+        sequence: u64,
+        materialization_revision: u64,
+        guard: DeferredBringIntoViewGuard,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(operation) = self.bring_into_view.as_mut() else {
+            return false;
+        };
+        if operation.request.sequence != sequence
+            || operation.stage != VirtualizedListBringIntoViewStage::Materializing
+        {
+            return false;
+        }
+        operation.stage = VirtualizedListBringIntoViewStage::Ready;
+        operation.materialization_revision = Some(materialization_revision);
+        operation.materialization_fence = Some(guard.scroll_chain_fence());
+        operation.deferred_guard = Some(guard);
+        cx.notify();
+        true
+    }
+
+    pub(super) fn abandon_materializing_bring_into_view(
+        &mut self,
+        sequence: u64,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.bring_into_view.as_ref().is_some_and(|operation| {
+            operation.request.sequence == sequence
+                && operation.stage == VirtualizedListBringIntoViewStage::Materializing
+        }) {
+            return false;
+        }
+        self.bring_into_view = None;
+        cx.notify();
+        true
+    }
+
+    fn take_window_bring_into_view_guard(
+        &mut self,
+        sequence: u64,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<DeferredBringIntoViewGuard> {
+        let Some(operation) = self.bring_into_view.as_ref() else {
+            return None;
+        };
+        if operation.request.sequence != sequence
+            || operation.stage != VirtualizedListBringIntoViewStage::Queued
+        {
+            return None;
+        }
+        if !operation.has_deferred_guard()
+            || operation.input_fence_is_missing()
+            || operation.scroll_was_overridden(window)
+            || operation.retry_authority_was_replaced(window)
+        {
+            self.bring_into_view = None;
+            cx.notify();
+            return None;
+        }
+        let operation = self
+            .bring_into_view
+            .as_mut()
+            .expect("matching virtualized-list reveal operation should remain present");
+        operation.stage = VirtualizedListBringIntoViewStage::InFlight;
+        Some(
+            operation
+                .deferred_guard
+                .take()
+                .expect("queued virtualized-list reveal should retain its deferred guard"),
+        )
+    }
+
+    fn record_submitted_bring_into_view_authority_generation(
+        &mut self,
+        sequence: u64,
+        generation: BringIntoViewChainGeneration,
+    ) -> bool {
+        let Some(operation) = self.bring_into_view.as_mut() else {
+            return false;
+        };
+        if operation.request.sequence != sequence
+            || operation.stage != VirtualizedListBringIntoViewStage::InFlight
+        {
+            return false;
+        }
+        operation.submitted_authority_generation = Some(generation);
+        operation.retry_authority_generation = None;
+        true
+    }
+
+    pub(super) fn prepare_deferred_materialization(
+        &mut self,
+        sequence: u64,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(operation) = self.bring_into_view.as_ref() else {
+            return false;
+        };
+        let is_current = operation.request.sequence == sequence
+            && operation.stage == VirtualizedListBringIntoViewStage::Materializing;
+        if !is_current {
+            return false;
+        }
+        let fence_is_valid = operation
+            .materialization_fence
+            .as_ref()
+            .is_none_or(|fence| {
+                !window.scroll_chain_fence_was_interrupted(fence)
+                    && window.scroll_chain_fence_matches_current_ancestry(fence)
+            });
+        if operation.input_fence_is_missing()
+            || !fence_is_valid
+            || operation.retry_authority_was_replaced(window)
+        {
+            self.bring_into_view = None;
+            cx.notify();
+            return false;
+        }
+        true
+    }
+
+    fn retry_after_window_completion(
+        &mut self,
+        request: &VirtualizedListBringIntoViewRequest,
+        window: &Window,
+        retry: VirtualizedListBringIntoViewRetry,
+    ) -> bool {
+        let Some(operation) = self.bring_into_view.as_mut() else {
+            return false;
+        };
+        if operation.request != *request
+            || operation.stage != VirtualizedListBringIntoViewStage::InFlight
+        {
+            return false;
+        }
+        if operation.scroll_was_overridden(window) || operation.retry_authority_was_replaced(window)
+        {
+            return false;
+        }
+        operation.retry_after_completion = Some(retry);
+        true
+    }
+
+    fn cancel_bring_into_view(
+        &mut self,
+        request: &VirtualizedListBringIntoViewRequest,
+        expected_stage: VirtualizedListBringIntoViewStage,
+    ) -> bool {
+        if !self.bring_into_view.as_ref().is_some_and(|operation| {
+            operation.request == *request && operation.stage == expected_stage
+        }) {
+            return false;
+        }
+        self.bring_into_view = None;
+        true
+    }
+
+    fn finish_bring_into_view(
+        &mut self,
+        sequence: u64,
+        outcome: BringIntoViewOutcome,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(operation) = self.bring_into_view.as_ref() else {
+            return;
+        };
+        if operation.stage != VirtualizedListBringIntoViewStage::InFlight
+            || operation.request.sequence != sequence
+        {
+            return;
+        }
+        let retry_generation = operation
+            .submitted_authority_generation
+            .filter(|generation| {
+                operation
+                    .retry_after_completion
+                    .is_some_and(|retry| retry.accepts(outcome))
+                    && !operation.scroll_was_overridden(window)
+                    && window.bring_into_view_authority_generation() == *generation
+            });
+        if let Some(retry_generation) = retry_generation {
+            let operation = self
+                .bring_into_view
+                .as_mut()
+                .expect("matching virtualized-list reveal operation should remain present");
+            operation.stage = VirtualizedListBringIntoViewStage::Materializing;
+            operation.materialization_revision = None;
+            operation.deferred_guard = None;
+            operation.retry_after_completion = None;
+            operation.submitted_authority_generation = None;
+            operation.retry_authority_generation = Some(retry_generation);
+        } else {
+            self.bring_into_view = None;
+        }
+        cx.notify();
+    }
+
+    fn render_snapshot(&self, window: &Window) -> VirtualizedListRuntimeRenderSnapshot {
         VirtualizedListRuntimeRenderSnapshot {
             scroll_surface: self.scroll_surface.clone(),
             focus_handle: self.focus_handle.clone(),
             active_key: self.active_key.clone(),
             selected_keys: self.selected_keys.clone(),
-            pending_scroll_to_active: self.pending_scroll_to_active.clone(),
+            bring_into_view: self
+                .bring_into_view
+                .as_ref()
+                .map(|operation| operation.render_snapshot(window)),
+        }
+    }
+
+    fn sync_builder_bring_into_view(
+        &mut self,
+        requested: Option<VirtualizedListBringIntoViewIntent>,
+    ) {
+        if self.last_builder_bring_into_view == requested {
+            return;
+        }
+
+        self.last_builder_bring_into_view = requested.clone();
+        match requested {
+            Some(intent) => {
+                self.replace_with_pending_bring_into_view(
+                    VirtualizedListBringIntoViewSource::Builder,
+                    intent,
+                    None,
+                    false,
+                );
+            }
+            None => {
+                if self.bring_into_view.as_ref().is_some_and(|operation| {
+                    operation.request.source == VirtualizedListBringIntoViewSource::Builder
+                }) {
+                    self.bring_into_view = None;
+                }
+            }
+        }
+    }
+
+    fn queue_active_bring_into_view(&mut self, key: impl Into<String>) {
+        self.replace_with_pending_bring_into_view(
+            VirtualizedListBringIntoViewSource::Active,
+            VirtualizedListBringIntoViewIntent::new(
+                key,
+                BringIntoViewOptions::vertical(open_gpui::BringIntoViewAlignment::Nearest),
+            ),
+            None,
+            false,
+        );
+    }
+
+    fn queue_active_bring_into_view_from_input(
+        &mut self,
+        key: impl Into<String>,
+        window: &mut Window,
+    ) -> bool {
+        let anchor = self.scroll_chain_anchor(window);
+        let Some(fence) = window
+            .capture_committed_scroll_chain_fence(
+                &anchor,
+                BringIntoViewOptions::vertical(open_gpui::BringIntoViewAlignment::Nearest),
+            )
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        self.replace_with_pending_bring_into_view(
+            VirtualizedListBringIntoViewSource::Active,
+            VirtualizedListBringIntoViewIntent::new(
+                key,
+                BringIntoViewOptions::vertical(open_gpui::BringIntoViewAlignment::Nearest),
+            ),
+            Some(fence),
+            true,
+        );
+        true
+    }
+
+    pub(super) fn scroll_chain_anchor(&mut self, window: &mut Window) -> RevealTargetHandle {
+        let window_id = window.window_handle().window_id();
+        if !self
+            .scroll_chain_anchor
+            .is_some_and(|anchor| anchor.window_id() == window_id)
+        {
+            self.scroll_chain_anchor = Some(window.new_reveal_target());
+        }
+        self.scroll_chain_anchor
+            .expect("virtualized-list scroll-chain anchor should be initialized for this window")
+    }
+
+    pub(super) fn clear_active_bring_into_view(&mut self) {
+        if self.bring_into_view.as_ref().is_some_and(|operation| {
+            operation.request.source == VirtualizedListBringIntoViewSource::Active
+        }) {
+            self.bring_into_view = None;
         }
     }
 
@@ -175,6 +721,7 @@ impl VirtualizedListRuntime {
 #[cfg(test)]
 mod geometry_authority_tests {
     use super::*;
+    use open_gpui::BringIntoViewCancelReason;
     use open_gpui_ui_core::{VirtualizerSnapshotItem, ui_px};
 
     fn items(keys: &[&str]) -> Arc<[VirtualizedListItemDescriptor]> {
@@ -182,6 +729,56 @@ mod geometry_authority_tests {
             .map(|key| VirtualizedListItemDescriptor::new(*key, key.to_uppercase()))
             .collect::<Vec<_>>()
             .into()
+    }
+
+    #[test]
+    fn stale_bring_into_view_completion_cannot_finish_a_newer_equal_intent() {
+        let intent = VirtualizedListBringIntoViewIntent::new(
+            "alpha",
+            BringIntoViewOptions::vertical(open_gpui::BringIntoViewAlignment::Nearest),
+        );
+        let mut operation = Some(VirtualizedListBringIntoViewOperation {
+            request: VirtualizedListBringIntoViewRequest::builder(2, intent),
+            stage: VirtualizedListBringIntoViewStage::InFlight,
+            materialization_revision: Some(0),
+            deferred_guard: None,
+            materialization_fence: None,
+            requires_input_fence: false,
+            retry_after_completion: None,
+            submitted_authority_generation: None,
+            retry_authority_generation: None,
+        });
+
+        assert!(!finish_in_flight_bring_into_view(&mut operation, 1));
+        assert_eq!(
+            operation
+                .as_ref()
+                .map(|operation| operation.request.sequence),
+            Some(2)
+        );
+        assert!(finish_in_flight_bring_into_view(&mut operation, 2));
+        assert!(operation.is_none());
+    }
+
+    #[test]
+    fn geometry_retry_reopens_only_a_completed_request() {
+        assert!(retry_after_geometry_change(
+            BringIntoViewOutcome::Completed(open_gpui::BringIntoViewCompletion::Revealed,)
+        ));
+        for outcome in [
+            BringIntoViewOutcome::Cancelled(BringIntoViewCancelReason::Superseded),
+            BringIntoViewOutcome::Cancelled(BringIntoViewCancelReason::ScrollOverridden),
+            BringIntoViewOutcome::Cancelled(BringIntoViewCancelReason::TargetUnlinked),
+            BringIntoViewOutcome::Cancelled(BringIntoViewCancelReason::AncestryChanged),
+            BringIntoViewOutcome::Cancelled(BringIntoViewCancelReason::TargetSuppressed),
+            BringIntoViewOutcome::Cancelled(BringIntoViewCancelReason::NoProgress),
+            BringIntoViewOutcome::Cancelled(BringIntoViewCancelReason::WindowClosed),
+        ] {
+            assert!(
+                !retry_after_geometry_change(outcome),
+                "{outcome:?} must terminate an interrupted virtual reveal"
+            );
+        }
     }
 
     #[test]
@@ -242,8 +839,8 @@ pub struct VirtualizedList {
     motion_preference: Option<MotionPreference>,
     snapshot: Option<VirtualizerSnapshot>,
     scroll_handle: Option<ScrollHandle>,
-    reveal_key: Option<String>,
-    reveal_strategy: VirtualizedListScrollStrategy,
+    bring_into_view_key: Option<String>,
+    bring_into_view_options: BringIntoViewOptions,
     row_renderer: Option<VirtualizedListRowRenderer>,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
@@ -287,8 +884,10 @@ impl VirtualizedList {
             motion_preference: None,
             snapshot: None,
             scroll_handle: None,
-            reveal_key: None,
-            reveal_strategy: VirtualizedListScrollStrategy::Nearest,
+            bring_into_view_key: None,
+            bring_into_view_options: BringIntoViewOptions::vertical(
+                open_gpui::BringIntoViewAlignment::Nearest,
+            ),
             row_renderer: None,
             on_activate: None,
             on_selection_change: None,
@@ -377,14 +976,14 @@ impl VirtualizedList {
         self
     }
 
-    /// Requests a key-based reveal during render using the provided scroll strategy.
-    pub fn reveal_key(
+    /// Materializes a keyed row, then requests its final physical reveal from GPUI.
+    pub fn bring_key_into_view(
         mut self,
         key: impl Into<String>,
-        strategy: VirtualizedListScrollStrategy,
+        options: BringIntoViewOptions,
     ) -> Self {
-        self.reveal_key = Some(key.into());
-        self.reveal_strategy = strategy;
+        self.bring_into_view_key = Some(key.into());
+        self.bring_into_view_options = options;
         self
     }
 
@@ -551,12 +1150,23 @@ impl RenderOnce for VirtualizedList {
                 self.items.clone(),
                 self.snapshot.as_ref(),
             ),
-            pending_scroll_to_active: None,
+            bring_into_view: None,
+            scroll_chain_anchor: None,
+            last_builder_bring_into_view: None,
+            next_bring_into_view_sequence: 0,
             typeahead: CollectionTypeaheadSession::default(),
             active_indicator: VirtualizedListActiveIndicatorRuntime::default(),
             active_indicator_frame_host: MotionFrameDriver::new(),
         });
-        let runtime_state = runtime.read(cx).render_snapshot();
+        let requested_bring_into_view = self
+            .bring_into_view_key
+            .as_deref()
+            .map(|key| VirtualizedListBringIntoViewIntent::new(key, self.bring_into_view_options));
+        let (runtime_state, scroll_chain_anchor) = runtime.update(cx, |runtime, _| {
+            runtime.sync_builder_bring_into_view(requested_bring_into_view);
+            let scroll_chain_anchor = runtime.scroll_chain_anchor(window);
+            (runtime.render_snapshot(window), scroll_chain_anchor)
+        });
         let scroll_handle =
             scroll_surface_handle(&runtime_state.scroll_surface, self.scroll_handle.as_ref());
         let focus_handle = runtime_state.focus_handle.clone();
@@ -572,14 +1182,14 @@ impl RenderOnce for VirtualizedList {
             viewport_item_count,
         );
         let scroll_offset = vertical_scroll_offset(&scroll_handle);
-        let plan = runtime.update(cx, |runtime, _| {
+        let (plan, geometry_revision) = runtime.update(cx, |runtime, _| {
             let VirtualizedListRuntime {
                 row_measurements,
                 geometry,
                 ..
             } = runtime;
             let geometry_revision = geometry.sync(&self.items, self.snapshot.as_ref());
-            VirtualizedListRenderPlan::resolve_cached(
+            let plan = VirtualizedListRenderPlan::resolve_cached(
                 self.id.clone(),
                 self.label.to_string(),
                 state.clone(),
@@ -591,29 +1201,210 @@ impl RenderOnce for VirtualizedList {
                 viewport_extent,
                 &mut geometry.cache,
                 geometry_revision,
-            )
+            );
+            (plan, geometry_revision)
         });
-        if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active.as_deref() {
-            scroll_active_key(
-                &scroll_handle,
-                &state,
-                pending_scroll_to_active,
-                plan.row_measure_mode(),
-                plan.virtualizer().snapshot(),
-            );
-            runtime.update(cx, |runtime, _| {
-                runtime.pending_scroll_to_active = None;
-            });
+        let mut tracked_reveal_key = state.active_key().map(str::to_owned);
+        let mut ready_bring_into_view = None;
+        let mut deferred_materialization = None;
+        if let Some(operation) = runtime_state.bring_into_view {
+            let request = operation.request.clone();
+            if operation.input_fence_is_missing
+                || operation.direct_scroll_was_overridden
+                || operation.retry_authority_was_replaced
+            {
+                runtime.update(cx, |runtime, _| {
+                    runtime.cancel_bring_into_view(&request, operation.stage);
+                });
+            } else {
+                let resolution = resolve_virtualized_list_materialization_target(
+                    &state,
+                    &request.intent.key,
+                    plan.row_measure_mode(),
+                    plan.virtualizer().snapshot(),
+                );
+                match resolution {
+                    VirtualizedListMaterializationResult::Target(target) => {
+                        let target_is_rendered = plan
+                            .rows()
+                            .iter()
+                            .any(|row| row.index() == target.index() && row.key() == target.key());
+                        match operation.stage {
+                            VirtualizedListBringIntoViewStage::Materializing => {
+                                tracked_reveal_key = Some(request.intent.key.clone());
+                                deferred_materialization =
+                                    Some(VirtualizedListDeferredMaterialization {
+                                        sequence: request.sequence,
+                                        options: request.intent.options,
+                                        geometry_revision,
+                                        target,
+                                        state: state.clone(),
+                                        row_measure_mode: plan.row_measure_mode(),
+                                        virtualizer_snapshot: plan.virtualizer().snapshot().clone(),
+                                        target_is_rendered,
+                                    });
+                            }
+                            VirtualizedListBringIntoViewStage::Ready if target_is_rendered => {
+                                if !operation.has_deferred_guard {
+                                    runtime.update(cx, |runtime, _| {
+                                        runtime.cancel_bring_into_view(
+                                            &request,
+                                            VirtualizedListBringIntoViewStage::Ready,
+                                        );
+                                    });
+                                } else {
+                                    tracked_reveal_key = Some(request.intent.key.clone());
+                                    ready_bring_into_view = Some(request);
+                                }
+                            }
+                            VirtualizedListBringIntoViewStage::Queued if target_is_rendered => {
+                                if !operation.has_deferred_guard {
+                                    runtime.update(cx, |runtime, _| {
+                                        runtime.cancel_bring_into_view(
+                                            &request,
+                                            VirtualizedListBringIntoViewStage::Queued,
+                                        );
+                                    });
+                                } else {
+                                    tracked_reveal_key = Some(request.intent.key.clone());
+                                }
+                            }
+                            VirtualizedListBringIntoViewStage::InFlight if target_is_rendered => {
+                                tracked_reveal_key = Some(request.intent.key.clone());
+                            }
+                            stage @ (VirtualizedListBringIntoViewStage::Ready
+                            | VirtualizedListBringIntoViewStage::Queued)
+                                if operation.materialization_revision
+                                    != Some(geometry_revision) =>
+                            {
+                                let retried = runtime.update(cx, |runtime, _| {
+                                    runtime.retry_bring_into_view(&request, stage)
+                                });
+                                if retried {
+                                    window.refresh();
+                                }
+                            }
+                            stage @ (VirtualizedListBringIntoViewStage::Ready
+                            | VirtualizedListBringIntoViewStage::Queued) => {
+                                runtime.update(cx, |runtime, _| {
+                                    runtime.cancel_bring_into_view(&request, stage);
+                                });
+                            }
+                            VirtualizedListBringIntoViewStage::InFlight
+                                if operation.materialization_revision
+                                    != Some(geometry_revision) =>
+                            {
+                                runtime.update(cx, |runtime, _| {
+                                    runtime.retry_after_window_completion(
+                                        &request,
+                                        window,
+                                        VirtualizedListBringIntoViewRetry::GeometryChanged,
+                                    );
+                                });
+                            }
+                            VirtualizedListBringIntoViewStage::InFlight => {
+                                // The core request owns physical reveal until this exact terminal
+                                // outcome returns to the retained operation.
+                            }
+                        }
+                    }
+                    VirtualizedListMaterializationResult::NotFound(_)
+                        if request.source == VirtualizedListBringIntoViewSource::Builder
+                            && operation.stage
+                                == VirtualizedListBringIntoViewStage::Materializing => {}
+                    VirtualizedListMaterializationResult::NotFound(_)
+                        if request.source == VirtualizedListBringIntoViewSource::Builder
+                            && matches!(
+                                operation.stage,
+                                VirtualizedListBringIntoViewStage::Ready
+                                    | VirtualizedListBringIntoViewStage::Queued
+                            ) =>
+                    {
+                        let retried = runtime.update(cx, |runtime, _| {
+                            runtime.retry_bring_into_view(&request, operation.stage)
+                        });
+                        if retried {
+                            window.refresh();
+                        }
+                    }
+                    VirtualizedListMaterializationResult::NotFound(_)
+                        if request.source == VirtualizedListBringIntoViewSource::Builder
+                            && operation.stage == VirtualizedListBringIntoViewStage::InFlight =>
+                    {
+                        runtime.update(cx, |runtime, _| {
+                            runtime.retry_after_window_completion(
+                                &request,
+                                window,
+                                VirtualizedListBringIntoViewRetry::BuilderTargetUnlinked,
+                            );
+                        });
+                    }
+                    _ => {
+                        runtime.update(cx, |runtime, _| {
+                            runtime.cancel_bring_into_view(&request, operation.stage);
+                        });
+                    }
+                }
+            }
         }
-        if let Some(reveal_key) = self.reveal_key.as_deref() {
-            reveal_virtualized_list_key(
-                &scroll_handle,
-                &state,
-                reveal_key,
-                self.reveal_strategy,
-                plan.row_measure_mode(),
-                plan.virtualizer().snapshot(),
-            );
+        let reveal_target_identity = tracked_reveal_key
+            .as_deref()
+            .unwrap_or("virtualized-list:no-tracked-row");
+        let reveal_target = runtime.update(cx, |runtime, _| {
+            runtime
+                .scroll_surface
+                .reveal_target_for(reveal_target_identity, window)
+        });
+        if let Some(request) = ready_bring_into_view {
+            let sequence = request.sequence;
+            let transitioned = runtime.update(cx, |runtime, _| {
+                runtime.transition_bring_into_view(
+                    &request,
+                    VirtualizedListBringIntoViewStage::Ready,
+                    VirtualizedListBringIntoViewStage::Queued,
+                )
+            });
+            if transitioned {
+                let runtime_for_frame = runtime.clone();
+                window.on_next_frame(move |window, cx| {
+                    let guard = runtime_for_frame.update(cx, |runtime, cx| {
+                        runtime.take_window_bring_into_view_guard(sequence, window, cx)
+                    });
+                    let Some(guard) = guard else {
+                        return;
+                    };
+
+                    let runtime_for_completion = runtime_for_frame.clone();
+                    match window.try_bring_into_view_with_guard_and_completion(
+                        guard,
+                        cx,
+                        move |outcome, window, cx| {
+                            runtime_for_completion.update(cx, |runtime, cx| {
+                                runtime.finish_bring_into_view(sequence, outcome, window, cx);
+                            });
+                        },
+                    ) {
+                        Ok(Some((request_id, subscription))) => {
+                            runtime_for_frame.update(cx, |runtime, _| {
+                                runtime.record_submitted_bring_into_view_authority_generation(
+                                    sequence,
+                                    request_id.chain_generation(),
+                                );
+                            });
+                            subscription.detach();
+                        }
+                        Ok(None) | Err(_) => {
+                            runtime_for_frame.update(cx, |runtime, cx| {
+                                runtime.cancel_bring_into_view(
+                                    &request,
+                                    VirtualizedListBringIntoViewStage::InFlight,
+                                );
+                                cx.notify();
+                            });
+                        }
+                    }
+                });
+            }
         }
         let on_activate = self.on_activate.clone();
         let on_selection_change = self.on_selection_change.clone();
@@ -622,7 +1413,6 @@ impl RenderOnce for VirtualizedList {
         let sticky_overlay = plan.sticky_overlay().cloned();
         let row_measure_mode = plan.row_measure_mode();
         let estimated_row_height = plan.metrics().row_height();
-        let virtualizer_snapshot = plan.virtualizer().snapshot().clone();
         let row_renderer = self.row_renderer.clone();
         let list_id = plan.list_id().to_owned();
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
@@ -631,7 +1421,11 @@ impl RenderOnce for VirtualizedList {
         let active_indicator_frame = runtime.update(cx, |runtime, _| {
             if runtime.active_key.as_deref() != list_state.active_key() {
                 runtime.active_key = list_state.active_key().map(str::to_owned);
-                runtime.pending_scroll_to_active = list_state.active_key().map(str::to_owned);
+                if runtime.last_builder_bring_into_view.is_none()
+                    && let Some(active_key) = list_state.active_key()
+                {
+                    runtime.queue_active_bring_into_view(active_key);
+                }
             }
             if &runtime.selected_keys != list_state.selected_key_set() {
                 runtime.selected_keys = list_state.selected_key_set().clone();
@@ -668,6 +1462,28 @@ impl RenderOnce for VirtualizedList {
             .with_label(&root_label)
             .with_disabled(list_state.disabled())
             .with_actions(root_actions);
+        let list_body = render_virtualized_list_body(
+            &list_id,
+            &rows,
+            plan.virtualizer().total_size(),
+            active_indicator,
+            colors,
+            row_measure_mode,
+            estimated_row_height,
+            row_renderer,
+            list_state.clone(),
+            runtime.clone(),
+            focus_handle.clone(),
+            reveal_target,
+            scroll_chain_anchor,
+            scroll_handle.clone(),
+            tracked_reveal_key,
+            deferred_materialization,
+            on_activate.clone(),
+            on_selection_change.clone(),
+            window,
+            cx,
+        );
 
         div()
             .id(self.id)
@@ -704,21 +1520,15 @@ impl RenderOnce for VirtualizedList {
             .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
             .on_key_down({
                 let runtime = runtime.clone();
-                let scroll_handle = scroll_handle.clone();
                 let on_activate = on_activate.clone();
                 let on_selection_change = on_selection_change.clone();
                 let plan_state = list_state.clone();
-                let row_measure_mode = row_measure_mode;
-                let virtualizer_snapshot = virtualizer_snapshot.clone();
                 move |event: &KeyDownEvent, window, cx| {
                     handle_virtualized_list_key_down(
                         &plan_state,
                         runtime.clone(),
-                        scroll_handle.clone(),
                         on_activate.clone(),
                         on_selection_change.clone(),
-                        row_measure_mode,
-                        &virtualizer_snapshot,
                         event,
                         window,
                         cx,
@@ -732,29 +1542,10 @@ impl RenderOnce for VirtualizedList {
                     .min_h(px(0.0))
                     .overflow_hidden()
                     .child(
-                        ScrollArea::new(
-                            scroll_viewport_id,
-                            render_virtualized_list_body(
-                                &list_id,
-                                &rows,
-                                plan.virtualizer().total_size(),
-                                active_indicator,
-                                colors,
-                                row_measure_mode,
-                                estimated_row_height,
-                                row_renderer,
-                                list_state.clone(),
-                                runtime.clone(),
-                                focus_handle,
-                                on_activate,
-                                on_selection_change,
-                                window,
-                                cx,
-                            ),
-                        )
-                        .vertical()
-                        .scroll_handle(&scroll_handle)
-                        .with_size(self.size),
+                        ScrollArea::new(scroll_viewport_id, list_body)
+                            .vertical()
+                            .scroll_handle(&scroll_handle)
+                            .with_size(self.size),
                     )
                     .when_some(sticky_overlay, |this, overlay| {
                         this.child(render_virtualized_list_sticky_overlay(
@@ -773,11 +1564,8 @@ impl RenderOnce for VirtualizedList {
 fn handle_virtualized_list_key_down(
     state: &VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
-    scroll_handle: ScrollHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
-    row_measure_mode: VirtualizedListRowMeasureMode,
-    virtualizer_snapshot: &VirtualizerSnapshot,
     event: &KeyDownEvent,
     window: &mut Window,
     cx: &mut App,
@@ -837,16 +1625,9 @@ fn handle_virtualized_list_key_down(
             if let Some(selection_change) = selection_change.as_ref() {
                 runtime.selected_keys = selection_change.selected_key_set();
             }
-            runtime.pending_scroll_to_active = Some(target.key().to_owned());
+            runtime.queue_active_bring_into_view_from_input(target.key(), window);
             cx.notify();
         });
-        scroll_active_key(
-            &scroll_handle,
-            state,
-            target.key(),
-            row_measure_mode,
-            virtualizer_snapshot,
-        );
         if let (Some(on_selection_change), Some(selection_change)) =
             (on_selection_change.as_ref(), selection_change)
         {
@@ -913,16 +1694,9 @@ fn handle_virtualized_list_key_down(
             if let Some(selection_change) = selection_change.as_ref() {
                 runtime.selected_keys = selection_change.selected_key_set();
             }
-            runtime.pending_scroll_to_active = Some(activation.key().to_owned());
+            runtime.queue_active_bring_into_view_from_input(activation.key(), window);
             cx.notify();
         });
-        scroll_active_key(
-            &scroll_handle,
-            state,
-            activation.key(),
-            row_measure_mode,
-            virtualizer_snapshot,
-        );
         if let (Some(on_selection_change), Some(selection_change)) =
             (on_selection_change.as_ref(), selection_change)
         {
@@ -975,16 +1749,9 @@ fn handle_virtualized_list_key_down(
         runtime.update(cx, |runtime, cx| {
             runtime.active_key = Some(target_key.clone());
             runtime.selection_anchor_key = Some(target_key.clone());
-            runtime.pending_scroll_to_active = Some(target_key.clone());
+            runtime.queue_active_bring_into_view_from_input(target_key.clone(), window);
             cx.notify();
         });
-        scroll_active_key(
-            &scroll_handle,
-            state,
-            target_key.as_str(),
-            row_measure_mode,
-            virtualizer_snapshot,
-        );
     }
 }
 
@@ -997,96 +1764,42 @@ fn virtualized_list_shift_only(event: &KeyDownEvent) -> bool {
         && !modifiers.function
 }
 
-fn scroll_active_key(
-    scroll_handle: &ScrollHandle,
+fn resolve_virtualized_list_materialization_target(
     state: &VirtualizedListState,
     key: &str,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    virtualizer_snapshot: &VirtualizerSnapshot,
+) -> VirtualizedListMaterializationResult {
+    match row_measure_mode.measured().then_some(virtualizer_snapshot) {
+        Some(snapshot) => state.materialization_target_for_key_with_snapshot(key, snapshot),
+        None => state.materialization_target_for_key(key),
+    }
+}
+
+pub(super) fn materialize_virtualized_list_target(
+    scroll_handle: &ScrollHandle,
+    state: &VirtualizedListState,
+    target: &VirtualizedListMaterializationTarget,
     row_measure_mode: VirtualizedListRowMeasureMode,
     virtualizer_snapshot: &VirtualizerSnapshot,
 ) {
     let viewport_extent = state.viewport_extent();
     let current_scroll_offset = vertical_scroll_offset(scroll_handle);
-    let target = match if row_measure_mode.measured() {
-        state.scroll_target_for_key_with_snapshot(
-            key,
-            VirtualizedListScrollStrategy::Nearest,
-            viewport_extent,
-            current_scroll_offset,
-            virtualizer_snapshot,
-        )
-    } else {
-        state.scroll_target_for_key(
-            key,
-            VirtualizedListScrollStrategy::Nearest,
-            viewport_extent,
-            current_scroll_offset,
-        )
-    } {
-        VirtualizedListRevealResult::Revealed(target)
-        | VirtualizedListRevealResult::Estimated(target) => target,
-        VirtualizedListRevealResult::NotFound(_)
-        | VirtualizedListRevealResult::DuplicateKey(_)
-        | VirtualizedListRevealResult::Disabled(_)
-        | VirtualizedListRevealResult::StatusRow(_)
-        | VirtualizedListRevealResult::StructuralRow(_)
-        | VirtualizedListRevealResult::NotSelectable(_) => {
-            return;
-        }
-    };
+    let snapshot = row_measure_mode.measured().then_some(virtualizer_snapshot);
+    let materialization_offset = state.materialization_scroll_offset(
+        target,
+        viewport_extent,
+        current_scroll_offset,
+        snapshot,
+    );
 
-    if target.scroll_offset() != current_scroll_offset {
+    if materialization_offset != current_scroll_offset {
         set_vertical_scroll_offset_with_source(
             scroll_handle,
-            target.scroll_offset(),
-            ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal),
+            materialization_offset,
+            ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Offset),
         );
     }
-}
-
-fn reveal_virtualized_list_key(
-    scroll_handle: &ScrollHandle,
-    state: &VirtualizedListState,
-    key: &str,
-    strategy: VirtualizedListScrollStrategy,
-    row_measure_mode: VirtualizedListRowMeasureMode,
-    virtualizer_snapshot: &VirtualizerSnapshot,
-) -> VirtualizedListRevealResult {
-    let viewport_extent = state.viewport_extent();
-    let current_scroll_offset = vertical_scroll_offset(scroll_handle);
-    let result = if row_measure_mode.measured() {
-        state.scroll_target_for_key_with_snapshot(
-            key,
-            strategy,
-            viewport_extent,
-            current_scroll_offset,
-            virtualizer_snapshot,
-        )
-    } else {
-        state.scroll_target_for_key(key, strategy, viewport_extent, current_scroll_offset)
-    };
-
-    match &result {
-        VirtualizedListRevealResult::Revealed(target)
-        | VirtualizedListRevealResult::Estimated(target) => {
-            if target.scroll_offset() != current_scroll_offset {
-                set_vertical_scroll_offset_with_source(
-                    scroll_handle,
-                    target.scroll_offset(),
-                    ScrollViewportChangeSource::Programmatic(
-                        ScrollViewportProgrammaticSource::Reveal,
-                    ),
-                );
-            }
-        }
-        VirtualizedListRevealResult::NotFound(_)
-        | VirtualizedListRevealResult::DuplicateKey(_)
-        | VirtualizedListRevealResult::Disabled(_)
-        | VirtualizedListRevealResult::StatusRow(_)
-        | VirtualizedListRevealResult::StructuralRow(_)
-        | VirtualizedListRevealResult::NotSelectable(_) => {}
-    }
-
-    result
 }
 
 fn resolve_viewport_item_count(row_height: UiPx, viewport_extent: UiPx, fallback: usize) -> usize {

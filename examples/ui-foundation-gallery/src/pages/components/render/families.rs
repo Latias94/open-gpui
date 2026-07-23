@@ -656,7 +656,7 @@ pub(super) fn component_state_contract_samples_section(
                 .children(virtualized_list_samples.into_iter().map(|sample| {
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
-                    let scroll_strategy = sample.scroll_strategy;
+                    let bring_into_view_options = sample.bring_into_view_options;
 
                     component_gallery_card_shell(
                         format!("component-virtualized-list-state-contract:{}", sample.id),
@@ -689,7 +689,7 @@ pub(super) fn component_state_contract_samples_section(
                     )
                     .child(component_virtualized_list_state_contract_row(
                         &state,
-                        scroll_strategy,
+                        bring_into_view_options,
                     ))
                 })),
         )

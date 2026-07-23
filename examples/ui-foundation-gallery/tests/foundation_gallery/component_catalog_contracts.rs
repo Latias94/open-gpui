@@ -405,7 +405,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(release_tree_snapshot.rendered_row_count(), 12);
     assert_eq!(
         release_tree_snapshot.rows()[0].render_key(),
-        "0:release-node-0000"
+        "release-node-0000"
     );
     let editable_tree = &trees[3];
     assert_eq!(editable_tree.id, "editable-outline");
@@ -1419,13 +1419,13 @@ fn components_page_samples_expose_component_metadata() {
         host_controlled_actions.renderer,
         pages::components::VirtualizedListSampleRenderer::NestedAction
     );
+    let host_bring_into_view = host_controlled_actions
+        .host_bring_into_view
+        .expect("host-controlled sample bring-into-view intent");
+    assert_eq!(host_bring_into_view.key, "host-action-0010");
     assert_eq!(
-        host_controlled_actions.host_reveal_key,
-        Some("host-action-0010")
-    );
-    assert_eq!(
-        host_controlled_actions.host_reveal_strategy,
-        VirtualizedListScrollStrategy::Top
+        host_bring_into_view.options,
+        BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge)
     );
 
     let measured_notes = virtualized_lists
@@ -1481,8 +1481,8 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
     assert_eq!(virtualized_list_contracts.len(), 1);
     let virtualized = &virtualized_list_contracts[0];
     assert_eq!(
-        virtualized.scroll_strategy,
-        VirtualizedListScrollStrategy::Center
+        virtualized.bring_into_view_options,
+        BringIntoViewOptions::vertical(BringIntoViewAlignment::Center)
     );
     assert_eq!(virtualized.state.item_count(), 10_000);
     assert_eq!(virtualized.state.active_index(), Some(42));

@@ -1,15 +1,24 @@
 use open_gpui::{
-    ScrollHandle, ScrollViewportChangeSource, ScrollViewportProgrammaticSource, ScrollWheelEvent,
-    TargetedEvent, Window, point, px,
+    BringIntoViewOptions, RevealTargetHandle, ScrollHandle, ScrollViewportChangeSource,
+    ScrollViewportProgrammaticSource, ScrollWheelEvent, TargetedEvent, Window, WindowId, point, px,
 };
 use open_gpui_ui_core::{UiPx, VirtualizerItemGeometry};
 
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 
+#[derive(Debug, Clone)]
+struct RevealTargetSlot {
+    window_id: WindowId,
+    logical_identity: String,
+    handle: RevealTargetHandle,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ScrollSurfaceRuntime {
     reset_key: Option<String>,
     scroll_handle: ScrollHandle,
+    reveal_targets: Vec<RevealTargetSlot>,
+    pending_bring_into_view: Option<BringIntoViewOptions>,
 }
 
 impl ScrollSurfaceRuntime {
@@ -17,6 +26,8 @@ impl ScrollSurfaceRuntime {
         Self {
             reset_key,
             scroll_handle: ScrollHandle::new(),
+            reveal_targets: Vec::new(),
+            pending_bring_into_view: None,
         }
     }
 
@@ -31,14 +42,64 @@ impl ScrollSurfaceRuntime {
     pub(crate) fn scroll_handle(&self) -> ScrollHandle {
         self.scroll_handle.clone()
     }
+
+    pub(crate) fn reveal_target_for(
+        &mut self,
+        logical_identity: &str,
+        window: &mut Window,
+    ) -> RevealTargetHandle {
+        let window_id = window.window_handle().window_id();
+        if let Some(slot) = self
+            .reveal_targets
+            .iter_mut()
+            .find(|slot| slot.window_id == window_id)
+        {
+            if slot.logical_identity != logical_identity {
+                slot.logical_identity = logical_identity.to_owned();
+                slot.handle = window.new_reveal_target();
+            }
+            return slot.handle;
+        }
+        let handle = window.new_reveal_target();
+        self.reveal_targets.push(RevealTargetSlot {
+            window_id,
+            logical_identity: logical_identity.to_owned(),
+            handle,
+        });
+        handle
+    }
+
+    pub(crate) fn queue_bring_into_view(&mut self, options: BringIntoViewOptions) {
+        self.pending_bring_into_view = Some(options);
+    }
+
+    pub(crate) fn queue_vertical_bring_into_view(&mut self) {
+        self.queue_bring_into_view(BringIntoViewOptions::vertical(
+            open_gpui::BringIntoViewAlignment::Nearest,
+        ));
+    }
+
+    /// Schedules the pending final reveal after the current render can bind its target.
+    pub(crate) fn schedule_pending_bring_into_view(
+        &mut self,
+        target: RevealTargetHandle,
+        window: &mut Window,
+    ) {
+        let Some(options) = self.pending_bring_into_view.take() else {
+            return;
+        };
+        request_bring_into_view(target, options, window);
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScrollSurfaceRevealStrategy {
-    Nearest,
-    Top,
-    Center,
-    Bottom,
+pub(crate) fn request_bring_into_view(
+    target: RevealTargetHandle,
+    options: BringIntoViewOptions,
+    window: &mut Window,
+) {
+    window.on_next_frame(move |window, cx| {
+        let _ = window.bring_into_view(&target, options, cx);
+    });
 }
 
 pub(crate) fn scroll_surface_handle(
@@ -93,8 +154,7 @@ pub(crate) fn set_vertical_scroll_offset_with_source(
     );
 }
 
-pub(crate) fn fixed_row_scroll_target(
-    strategy: ScrollSurfaceRevealStrategy,
+pub(crate) fn materialization_fixed_row_offset(
     target_index: usize,
     item_count: usize,
     row_height: UiPx,
@@ -110,8 +170,7 @@ pub(crate) fn fixed_row_scroll_target(
     let target_index = target_index.min(item_count - 1);
     let total_size = row_height * item_count as f32;
     let row_start = row_height * target_index as f32;
-    row_geometry_scroll_target(
-        strategy,
+    materialization_row_geometry_offset(
         VirtualizerItemGeometry::new(row_start, row_height),
         total_size,
         viewport_extent,
@@ -119,8 +178,7 @@ pub(crate) fn fixed_row_scroll_target(
     )
 }
 
-pub(crate) fn row_geometry_scroll_target(
-    strategy: ScrollSurfaceRevealStrategy,
+pub(crate) fn materialization_row_geometry_offset(
     geometry: VirtualizerItemGeometry,
     total_size: UiPx,
     viewport_extent: UiPx,
@@ -131,31 +189,21 @@ pub(crate) fn row_geometry_scroll_target(
     let current_scroll_offset = nonnegative_px(current_scroll_offset).min(max_scroll_offset);
     let row_start = geometry.start();
     let row_end = geometry.end();
-    let target = match strategy {
-        ScrollSurfaceRevealStrategy::Nearest => {
-            let viewport_start = current_scroll_offset;
-            let viewport_end = viewport_start + viewport_extent;
-            if row_start < viewport_start {
-                row_start
-            } else if row_end > viewport_end {
-                row_end - viewport_extent
-            } else {
-                viewport_start
-            }
-        }
-        ScrollSurfaceRevealStrategy::Top => row_start,
-        ScrollSurfaceRevealStrategy::Center => {
-            row_start + geometry.size().half() - viewport_extent.half()
-        }
-        ScrollSurfaceRevealStrategy::Bottom => row_end - viewport_extent,
+    let viewport_start = current_scroll_offset;
+    let viewport_end = viewport_start + viewport_extent;
+    let target = if row_start < viewport_start {
+        row_start
+    } else if row_end > viewport_end {
+        row_end - viewport_extent
+    } else {
+        viewport_start
     };
 
     nonnegative_px(target).min(max_scroll_offset)
 }
 
-pub(crate) fn reveal_row_geometry(
+pub(crate) fn materialize_row_geometry(
     scroll_handle: &ScrollHandle,
-    strategy: ScrollSurfaceRevealStrategy,
     geometry: VirtualizerItemGeometry,
     total_size: UiPx,
     fallback_viewport_extent: Option<UiPx>,
@@ -168,7 +216,7 @@ pub(crate) fn reveal_row_geometry(
 
     let current = vertical_scroll_offset(scroll_handle);
     let target =
-        row_geometry_scroll_target(strategy, geometry, total_size, viewport_extent, current);
+        materialization_row_geometry_offset(geometry, total_size, viewport_extent, current);
     if target == current {
         return false;
     }
@@ -176,14 +224,13 @@ pub(crate) fn reveal_row_geometry(
     set_vertical_scroll_offset_with_source(
         scroll_handle,
         target,
-        ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal),
+        ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Offset),
     );
     true
 }
 
-pub(crate) fn reveal_fixed_row(
+pub(crate) fn materialize_fixed_row(
     scroll_handle: &ScrollHandle,
-    strategy: ScrollSurfaceRevealStrategy,
     target_index: usize,
     item_count: usize,
     row_height: UiPx,
@@ -197,8 +244,7 @@ pub(crate) fn reveal_fixed_row(
     }
 
     let current = vertical_scroll_offset(scroll_handle);
-    let target = fixed_row_scroll_target(
-        strategy,
+    let target = materialization_fixed_row_offset(
         target_index,
         item_count,
         row_height,
@@ -212,7 +258,7 @@ pub(crate) fn reveal_fixed_row(
     set_vertical_scroll_offset_with_source(
         scroll_handle,
         target,
-        ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal),
+        ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Offset),
     );
     true
 }
@@ -272,27 +318,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fixed_row_scroll_target_matches_nearest_alignment_contract() {
+    fn materialization_fixed_row_offset_keeps_target_in_mount_window() {
         assert_eq!(
-            fixed_row_scroll_target(
-                ScrollSurfaceRevealStrategy::Nearest,
-                10,
-                100,
-                ui_px(32.0),
-                ui_px(96.0),
-                ui_px(0.0),
-            ),
+            materialization_fixed_row_offset(10, 100, ui_px(32.0), ui_px(96.0), ui_px(0.0),),
             ui_px(256.0)
         );
         assert_eq!(
-            fixed_row_scroll_target(
-                ScrollSurfaceRevealStrategy::Nearest,
-                10,
-                100,
-                ui_px(32.0),
-                ui_px(96.0),
-                ui_px(320.0),
-            ),
+            materialization_fixed_row_offset(10, 100, ui_px(32.0), ui_px(96.0), ui_px(320.0),),
             ui_px(320.0)
         );
     }
@@ -313,103 +345,23 @@ mod tests {
     }
 
     #[test]
-    fn fixed_row_scroll_target_supports_explicit_alignment_strategies() {
-        let row_height = ui_px(20.0);
-        let viewport_extent = ui_px(100.0);
-
-        assert_eq!(
-            fixed_row_scroll_target(
-                ScrollSurfaceRevealStrategy::Top,
-                10,
-                100,
-                row_height,
-                viewport_extent,
-                ui_px(0.0),
-            ),
-            ui_px(200.0)
-        );
-        assert_eq!(
-            fixed_row_scroll_target(
-                ScrollSurfaceRevealStrategy::Center,
-                10,
-                100,
-                row_height,
-                viewport_extent,
-                ui_px(0.0),
-            ),
-            ui_px(160.0)
-        );
-        assert_eq!(
-            fixed_row_scroll_target(
-                ScrollSurfaceRevealStrategy::Bottom,
-                10,
-                100,
-                row_height,
-                viewport_extent,
-                ui_px(0.0),
-            ),
-            ui_px(120.0)
-        );
-    }
-
-    #[test]
-    fn row_geometry_scroll_target_uses_variable_item_bounds() {
+    fn materialization_row_geometry_offset_uses_variable_item_bounds() {
         let geometry = VirtualizerItemGeometry::new(ui_px(240.0), ui_px(20.0));
 
         assert_eq!(
-            row_geometry_scroll_target(
-                ScrollSurfaceRevealStrategy::Nearest,
-                geometry,
-                ui_px(320.0),
-                ui_px(80.0),
-                ui_px(0.0),
-            ),
+            materialization_row_geometry_offset(geometry, ui_px(320.0), ui_px(80.0), ui_px(0.0),),
             ui_px(180.0)
-        );
-        assert_eq!(
-            row_geometry_scroll_target(
-                ScrollSurfaceRevealStrategy::Center,
-                geometry,
-                ui_px(320.0),
-                ui_px(80.0),
-                ui_px(0.0),
-            ),
-            ui_px(210.0)
-        );
-        assert_eq!(
-            row_geometry_scroll_target(
-                ScrollSurfaceRevealStrategy::Bottom,
-                geometry,
-                ui_px(250.0),
-                ui_px(80.0),
-                ui_px(0.0),
-            ),
-            ui_px(170.0)
         );
     }
 
     #[test]
-    fn fixed_row_scroll_target_clamps_to_scrollable_range() {
+    fn materialization_fixed_row_offset_clamps_to_scrollable_range() {
         assert_eq!(
-            fixed_row_scroll_target(
-                ScrollSurfaceRevealStrategy::Top,
-                usize::MAX,
-                10,
-                ui_px(20.0),
-                ui_px(100.0),
-                ui_px(0.0),
-            ),
+            materialization_fixed_row_offset(usize::MAX, 10, ui_px(20.0), ui_px(100.0), ui_px(0.0),),
             ui_px(100.0)
         );
         assert_eq!(
-            fixed_row_scroll_target(
-                ScrollSurfaceRevealStrategy::Bottom,
-                0,
-                10,
-                ui_px(20.0),
-                ui_px(100.0),
-                ui_px(0.0),
-            ),
+            materialization_fixed_row_offset(0, 10, ui_px(20.0), ui_px(100.0), ui_px(0.0),),
             ui_px(0.0)
         );
     }
@@ -426,11 +378,10 @@ mod tests {
     }
 
     #[test]
-    fn reveal_fixed_row_noops_when_target_is_visible() {
+    fn materialize_fixed_row_noops_when_target_is_visible() {
         let scroll_handle = ScrollHandle::new();
-        assert!(!reveal_fixed_row(
+        assert!(!materialize_fixed_row(
             &scroll_handle,
-            ScrollSurfaceRevealStrategy::Nearest,
             0,
             10,
             ui_px(32.0),

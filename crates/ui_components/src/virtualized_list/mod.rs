@@ -31,9 +31,9 @@ pub use self::descriptor::{
     VirtualizedListItemDescriptor, VirtualizedListRowKind, VirtualizedListStatusKind,
 };
 pub use self::model::{
-    VirtualizedListActivation, VirtualizedListRevealResult, VirtualizedListRevealTarget,
-    VirtualizedListScrollStrategy, VirtualizedListSelectionChange, VirtualizedListSelectionMode,
-    VirtualizedListState, VirtualizedListStateItem,
+    VirtualizedListActivation, VirtualizedListMaterializationResult,
+    VirtualizedListMaterializationTarget, VirtualizedListSelectionChange,
+    VirtualizedListSelectionMode, VirtualizedListState, VirtualizedListStateItem,
 };
 pub use self::render_plan::{
     VirtualizedListBehaviorSnapshot, VirtualizedListRowBehaviorSnapshot,
@@ -464,13 +464,8 @@ mod tests {
         assert_eq!(state.active_index(), Some(2));
         assert!(state.selected_keys().is_empty());
         assert_eq!(
-            state.scroll_target_for_key(
-                "duplicate",
-                VirtualizedListScrollStrategy::Nearest,
-                ui_px(84.0),
-                UiPx::ZERO,
-            ),
-            VirtualizedListRevealResult::DuplicateKey("duplicate".to_owned())
+            state.materialization_target_for_key("duplicate"),
+            VirtualizedListMaterializationResult::DuplicateKey("duplicate".to_owned())
         );
     }
 
@@ -531,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn virtualized_list_scroll_to_key_reports_reveal_result() {
+    fn virtualized_list_materialization_reports_non_selectable_keys() {
         let state = VirtualizedListState::resolve(
             Size::Small,
             false,
@@ -548,22 +543,12 @@ mod tests {
         .with_metrics(VirtualizedListMetrics::from_size(Size::Small).with_row_height(ui_px(28.0)));
 
         assert_eq!(
-            state.scroll_target_for_key(
-                "beta",
-                VirtualizedListScrollStrategy::Top,
-                ui_px(56.0),
-                UiPx::ZERO,
-            ),
-            VirtualizedListRevealResult::Disabled("beta".to_owned())
+            state.materialization_target_for_key("beta"),
+            VirtualizedListMaterializationResult::Disabled("beta".to_owned())
         );
         assert_eq!(
-            state.scroll_target_for_key(
-                "missing",
-                VirtualizedListScrollStrategy::Top,
-                ui_px(56.0),
-                UiPx::ZERO,
-            ),
-            VirtualizedListRevealResult::NotFound("missing".to_owned())
+            state.materialization_target_for_key("missing"),
+            VirtualizedListMaterializationResult::NotFound("missing".to_owned())
         );
     }
 
@@ -623,13 +608,8 @@ mod tests {
         assert_eq!(snapshot.rows()[4].role(), Role::Status);
         assert_eq!(snapshot.rows()[6].role(), Role::Alert);
         assert_eq!(
-            snapshot.state().scroll_target_for_key(
-                "retry",
-                VirtualizedListScrollStrategy::Nearest,
-                ui_px(84.0),
-                UiPx::ZERO,
-            ),
-            VirtualizedListRevealResult::StatusRow("retry".to_owned())
+            snapshot.state().materialization_target_for_key("retry"),
+            VirtualizedListMaterializationResult::StatusRow("retry".to_owned())
         );
     }
 
@@ -651,14 +631,6 @@ mod tests {
         assert_eq!(VirtualizedListStatusKind::Exhausted.as_str(), "exhausted");
         assert_eq!(VirtualizedListStatusKind::Error.as_str(), "error");
         assert_eq!(VirtualizedListStatusKind::Retry.as_str(), "retry");
-    }
-
-    #[test]
-    fn virtualized_list_scroll_strategy_labels_are_stable() {
-        assert_eq!(VirtualizedListScrollStrategy::Nearest.as_str(), "nearest");
-        assert_eq!(VirtualizedListScrollStrategy::Top.as_str(), "top");
-        assert_eq!(VirtualizedListScrollStrategy::Center.as_str(), "center");
-        assert_eq!(VirtualizedListScrollStrategy::Bottom.as_str(), "bottom");
     }
 
     #[test]
@@ -814,13 +786,8 @@ mod tests {
         assert_eq!(snapshot.rows()[3].position_in_set(), None);
         assert_eq!(snapshot.rows()[3].size_of_set(), 1);
         assert_eq!(
-            snapshot.state().scroll_target_for_key(
-                "recent",
-                VirtualizedListScrollStrategy::Nearest,
-                ui_px(84.0),
-                UiPx::ZERO,
-            ),
-            VirtualizedListRevealResult::StructuralRow("recent".to_owned())
+            snapshot.state().materialization_target_for_key("recent"),
+            VirtualizedListMaterializationResult::StructuralRow("recent".to_owned())
         );
     }
 
@@ -1131,7 +1098,7 @@ mod tests {
     }
 
     #[test]
-    fn virtualized_list_measured_scroll_target_uses_snapshot_sizes() {
+    fn virtualized_list_materialization_target_reports_snapshot_confidence() {
         let state = VirtualizedListState::resolve(
             Size::Medium,
             false,
@@ -1165,34 +1132,10 @@ mod tests {
         );
 
         assert_eq!(
-            state.scroll_target_for_key_with_snapshot(
-                "beta",
-                VirtualizedListScrollStrategy::Top,
-                ui_px(30.0),
-                UiPx::ZERO,
-                &exact_snapshot,
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "beta",
-                1,
-                ui_px(10.0),
-                false,
-            ))
-        );
-        assert_eq!(
-            state.scroll_target_for_key_with_snapshot(
-                "beta",
-                VirtualizedListScrollStrategy::Center,
-                ui_px(30.0),
-                UiPx::ZERO,
-                &exact_snapshot,
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "beta",
-                1,
-                ui_px(20.0),
-                false,
-            ))
+            state.materialization_target_for_key_with_snapshot("beta", &exact_snapshot),
+            VirtualizedListMaterializationResult::Target(
+                VirtualizedListMaterializationTarget::new("beta", 1, false)
+            )
         );
         let estimated_snapshot = VirtualizerSnapshot::new(
             ui_px(0.0),
@@ -1202,24 +1145,15 @@ mod tests {
             )],
         );
         assert_eq!(
-            state.scroll_target_for_key_with_snapshot(
-                "beta",
-                VirtualizedListScrollStrategy::Top,
-                ui_px(30.0),
-                UiPx::ZERO,
-                &estimated_snapshot,
-            ),
-            VirtualizedListRevealResult::Estimated(VirtualizedListRevealTarget::new(
-                "beta",
-                1,
-                ui_px(10.0),
-                true,
-            ))
+            state.materialization_target_for_key_with_snapshot("beta", &estimated_snapshot),
+            VirtualizedListMaterializationResult::Target(
+                VirtualizedListMaterializationTarget::new("beta", 1, true)
+            )
         );
     }
 
     #[test]
-    fn virtualized_list_prepend_reveal_preserves_key_identity_with_measured_rows() {
+    fn virtualized_list_prepend_materialization_preserves_key_identity_with_measured_rows() {
         let prepended_state = VirtualizedListState::resolve(
             Size::Medium,
             false,
@@ -1267,19 +1201,10 @@ mod tests {
         assert_eq!(prepended_state.active_key(), Some("gamma"));
         assert_eq!(prepended_state.selected_keys(), ["gamma"]);
         assert_eq!(
-            prepended_state.scroll_target_for_key_with_snapshot(
-                "gamma",
-                VirtualizedListScrollStrategy::Top,
-                ui_px(30.0),
-                UiPx::ZERO,
-                &snapshot,
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "gamma",
-                4,
-                ui_px(100.0),
-                false,
-            ))
+            prepended_state.materialization_target_for_key_with_snapshot("gamma", &snapshot),
+            VirtualizedListMaterializationResult::Target(
+                VirtualizedListMaterializationTarget::new("gamma", 4, false)
+            )
         );
     }
 
@@ -1489,7 +1414,7 @@ mod tests {
     }
 
     #[test]
-    fn virtualized_list_scroll_target_applies_alignment_strategies() {
+    fn virtualized_list_materialization_uses_nearest_mounting_offset() {
         let state = VirtualizedListState::resolve(
             Size::Medium,
             false,
@@ -1505,75 +1430,19 @@ mod tests {
         let viewport_extent = ui_px(96.0);
         let current = ui_px(320.0);
 
+        let target = match state.materialization_target_for_key("row-10") {
+            VirtualizedListMaterializationResult::Target(target) => target,
+            result => panic!("row-10 should be materializable, got {result:?}"),
+        };
+        assert_eq!(target.index(), 10);
+        assert!(!target.estimated());
         assert_eq!(
-            state.scroll_target_for_key(
-                "row-10",
-                VirtualizedListScrollStrategy::Top,
-                viewport_extent,
-                current,
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "row-10",
-                10,
-                ui_px(320.0),
-                false,
-            ))
+            state.materialization_scroll_offset(&target, viewport_extent, ui_px(0.0), None,),
+            ui_px(256.0)
         );
         assert_eq!(
-            state.scroll_target_for_key(
-                "row-10",
-                VirtualizedListScrollStrategy::Center,
-                viewport_extent,
-                current,
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "row-10",
-                10,
-                ui_px(288.0),
-                false,
-            ))
-        );
-        assert_eq!(
-            state.scroll_target_for_key(
-                "row-10",
-                VirtualizedListScrollStrategy::Bottom,
-                viewport_extent,
-                current,
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "row-10",
-                10,
-                ui_px(256.0),
-                false,
-            ))
-        );
-        assert_eq!(
-            state.scroll_target_for_key(
-                "row-10",
-                VirtualizedListScrollStrategy::Nearest,
-                viewport_extent,
-                current,
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "row-10",
-                10,
-                ui_px(320.0),
-                false,
-            ))
-        );
-        assert_eq!(
-            state.scroll_target_for_key(
-                "row-10",
-                VirtualizedListScrollStrategy::Nearest,
-                viewport_extent,
-                ui_px(0.0),
-            ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "row-10",
-                10,
-                ui_px(256.0),
-                false,
-            ))
+            state.materialization_scroll_offset(&target, viewport_extent, current, None),
+            current
         );
     }
 }

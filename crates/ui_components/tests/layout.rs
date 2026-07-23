@@ -1,14 +1,16 @@
 use open_gpui::{
-    Context, InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
+    BringIntoViewAlignment, BringIntoViewOptions, Context, InputEvent, InteractiveElement,
+    IntoElement, Keystroke, Modifiers, MouseButton, ParentElement, Render, RevealTargetExt as _,
+    RevealTargetHandle, ScrollDelta, ScrollWheelEvent, Styled, VisualContext as _, Window, div,
+    point, px,
 };
 use open_gpui_ui_components::{
     Button, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter,
     SplitterPanel, SplitterPanelDescriptor, SplitterState, Tree, TreeChildrenLoadState,
     TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRowRenderContext,
-    VirtualizedListScrollStrategy, VirtualizedListSelectionMode, apply_tree_move,
-    gpui_adapter::VirtualizedListGpuiExt,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListMaterializationResult,
+    VirtualizedListMaterializationTarget, VirtualizedListRowRenderContext,
+    VirtualizedListSelectionMode, apply_tree_move, gpui_adapter::VirtualizedListGpuiExt,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, VirtualizerRange, ui_px};
 use std::cell::RefCell;
@@ -118,22 +120,16 @@ fn virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_cont
         VirtualizedListActivation::new(active_row.index(), active_row.key(), active_row.label());
     assert_eq!(activation.index(), 104);
     assert_eq!(activation.key(), "item-0104");
-    let reveal = snapshot.state().scroll_target_for_key(
-        activation.key(),
-        VirtualizedListScrollStrategy::Top,
-        snapshot.viewport_extent(),
-        snapshot.scroll_offset(),
-    );
+    let materialization = snapshot
+        .state()
+        .materialization_target_for_key(activation.key());
     assert_eq!(
-        reveal,
-        open_gpui_ui_components::VirtualizedListRevealResult::Revealed(
-            open_gpui_ui_components::VirtualizedListRevealTarget::new(
-                activation.key(),
-                activation.index(),
-                ui_px(2_912.0),
-                false,
-            ),
-        )
+        materialization,
+        VirtualizedListMaterializationResult::Target(VirtualizedListMaterializationTarget::new(
+            activation.key(),
+            activation.index(),
+            false,
+        ),)
     );
 }
 
@@ -163,6 +159,39 @@ fn virtualized_list_behavior_snapshot_applies_builder_metrics() {
     assert_eq!(*snapshot.overscan_range(), VirtualizerRange::new(1, 7));
     assert_eq!(snapshot.active_row().map(|row| row.index()), Some(5));
     assert_eq!(snapshot.selected_row().map(|row| row.index()), Some(3));
+}
+
+#[test]
+fn virtualized_tree_render_keys_follow_unique_values_across_reorder() {
+    let snapshot = |items| {
+        Tree::new("stable-tree", "Stable tree", items)
+            .virtualized(true)
+            .viewport_item_count(3)
+            .overscan_count(0)
+            .behavior_snapshot(ui_px(0.0), ui_px(120.0))
+    };
+    let initial = snapshot([
+        TreeItemDescriptor::new("alpha", "Alpha"),
+        TreeItemDescriptor::new("beta", "Beta"),
+        TreeItemDescriptor::new("gamma", "Gamma"),
+    ]);
+    let reordered = snapshot([
+        TreeItemDescriptor::new("gamma", "Gamma"),
+        TreeItemDescriptor::new("alpha", "Alpha"),
+        TreeItemDescriptor::new("beta", "Beta"),
+    ]);
+    let render_key = |snapshot: &open_gpui_ui_components::TreeBehaviorSnapshot| {
+        snapshot
+            .rows()
+            .iter()
+            .find(|row| row.value() == "alpha")
+            .expect("alpha should be rendered")
+            .render_key()
+            .to_owned()
+    };
+
+    assert_eq!(render_key(&initial), "alpha");
+    assert_eq!(render_key(&reordered), "alpha");
 }
 
 #[open_gpui::test]
@@ -654,10 +683,10 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         root::VirtualizedListSelectionMode::Multiple;
     let prelude_virtualized_selection_mode: prelude::VirtualizedListSelectionMode =
         prelude::VirtualizedListSelectionMode::Single;
-    let _root_scroll_strategy: root::VirtualizedListScrollStrategy =
-        root::VirtualizedListScrollStrategy::Center;
-    let _prelude_scroll_strategy: prelude::VirtualizedListScrollStrategy =
-        prelude::VirtualizedListScrollStrategy::Center;
+    let _root_materialization_target: root::VirtualizedListMaterializationTarget =
+        root::VirtualizedListMaterializationTarget::new("root-item-4", 4, false);
+    let _prelude_materialization_target: prelude::VirtualizedListMaterializationTarget =
+        prelude::VirtualizedListMaterializationTarget::new("prelude-item-4", 4, false);
 
     assert_eq!(root_status_cue.state().role(), Role::Status);
     assert_eq!(prelude_status_cue.state().role(), Role::Status);
@@ -688,10 +717,7 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude::tree_navigation_target("home", 0, &[false]),
         Some(0)
     );
-    assert_eq!(
-        root_tree_component_snapshot.rows()[0].render_key(),
-        "0:root"
-    );
+    assert_eq!(root_tree_component_snapshot.rows()[0].render_key(), "root");
     assert_eq!(prelude_tree_component_snapshot.state().items().len(), 1);
     assert_eq!(root_tree_component_snapshot.rendered_row_count(), 1);
     assert_eq!(root_tree_move.position(), TreeDropPosition::Before);
@@ -733,32 +759,20 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(root_virtualized_snapshot.role(), Role::ListBox);
     assert_eq!(prelude_virtualized_snapshot.row_role(), Role::ListBoxOption);
     assert_eq!(
-        root_virtualized_snapshot.state().scroll_target_for_key(
-            "root-item-4",
-            root::VirtualizedListScrollStrategy::Top,
-            root_virtualized_snapshot.viewport_extent(),
-            root_virtualized_snapshot.scroll_offset(),
-        ),
-        root::VirtualizedListRevealResult::Revealed(root::VirtualizedListRevealTarget::new(
-            "root-item-4",
-            4,
-            ui_px(112.0),
-            false,
-        ))
+        root_virtualized_snapshot
+            .state()
+            .materialization_target_for_key("root-item-4"),
+        root::VirtualizedListMaterializationResult::Target(
+            root::VirtualizedListMaterializationTarget::new("root-item-4", 4, false)
+        )
     );
     assert_eq!(
-        prelude_virtualized_snapshot.state().scroll_target_for_key(
-            "prelude-item-4",
-            prelude::VirtualizedListScrollStrategy::Top,
-            prelude_virtualized_snapshot.viewport_extent(),
-            prelude_virtualized_snapshot.scroll_offset(),
-        ),
-        prelude::VirtualizedListRevealResult::Revealed(prelude::VirtualizedListRevealTarget::new(
-            "prelude-item-4",
-            4,
-            ui_px(112.0),
-            false,
-        ),)
+        prelude_virtualized_snapshot
+            .state()
+            .materialization_target_for_key("prelude-item-4"),
+        prelude::VirtualizedListMaterializationResult::Target(
+            prelude::VirtualizedListMaterializationTarget::new("prelude-item-4", 4, false)
+        )
     );
 }
 
@@ -831,6 +845,17 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued_callbacks > 0,
+        "the active-row reveal should submit after materializing and capturing its guard"
+    );
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
 
     let row_4_after = cx
         .debug_bounds("virtualized-list:runtime-list:row:item-0004")
@@ -849,7 +874,7 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
 }
 
 #[open_gpui::test]
-fn virtualized_list_runtime_uses_host_scroll_handle_for_controlled_reveal(
+fn virtualized_list_runtime_materializes_then_uses_host_scroll_handle_for_final_reveal(
     cx: &mut open_gpui::TestAppContext,
 ) {
     struct TestView {
@@ -873,7 +898,10 @@ fn virtualized_list_runtime_uses_host_scroll_handle_for_controlled_reveal(
                         .viewport_item_count(4)
                         .overscan(0)
                         .scroll_handle(&self.scroll_handle)
-                        .reveal_key("item-0010", VirtualizedListScrollStrategy::Top),
+                        .bring_key_into_view(
+                            "item-0010",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
                 ),
             )
         }
@@ -889,8 +917,874 @@ fn virtualized_list_runtime_uses_host_scroll_handle_for_controlled_reveal(
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(queued_callbacks > 0);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
 
     assert_eq!(scroll_handle.offset().y, px(-280.0));
+}
+
+#[open_gpui::test]
+fn virtualized_list_builder_retries_the_same_key_after_data_arrives(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        loaded: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let item_count = if self.loaded { 100 } else { 5 };
+            let items = (0..item_count).map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("deferred-host-list", "Deferred host list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0010",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        loaded: false,
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(scroll_handle.offset().y, px(0.0));
+
+    view.update(cx, |view, cx| {
+        view.loaded = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(queued_callbacks > 0);
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(scroll_handle.offset().y, px(-280.0));
+}
+
+#[open_gpui::test]
+fn virtualized_list_builder_retries_after_a_ready_target_temporarily_disappears(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        target_present: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100)
+                .filter(|index| self.target_present || *index != 10)
+                .map(|index| {
+                    VirtualizedListItemDescriptor::new(
+                        format!("item-{index:04}"),
+                        format!("Item {index:04}"),
+                    )
+                });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("ready-missing-list", "Ready missing list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0010",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        target_present: true,
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(
+        scroll_handle.offset().y,
+        px(-196.0),
+        "the first frame should publish the ready guard after logical materialization"
+    );
+
+    view.update(cx, |view, cx| {
+        view.target_present = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    view.update(cx, |view, cx| {
+        view.target_present = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued_callbacks > 0,
+        "the restored ready target should submit its retained Builder reveal"
+    );
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        px(-280.0),
+        "a ready Builder target must retain its intent while temporarily absent"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_builder_retries_after_an_in_flight_target_temporarily_unlinks(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        target_present: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100)
+                .filter(|index| self.target_present || *index != 10)
+                .map(|index| {
+                    VirtualizedListItemDescriptor::new(
+                        format!("item-{index:04}"),
+                        format!("Item {index:04}"),
+                    )
+                });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("in-flight-missing-list", "In-flight missing list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0010",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        target_present: true,
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued_callbacks > 0,
+        "the initial physical reveal should be in flight before the target disappears"
+    );
+
+    view.update(cx, |view, cx| {
+        view.target_present = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    view.update(cx, |view, cx| {
+        view.target_present = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued_callbacks > 0,
+        "the restored Builder target should submit a fresh physical reveal"
+    );
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        px(-280.0),
+        "a temporarily unlinked Builder target must retain its declarative reveal intent"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_re_materializes_a_ready_key_after_reorder(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        reordered: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut order = (0..100).collect::<Vec<_>>();
+            if self.reordered {
+                order.swap(10, 80);
+            }
+            let items = order.into_iter().map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("reordered-host-list", "Reordered host list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0010",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        reordered: false,
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(scroll_handle.offset().y, px(-196.0));
+
+    view.update(cx, |view, cx| {
+        view.reordered = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(scroll_handle.offset().y, px(-2156.0));
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(queued_callbacks > 0);
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(scroll_handle.offset().y, px(-2240.0));
+}
+
+#[open_gpui::test]
+fn virtualized_list_cancels_a_ready_reveal_when_its_key_becomes_duplicate(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        duplicate_target: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100).map(|index| {
+                let key = if self.duplicate_target && index == 9 {
+                    "item-0010".to_owned()
+                } else {
+                    format!("item-{index:04}")
+                };
+                VirtualizedListItemDescriptor::new(key, format!("Item {index:04}"))
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("duplicate-reveal-list", "Duplicate reveal list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0010",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        duplicate_target: false,
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(scroll_handle.offset().y, px(-196.0));
+
+    view.update(cx, |view, cx| {
+        view.duplicate_target = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        px(-196.0),
+        "an ambiguous stable key must cancel the two-phase reveal"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_cancels_a_ready_reveal_when_its_key_becomes_disabled(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        disable_target: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100).map(|index| {
+                let descriptor = VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                );
+                if self.disable_target && index == 10 {
+                    descriptor.disabled(true)
+                } else {
+                    descriptor
+                }
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("disabled-reveal-list", "Disabled reveal list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0010",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        disable_target: false,
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(scroll_handle.offset().y, px(-196.0));
+
+    view.update(cx, |view, cx| {
+        view.disable_target = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        px(-196.0),
+        "a disabled stable key must cancel the two-phase reveal"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_user_scroll_does_not_reissue_an_in_flight_builder_reveal(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100).map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("interrupt-list", "Interrupt list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0080",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(queued_callbacks > 0, "physical reveal should be in flight");
+
+    let viewport = cx
+        .debug_bounds("scroll-area:virtualized-list:interrupt-list:viewport")
+        .expect("virtualized-list viewport should be rendered");
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(4_000.0))),
+        ..Default::default()
+    });
+    for _ in 0..4 {
+        cx.update(|window, cx| {
+            window.drain_next_frame_callbacks_for_test(cx);
+            window.draw(cx).clear();
+        });
+    }
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        px(0.0),
+        "a user wheel interruption must terminate the declarative reveal without bouncing back"
+    );
+    assert_eq!(
+        scroll_handle
+            .committed_viewport_snapshot()
+            .map(|snapshot| snapshot.source()),
+        Some(open_gpui::ScrollViewportChangeSource::Wheel)
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_wheel_between_materialization_and_window_request_cancels_reveal(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100).map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("queued-interrupt-list", "Queued interrupt list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0080",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let viewport = cx
+        .debug_bounds("scroll-area:virtualized-list:queued-interrupt-list:viewport")
+        .expect("virtualized-list viewport should be rendered");
+    let before_wheel = scroll_handle.offset().y;
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(4.0))),
+        ..Default::default()
+    });
+    let after_wheel = scroll_handle.offset().y;
+    assert_ne!(
+        after_wheel, before_wheel,
+        "the wheel must move the viewport"
+    );
+
+    for _ in 0..4 {
+        cx.update(|window, cx| {
+            window.drain_next_frame_callbacks_for_test(cx);
+            window.draw(cx).clear();
+        });
+    }
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        after_wheel,
+        "a wheel intent observed before the physical request must prevent later snap-back"
+    );
+    assert_eq!(
+        scroll_handle
+            .committed_viewport_snapshot()
+            .map(|snapshot| snapshot.source()),
+        Some(open_gpui::ScrollViewportChangeSource::Wheel)
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_ancestor_wheel_between_materialization_and_window_request_cancels_reveal(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        outer_scroll_handle: open_gpui::ScrollHandle,
+        inner_scroll_handle: open_gpui::ScrollHandle,
+        list_scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100).map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(180.0)).child(
+                    ScrollArea::new(
+                        "ancestor-interrupt-outer",
+                        div().relative().w(px(640.0)).h(px(640.0)).child(
+                            div()
+                                .absolute()
+                                .left(px(320.0))
+                                .top(px(320.0))
+                                .w(px(240.0))
+                                .h(px(140.0))
+                                .child(
+                                    ScrollArea::new(
+                                        "ancestor-interrupt-inner",
+                                        div().relative().w(px(500.0)).h(px(500.0)).child(
+                                            div()
+                                                .absolute()
+                                                .top(px(260.0))
+                                                .w(px(240.0))
+                                                .h(px(112.0))
+                                                .child(
+                                                    VirtualizedList::new(
+                                                        "ancestor-interrupt-list",
+                                                        "Ancestor interrupt list",
+                                                        items,
+                                                    )
+                                                    .with_size(Size::Small)
+                                                    .row_height(ui_px(28.0))
+                                                    .viewport_item_count(4)
+                                                    .overscan(0)
+                                                    .scroll_handle(&self.list_scroll_handle)
+                                                    .bring_key_into_view(
+                                                        "item-0080",
+                                                        BringIntoViewOptions::vertical(
+                                                            BringIntoViewAlignment::MinEdge,
+                                                        ),
+                                                    ),
+                                                ),
+                                        ),
+                                    )
+                                    .vertical()
+                                    .scroll_handle(&self.inner_scroll_handle),
+                                ),
+                        ),
+                    )
+                    .vertical()
+                    .scroll_handle(&self.outer_scroll_handle),
+                ),
+            )
+        }
+    }
+
+    let outer_scroll_handle = open_gpui::ScrollHandle::new();
+    let inner_scroll_handle = open_gpui::ScrollHandle::new();
+    let list_scroll_handle = open_gpui::ScrollHandle::new();
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        outer_scroll_handle: outer_scroll_handle.clone(),
+        inner_scroll_handle: inner_scroll_handle.clone(),
+        list_scroll_handle,
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("virtualized-list:ancestor-interrupt-list:row:item-0080")
+            .is_some(),
+        "the first frame must materialize and bind the remote target before the deferred request"
+    );
+    assert_eq!(
+        outer_scroll_handle.offset().y,
+        px(0.0),
+        "the deferred request must not move the outer ancestor in its materialization frame"
+    );
+    assert_eq!(
+        inner_scroll_handle.offset().y,
+        px(0.0),
+        "the deferred request must not move the inner ancestor in its materialization frame"
+    );
+
+    let outer_viewport = cx
+        .debug_bounds("scroll-area:ancestor-interrupt-outer")
+        .expect("outer ancestor viewport should be rendered");
+    cx.simulate_event(ScrollWheelEvent {
+        position: outer_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    let outer_after_wheel = outer_scroll_handle.offset().y;
+    assert_ne!(
+        outer_after_wheel,
+        px(0.0),
+        "the outer ancestor wheel must move its viewport"
+    );
+
+    for _ in 0..4 {
+        cx.update(|window, cx| {
+            window.drain_next_frame_callbacks_for_test(cx);
+            window.draw(cx).clear();
+        });
+    }
+
+    assert_eq!(
+        outer_scroll_handle.offset().y,
+        outer_after_wheel,
+        "an ancestor wheel before the physical request must prevent later nested snap-back"
+    );
+    assert_eq!(
+        inner_scroll_handle.offset().y,
+        px(0.0),
+        "the cancelled request must not move the inner ancestor"
+    );
+    assert_eq!(
+        outer_scroll_handle
+            .committed_viewport_snapshot()
+            .map(|snapshot| snapshot.source()),
+        Some(open_gpui::ScrollViewportChangeSource::Wheel)
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_superseded_in_flight_request_does_not_retry_after_reorder(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        reordered: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+        competing_target: RevealTargetHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut order = (0..100).collect::<Vec<_>>();
+            if self.reordered {
+                order.swap(10, 80);
+            }
+            let competing_target = self.competing_target;
+            let items = order.into_iter().map(move |index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("superseded-retry-list", "Superseded retry list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .render_row(move |context, _, _| {
+                            let row = div().w_full().h_full().child(context.label().to_owned());
+                            if context.key() == "item-0080" {
+                                row.track_reveal_target(&competing_target)
+                                    .into_any_element()
+                            } else {
+                                row.into_any_element()
+                            }
+                        })
+                        .bring_key_into_view(
+                            "item-0080",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|window, _| TestView {
+        reordered: false,
+        scroll_handle: scroll_handle.clone(),
+        competing_target: window.new_reveal_target(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued_callbacks > 0,
+        "the virtual request should be in flight"
+    );
+
+    let competing_target = cx.update_window_entity(&view, |view, _, _| view.competing_target);
+    view.update(cx, |view, cx| {
+        view.reordered = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| {
+        window
+            .bring_into_view(
+                &competing_target,
+                BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                cx,
+            )
+            .expect("the competing reveal target belongs to this window");
+    });
+
+    for _ in 0..4 {
+        cx.update(|window, cx| {
+            window.drain_next_frame_callbacks_for_test(cx);
+            window.draw(cx).clear();
+        });
+    }
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert!(
+        cx.debug_bounds("virtualized-list:superseded-retry-list:row:item-0080")
+            .is_none(),
+        "a superseded request must not rematerialize its reordered target"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_reorder_and_wheel_during_an_in_flight_request_does_not_retry(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        reordered: bool,
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut order = (0..100).collect::<Vec<_>>();
+            if self.reordered {
+                order.swap(10, 80);
+            }
+            let items = order.into_iter().map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("reorder-interrupt-list", "Reorder interrupt list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .bring_key_into_view(
+                            "item-0080",
+                            BringIntoViewOptions::vertical(BringIntoViewAlignment::MinEdge),
+                        ),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        reordered: false,
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued_callbacks > 0,
+        "the physical request should be submitted"
+    );
+
+    let viewport = cx
+        .debug_bounds("scroll-area:virtualized-list:reorder-interrupt-list:viewport")
+        .expect("virtualized-list viewport should be rendered");
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(4.0))),
+        ..Default::default()
+    });
+    let after_wheel = scroll_handle.offset().y;
+    view.update(cx, |view, cx| {
+        view.reordered = true;
+        cx.notify();
+    });
+
+    for _ in 0..4 {
+        cx.update(|window, cx| {
+            window.drain_next_frame_callbacks_for_test(cx);
+            window.draw(cx).clear();
+        });
+    }
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        after_wheel,
+        "a superseded in-flight request must not rematerialize the reordered target after wheel input"
+    );
+    let stale_target_bounds =
+        cx.debug_bounds("virtualized-list:reorder-interrupt-list:row:item-0080");
+    assert!(
+        stale_target_bounds.is_none(),
+        "the stale operation must not mount the target at its new index; bounds={stale_target_bounds:?}, offset={:?}",
+        scroll_handle.offset(),
+    );
 }
 
 #[open_gpui::test]
@@ -1123,6 +2017,89 @@ fn virtualized_list_runtime_typeahead_reveals_without_selection(
     assert!(
         selection_changes.borrow().is_empty(),
         "typeahead should move active state without selecting"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_typeahead_wheel_before_draw_cancels_materialization(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut items = (0..40)
+                .map(|index| {
+                    VirtualizedListItemDescriptor::new(
+                        format!("item-{index:04}"),
+                        format!("Item {index:04}"),
+                    )
+                })
+                .collect::<Vec<_>>();
+            items[20] = VirtualizedListItemDescriptor::new("item-0020", "Zulu Target");
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(84.0)).child(
+                    VirtualizedList::new("typeahead-wheel-list", "Typeahead wheel list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(3)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let root = cx
+        .debug_bounds("virtualized-list:typeahead-wheel-list:root")
+        .expect("the virtualized list root should render");
+    cx.simulate_click(root.center(), Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let viewport = cx
+        .debug_bounds("scroll-area:virtualized-list:typeahead-wheel-list:viewport")
+        .expect("the virtualized list viewport should render");
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("z").unwrap(), cx);
+        window.dispatch_event(
+            ScrollWheelEvent {
+                position: viewport.center(),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-96.0))),
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    });
+    let after_wheel = scroll_handle.offset().y;
+    assert_ne!(
+        after_wheel,
+        px(0.0),
+        "the user wheel must move the list before the deferred materialization frame"
+    );
+
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+
+    assert_eq!(
+        scroll_handle.offset().y,
+        after_wheel,
+        "a stale typeahead request must not overwrite the user wheel position"
+    );
+    assert!(
+        cx.debug_bounds("virtualized-list:typeahead-wheel-list:row:item-0020")
+            .is_none(),
+        "a wheel observed before prepaint must prevent stale typeahead materialization"
     );
 }
 

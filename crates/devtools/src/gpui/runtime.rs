@@ -549,7 +549,8 @@ fn scroll_viewport_source_label(source: ScrollViewportChangeSource) -> &'static 
         ScrollViewportChangeSource::Touch => "touch",
         ScrollViewportChangeSource::Programmatic(source) => match source {
             ScrollViewportProgrammaticSource::Offset => "programmatic-offset",
-            ScrollViewportProgrammaticSource::Reveal => "programmatic-reveal",
+            ScrollViewportProgrammaticSource::ScrollToItem => "programmatic-scroll-to-item",
+            ScrollViewportProgrammaticSource::BringIntoView => "programmatic-bring-into-view",
             ScrollViewportProgrammaticSource::ScrollToBottom => "programmatic-scroll-to-bottom",
         },
     }

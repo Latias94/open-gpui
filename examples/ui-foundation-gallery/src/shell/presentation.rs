@@ -535,6 +535,7 @@ impl GalleryShell {
                         self.presentation_action_count, self.presentation_drag_status,
                     )),
             )
+            .child(self.render_bring_into_view_demo(snapshot, cx))
             .child(self.render_signal_list(snapshot.selected_page))
     }
 }

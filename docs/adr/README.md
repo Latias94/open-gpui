@@ -32,3 +32,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0022: Open GPUI Subtree Presentation Authority](0022-open-gpui-subtree-presentation-authority.md)
 - [ADR 0023: Open GPUI Live Region And Announcement Authority](0023-open-gpui-live-region-announcement-authority.md)
 - [ADR 0024: Open GPUI Typed Committed Portal Anchor Authority](0024-open-gpui-typed-committed-portal-anchor-authority.md)
+- [ADR 0025: Open GPUI Bring Into View Authority](0025-open-gpui-bring-into-view-authority.md)

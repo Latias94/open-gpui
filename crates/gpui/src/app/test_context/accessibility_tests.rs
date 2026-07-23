@@ -28,12 +28,12 @@ fn node_with_label<'a>(update: &'a TreeUpdate, label: &str) -> (NodeId, &'a Node
         .unwrap_or_else(|| panic!("missing node labelled {label:?}"))
 }
 
-struct AccessibilityScopeElement {
+pub(super) struct AccessibilityScopeElement {
     scope: AccessibilityTreeScope,
     child: Option<AnyElement>,
 }
 
-fn accessibility_scope(
+pub(super) fn accessibility_scope(
     scope: AccessibilityTreeScope,
     child: impl IntoElement,
 ) -> AccessibilityScopeElement {

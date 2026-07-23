@@ -2006,8 +2006,10 @@ pub struct Div {
 pub enum ScrollViewportProgrammaticSource {
     /// Code set the scroll offset directly.
     Offset,
-    /// Code revealed an item using scroll-to-item behavior.
-    Reveal,
+    /// Code scrolled directly to a child item.
+    ScrollToItem,
+    /// The window bring-into-view authority committed an offset.
+    BringIntoView,
     /// Code requested scrolling to the bottom edge.
     ScrollToBottom,
 }
@@ -2632,12 +2634,12 @@ impl Interactivity {
                     || self.base_style.overflow.y == Some(Overflow::Scroll))
                     && let Some(element_state) = element_state.as_mut()
                 {
-                    self.scroll_offset = Some(
-                        element_state
-                            .scroll_offset
-                            .get_or_insert_with(Rc::default)
-                            .clone(),
-                    );
+                    let scroll_handle = element_state
+                        .scroll_handle
+                        .get_or_insert_with(ScrollHandle::new)
+                        .clone();
+                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                    self.tracked_scroll_handle = Some(scroll_handle);
                 }
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
@@ -2743,47 +2745,59 @@ impl Interactivity {
                 }
 
                 window.with_text_style(style.text_style().cloned(), |window| {
-                    window.with_content_mask(
-                        style.overflow_mask(bounds, window.rem_size()),
-                        |window| {
-                            let hitbox =
-                                if interactive && self.should_insert_hitbox(&style, window, cx) {
-                                    Some(window.insert_hitbox(bounds, self.hitbox_behavior))
-                                } else {
-                                    None
-                                };
+                    let overflow_mask = style.overflow_mask(bounds, window.rem_size());
+                    let scroll_viewport_bounds =
+                        overflow_mask.as_ref().map_or(bounds, |mask| mask.bounds);
+                    window.with_content_mask(overflow_mask, |window| {
+                        let hitbox = if interactive && self.should_insert_hitbox(&style, window, cx)
+                        {
+                            Some(window.insert_hitbox(bounds, self.hitbox_behavior))
+                        } else {
+                            None
+                        };
 
-                            if self.tooltip_builder.is_some()
-                                && let Some(hitbox) = hitbox.as_ref()
-                                && let Some(element_state) = element_state.as_mut()
-                            {
-                                element_state
-                                    .committed_tooltip_hitbox
-                                    .get_or_insert_with(Default::default)
-                                    .record(hitbox, window);
-                            }
+                        if self.tooltip_builder.is_some()
+                            && let Some(hitbox) = hitbox.as_ref()
+                            && let Some(element_state) = element_state.as_mut()
+                        {
+                            element_state
+                                .committed_tooltip_hitbox
+                                .get_or_insert_with(Default::default)
+                                .record(hitbox, window);
+                        }
 
-                            if interactive
-                                && let Some(handle) = self
-                                    .tracked_pointer_capture_handle
-                                    .as_ref()
-                                    .or(self.drag_pointer_capture_handle.as_ref())
-                                && let Some(hitbox) = hitbox.as_ref()
-                            {
-                                window
-                                    .bind_pointer_capture(handle, hitbox.id)
-                                    .unwrap_or_else(|error| {
-                                        panic!("failed to bind pointer capture handle: {error}")
-                                    });
-                            }
+                        if interactive
+                            && let Some(handle) = self
+                                .tracked_pointer_capture_handle
+                                .as_ref()
+                                .or(self.drag_pointer_capture_handle.as_ref())
+                            && let Some(hitbox) = hitbox.as_ref()
+                        {
+                            window
+                                .bind_pointer_capture(handle, hitbox.id)
+                                .unwrap_or_else(|error| {
+                                    panic!("failed to bind pointer capture handle: {error}")
+                                });
+                        }
 
-                            let scroll_offset =
-                                self.clamp_scroll_position(bounds, &style, window, cx);
-                            self.dispatch_scroll_viewport_changed(content_size, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
-                            (result, element_state)
-                        },
-                    )
+                        let scroll_offset = self.clamp_scroll_position(bounds, &style, window, cx);
+                        self.dispatch_scroll_viewport_changed(content_size, window, cx);
+                        let result = if let Some(scroll_handle) =
+                            self.tracked_scroll_handle.as_ref()
+                            && (style.overflow.x == Overflow::Scroll
+                                || style.overflow.y == Overflow::Scroll)
+                        {
+                            window.with_scroll_handle_container(
+                                scroll_handle.clone(),
+                                scroll_viewport_bounds,
+                                style.overflow,
+                                |window| f(&style, scroll_offset, hitbox, window, cx),
+                            )
+                        } else {
+                            f(&style, scroll_offset, hitbox, window, cx)
+                        };
+                        (result, element_state)
+                    })
                 })
             },
         )
@@ -2821,15 +2835,15 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if self.scroll_viewport_changed_listeners.is_empty() {
-            return;
-        }
         let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() else {
             return;
         };
         let Some(event) = scroll_handle.take_scroll_viewport_changed_event(content_size) else {
             return;
         };
+        if self.scroll_viewport_changed_listeners.is_empty() {
+            return;
+        }
         if !window.subtree_presentation().is_interactive() {
             return;
         }
@@ -3768,6 +3782,12 @@ impl Interactivity {
                             delta_x = Pixels::ZERO;
                         }
                     }
+                    if let Some(scroll_handle) = tracked_scroll_handle.as_ref()
+                        && (!delta_x.is_zero() || !delta_y.is_zero())
+                    {
+                        scroll_handle
+                            .mark_direct_scroll_intent(!delta_x.is_zero(), !delta_y.is_zero());
+                    }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
                     if !delta_x.is_zero() || !delta_y.is_zero() {
@@ -3958,7 +3978,7 @@ pub struct InteractiveElementState {
     pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
     pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
-    pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    pub(crate) scroll_handle: Option<ScrollHandle>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
     pub(crate) committed_tooltip_hitbox: Option<CommittedHitbox>,
     pub(crate) drag_pointer_capture_handle: Option<PointerCaptureHandle>,
@@ -4569,6 +4589,7 @@ struct ScrollHandleState {
     last_committed_viewport: Option<ScrollViewportStateSnapshot>,
     last_committed_viewport_snapshot: Option<ScrollViewportSnapshot>,
     pending_viewport_change_source: Option<ScrollViewportChangeSource>,
+    direct_scroll_revision: crate::window::ScrollDirectMutationRevision,
     discard_next_viewport_event: bool,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -4676,12 +4697,16 @@ impl ScrollHandle {
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
     pub fn scroll_to_item(&self, ix: usize) {
         let mut state = self.0.borrow_mut();
+        state.direct_scroll_revision.horizontal =
+            state.direct_scroll_revision.horizontal.saturating_add(1);
+        state.direct_scroll_revision.vertical =
+            state.direct_scroll_revision.vertical.saturating_add(1);
         state.active_item = Some(ScrollActiveItem {
             index: ix,
             strategy: ScrollStrategy::default(),
         });
         state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic(
-            ScrollViewportProgrammaticSource::Reveal,
+            ScrollViewportProgrammaticSource::ScrollToItem,
         ));
     }
 
@@ -4689,12 +4714,14 @@ impl ScrollHandle {
     /// This scrolls the minimal amount to ensure that the child is the first visible element
     pub fn scroll_to_top_of_item(&self, ix: usize) {
         let mut state = self.0.borrow_mut();
+        state.direct_scroll_revision.vertical =
+            state.direct_scroll_revision.vertical.saturating_add(1);
         state.active_item = Some(ScrollActiveItem {
             index: ix,
             strategy: ScrollStrategy::Top,
         });
         state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic(
-            ScrollViewportProgrammaticSource::Reveal,
+            ScrollViewportProgrammaticSource::ScrollToItem,
         ));
     }
 
@@ -4752,6 +4779,8 @@ impl ScrollHandle {
     /// Scrolls to the bottom.
     pub fn scroll_to_bottom(&self) {
         let mut state = self.0.borrow_mut();
+        state.direct_scroll_revision.vertical =
+            state.direct_scroll_revision.vertical.saturating_add(1);
         state.scroll_to_bottom = true;
         state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic(
             ScrollViewportProgrammaticSource::ScrollToBottom,
@@ -4787,6 +4816,13 @@ impl ScrollHandle {
         source: ScrollViewportChangeSource,
     ) {
         let mut state = self.0.borrow_mut();
+        let previous = *state.offset.borrow();
+        let horizontal = previous.x != position.x;
+        let vertical = previous.y != position.y;
+        state.mark_direct_scroll_intent(
+            horizontal || (!horizontal && !vertical),
+            vertical || (!horizontal && !vertical),
+        );
         let changed = {
             let mut offset = state.offset.borrow_mut();
             if *offset == position {
@@ -4801,8 +4837,49 @@ impl ScrollHandle {
         }
     }
 
-    fn mark_scroll_viewport_change(&self, source: ScrollViewportChangeSource) {
+    pub(crate) fn mark_scroll_viewport_change(&self, source: ScrollViewportChangeSource) {
         self.0.borrow_mut().pending_viewport_change_source = Some(source);
+    }
+
+    pub(crate) fn mark_direct_scroll_intent(&self, horizontal: bool, vertical: bool) {
+        self.0
+            .borrow_mut()
+            .mark_direct_scroll_intent(horizontal, vertical);
+    }
+
+    pub(crate) fn scroll_container_identity(&self) -> usize {
+        Rc::as_ptr(&self.0) as usize
+    }
+
+    /// Returns an opaque revision for explicit scroll mutations on this handle.
+    pub fn direct_scroll_revision(&self) -> crate::window::ScrollDirectMutationRevision {
+        self.0.borrow().direct_scroll_revision
+    }
+
+    pub(crate) fn apply_bring_into_view_offset(
+        &self,
+        position: Point<Pixels>,
+        horizontal: bool,
+        vertical: bool,
+    ) -> bool {
+        let mut state = self.0.borrow_mut();
+        let max = state.max_offset;
+        let mut offset = state.offset.borrow_mut();
+        let previous = *offset;
+        if horizontal {
+            offset.x = position.x.clamp(-max.x, Pixels::ZERO);
+        }
+        if vertical {
+            offset.y = position.y.clamp(-max.y, Pixels::ZERO);
+        }
+        let changed = *offset != previous;
+        drop(offset);
+        if changed {
+            state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic(
+                ScrollViewportProgrammaticSource::BringIntoView,
+            ));
+        }
+        changed
     }
 
     fn discard_next_viewport_event(&self) {
@@ -4883,6 +4960,19 @@ impl ScrollHandle {
     /// Get the count of children for scrollable item.
     pub fn children_count(&self) -> usize {
         self.0.borrow().child_bounds.len()
+    }
+}
+
+impl ScrollHandleState {
+    fn mark_direct_scroll_intent(&mut self, horizontal: bool, vertical: bool) {
+        if horizontal {
+            self.direct_scroll_revision.horizontal =
+                self.direct_scroll_revision.horizontal.saturating_add(1);
+        }
+        if vertical {
+            self.direct_scroll_revision.vertical =
+                self.direct_scroll_revision.vertical.saturating_add(1);
+        }
     }
 }
 
@@ -5582,7 +5672,9 @@ mod tests {
 
         assert_eq!(
             revealed.source(),
-            ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal)
+            ScrollViewportChangeSource::Programmatic(
+                ScrollViewportProgrammaticSource::ScrollToItem
+            )
         );
     }
 

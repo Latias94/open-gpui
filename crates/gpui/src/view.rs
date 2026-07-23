@@ -167,6 +167,7 @@ impl Element for AnyView {
                         && !window.refreshing
                         && !window.portal_anchor_dependency_invalidates_view(self.entity_id())
                         && !window.portal_anchor_capture_requires_fresh_prepaint()
+                        && !window.reveal_target_capture_requires_fresh_prepaint()
                     {
                         let prepaint_start = window.prepaint_index();
                         window.reuse_prepaint(element_state.prepaint_range.clone());
@@ -185,6 +186,7 @@ impl Element for AnyView {
                         let root_layout_id = element.request_layout(window, cx);
                         element.layout_as_root(bounds.size.into(), window, cx);
                         window.register_portal_anchor_root_layout_alias(root_layout_id);
+                        window.register_reveal_target_root_layout_alias(root_layout_id);
                         element.prepaint_at(bounds.origin, window, cx);
                         element
                     });

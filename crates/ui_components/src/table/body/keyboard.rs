@@ -1,7 +1,7 @@
 use open_gpui::{App, Entity, FocusHandle, KeyDownEvent, ScrollHandle, Window};
 use open_gpui_ui_core::{TableResolvedRow, TableRowIdentity, TableRowModel, UiPx};
 
-use crate::scroll_surface::{ScrollSurfaceRevealStrategy, reveal_fixed_row, reveal_row_geometry};
+use crate::scroll_surface::{materialize_fixed_row, materialize_row_geometry};
 use crate::table::{
     TableInputModifiers, TableRowAction, TableRowActivation, TableRowActivationHandler,
     TableRowActivationKind, TableRowExpansionHandler, TableRowExpansionToggle, TableRowRenderPlan,
@@ -204,7 +204,7 @@ impl TableKeyboardDispatchContext<'_> {
                 if let Some(center_index) = index.checked_sub(self.top_row_count)
                     && center_index < self.center_total_row_count
                 {
-                    scroll_table_row_into_view(
+                    materialize_table_row(
                         &self.vertical_scroll_handle,
                         self.runtime,
                         cx,
@@ -263,7 +263,7 @@ impl TableKeyboardDispatchContext<'_> {
     }
 }
 
-fn scroll_table_row_into_view(
+fn materialize_table_row(
     scroll_handle: &ScrollHandle,
     runtime: &Entity<TableRuntime>,
     cx: &App,
@@ -275,9 +275,8 @@ fn scroll_table_row_into_view(
     if let Some(virtualizer) = runtime.read(cx).center_virtualizer()
         && let Some(geometry) = virtualizer.item_geometry(index)
     {
-        reveal_row_geometry(
+        materialize_row_geometry(
             scroll_handle,
-            ScrollSurfaceRevealStrategy::Nearest,
             geometry,
             virtualizer.total_size(),
             Some(fallback_viewport_extent),
@@ -285,9 +284,8 @@ fn scroll_table_row_into_view(
         return;
     }
 
-    reveal_fixed_row(
+    materialize_fixed_row(
         scroll_handle,
-        ScrollSurfaceRevealStrategy::Nearest,
         index,
         row_count,
         fallback_row_height,

@@ -3,10 +3,11 @@
 use open_gpui::prelude::*;
 
 use open_gpui::{
-    AccessibilityAnnouncement, Anchor, App, AppContext, BorrowAppContext, Bounds, Context,
-    ElementGeometry, ElementId, FocusHandle, InteractiveElement, IntoElement, ListAlignment,
-    ListState, ParentElement, Pixels, PortalAnchorExt as _, PortalAnchorHandle, Render,
-    ScrollHandle, StatefulInteractiveElement, Styled, SubtreePresentation, SubtreeTransform,
+    AccessibilityAnnouncement, Anchor, App, AppContext, BorrowAppContext, Bounds,
+    BringIntoViewOutcome, Context, ElementGeometry, ElementId, FocusHandle, InteractiveElement,
+    IntoElement, ListAlignment, ListState, ParentElement, Pixels, PortalAnchorExt as _,
+    PortalAnchorHandle, Render, RevealTargetExt as _, RevealTargetHandle, ScrollHandle,
+    StatefulInteractiveElement, Styled, SubtreePresentation, SubtreeTransform,
     SubtreeTransformExt as _, Window, WindowBounds, WindowOptions, anchored, deferred, div, point,
     px, rgb, size,
 };
@@ -21,11 +22,11 @@ use open_gpui_ui_components::{
     ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress, ProgressState,
     ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton,
     SkeletonState, StatusCue, SwitchState, TextInputState, TextareaState, ThemeResolver,
-    ToggleState, Tooltip, TooltipOpenIntent,
+    ToggleState, Tooltip, TooltipOpenIntent, VirtualizedList, VirtualizedListItemDescriptor,
     gpui_adapter::{
-        DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, WindowOverlayRuntime,
-        focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui,
-        init_text_input,
+        DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, VirtualizedListGpuiExt,
+        WindowOverlayRuntime, focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui,
+        gpui_px_from_ui, init_text_input,
     },
     listbox::ListboxOption,
     theme::{ThemeContext, ThemeScope},
@@ -41,6 +42,7 @@ use crate::pages::{
     self, GALLERY_SECTIONS, GalleryPage, focus_a11y::FocusA11yPageState, overlay::OverlayPageState,
 };
 
+mod bring_into_view;
 mod components;
 mod focus_a11y;
 mod overlay;
@@ -143,6 +145,14 @@ pub struct GalleryShell {
     presentation_action_count: usize,
     presentation_drag_status: String,
     presentation_geometry: Option<ElementGeometry>,
+    bring_into_view_target: RevealTargetHandle,
+    bring_into_view_focus: FocusHandle,
+    bring_into_view_outer_scroll: ScrollHandle,
+    bring_into_view_inner_scroll: ScrollHandle,
+    bring_into_view_virtual_scroll: ScrollHandle,
+    bring_into_view_virtual_key: Option<String>,
+    bring_into_view_generation: u64,
+    bring_into_view_outcome: Option<BringIntoViewOutcome>,
     focus_controls: [FocusHandle; pages::focus_a11y::FOCUS_CONTROLS.len()],
     tooltip_focus_controls: [FocusHandle; 4],
     portal_anchor_demo_anchor: PortalAnchorHandle,
@@ -202,6 +212,14 @@ impl GalleryShell {
             presentation_action_count: 0,
             presentation_drag_status: "Ready".to_owned(),
             presentation_geometry: None,
+            bring_into_view_target: window.new_reveal_target(),
+            bring_into_view_focus: cx.focus_handle().tab_stop(true),
+            bring_into_view_outer_scroll: ScrollHandle::new(),
+            bring_into_view_inner_scroll: ScrollHandle::new(),
+            bring_into_view_virtual_scroll: ScrollHandle::new(),
+            bring_into_view_virtual_key: None,
+            bring_into_view_generation: 0,
+            bring_into_view_outcome: None,
 
             focus_controls: pages::focus_a11y::FOCUS_CONTROLS
                 .map(|spec| cx.focus_handle().tab_index(spec.tab_index).tab_stop(true)),
@@ -437,11 +455,6 @@ impl GalleryShell {
             self.components_focus = focus;
             self.components_list_state
                 .reset(pages::components::component_page_section_count(focus));
-        }
-        if let Some(index) =
-            pages::components::component_page_section_index(self.components_focus, id)
-        {
-            self.components_list_state.scroll_to_reveal_item(index);
         }
         cx.notify();
     }

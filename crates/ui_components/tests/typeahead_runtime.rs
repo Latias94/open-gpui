@@ -2,13 +2,16 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    Context, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton,
-    ParentElement, Render, Styled, VisualTestContext, Window, div, point, px, size,
+    AnyView, AppContext, Context, Entity, FocusHandle, InputEvent, InteractiveElement, IntoElement,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton, ParentElement, Render,
+    ScrollDelta, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled,
+    SubtreePresentation, SubtreePresentationExt, VisualContext, VisualTestContext, Window, canvas,
+    div, point, px, size,
 };
 use open_gpui_ui_components::{
-    ContextMenu, Listbox, ListboxGroup, Menu, MenuItem, Select, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListSelectionMode,
-    listbox::ListboxOption,
+    ContextMenu, Listbox, ListboxGroup, Menu, MenuItem, ScrollArea, Select, Tree,
+    TreeItemDescriptor, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListSelectionMode, listbox::ListboxOption,
 };
 use open_gpui_ui_core::{Sizable, ui_px};
 
@@ -401,6 +404,790 @@ fn tree_removes_focus_authority_when_a_unique_value_becomes_ambiguous(
     assert!(cx.debug_selector_is_focused("tree:dynamic-tree:item:amber"));
     dispatch_key(cx, "enter");
     assert_eq!(selections.borrow().as_slice(), ["amber"]);
+}
+
+#[derive(Clone, Copy, Default)]
+enum VirtualizedTreeTargetMutation {
+    #[default]
+    None,
+    Reordered,
+    Disabled,
+}
+
+struct VirtualizedTreeFocusView {
+    target_mutation: VirtualizedTreeTargetMutation,
+}
+
+impl VirtualizedTreeFocusView {
+    fn items(&self) -> Vec<TreeItemDescriptor> {
+        let mut indices = (0..100).collect::<Vec<_>>();
+        if matches!(
+            self.target_mutation,
+            VirtualizedTreeTargetMutation::Reordered
+        ) {
+            let target = indices.pop().expect("test tree should contain a target");
+            indices.insert(10, target);
+        }
+
+        indices
+            .into_iter()
+            .map(|index| {
+                let descriptor =
+                    TreeItemDescriptor::new(format!("item-{index:04}"), format!("Item {index:04}"));
+                if index == 99
+                    && matches!(
+                        self.target_mutation,
+                        VirtualizedTreeTargetMutation::Disabled
+                    )
+                {
+                    descriptor.disabled(true)
+                } else {
+                    descriptor
+                }
+            })
+            .collect()
+    }
+}
+
+impl Render for VirtualizedTreeFocusView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            div().w(px(280.0)).h(px(112.0)).child(
+                Tree::new("virtual-focus-tree", "Virtual focus tree", self.items())
+                    .small()
+                    .virtualized(true)
+                    .viewport_item_count(4)
+                    .overscan_count(0)
+                    .default_focused("item-0000"),
+            ),
+        )
+    }
+}
+
+struct NestedVirtualizedTreeWheelView {
+    outer_scroll_handle: ScrollHandle,
+    virtualized: bool,
+}
+
+impl Render for NestedVirtualizedTreeWheelView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let items = (0..100).map(|index| {
+            TreeItemDescriptor::new(format!("item-{index:04}"), format!("Item {index:04}"))
+        });
+
+        div().size_full().child(
+            div().w(px(240.0)).h(px(180.0)).child(
+                ScrollArea::new(
+                    "tree-wheel-fence-outer",
+                    div().relative().w(px(640.0)).h(px(640.0)).child(
+                        div().absolute().w(px(180.0)).h(px(112.0)).child(
+                            Tree::new("tree-wheel-fence", "Tree wheel fence", items)
+                                .small()
+                                .virtualized(self.virtualized)
+                                .viewport_item_count(4)
+                                .overscan_count(0)
+                                .default_focused("item-0000"),
+                        ),
+                    ),
+                )
+                .vertical()
+                .scroll_handle(&self.outer_scroll_handle),
+            ),
+        )
+    }
+}
+
+struct LateTreeFocusClaimView {
+    focus: FocusHandle,
+    armed: bool,
+}
+
+impl Render for LateTreeFocusClaimView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.armed {
+            self.armed = false;
+            self.focus.focus(window, cx);
+        }
+
+        div()
+            .id("late-tree-focus-claim")
+            .debug_selector(|| "late-tree-focus-claim".into())
+            .w(px(80.0))
+            .h(px(32.0))
+            .focusable()
+            .track_focus(&self.focus)
+    }
+}
+
+struct VirtualizedTreeLateFocusView {
+    late_focus_claim: Entity<LateTreeFocusClaimView>,
+}
+
+impl Render for VirtualizedTreeLateFocusView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let items = (0..100).map(|index| {
+            TreeItemDescriptor::new(format!("item-{index:04}"), format!("Item {index:04}"))
+        });
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div().w(px(280.0)).h(px(112.0)).child(
+                    Tree::new("tree-late-focus-claim", "Tree late focus claim", items)
+                        .small()
+                        .virtualized(true)
+                        .viewport_item_count(4)
+                        .overscan_count(0)
+                        .default_focused("item-0000"),
+                ),
+            )
+            .child(AnyView::from(self.late_focus_claim.clone()))
+    }
+}
+
+struct LateTreePrepaintFocusClaimView {
+    focus: FocusHandle,
+    armed: bool,
+    focus_stable: bool,
+}
+
+impl Render for LateTreePrepaintFocusClaimView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let request_focus = std::mem::take(&mut self.armed);
+        let focus = self.focus.clone();
+        let focus_stable = self.focus_stable;
+
+        div()
+            .id("late-tree-prepaint-focus-claim")
+            .debug_selector(|| "late-tree-prepaint-focus-claim".into())
+            .w(px(80.0))
+            .h(px(32.0))
+            .focusable()
+            .track_focus(&self.focus)
+            .child(
+                canvas(
+                    move |_, window, _| {
+                        if request_focus {
+                            let focus = focus.clone();
+                            if focus_stable {
+                                window.record_prepaint_focus_stable_commit(move |_, window, cx| {
+                                    focus.focus(window, cx);
+                                });
+                            } else {
+                                window.record_prepaint_window_commit(move |_, window, cx| {
+                                    focus.focus(window, cx);
+                                });
+                            }
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            )
+    }
+}
+
+struct VirtualizedTreeLatePrepaintFocusView {
+    late_focus_claim: Entity<LateTreePrepaintFocusClaimView>,
+}
+
+impl Render for VirtualizedTreeLatePrepaintFocusView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let items = (0..100).map(|index| {
+            TreeItemDescriptor::new(format!("item-{index:04}"), format!("Item {index:04}"))
+        });
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div().w(px(280.0)).h(px(112.0)).child(
+                    Tree::new(
+                        "tree-late-prepaint-focus-claim",
+                        "Tree late prepaint focus claim",
+                        items,
+                    )
+                    .small()
+                    .virtualized(true)
+                    .viewport_item_count(4)
+                    .overscan_count(0)
+                    .default_focused("item-0000"),
+                ),
+            )
+            .child(AnyView::from(self.late_focus_claim.clone()))
+    }
+}
+
+struct VirtualizedTreeRejectedFocusRetryView {
+    presentation: SubtreePresentation,
+    virtualized: bool,
+    external_focus: FocusHandle,
+}
+
+impl Render for VirtualizedTreeRejectedFocusRetryView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let items = (0..100).map(|index| {
+            TreeItemDescriptor::new(format!("item-{index:04}"), format!("Item {index:04}"))
+        });
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .w(px(280.0))
+                    .h(px(112.0))
+                    .child(
+                        Tree::new(
+                            "tree-rejected-focus-retry",
+                            "Tree rejected focus retry",
+                            items,
+                        )
+                        .small()
+                        .virtualized(self.virtualized)
+                        .viewport_item_count(4)
+                        .overscan_count(0)
+                        .default_focused("item-0000"),
+                    )
+                    .with_subtree_presentation(self.presentation),
+            )
+            .child(
+                div()
+                    .id("tree-rejected-focus-retry-external")
+                    .debug_selector(|| "tree-rejected-focus-retry-external".into())
+                    .w(px(80.0))
+                    .h(px(32.0))
+                    .focusable()
+                    .track_focus(&self.external_focus),
+            )
+    }
+}
+
+#[open_gpui::test]
+fn virtualized_tree_re_resolves_a_keyboard_focus_target_after_reorder(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, _| VirtualizedTreeFocusView {
+        target_mutation: VirtualizedTreeTargetMutation::None,
+    });
+    draw(cx);
+    focus_tree(cx, "virtual-focus-tree");
+
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
+        view.update(cx, |view, cx| {
+            view.target_mutation = VirtualizedTreeTargetMutation::Reordered;
+            cx.notify();
+        });
+    });
+    draw(cx);
+
+    assert!(
+        cx.debug_selector_is_focused("tree:virtual-focus-tree:item:item-0099"),
+        "the logical target must be focused at its current index"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_cancels_a_keyboard_focus_target_that_becomes_disabled(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, _| VirtualizedTreeFocusView {
+        target_mutation: VirtualizedTreeTargetMutation::None,
+    });
+    draw(cx);
+    focus_tree(cx, "virtual-focus-tree");
+
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
+        view.update(cx, |view, cx| {
+            view.target_mutation = VirtualizedTreeTargetMutation::Disabled;
+            cx.notify();
+        });
+    });
+    draw(cx);
+
+    assert!(
+        cx.debug_selector_is_focused("tree:virtual-focus-tree:item:item-0000"),
+        "an unavailable logical target must not move or strand focus"
+    );
+    assert!(
+        cx.debug_bounds("tree:virtual-focus-tree:item:item-0099")
+            .is_none(),
+        "an unavailable logical target must not materialize its stale index"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_wheel_before_the_next_draw_cancels_materialization(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let outer_scroll_handle = ScrollHandle::new();
+    let (_, cx) = cx.add_window_view(|_, _| NestedVirtualizedTreeWheelView {
+        outer_scroll_handle: outer_scroll_handle.clone(),
+        virtualized: true,
+    });
+    draw(cx);
+    focus_tree(cx, "tree-wheel-fence");
+
+    let outer_viewport = cx
+        .debug_bounds("scroll-area:tree-wheel-fence-outer")
+        .expect("the outer scroll area should be mounted");
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
+        window.dispatch_event(
+            ScrollWheelEvent {
+                position: point(
+                    outer_viewport.left() + px(220.0),
+                    outer_viewport.top() + px(8.0),
+                ),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-16.0))),
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    });
+    let outer_after_wheel = outer_scroll_handle.offset().y;
+    let first_row_after_wheel = cx
+        .debug_bounds("tree:tree-wheel-fence:item:item-0001")
+        .expect("a visible Tree row should remain mounted after wheel input");
+    assert_ne!(
+        outer_after_wheel,
+        px(0.0),
+        "the outer wheel must move the ancestor viewport"
+    );
+
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert!(
+        cx.debug_bounds("tree:tree-wheel-fence:item:item-0099")
+            .is_none(),
+        "a wheel observed before prepaint must cancel stale Tree materialization"
+    );
+    assert_eq!(
+        outer_scroll_handle.offset().y,
+        outer_after_wheel,
+        "the cancelled request must not overwrite the outer wheel position"
+    );
+    assert_eq!(
+        cx.debug_bounds("tree:tree-wheel-fence:item:item-0001"),
+        Some(first_row_after_wheel),
+        "the cancelled request must not move the Tree's own virtual viewport"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_static_handoff_retains_the_interrupted_scroll_fence(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let outer_scroll_handle = ScrollHandle::new();
+    let (view, cx) = cx.add_window_view(|_, _| NestedVirtualizedTreeWheelView {
+        outer_scroll_handle: outer_scroll_handle.clone(),
+        virtualized: true,
+    });
+    draw(cx);
+    focus_tree(cx, "tree-wheel-fence");
+
+    let outer_viewport = cx
+        .debug_bounds("scroll-area:tree-wheel-fence-outer")
+        .expect("the outer scroll area should be mounted");
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
+        window.dispatch_event(
+            ScrollWheelEvent {
+                position: point(
+                    outer_viewport.left() + px(220.0),
+                    outer_viewport.top() + px(8.0),
+                ),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-16.0))),
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    });
+    let outer_after_wheel = outer_scroll_handle.offset().y;
+    view.update(cx, |view, cx| {
+        view.virtualized = false;
+        cx.notify();
+    });
+
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    let target = cx
+        .debug_bounds("tree:tree-wheel-fence:item:item-0099")
+        .expect("static Tree handoff should mount every row");
+    assert_eq!(
+        outer_scroll_handle.offset().y,
+        outer_after_wheel,
+        "the static handoff must not overwrite the outer wheel position"
+    );
+    assert!(
+        target.top() > outer_viewport.bottom(),
+        "the interrupted fence must prevent automatic focus reveal after static handoff; target={target:?}, outer={outer_viewport:?}"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_late_sibling_focus_claim_cancels_materialization(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        let external_focus = cx.focus_handle();
+        VirtualizedTreeLateFocusView {
+            late_focus_claim: cx.new(move |_| LateTreeFocusClaimView {
+                focus: external_focus,
+                armed: false,
+            }),
+        }
+    });
+    draw(cx);
+    focus_tree(cx, "tree-late-focus-claim");
+    let first_row_before = cx
+        .debug_bounds("tree:tree-late-focus-claim:item:item-0000")
+        .expect("the first Tree row should initially be mounted");
+    let late_focus_claim =
+        cx.update_window_entity(&view, |view, _, _| view.late_focus_claim.clone());
+
+    late_focus_claim.update(cx, |late_focus_claim, cx| {
+        late_focus_claim.armed = true;
+        cx.notify();
+    });
+    dispatch_key(cx, "end");
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert!(
+        cx.debug_selector_is_focused("late-tree-focus-claim"),
+        "the sibling's later render-time claim must win the candidate frame"
+    );
+    assert!(
+        cx.debug_bounds("tree:tree-late-focus-claim:item:item-0099")
+            .is_none(),
+        "a losing Tree claim must not materialize its former target"
+    );
+    assert_eq!(
+        cx.debug_bounds("tree:tree-late-focus-claim:item:item-0000"),
+        Some(first_row_before),
+        "a losing Tree claim must preserve the virtual viewport"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_late_prepaint_focus_claim_cancels_materialization(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        let external_focus = cx.focus_handle();
+        VirtualizedTreeLatePrepaintFocusView {
+            late_focus_claim: cx.new(move |_| LateTreePrepaintFocusClaimView {
+                focus: external_focus,
+                armed: false,
+                focus_stable: false,
+            }),
+        }
+    });
+    draw(cx);
+    focus_tree(cx, "tree-late-prepaint-focus-claim");
+    let first_row_before = cx
+        .debug_bounds("tree:tree-late-prepaint-focus-claim:item:item-0000")
+        .expect("the first Tree row should initially be mounted");
+    let late_focus_claim =
+        cx.update_window_entity(&view, |view, _, _| view.late_focus_claim.clone());
+
+    late_focus_claim.update(cx, |late_focus_claim, cx| {
+        late_focus_claim.armed = true;
+        cx.notify();
+    });
+    dispatch_key(cx, "end");
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert!(
+        cx.debug_selector_is_focused("late-tree-prepaint-focus-claim"),
+        "the sibling's later prepaint-commit claim must win the candidate frame"
+    );
+    assert!(
+        cx.debug_bounds("tree:tree-late-prepaint-focus-claim:item:item-0099")
+            .is_none(),
+        "a prepaint-commit focus override must prevent stale Tree materialization"
+    );
+    assert_eq!(
+        cx.debug_bounds("tree:tree-late-prepaint-focus-claim:item:item-0000"),
+        Some(first_row_before),
+        "a prepaint-commit focus override must preserve the virtual viewport"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_focus_stable_commit_rejects_late_focus_claim(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        let external_focus = cx.focus_handle();
+        VirtualizedTreeLatePrepaintFocusView {
+            late_focus_claim: cx.new(move |_| LateTreePrepaintFocusClaimView {
+                focus: external_focus,
+                armed: false,
+                focus_stable: true,
+            }),
+        }
+    });
+    draw(cx);
+    focus_tree(cx, "tree-late-prepaint-focus-claim");
+    let late_focus_claim =
+        cx.update_window_entity(&view, |view, _, _| view.late_focus_claim.clone());
+
+    late_focus_claim.update(cx, |late_focus_claim, cx| {
+        late_focus_claim.armed = true;
+        cx.notify();
+    });
+    dispatch_key(cx, "end");
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert!(
+        cx.debug_selector_is_focused("tree:tree-late-prepaint-focus-claim:item:item-0099"),
+        "a focus-stable commit must reject a late competing focus claim"
+    );
+    assert!(
+        cx.debug_bounds("tree:tree-late-prepaint-focus-claim:item:item-0099")
+            .is_some(),
+        "the focus-stable phase must retain the Tree materialization it validated"
+    );
+    assert!(
+        !cx.debug_selector_is_focused("late-tree-prepaint-focus-claim"),
+        "the late focus-stable commit must not take focus"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_retries_a_rejected_static_handoff_claim_when_interactive_again(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| VirtualizedTreeRejectedFocusRetryView {
+        presentation: SubtreePresentation::Visible,
+        virtualized: true,
+        external_focus: cx.focus_handle(),
+    });
+    draw(cx);
+    focus_tree(cx, "tree-rejected-focus-retry");
+
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
+        view.update(cx, |view, cx| {
+            view.virtualized = false;
+            view.presentation = SubtreePresentation::Inert;
+            cx.notify();
+        });
+    });
+    draw(cx);
+
+    view.update(cx, |view, cx| {
+        view.presentation = SubtreePresentation::Visible;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert!(
+        cx.debug_selector_is_focused("tree:tree-rejected-focus-retry:item:item-0099"),
+        "a rejected static handoff claim must retry after its target becomes interactive again"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_does_not_retry_a_rejected_static_handoff_after_a_new_claim(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| VirtualizedTreeRejectedFocusRetryView {
+        presentation: SubtreePresentation::Visible,
+        virtualized: true,
+        external_focus: cx.focus_handle(),
+    });
+    draw(cx);
+    focus_tree(cx, "tree-rejected-focus-retry");
+    let external_focus = cx.update_window_entity(&view, |view, _, _| view.external_focus.clone());
+
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
+        view.update(cx, |view, cx| {
+            view.virtualized = false;
+            view.presentation = SubtreePresentation::Inert;
+            cx.notify();
+        });
+    });
+    draw(cx);
+
+    cx.update(|window, cx| {
+        external_focus.focus(window, cx);
+        view.update(cx, |view, cx| {
+            view.presentation = SubtreePresentation::Visible;
+            cx.notify();
+        });
+    });
+    cx.run_until_parked();
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert!(
+        cx.debug_selector_is_focused("tree-rejected-focus-retry-external"),
+        "a newer focus claim must prevent a rejected Tree handoff from retrying or reclaiming focus"
+    );
+    assert!(
+        !cx.debug_selector_is_focused("tree:tree-rejected-focus-retry:item:item-0099"),
+        "the rejected Tree handoff must not regain focus after a newer claim"
+    );
+}
+
+struct VirtualizedTreeFocusHandoffView {
+    external_focus: FocusHandle,
+    focus_external_on_select: bool,
+    selection_count: Rc<RefCell<usize>>,
+}
+
+impl Render for VirtualizedTreeFocusHandoffView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mut tree = Tree::new(
+            "focus-handoff-tree",
+            "Focus handoff tree",
+            (0..100).map(|index| {
+                TreeItemDescriptor::new(format!("item-{index:04}"), format!("Item {index:04}"))
+            }),
+        )
+        .small()
+        .virtualized(true)
+        .viewport_item_count(4)
+        .overscan_count(0)
+        .default_focused("item-0000");
+        if self.focus_external_on_select {
+            let external_focus = self.external_focus.clone();
+            let selection_count = self.selection_count.clone();
+            tree = tree.on_select(move |_, window, cx| {
+                *selection_count.borrow_mut() += 1;
+                external_focus.focus(window, cx);
+            });
+        }
+
+        div()
+            .size_full()
+            .flex()
+            .gap_2()
+            .child(div().w(px(280.0)).h(px(112.0)).child(tree))
+            .child(
+                div()
+                    .id("focus-handoff-target")
+                    .debug_selector(|| "tree-focus-handoff-target".into())
+                    .w(px(80.0))
+                    .h(px(40.0))
+                    .focusable()
+                    .track_focus(&self.external_focus),
+            )
+    }
+}
+
+#[open_gpui::test]
+fn virtualized_tree_losing_same_turn_focus_claim_does_not_materialize_or_reclaim(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(|_, cx| VirtualizedTreeFocusHandoffView {
+        external_focus: cx.focus_handle(),
+        focus_external_on_select: false,
+        selection_count: Rc::new(RefCell::new(0)),
+    });
+    draw(cx);
+    focus_tree(cx, "focus-handoff-tree");
+    assert!(cx.debug_selector_is_focused("tree:focus-handoff-tree:item:item-0000"));
+    let first_row_before = cx
+        .debug_bounds("tree:focus-handoff-tree:item:item-0000")
+        .expect("the first row should initially be mounted");
+
+    let external_focus = cx.update_window_entity(&view, |view, _, _| view.external_focus.clone());
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
+        external_focus.focus(window, cx);
+    });
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert!(
+        cx.debug_selector_is_focused("tree-focus-handoff-target"),
+        "the later same-turn focus request must remain the winning claim"
+    );
+    assert!(
+        cx.debug_bounds("tree:focus-handoff-tree:item:item-0099")
+            .is_none(),
+        "a superseded Tree claim must not materialize its former target"
+    );
+    assert_eq!(
+        cx.debug_bounds("tree:focus-handoff-tree:item:item-0000"),
+        Some(first_row_before),
+        "a superseded Tree claim must not move the virtual viewport"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_tree_on_select_focus_handoff_cancels_the_pending_materialization(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let selection_count = Rc::new(RefCell::new(0));
+    let (_, cx) = cx.add_window_view(|_, cx| VirtualizedTreeFocusHandoffView {
+        external_focus: cx.focus_handle(),
+        focus_external_on_select: true,
+        selection_count: selection_count.clone(),
+    });
+    draw(cx);
+    focus_tree(cx, "focus-handoff-tree");
+    let first_row_before = cx
+        .debug_bounds("tree:focus-handoff-tree:item:item-0000")
+        .expect("the first row should initially be mounted");
+
+    dispatch_key(cx, "end");
+    dispatch_key(cx, "enter");
+    for _ in 0..3 {
+        draw(cx);
+        cx.run_until_parked();
+    }
+
+    assert_eq!(*selection_count.borrow(), 1);
+    assert!(
+        cx.debug_selector_is_focused("tree-focus-handoff-target"),
+        "the callback focus request must supersede the Tree claim"
+    );
+    assert!(
+        cx.debug_bounds("tree:focus-handoff-tree:item:item-0099")
+            .is_none(),
+        "the callback focus request must cancel stale target materialization"
+    );
+    assert_eq!(
+        cx.debug_bounds("tree:focus-handoff-tree:item:item-0000"),
+        Some(first_row_before),
+        "the callback focus request must preserve the virtual viewport"
+    );
 }
 
 struct TwoTreeView;

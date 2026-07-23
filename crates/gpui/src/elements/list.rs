@@ -16,7 +16,11 @@ use crate::{
 use open_gpui_collections::VecDeque;
 use open_gpui_refineable::Refineable as _;
 use open_gpui_sum_tree::{Bias, Dimensions, SumTree};
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    rc::Rc,
+};
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 
@@ -51,7 +55,10 @@ impl List {
 
 /// The list state that views must hold on behalf of the list element.
 #[derive(Clone)]
-pub struct ListState(Rc<RefCell<StateInner>>);
+pub struct ListState(
+    Rc<RefCell<StateInner>>,
+    Rc<Cell<crate::window::ScrollDirectMutationRevision>>,
+);
 
 impl std::fmt::Debug for ListState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -317,20 +324,25 @@ impl ListState {
     /// be measured even though they are not visible. This can help ensure
     /// that the list doesn't flicker or pop in when scrolling.
     pub fn new(item_count: usize, alignment: ListAlignment, overdraw: Pixels) -> Self {
-        let this = Self(Rc::new(RefCell::new(StateInner {
-            last_layout_bounds: None,
-            last_padding: None,
-            items: SumTree::default(),
-            logical_scroll_top: None,
-            alignment,
-            overdraw,
-            scroll_handler: None,
-            reset: false,
-            scrollbar_drag_start_height: None,
-            measuring_behavior: ListMeasuringBehavior::default(),
-            pending_scroll: None,
-            follow_state: FollowState::default(),
-        })));
+        let this = Self(
+            Rc::new(RefCell::new(StateInner {
+                last_layout_bounds: None,
+                last_padding: None,
+                items: SumTree::default(),
+                logical_scroll_top: None,
+                alignment,
+                overdraw,
+                scroll_handler: None,
+                reset: false,
+                scrollbar_drag_start_height: None,
+                measuring_behavior: ListMeasuringBehavior::default(),
+                pending_scroll: None,
+                follow_state: FollowState::default(),
+            })),
+            Rc::new(Cell::new(
+                crate::window::ScrollDirectMutationRevision::default(),
+            )),
+        );
         this.splice(0..0, item_count);
         this
     }
@@ -530,6 +542,11 @@ impl ListState {
 
     /// Scroll the list by the given offset
     pub fn scroll_by(&self, distance: Pixels) {
+        self.mark_direct_scroll_intent(false, true);
+        self.scroll_by_for_bring_into_view_authority(distance);
+    }
+
+    fn scroll_by_for_bring_into_view_authority(&self, distance: Pixels) {
         if distance == px(0.) {
             return;
         }
@@ -563,11 +580,11 @@ impl ListState {
 
     /// Scroll the list to the very end (past the last item).
     ///
-    /// Unlike [`scroll_to_reveal_item`], this uses the total item count as the
-    /// anchor, so the list's layout pass will walk backwards from the end and
-    /// always show the bottom of the last item — even when that item is still
-    /// growing (e.g. during streaming).
+    /// This uses the total item count as the anchor, so the list's layout pass
+    /// walks backwards from the end and shows the bottom of the last item even
+    /// when that item is still growing, such as during streaming.
     pub fn scroll_to_end(&self) {
+        self.mark_direct_scroll_intent(false, true);
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
         state.pending_scroll = None;
@@ -582,21 +599,19 @@ impl ListState {
     /// scrolls back to the bottom. In `Normal` mode, no automatic
     /// following occurs.
     pub fn set_follow_mode(&self, mode: FollowMode) {
-        let state = &mut *self.0.borrow_mut();
-
         match mode {
             FollowMode::Normal => {
-                state.follow_state = FollowState::Normal;
+                self.0.borrow_mut().follow_state = FollowState::Normal;
             }
             FollowMode::Tail => {
+                self.mark_direct_scroll_intent(false, true);
+                let state = &mut *self.0.borrow_mut();
                 state.follow_state = FollowState::Tail { is_following: true };
-                if matches!(mode, FollowMode::Tail) {
-                    let item_count = state.items.summary().count;
-                    state.logical_scroll_top = Some(ListOffset {
-                        item_ix: item_count,
-                        offset_in_item: px(0.),
-                    });
-                }
+                let item_count = state.items.summary().count;
+                state.logical_scroll_top = Some(ListOffset {
+                    item_ix: item_count,
+                    offset_in_item: px(0.),
+                });
             }
         }
     }
@@ -612,6 +627,7 @@ impl ListState {
 
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
+        self.mark_direct_scroll_intent(false, true);
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
@@ -621,39 +637,6 @@ impl ListState {
 
         if scroll_top.item_ix < item_count {
             state.follow_state.stop_following();
-        }
-
-        state.rebase_pending_scroll(scroll_top);
-        state.logical_scroll_top = Some(scroll_top);
-    }
-
-    /// Scroll the list to the given item, such that the item is fully visible.
-    pub fn scroll_to_reveal_item(&self, ix: usize) {
-        let state = &mut *self.0.borrow_mut();
-
-        let mut scroll_top = state.logical_scroll_top();
-        let height = state
-            .last_layout_bounds
-            .map_or(px(0.), |bounds| bounds.size.height);
-        let padding = state.last_padding.unwrap_or_default();
-
-        if ix <= scroll_top.item_ix {
-            scroll_top.item_ix = ix;
-            scroll_top.offset_in_item = px(0.);
-        } else {
-            let mut cursor = state.items.cursor::<ListItemSummary>(());
-            cursor.seek(&Count(ix + 1), Bias::Right);
-            let bottom = cursor.start().height + padding.top;
-            let goal_top = px(0.).max(bottom - height + padding.bottom);
-
-            cursor.seek(&Height(goal_top), Bias::Left);
-            let start_ix = cursor.start().count;
-            let start_item_top = cursor.start().height;
-
-            if start_ix >= scroll_top.item_ix {
-                scroll_top.item_ix = start_ix;
-                scroll_top.offset_in_item = goal_top - start_item_top;
-            }
         }
 
         state.rebase_pending_scroll(scroll_top);
@@ -718,7 +701,9 @@ impl ListState {
 
     /// Set the offset from the scrollbar
     pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
-        self.0.borrow_mut().set_offset_from_scrollbar(point);
+        self.mark_direct_scroll_intent(false, true);
+        let mut state = self.0.borrow_mut();
+        state.set_offset_from_scrollbar(point);
     }
 
     /// Returns the maximum scroll offset according to the items we have measured.
@@ -752,6 +737,60 @@ impl ListState {
     /// Return the bounds of the viewport in pixels.
     pub fn viewport_bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
+    }
+
+    pub(crate) fn scroll_container_identity(&self) -> usize {
+        Rc::as_ptr(&self.0) as usize
+    }
+
+    pub(crate) fn direct_scroll_revision(&self) -> crate::window::ScrollDirectMutationRevision {
+        self.1.get()
+    }
+
+    fn mark_direct_scroll_intent(&self, horizontal: bool, vertical: bool) {
+        let mut revision = self.1.get();
+        if horizontal {
+            revision.horizontal = revision.horizontal.saturating_add(1);
+        }
+        if vertical {
+            revision.vertical = revision.vertical.saturating_add(1);
+        }
+        self.1.set(revision);
+    }
+
+    fn scroll(
+        &self,
+        scroll_top: &ListOffset,
+        height: Pixels,
+        delta: Point<Pixels>,
+        current_view: EntityId,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if delta.y != px(0.) {
+            self.mark_direct_scroll_intent(false, true);
+        }
+        self.0
+            .borrow_mut()
+            .scroll(scroll_top, height, delta, current_view, window, cx);
+    }
+
+    pub(crate) fn apply_bring_into_view_offset(
+        &self,
+        offset: Point<Pixels>,
+        vertical: bool,
+    ) -> bool {
+        if !vertical {
+            return false;
+        }
+        let current = self.scroll_px_offset_for_scrollbar();
+        let max = self.max_offset_for_scrollbar();
+        let target = offset.y.clamp(-max.y, Pixels::ZERO);
+        if target == current.y {
+            return false;
+        }
+        self.scroll_by_for_bring_into_view_authority(current.y - target);
+        self.scroll_px_offset_for_scrollbar().y != current.y
     }
 
     /// Returns whether the item is entirely above the viewport, or `None` if
@@ -1458,50 +1497,50 @@ impl Element for List {
         cx: &mut App,
     ) -> ListPrepaintState {
         let list_state = self.state.clone();
-        let state = &mut *self.state.0.borrow_mut();
-        state.reset = false;
-
         let mut style = Style::default();
         style.refine(&self.style);
-
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        window.with_list_scroll_container(list_state.clone(), bounds, |window| {
+            let state = &mut *self.state.0.borrow_mut();
+            state.reset = false;
 
-        // If the width of the list has changed, invalidate all cached item heights
-        if state
-            .last_layout_bounds
-            .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
-        {
-            let new_items = SumTree::from_iter(
-                state.items.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: None,
-                    focus_handle: item.focus_handle(),
-                }),
-                (),
-            );
+            // If the width changed, every cached item height belongs to the old measure.
+            if state
+                .last_layout_bounds
+                .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
+            {
+                let new_items = SumTree::from_iter(
+                    state.items.iter().map(|item| ListItem::Unmeasured {
+                        size_hint: None,
+                        focus_handle: item.focus_handle(),
+                    }),
+                    (),
+                );
+                state.items = new_items;
+                state.measuring_behavior.reset();
+            }
 
-            state.items = new_items;
-            state.measuring_behavior.reset();
-        }
+            let padding = style
+                .padding
+                .to_pixels(bounds.size.into(), window.rem_size());
+            let (layout, pending_autoscroll) =
+                state.prepaint_items(bounds, padding, &mut self.render_item, window, cx);
 
-        let padding = style
-            .padding
-            .to_pixels(bounds.size.into(), window.rem_size());
-        let (layout, pending_autoscroll) =
-            state.prepaint_items(bounds, padding, &mut self.render_item, window, cx);
+            if let Some(PendingAutoscroll { scroll_top, intent }) = pending_autoscroll {
+                window.record_autoscroll_commit(intent, move |_, window, _| {
+                    let state = &mut *list_state.0.borrow_mut();
+                    if state.logical_scroll_top != Some(scroll_top) {
+                        list_state.mark_direct_scroll_intent(false, true);
+                        state.logical_scroll_top = Some(scroll_top);
+                        window.refresh();
+                    }
+                });
+            }
 
-        if let Some(PendingAutoscroll { scroll_top, intent }) = pending_autoscroll {
-            window.record_autoscroll_commit(intent, move |_, window, _| {
-                let state = &mut *list_state.0.borrow_mut();
-                if state.logical_scroll_top != Some(scroll_top) {
-                    state.logical_scroll_top = Some(scroll_top);
-                    window.refresh();
-                }
-            });
-        }
-
-        state.last_layout_bounds = Some(bounds);
-        state.last_padding = Some(padding);
-        ListPrepaintState { hitbox, layout }
+            state.last_layout_bounds = Some(bounds);
+            state.last_padding = Some(padding);
+            ListPrepaintState { hitbox, layout }
+        })
     }
 
     fn paint(
@@ -1527,14 +1566,7 @@ impl Element for List {
             {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
-                list_state.0.borrow_mut().scroll(
-                    &scroll_top,
-                    height,
-                    pixel_delta,
-                    current_view,
-                    window,
-                    cx,
-                )
+                list_state.scroll(&scroll_top, height, pixel_delta, current_view, window, cx)
             }
         });
 
@@ -1645,14 +1677,14 @@ impl open_gpui_sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for He
 mod test {
 
     use open_gpui::{ScrollDelta, ScrollWheelEvent};
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use crate::{
         AppContext, Bounds, Context, Element, FollowMode, InteractiveElement, IntoElement,
-        ListOffset, ListState, ParentElement, Point, Render, Styled, SubtreeTransform,
-        SubtreeTransformExt, TestAppContext, Window, canvas, div, fill, list, point, px, red, size,
-        util::FluentBuilder,
+        ListOffset, ListState, ParentElement, Point, Render, RevealTargetExt, Styled,
+        SubtreeTransform, SubtreeTransformExt, TestAppContext, Window, canvas, div, fill, list,
+        point, px, red, size, util::FluentBuilder,
     };
 
     struct AutoscrollValidityView {
@@ -1701,6 +1733,7 @@ mod test {
         let initial = ListOffset::default();
         let valid_state = ListState::new(4, crate::ListAlignment::Top, px(10.0));
         valid_state.scroll_to(initial);
+        let valid_revision = valid_state.direct_scroll_revision();
         let rendered_valid_state = valid_state.clone();
         cx.add_empty_window()
             .draw(Point::default(), size(px(100.0), px(20.0)), move |_, cx| {
@@ -1711,9 +1744,20 @@ mod test {
                 .into_any_element()
             });
         assert_ne!(valid_state.logical_scroll_top(), initial);
+        assert!(
+            valid_state
+                .direct_scroll_revision()
+                .vertical_changed_since(valid_revision)
+        );
+        assert!(
+            !valid_state
+                .direct_scroll_revision()
+                .horizontal_changed_since(valid_revision)
+        );
 
         let failed_state = ListState::new(4, crate::ListAlignment::Top, px(10.0));
         failed_state.scroll_to(initial);
+        let failed_revision = failed_state.direct_scroll_revision();
         let rendered_failed_state = failed_state.clone();
         cx.add_empty_window()
             .draw(Point::default(), size(px(100.0), px(20.0)), move |_, cx| {
@@ -1724,6 +1768,107 @@ mod test {
                 .into_any_element()
             });
         assert_eq!(failed_state.logical_scroll_top(), initial);
+        assert_eq!(failed_state.direct_scroll_revision(), failed_revision);
+    }
+
+    struct DeferredGuardInListItemView {
+        state: ListState,
+        target: crate::RevealTargetHandle,
+        captured_guard: Rc<RefCell<Option<crate::DeferredBringIntoViewGuard>>>,
+    }
+
+    impl Render for DeferredGuardInListItemView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let target = self.target;
+            let captured_guard = self.captured_guard.clone();
+            list(self.state.clone(), move |_, _, _| {
+                let target_for_capture = target;
+                let captured_guard = captured_guard.clone();
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(16.))
+                    .child(
+                        div()
+                            .id("deferred-guard-list-target")
+                            .w_full()
+                            .h(px(16.))
+                            .track_reveal_target(&target),
+                    )
+                    .on_children_prepainted(move |_, window, _| {
+                        let guard = window
+                            .capture_deferred_bring_into_view_guard(
+                                &target_for_capture,
+                                crate::BringIntoViewOptions::nearest(),
+                            )
+                            .expect("list target belongs to window");
+                        let pending_guard = Rc::new(RefCell::new(Some(guard)));
+                        let captured_guard = captured_guard.clone();
+                        window.record_prepaint_window_commit(move |_, _, _| {
+                            if let Some(guard) = pending_guard.borrow_mut().take() {
+                                captured_guard.borrow_mut().replace(guard);
+                            }
+                        });
+                    })
+                    .into_any_element()
+            })
+            .w(px(80.))
+            .h(px(20.))
+        }
+    }
+
+    #[open_gpui::test]
+    fn deferred_guard_capture_does_not_reborrow_list_state_during_item_prepaint(
+        cx: &mut TestAppContext,
+    ) {
+        let state = ListState::new(1, crate::ListAlignment::Top, px(0.));
+        let rendered_state = state.clone();
+        let captured_guard = Rc::new(RefCell::new(None));
+        let captured_guard_for_view = captured_guard.clone();
+        let (_view, cx) = cx.add_window_view(move |window, _| DeferredGuardInListItemView {
+            state: rendered_state,
+            target: window.new_reveal_target(),
+            captured_guard: captured_guard_for_view,
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(captured_guard.borrow().is_some());
+        assert_eq!(
+            state.direct_scroll_revision(),
+            crate::ScrollDirectMutationRevision::default()
+        );
+    }
+
+    #[open_gpui::test]
+    fn setting_follow_tail_cancels_a_deferred_list_reveal(cx: &mut TestAppContext) {
+        let state = ListState::new(1, crate::ListAlignment::Top, px(0.));
+        let rendered_state = state.clone();
+        let captured_guard = Rc::new(RefCell::new(None));
+        let captured_guard_for_view = captured_guard.clone();
+        let (_view, cx) = cx.add_window_view(move |window, _| DeferredGuardInListItemView {
+            state: rendered_state,
+            target: window.new_reveal_target(),
+            captured_guard: captured_guard_for_view,
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        let guard = captured_guard
+            .borrow_mut()
+            .take()
+            .expect("the list item should capture its deferred reveal guard");
+        let before_tail = state.direct_scroll_revision();
+
+        state.set_follow_mode(FollowMode::Tail);
+
+        let after_tail = state.direct_scroll_revision();
+        assert!(after_tail.vertical_changed_since(before_tail));
+        assert!(!after_tail.horizontal_changed_since(before_tail));
+        assert_eq!(state.logical_scroll_top().item_ix, state.item_count());
+
+        let submitted = cx.update(|window, cx| {
+            window.try_bring_into_view_with_guard_and_completion(guard, cx, |_, _, _| {})
+        });
+        assert!(matches!(submitted, Ok(None)));
     }
 
     #[open_gpui::test]

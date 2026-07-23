@@ -147,6 +147,66 @@ fn open_presentation_action_tooltip(shell: &Entity<GalleryShell>, cx: &mut Visua
     assert_presentation_tooltip_open(cx);
 }
 
+fn settle_bring_into_view_demo(cx: &mut VisualTestContext) {
+    for _ in 0..6 {
+        cx.update(|window, cx| {
+            window.drain_next_frame_callbacks_for_test(cx);
+        });
+        settle(cx);
+    }
+}
+
+fn reset_bring_into_view_demo(shell: &Entity<GalleryShell>, cx: &mut VisualTestContext) {
+    scroll_page_selector_into_view(shell, cx, "gallery:bring-into-view:reset");
+    click(cx, "gallery:bring-into-view:reset");
+    settle(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_offsets()),
+        (point(px(0.0), px(0.0)), point(px(0.0), px(0.0)))
+    );
+}
+
+fn focus_bring_into_view_demo_target_with_keyboard(cx: &mut VisualTestContext) {
+    assert!(cx.activate_accessibility());
+    let tree = cx
+        .latest_accessibility_tree_update()
+        .expect("focus-target command should publish accessibility");
+    let (button_id, _) =
+        presentation_a11y_node_with_role_and_label(&tree, accesskit::Role::Button, "Focus target");
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Focus,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: button_id,
+        data: None,
+    }));
+    settle(cx);
+    assert!(cx.debug_selector_is_focused("button:bring-into-view-focus:root"));
+
+    press_presentation_enter(cx);
+    settle_bring_into_view_demo(cx);
+    assert!(cx.debug_selector_is_focused("gallery:bring-into-view:target"));
+}
+
+fn assert_bring_into_view_demo_revealed(shell: &Entity<GalleryShell>, cx: &mut VisualTestContext) {
+    let (outer, inner) = cx.update(|_, app| shell.read(app).bring_into_view_demo_offsets());
+    let max_offsets = cx.update(|_, app| shell.read(app).bring_into_view_demo_max_offsets());
+    let outcome = cx.update(|_, app| shell.read(app).bring_into_view_demo_outcome());
+    assert!(
+        outer.x < px(0.0) && outer.y < px(0.0),
+        "expected both outer physical axes to scroll; outer={outer:?} inner={inner:?} max={max_offsets:?} outcome={outcome:?}"
+    );
+    assert!(
+        inner.x < px(0.0) && inner.y < px(0.0),
+        "expected both inner physical axes to scroll; offset={inner:?}"
+    );
+
+    let target = bounds(cx, "gallery:bring-into-view:target");
+    let outer = bounds(cx, "gallery:bring-into-view:outer-scrollport");
+    let inner = bounds(cx, "gallery:bring-into-view:inner-scrollport");
+    assert!(outer.contains(&target.center()));
+    assert!(inner.contains(&target.center()));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn assert_presentation_channels_suppressed(
     shell: &Entity<GalleryShell>,
@@ -224,6 +284,8 @@ fn presentation_page_commits_geometry_and_routes_transformed_interactions(
         "gallery:presentation-flow-sentinel",
         "gallery:presentation-matrix",
         "gallery:presentation-readout",
+        "gallery:bring-into-view:demo",
+        "gallery:bring-into-view:readout",
     ] {
         assert!(
             cx.debug_bounds(selector).is_some(),
@@ -404,6 +466,147 @@ fn presentation_page_commits_geometry_and_routes_transformed_interactions(
                 .starts_with("Dropped Payload at local")
         }),
         "identity-mode drag/drop should retain target-local geometry"
+    );
+}
+
+#[open_gpui::test]
+fn presentation_bring_into_view_unifies_all_entry_paths_and_virtual_materialization(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Presentation);
+    settle(cx);
+    scroll_page_selector_into_view(&shell, cx, "gallery:bring-into-view:demo");
+
+    reset_bring_into_view_demo(&shell, cx);
+    click(cx, "gallery:bring-into-view:application");
+    settle_bring_into_view_demo(cx);
+    assert_bring_into_view_demo_revealed(&shell, cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_outcome()),
+        Some(open_gpui::BringIntoViewOutcome::Completed(
+            open_gpui::BringIntoViewCompletion::Revealed
+        ))
+    );
+
+    reset_bring_into_view_demo(&shell, cx);
+    focus_bring_into_view_demo_target_with_keyboard(cx);
+    assert!(cx.debug_selector_is_focused("gallery:bring-into-view:target"));
+    assert_bring_into_view_demo_revealed(&shell, cx);
+
+    reset_bring_into_view_demo(&shell, cx);
+    assert!(cx.activate_accessibility());
+    let tree = cx
+        .latest_accessibility_tree_update()
+        .expect("bring-into-view target should publish accessibility");
+    let (target_id, target) = presentation_a11y_node_with_role_and_label(
+        &tree,
+        accesskit::Role::Group,
+        "Bring into view target",
+    );
+    assert!(!target.supports_action(accesskit::Action::Click));
+    assert!(target.supports_action(accesskit::Action::ScrollIntoView));
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::ScrollIntoView,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: target_id,
+        data: None,
+    }));
+    settle_bring_into_view_demo(cx);
+    assert_bring_into_view_demo_revealed(&shell, cx);
+
+    reset_bring_into_view_demo(&shell, cx);
+    assert!(
+        cx.debug_bounds(
+            "virtualized-list:bring-into-view-demo-virtual-list:row:virtual-target-0080"
+        )
+        .is_none()
+    );
+    click(cx, "gallery:bring-into-view:virtual");
+    settle_bring_into_view_demo(cx);
+    let virtual_target = bounds(
+        cx,
+        "virtualized-list:bring-into-view-demo-virtual-list:row:virtual-target-0080",
+    );
+    let virtual_viewport = bounds(
+        cx,
+        "scroll-area:virtualized-list:bring-into-view-demo-virtual-list:viewport",
+    );
+    let inner_viewport = bounds(cx, "gallery:bring-into-view:inner-scrollport");
+    let outer_viewport = bounds(cx, "gallery:bring-into-view:outer-scrollport");
+    assert!(
+        virtual_viewport.contains(&virtual_target.center())
+            && inner_viewport.contains(&virtual_target.center())
+            && outer_viewport.contains(&virtual_target.center()),
+        "the materialized row must finish inside the virtual, inner, and outer viewports"
+    );
+    let (outer_offset, inner_offset) =
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_offsets());
+    let virtual_offset = cx.update(|_, app| shell.read(app).bring_into_view_demo_virtual_offset());
+    assert_ne!(virtual_offset.y, px(0.0));
+    assert_ne!(inner_offset, point(px(0.0), px(0.0)));
+    assert_ne!(outer_offset, point(px(0.0), px(0.0)));
+
+    reset_bring_into_view_demo(&shell, cx);
+    click(cx, "gallery:bring-into-view:animate");
+    cx.update(|window, cx| {
+        window.drain_next_frame_callbacks_for_test(cx);
+    });
+    redraw(cx);
+    advance_and_redraw(cx, Duration::from_millis(100));
+    let scroll_position =
+        visible_page_interaction_point(cx, "gallery:bring-into-view:outer-scrollport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: scroll_position,
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-16.0))),
+        ..Default::default()
+    });
+    settle_bring_into_view_demo(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_outcome()),
+        Some(open_gpui::BringIntoViewOutcome::Cancelled(
+            open_gpui::BringIntoViewCancelReason::ScrollOverridden
+        ))
+    );
+}
+
+#[open_gpui::test]
+fn presentation_bring_into_view_reset_invalidates_stale_callbacks(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Presentation);
+    settle(cx);
+    scroll_page_selector_into_view(&shell, cx, "gallery:bring-into-view:demo");
+
+    reset_bring_into_view_demo(&shell, cx);
+    click(cx, "gallery:bring-into-view:application");
+    click(cx, "gallery:bring-into-view:reset");
+    settle_bring_into_view_demo(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_offsets()),
+        (point(px(0.0), px(0.0)), point(px(0.0), px(0.0)))
+    );
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_outcome()),
+        None,
+        "a reset must invalidate a request that was only scheduled"
+    );
+
+    click(cx, "gallery:bring-into-view:animate");
+    cx.update(|window, cx| {
+        window.drain_next_frame_callbacks_for_test(cx);
+    });
+    redraw(cx);
+    advance_and_redraw(cx, Duration::from_millis(100));
+    click(cx, "gallery:bring-into-view:reset");
+    settle_bring_into_view_demo(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_offsets()),
+        (point(px(0.0), px(0.0)), point(px(0.0), px(0.0)))
+    );
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).bring_into_view_demo_outcome()),
+        None,
+        "a reset must ignore the terminal callback from an invalidated request"
     );
 }
 

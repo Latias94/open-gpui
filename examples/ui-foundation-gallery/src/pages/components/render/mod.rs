@@ -77,16 +77,6 @@ fn component_page_render_section_id(id: &str) -> &str {
     }
 }
 
-pub(crate) fn component_page_section_index(
-    mode: pages::components::ComponentFocusMode,
-    id: &str,
-) -> Option<usize> {
-    let id = component_page_render_section_id(id);
-    component_page_render_sections(mode)
-        .iter()
-        .position(|section| section.id == id)
-}
-
 pub(crate) fn component_page_section_count(mode: pages::components::ComponentFocusMode) -> usize {
     component_page_render_sections(mode).len()
 }

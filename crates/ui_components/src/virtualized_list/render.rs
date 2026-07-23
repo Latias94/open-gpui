@@ -3,9 +3,12 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     AnyElement, App, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement, Pixels,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    RevealTargetExt, RevealTargetHandle, ScrollHandle, StatefulInteractiveElement, Styled, Window,
+    div, px,
 };
 use open_gpui_ui_core::{AccessibleAction, LivePoliteness, SemanticDescriptor, Size, UiPx};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use super::descriptor::VirtualizedListRowKind;
 use super::model::{VirtualizedListActivation, VirtualizedListSelectionMode, VirtualizedListState};
@@ -15,8 +18,9 @@ use super::render_plan::{
     VirtualizedListStickyOverlaySnapshot,
 };
 use super::runtime::{
-    VirtualizedListActivationHandler, VirtualizedListRowRenderer, VirtualizedListRuntime,
-    VirtualizedListSelectionChangeHandler,
+    VirtualizedListActivationHandler, VirtualizedListDeferredMaterialization,
+    VirtualizedListRowRenderer, VirtualizedListRuntime, VirtualizedListSelectionChangeHandler,
+    materialize_virtualized_list_target,
 };
 use super::style::VirtualizedListColors;
 
@@ -32,6 +36,11 @@ pub(super) fn render_virtualized_list_body(
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
+    reveal_target: RevealTargetHandle,
+    scroll_chain_anchor: RevealTargetHandle,
+    scroll_handle: ScrollHandle,
+    reveal_key: Option<String>,
+    deferred_materialization: Option<VirtualizedListDeferredMaterialization>,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
     window: &mut Window,
@@ -42,28 +51,73 @@ pub(super) fn render_virtualized_list_body(
     let body_id = format!("virtualized-list:{list_id}:body");
     let mut row_elements = Vec::with_capacity(rows.len());
     for row in rows {
-        row_elements.push(
-            render_virtualized_list_row(
-                list_id.clone(),
-                row,
-                colors,
-                row_measure_mode,
-                estimated_row_height,
-                row_renderer.clone(),
-                list_state.clone(),
-                runtime.clone(),
-                focus_handle.clone(),
-                on_activate.clone(),
-                on_selection_change.clone(),
-                window,
-                cx,
-            )
-            .into_any_element(),
-        );
+        row_elements.push(render_virtualized_list_row(
+            list_id.clone(),
+            row,
+            colors,
+            row_measure_mode,
+            estimated_row_height,
+            row_renderer.clone(),
+            list_state.clone(),
+            runtime.clone(),
+            focus_handle.clone(),
+            reveal_target,
+            reveal_key.as_deref(),
+            on_activate.clone(),
+            on_selection_change.clone(),
+            window,
+            cx,
+        ));
     }
 
-    div()
-        .id(body_id.clone())
+    let mut body = div();
+    if let Some(materialization) = deferred_materialization {
+        let runtime = runtime.clone();
+        let scroll_handle = scroll_handle.clone();
+        body = body.on_children_prepainted(move |_, window, cx| {
+            let prepared = runtime.update(cx, |runtime, cx| {
+                runtime.prepare_deferred_materialization(materialization.sequence, window, cx)
+            });
+            if !prepared {
+                return;
+            }
+            if !materialization.target_is_rendered {
+                materialize_virtualized_list_target(
+                    &scroll_handle,
+                    &materialization.state,
+                    &materialization.target,
+                    materialization.row_measure_mode,
+                    &materialization.virtualizer_snapshot,
+                );
+            }
+            let guard = window
+                .capture_deferred_bring_into_view_guard(&reveal_target, materialization.options)
+                .ok();
+            let guard = Rc::new(RefCell::new(guard));
+            let runtime = runtime.clone();
+            let materialization_for_commit = materialization.clone();
+            window.record_prepaint_window_commit(move |_, window, cx| {
+                let guard = guard.borrow_mut().take();
+                let changed = runtime.update(cx, |runtime, cx| match guard {
+                    Some(guard) => runtime.publish_deferred_bring_into_view_guard(
+                        materialization_for_commit.sequence,
+                        materialization_for_commit.geometry_revision,
+                        guard,
+                        cx,
+                    ),
+                    None => runtime.abandon_materializing_bring_into_view(
+                        materialization_for_commit.sequence,
+                        cx,
+                    ),
+                });
+                if changed {
+                    window.refresh();
+                }
+            });
+        });
+    }
+
+    body.id(body_id.clone())
         .debug_selector({
             let body_id = body_id.clone();
             move || body_id.clone()
@@ -77,6 +131,7 @@ pub(super) fn render_virtualized_list_body(
                 indicator, colors, window, cx,
             ))
         })
+        .track_reveal_target(&scroll_chain_anchor)
         .into_any_element()
 }
 
@@ -150,11 +205,13 @@ fn render_virtualized_list_row(
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
+    reveal_target: RevealTargetHandle,
+    reveal_key: Option<&str>,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
     window: &mut Window,
     cx: &mut App,
-) -> impl IntoElement {
+) -> AnyElement {
     let render_key = row.render_key().to_owned();
     let target = row.target();
     let activation = VirtualizedListActivation::from_target(target.clone(), row.selected());
@@ -230,7 +287,8 @@ fn render_virtualized_list_row(
             .with_size_of_set(row.size_of_set());
     }
 
-    div()
+    let binds_reveal_target = reveal_key == Some(target.key());
+    let element = div()
         .on_children_prepainted({
             let runtime = runtime.clone();
             let render_key = render_key.clone();
@@ -319,7 +377,7 @@ fn render_virtualized_list_row(
                     if let Some(selection_change) = selection_change.as_ref() {
                         runtime.selected_keys = selection_change.selected_key_set();
                     }
-                    runtime.pending_scroll_to_active = None;
+                    runtime.clear_active_bring_into_view();
                 });
                 focus_handle.focus(window, cx);
                 if let (Some(on_selection_change), Some(selection_change)) =
@@ -332,7 +390,14 @@ fn render_virtualized_list_row(
                 }
             })
         })
-        .child(row_content)
+        .child(row_content);
+    if binds_reveal_target {
+        element
+            .track_reveal_target(&reveal_target)
+            .into_any_element()
+    } else {
+        element.into_any_element()
+    }
 }
 
 fn render_default_virtualized_list_row_content(

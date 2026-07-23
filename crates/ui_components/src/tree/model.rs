@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use open_gpui_ui_core::{Orientation, Role, Size, UiPx};
 
 use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
@@ -11,6 +13,7 @@ use super::{
 pub struct TreeItemState {
     index: usize,
     value: String,
+    render_identity: String,
     label: String,
     depth: usize,
     parent_value: Option<String>,
@@ -39,6 +42,10 @@ impl TreeItemState {
     /// Returns the stable item value.
     pub fn value(&self) -> &str {
         &self.value
+    }
+
+    pub(crate) fn render_identity(&self) -> &str {
+        &self.render_identity
     }
 
     /// Returns the visible item label.
@@ -284,6 +291,10 @@ impl TreeState {
         {
             flattened[*item.item()].disabled = true;
         }
+        let value_counts = flattened.iter().fold(BTreeMap::new(), |mut counts, item| {
+            *counts.entry(item.value.clone()).or_insert(0usize) += 1;
+            counts
+        });
         let selected_index = collection.selected_item().map(|item| *item.item());
         let focused_index = collection.active_item().map(|item| *item.item());
         let focusable_count = flattened.iter().filter(|item| !item.disabled).count();
@@ -300,6 +311,11 @@ impl TreeState {
                 };
 
                 item.index = index;
+                item.render_identity = tree_row_render_identity(
+                    item.value(),
+                    index,
+                    value_counts.get(item.value()).copied().unwrap_or_default() > 1,
+                );
                 item.selected = selected_index == Some(index);
                 item.focused = focused_index == Some(index);
                 item.position_in_set = position_in_set;
@@ -557,6 +573,7 @@ fn flatten_tree_items(
         flattened.push(TreeItemState {
             index: flattened.len(),
             value: item.value().to_owned(),
+            render_identity: String::new(),
             label: item.label().to_owned(),
             depth,
             parent_value: parent_value.map(str::to_owned),
@@ -580,6 +597,21 @@ fn flatten_tree_items(
                 flattened,
             );
         }
+    }
+}
+
+const TREE_ROW_DISAMBIGUATION_PREFIX: &str = "__open_gpui_tree_row__:";
+
+fn tree_row_render_identity(value: &str, index: usize, duplicate: bool) -> String {
+    if duplicate {
+        format!("{TREE_ROW_DISAMBIGUATION_PREFIX}duplicate:{index}:{value}")
+    } else if value.starts_with(TREE_ROW_DISAMBIGUATION_PREFIX) {
+        format!(
+            "{TREE_ROW_DISAMBIGUATION_PREFIX}value:{}:{value}",
+            value.len()
+        )
+    } else {
+        value.to_owned()
     }
 }
 
@@ -945,7 +977,7 @@ mod tests {
         assert_eq!(snapshot.rows().len(), 9);
         assert_eq!(snapshot.rows()[0].index(), 8);
         assert_eq!(snapshot.rows()[0].value(), "node-0008");
-        assert_eq!(snapshot.rows()[0].render_key(), "8:node-0008");
+        assert_eq!(snapshot.rows()[0].render_key(), "node-0008");
         assert_eq!(snapshot.rows()[0].virtual_start(), row_height * 8.0);
         assert_eq!(snapshot.rows()[0].virtual_size(), row_height);
         assert_eq!(

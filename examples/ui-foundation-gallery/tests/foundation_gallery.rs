@@ -1,6 +1,6 @@
 use open_gpui::{
-    Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, SubtreePresentation,
-    VisualTestContext, accesskit, point, px, size,
+    Bounds, BringIntoViewAlignment, BringIntoViewOptions, Entity, MouseButton, Pixels, ScrollDelta,
+    ScrollWheelEvent, SubtreePresentation, VisualTestContext, accesskit, point, px, size,
 };
 use open_gpui_command::{
     CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome, CommandProviderState,
@@ -17,7 +17,7 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, TableColumnOrderChange, TableGlobalFilterChange,
     TablePredicateFilterChange, TablePredicateFilterOperator, TableRangeFilterChange,
     TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
-    VirtualizedListRowMeasureMode, VirtualizedListScrollStrategy,
+    VirtualizedListRowMeasureMode,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, OverlayLayerPhase, OverlayLayerSnapshot, TableDebugSelector,
         WindowOverlayRuntime, WindowOverlaySnapshot, default_deferred_priority, gpui_overlay_state,

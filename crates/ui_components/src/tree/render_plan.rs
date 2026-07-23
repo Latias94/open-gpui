@@ -287,7 +287,7 @@ impl TreeRenderPlan {
                 let key = state
                     .items()
                     .get(index)
-                    .map(|item| tree_row_render_key(item, index))
+                    .map(|item| item.render_identity().to_owned())
                     .unwrap_or_else(|| index.to_string());
 
                 VirtualizerItemKey::new(key)
@@ -381,8 +381,4 @@ fn resolve_tree_viewport_extent(
     } else {
         metrics.row_height() * viewport_item_count.max(1) as f32
     }
-}
-
-fn tree_row_render_key(item: &TreeItemState, index: usize) -> String {
-    format!("{index}:{}", item.value())
 }

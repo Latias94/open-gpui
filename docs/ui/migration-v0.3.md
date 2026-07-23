@@ -951,6 +951,85 @@ The removed `gpui_relative_overlay_layer`, Menu `submenu_trigger_bounds`, and co
 trigger bounds have no compatibility aliases. Keep `OverlayAnchorInput` only as a pure placement
 snapshot after a live target has been resolved.
 
+## Window-Owned Bring Into View
+
+Final reveal is no longer component-owned fixed-row or nearest-row arithmetic. Application
+requests, winning focus claims, and AccessKit `ScrollIntoView` now share one window-owned authority
+that walks committed scroll ancestry from inner to outer.
+
+For an ordinary physical target, retain one handle and bind it in every rendered frame:
+
+```rust
+use open_gpui::{
+    BringIntoViewAlignment, BringIntoViewOptions, RevealTargetExt as _,
+};
+
+let target = row.track_reveal_target(&state.reveal_target);
+window.bring_into_view(
+    &state.reveal_target,
+    BringIntoViewOptions::vertical(BringIntoViewAlignment::Nearest),
+    cx,
+)?;
+```
+
+Create `state.reveal_target` once with `window.new_reveal_target()`. Do not recreate it during
+render, bind it to two elements in one frame, use it in another window, or retain a raw rectangle as
+fallback geometry. Use `bring_into_view_with_completion` when the exact `Completed` or `Cancelled`
+outcome matters. Dropping the returned subscription only stops observation.
+
+Every successfully published accessibility node now exposes `ScrollIntoView`. It is a geometry
+action, not a Click or Focus alias, so disabled nodes may retain it while stale, suppressed, or
+unpublished nodes cannot route it.
+
+`BringIntoViewOptions` names physical horizontal and vertical axes. The alignments are `Nearest`,
+`MinEdge`, `Center`, and `MaxEdge`; margins are finite non-negative physical edges. The vertical
+convenience constructor preserves horizontal position. Do not translate these into logical
+block/inline or start/end semantics until the framework has a direction authority.
+
+VirtualizedList now exposes a strict two-phase contract. Replace final reveal math such as
+`scroll_target_for_key` and `scroll_target_for_key_with_snapshot` with the complete builder path:
+
+```rust
+let list = VirtualizedList::new("results", "Results", items)
+    .bring_key_into_view(
+        selected_key,
+        BringIntoViewOptions::vertical(BringIntoViewAlignment::Nearest),
+    );
+```
+
+The list resolves a `VirtualizedListMaterializationResult`, uses private estimated geometry only to
+mount the keyed row, then asks GPUI to reveal its bound physical target. Custom adapters may call
+`materialization_target_for_key` or `materialization_target_for_key_with_snapshot`, but the returned
+index and estimated flag are not final scroll coordinates. Duplicate, missing, disabled, status,
+and structural keys fail closed. Reorder or filtering between materialization and reveal re-resolves
+the stable key; do not persist an index.
+
+Direct `ScrollHandle` operations remain valid explicit scrolling. Wheel, scrollbar, keyboard,
+touch, or programmatic direct scrolling cancels affected in-flight reveal instead of silently
+continuing an older animation. An explicit portal begins a new rendered ancestry; source-tree reveal
+requires an explicit application request rather than implicit anchor traversal.
+
+Custom two-phase adapters that schedule a physical request after mounting must capture
+`Window::capture_deferred_bring_into_view_guard` from prepaint inside the intended final scroll
+ancestry as soon as logical materialization completes, then later use
+`Window::try_bring_into_view_with_guard_and_completion` after the target binds. The guard
+atomically rejects an interrupted direct scroll, an unbound target, or a changed nested ancestry
+without entering window authority. `ScrollHandle::direct_scroll_revision()` remains suitable only when an
+adapter intentionally owns one known handle; neither capability is an offset, viewport snapshot,
+or replacement reveal engine.
+
+When a focus handoff itself spans frames, retain its `ScrollChainFence` from the original input or
+materialization boundary and call `Window::focus_with_completion_and_scroll_fence`. This keeps
+ordinary focus arbitration intact while suppressing only the automatic physical reveal when direct
+scrolling, scroll-axis capability, or committed ancestry has changed. Do not recapture a fence
+after user input to make an old focus operation eligible again.
+
+`ListState::scroll_to_reveal_item` is removed without an alias; bind the rendered item to a
+`RevealTargetHandle` when final nested reveal is intended. `UniformListScrollHandle` keeps
+`scroll_to_item*` as explicit index-based direct scrolling and adds `base_handle()` for low-level
+viewport access. Its tuple field, `UniformListScrollState`, and `DeferredScrollToItem` are now
+private implementation state; use the named methods instead of mutating pending scroll records.
+
 ## Window Overlay Runtime
 
 Focus target identity is now owned by `FocusTargetId`. The duplicate `OverlayFocusTarget` type was

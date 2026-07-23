@@ -650,6 +650,17 @@ impl RenderOnce for Command {
             selected_values,
             active_value,
         );
+        let reveal_target = runtime.update(cx, |runtime, _| {
+            runtime.scroll_surface.reveal_target_for(
+                state.active_value().unwrap_or("command:no-active-row"),
+                window,
+            )
+        });
+        runtime.update(cx, |runtime, _| {
+            runtime
+                .scroll_surface
+                .schedule_pending_bring_into_view(reveal_target, window);
+        });
         let scroll_reset_key = command_scroll_reset_key(&state);
         let previous_scroll_reset_key = scroll_surface.reset_key();
         let reset_key_changed = previous_scroll_reset_key != Some(scroll_reset_key.as_str());
@@ -826,6 +837,7 @@ impl RenderOnce for Command {
                     debug_id.clone(),
                     state.clone(),
                     scroll_handle.clone(),
+                    reveal_target,
                     viewport_extent,
                     scroll_offset,
                     input_controller.clone(),
@@ -853,6 +865,7 @@ impl RenderOnce for Command {
                                 debug_id,
                                 state,
                                 scroll_handle,
+                                reveal_target,
                                 viewport_extent,
                                 scroll_offset,
                                 window_overlay_runtime.clone(),

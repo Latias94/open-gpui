@@ -7,7 +7,8 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, Context, ElementId, Entity, FocusHandle, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    ParentElement, RenderOnce, RevealTargetExt, RevealTargetHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
@@ -26,6 +27,7 @@ use crate::debug_selector::{
     debug_selector_element_id,
 };
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
+use crate::scroll_surface::ScrollSurfaceRuntime;
 use crate::theme::{ThemeContext, ThemeResolver};
 
 type ListboxSelectHandler = Rc<dyn Fn(ListboxSelection, &mut Window, &mut App)>;
@@ -916,6 +918,7 @@ struct ListboxRuntime {
     active_value: Option<String>,
     selected_value: Option<String>,
     typeahead: CollectionTypeaheadSession,
+    scroll_surface: ScrollSurfaceRuntime,
 }
 
 impl ListboxRuntime {
@@ -1161,6 +1164,7 @@ impl RenderOnce for Listbox {
                     .or_else(|| self.default_active_value.clone()),
                 selected_value: self.selection.value().clone(),
                 typeahead: CollectionTypeaheadSession::default(),
+                scroll_surface: ScrollSurfaceRuntime::new(None),
             });
             let runtime_state = runtime.read(cx).clone();
             let selected_value = if selection_controlled {
@@ -1184,6 +1188,17 @@ impl RenderOnce for Listbox {
                 self.tokens,
             );
             runtime.update(cx, |runtime, _| runtime.sync(&self.selection, &state));
+            let reveal_target = runtime.update(cx, |runtime, _| {
+                runtime.scroll_surface.reveal_target_for(
+                    state.active_value().unwrap_or("listbox:no-active-row"),
+                    window,
+                )
+            });
+            runtime.update(cx, |runtime, _| {
+                runtime
+                    .scroll_surface
+                    .schedule_pending_bring_into_view(reveal_target, window);
+            });
             let id = self.id;
             let debug_id = debug_selector_element_id(&id);
             let colors = state.colors();
@@ -1293,6 +1308,7 @@ impl RenderOnce for Listbox {
                     activation_bindings,
                     focus_owner,
                     active_focus,
+                    reveal_target,
                     &theme,
                 ))
         })
@@ -1422,7 +1438,10 @@ fn handle_listbox_navigation_key_down(
         cx.stop_propagation();
         window.prevent_default();
         let value = target.value().to_owned();
-        runtime.update(cx, |runtime, cx| runtime.set_active(value, cx));
+        runtime.update(cx, |runtime, cx| {
+            runtime.set_active(value, cx);
+            runtime.scroll_surface.queue_vertical_bring_into_view();
+        });
         return;
     }
 
@@ -1445,7 +1464,10 @@ fn handle_listbox_navigation_key_down(
         update.searches_after_current(),
     ) {
         let value = target.value().to_owned();
-        runtime.update(cx, |runtime, cx| runtime.set_active(value, cx));
+        runtime.update(cx, |runtime, cx| {
+            runtime.set_active(value, cx);
+            runtime.scroll_surface.queue_vertical_bring_into_view();
+        });
     }
 }
 
@@ -1456,6 +1478,7 @@ fn listbox_children(
     activation_bindings: Rc<Vec<Option<ActivationBinding>>>,
     focus_owner: ListboxFocusOwner,
     active_focus: Option<FocusHandle>,
+    reveal_target: RevealTargetHandle,
     theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     if state.empty() {
@@ -1490,6 +1513,7 @@ fn listbox_children(
             activation_bindings.clone(),
             focus_owner,
             active_focus.clone(),
+            reveal_target,
             theme,
         ));
     }
@@ -1531,6 +1555,7 @@ fn listbox_children(
             activation_bindings.clone(),
             focus_owner,
             active_focus.clone(),
+            reveal_target,
             theme,
         ));
     }
@@ -1547,6 +1572,7 @@ fn listbox_option_elements(
     activation_bindings: Rc<Vec<Option<ActivationBinding>>>,
     focus_owner: ListboxFocusOwner,
     active_focus: Option<FocusHandle>,
+    reveal_target: RevealTargetHandle,
     theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     states
@@ -1608,7 +1634,7 @@ fn listbox_option_elements(
                         .with_size_of_set(state.size_of_set());
                 }
 
-                activation
+                let element = activation
                     .bind_pointer_and_accessibility(
                         div()
                             .id(option_element_id)
@@ -1634,7 +1660,14 @@ fn listbox_option_elements(
                             })
                             .child(option_label.clone()),
                     )
-                    .into_any_element()
+                    .into_any_element();
+                if active {
+                    element
+                        .track_reveal_target(&reveal_target)
+                        .into_any_element()
+                } else {
+                    element
+                }
             }
         })
         .collect()

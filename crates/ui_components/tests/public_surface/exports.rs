@@ -24,6 +24,9 @@ fn common_extended_diagnostic_and_adapter_paths_compile() {
             TableRowIdentity::source("row"),
             UiPx::ZERO,
         )]);
+    let _root_materialization: Option<root::VirtualizedListMaterializationResult> = None;
+    let _common_materialization: Option<common::VirtualizedListMaterializationTarget> = None;
+    let _prelude_materialization: Option<prelude::VirtualizedListMaterializationResult> = None;
 
     let _extended_filter = root::TableGlobalFilter::new("filter", "Filter");
     let table = root::Table::new("diagnostic-table", "Diagnostic table", TableState::new([]));

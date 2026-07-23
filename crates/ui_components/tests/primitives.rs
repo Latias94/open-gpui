@@ -368,11 +368,12 @@ fn separator_final_tree_downgrades_to_group_preserves_orientation_and_omits_deco
         assert_eq!(separator.numeric_value(), None);
         assert_eq!(separator.min_numeric_value(), None);
         assert_eq!(separator.max_numeric_value(), None);
-        let mut without_actions = separator.clone();
-        without_actions.clear_actions();
+        let mut geometry_only = separator.clone();
+        geometry_only.clear_actions();
+        geometry_only.add_action(accesskit::Action::ScrollIntoView);
         assert_eq!(
-            separator, &without_actions,
-            "display-only separators must not publish accessibility actions"
+            separator, &geometry_only,
+            "display-only separators must publish only the framework geometry action"
         );
     }
 }

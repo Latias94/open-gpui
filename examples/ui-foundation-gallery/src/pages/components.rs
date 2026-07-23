@@ -15,8 +15,7 @@ pub use catalog::{
     official_sample_selector_pairs, state_contract_readout_pairs,
 };
 pub(crate) use render::{
-    component_page_section_count, component_page_section_index, render_components_directory,
-    render_components_page,
+    component_page_section_count, render_components_directory, render_components_page,
 };
 pub use runtime::{
     FormSampleRuntimeAction, FormSampleRuntimeCompletion, FormSampleRuntimeEvent,
@@ -250,10 +249,11 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::VirtualizedListState",
     "open_gpui_ui_components::VirtualizedListActivation",
     "open_gpui_ui_components::VirtualizedListMetrics",
-    "open_gpui_ui_components::VirtualizedListScrollStrategy",
+    "open_gpui_ui_components::VirtualizedListMaterializationTarget",
+    "open_gpui_ui_components::VirtualizedListMaterializationResult",
     "open_gpui_ui_components::VirtualizedListState::navigation_target",
-    "open_gpui_ui_components::VirtualizedListState::scroll_target_for_key",
-    "open_gpui_ui_components::VirtualizedListState::scroll_target_for_key_with_snapshot",
+    "open_gpui_ui_components::VirtualizedListState::materialization_target_for_key",
+    "open_gpui_ui_components::VirtualizedListState::materialization_target_for_key_with_snapshot",
     "ThemeTokens",
     "Size",
     "Role::Button",

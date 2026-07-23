@@ -1,7 +1,7 @@
 use crate::choice::{normalize_query, normalized_text_starts_with};
 use crate::roving_focus::paged_navigation_target;
 use crate::scroll_surface::{
-    ScrollSurfaceRevealStrategy, fixed_row_scroll_target, row_geometry_scroll_target,
+    materialization_fixed_row_offset, materialization_row_geometry_offset,
 };
 use open_gpui_ui_core::{Size, UiPx, VirtualizerItemGeometry, VirtualizerSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,32 +9,6 @@ use std::sync::Arc;
 
 use super::descriptor::{VirtualizedListItemDescriptor, VirtualizedListRowKind};
 use super::style::{VirtualizedListMetrics, nonnegative_px};
-
-/// Scroll alignment requested when a virtualized row should be revealed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum VirtualizedListScrollStrategy {
-    /// Keep the row visible with the smallest scroll movement.
-    #[default]
-    Nearest,
-    /// Align the row to the top edge of the viewport.
-    Top,
-    /// Align the row to the viewport center.
-    Center,
-    /// Align the row to the bottom edge of the viewport.
-    Bottom,
-}
-
-impl VirtualizedListScrollStrategy {
-    /// Returns the stable scroll strategy label.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Nearest => "nearest",
-            Self::Top => "top",
-            Self::Center => "center",
-            Self::Bottom => "bottom",
-        }
-    }
-}
 
 /// Selection behavior for a virtualized list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -260,22 +234,23 @@ impl VirtualizedListSelectionChange {
     }
 }
 
-/// Resolved key-based scroll target for a virtualized list.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VirtualizedListRevealTarget {
+/// A stable logical row that a virtualized list can materialize.
+///
+/// This describes collection identity only. The list may use private estimated geometry to mount
+/// the row, but final physical scrolling belongs to GPUI's bring-into-view authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualizedListMaterializationTarget {
     key: String,
     index: usize,
-    scroll_offset: UiPx,
     estimated: bool,
 }
 
-impl VirtualizedListRevealTarget {
-    /// Creates a reveal target.
-    pub fn new(key: impl Into<String>, index: usize, scroll_offset: UiPx, estimated: bool) -> Self {
+impl VirtualizedListMaterializationTarget {
+    /// Creates a logical materialization target.
+    pub fn new(key: impl Into<String>, index: usize, estimated: bool) -> Self {
         Self {
             key: key.into(),
             index,
-            scroll_offset,
             estimated,
         }
     }
@@ -290,24 +265,17 @@ impl VirtualizedListRevealTarget {
         self.index
     }
 
-    /// Returns the resolved scroll offset.
-    pub const fn scroll_offset(&self) -> UiPx {
-        self.scroll_offset
-    }
-
-    /// Returns whether the target used estimated geometry.
+    /// Returns whether mounting this target may use estimated geometry.
     pub const fn estimated(&self) -> bool {
         self.estimated
     }
 }
 
-/// Result of resolving a key-based reveal request.
-#[derive(Debug, Clone, PartialEq)]
-pub enum VirtualizedListRevealResult {
-    /// The row can be revealed with exact fixed-row geometry.
-    Revealed(VirtualizedListRevealTarget),
-    /// The row can be revealed with estimated geometry.
-    Estimated(VirtualizedListRevealTarget),
+/// Result of resolving a key-based virtualized-list materialization request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VirtualizedListMaterializationResult {
+    /// The row has a unique selectable identity and can be materialized.
+    Target(VirtualizedListMaterializationTarget),
     /// The key is not present in the current collection.
     NotFound(String),
     /// The key is present more than once and is not a stable reveal target.
@@ -318,7 +286,7 @@ pub enum VirtualizedListRevealResult {
     StatusRow(String),
     /// The key is present but belongs to a non-selectable structural row.
     StructuralRow(String),
-    /// The key is present but cannot participate in reveal.
+    /// The key is present but cannot participate in materialization.
     NotSelectable(String),
 }
 
@@ -635,64 +603,76 @@ impl VirtualizedListState {
         ))
     }
 
-    /// Returns a key-based reveal target for fixed-height rows.
-    pub fn scroll_target_for_key(
+    /// Resolves a stable row identity that can be materialized with fixed-row geometry.
+    pub fn materialization_target_for_key(
         &self,
         key: &str,
-        strategy: VirtualizedListScrollStrategy,
-        viewport_extent: UiPx,
-        current_scroll_offset: UiPx,
-    ) -> VirtualizedListRevealResult {
-        let index = match self.reveal_index_for_key(key) {
+    ) -> VirtualizedListMaterializationResult {
+        let index = match self.materialization_index_for_key(key) {
             Ok(index) => index,
             Err(result) => return result,
         };
-        let scroll_offset = virtualized_list_scroll_target(
-            strategy,
-            index,
-            self.item_count(),
-            self.metrics.row_height(),
-            viewport_extent,
-            current_scroll_offset,
-        );
 
-        VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-            key,
-            index,
-            scroll_offset,
-            false,
+        VirtualizedListMaterializationResult::Target(VirtualizedListMaterializationTarget::new(
+            key, index, false,
         ))
     }
 
-    /// Returns a key-based reveal target using keyed measured row sizes when available.
-    pub fn scroll_target_for_key_with_snapshot(
+    /// Resolves a stable row identity using the supplied measured-row snapshot.
+    ///
+    /// `estimated` is true when the snapshot cannot prove an exact materialization position for
+    /// the current collection. It is not a final physical-reveal result.
+    pub fn materialization_target_for_key_with_snapshot(
         &self,
         key: &str,
-        strategy: VirtualizedListScrollStrategy,
-        viewport_extent: UiPx,
-        current_scroll_offset: UiPx,
         snapshot: &VirtualizerSnapshot,
-    ) -> VirtualizedListRevealResult {
-        let index = match self.reveal_index_for_key(key) {
+    ) -> VirtualizedListMaterializationResult {
+        let index = match self.materialization_index_for_key(key) {
             Ok(index) => index,
             Err(result) => return result,
         };
+        let measured_keys = snapshot
+            .measurements()
+            .iter()
+            .map(|measurement| measurement.key().as_str())
+            .collect::<BTreeSet<_>>();
+        let estimated = self
+            .items
+            .iter()
+            .any(|item| !measured_keys.contains(item.key()));
 
-        let (scroll_offset, estimated) = virtualized_list_measured_scroll_target(
-            strategy,
-            index,
-            self.items.as_ref(),
-            self.metrics.row_height(),
-            viewport_extent,
-            current_scroll_offset,
-            snapshot,
-        );
-        let target = VirtualizedListRevealTarget::new(key, index, scroll_offset, estimated);
+        VirtualizedListMaterializationResult::Target(VirtualizedListMaterializationTarget::new(
+            key, index, estimated,
+        ))
+    }
 
-        if estimated {
-            VirtualizedListRevealResult::Estimated(target)
-        } else {
-            VirtualizedListRevealResult::Revealed(target)
+    pub(super) fn materialization_scroll_offset(
+        &self,
+        target: &VirtualizedListMaterializationTarget,
+        viewport_extent: UiPx,
+        current_scroll_offset: UiPx,
+        snapshot: Option<&VirtualizerSnapshot>,
+    ) -> UiPx {
+        let target_index = target.index().min(self.item_count().saturating_sub(1));
+        match snapshot {
+            Some(snapshot) => {
+                virtualized_list_measured_scroll_target(
+                    target_index,
+                    self.items.as_ref(),
+                    self.metrics.row_height(),
+                    viewport_extent,
+                    current_scroll_offset,
+                    snapshot,
+                )
+                .0
+            }
+            None => virtualized_list_scroll_target(
+                target_index,
+                self.item_count(),
+                self.metrics.row_height(),
+                viewport_extent,
+                current_scroll_offset,
+            ),
         }
     }
 
@@ -771,7 +751,10 @@ impl VirtualizedListState {
         state_item_index_by_unique_key(self.items.as_ref(), &self.duplicate_keys, key)
     }
 
-    fn reveal_index_for_key(&self, key: &str) -> Result<usize, VirtualizedListRevealResult> {
+    fn materialization_index_for_key(
+        &self,
+        key: &str,
+    ) -> Result<usize, VirtualizedListMaterializationResult> {
         let matches = self
             .items
             .iter()
@@ -780,28 +763,38 @@ impl VirtualizedListState {
             .collect::<Vec<_>>();
 
         let index = match matches.as_slice() {
-            [] => return Err(VirtualizedListRevealResult::NotFound(key.to_owned())),
+            [] => {
+                return Err(VirtualizedListMaterializationResult::NotFound(
+                    key.to_owned(),
+                ));
+            }
             [index] => *index,
-            _ => return Err(VirtualizedListRevealResult::DuplicateKey(key.to_owned())),
+            _ => {
+                return Err(VirtualizedListMaterializationResult::DuplicateKey(
+                    key.to_owned(),
+                ));
+            }
         };
 
         let item = &self.items[index];
         match item.kind() {
             VirtualizedListRowKind::Item => {
                 if item.disabled_state() {
-                    Err(VirtualizedListRevealResult::Disabled(key.to_owned()))
+                    Err(VirtualizedListMaterializationResult::Disabled(
+                        key.to_owned(),
+                    ))
                 } else {
                     Ok(index)
                 }
             }
             VirtualizedListRowKind::Loading
             | VirtualizedListRowKind::Empty
-            | VirtualizedListRowKind::Error => {
-                Err(VirtualizedListRevealResult::StatusRow(key.to_owned()))
-            }
-            VirtualizedListRowKind::Section | VirtualizedListRowKind::Separator => {
-                Err(VirtualizedListRevealResult::StructuralRow(key.to_owned()))
-            }
+            | VirtualizedListRowKind::Error => Err(
+                VirtualizedListMaterializationResult::StatusRow(key.to_owned()),
+            ),
+            VirtualizedListRowKind::Section | VirtualizedListRowKind::Separator => Err(
+                VirtualizedListMaterializationResult::StructuralRow(key.to_owned()),
+            ),
         }
     }
 
@@ -886,15 +879,13 @@ pub(super) fn virtualized_list_navigation_target(
 
 /// Resolves a fixed-height scroll target for a virtualized list.
 pub(super) fn virtualized_list_scroll_target(
-    strategy: VirtualizedListScrollStrategy,
     target_index: usize,
     item_count: usize,
     row_height: UiPx,
     viewport_extent: UiPx,
     current_scroll_offset: UiPx,
 ) -> UiPx {
-    fixed_row_scroll_target(
-        scroll_surface_reveal_strategy(strategy),
+    materialization_fixed_row_offset(
         target_index,
         item_count,
         row_height,
@@ -904,7 +895,6 @@ pub(super) fn virtualized_list_scroll_target(
 }
 
 fn virtualized_list_measured_scroll_target(
-    strategy: VirtualizedListScrollStrategy,
     target_index: usize,
     items: &[VirtualizedListStateItem],
     estimated_row_height: UiPx,
@@ -943,8 +933,7 @@ fn virtualized_list_measured_scroll_target(
         cursor = cursor + size;
     }
 
-    let target = row_geometry_scroll_target(
-        scroll_surface_reveal_strategy(strategy),
+    let target = materialization_row_geometry_offset(
         VirtualizerItemGeometry::new(target_start, target_size),
         cursor,
         viewport_extent,
@@ -952,17 +941,6 @@ fn virtualized_list_measured_scroll_target(
     );
 
     (target, estimated)
-}
-
-const fn scroll_surface_reveal_strategy(
-    strategy: VirtualizedListScrollStrategy,
-) -> ScrollSurfaceRevealStrategy {
-    match strategy {
-        VirtualizedListScrollStrategy::Nearest => ScrollSurfaceRevealStrategy::Nearest,
-        VirtualizedListScrollStrategy::Top => ScrollSurfaceRevealStrategy::Top,
-        VirtualizedListScrollStrategy::Center => ScrollSurfaceRevealStrategy::Center,
-        VirtualizedListScrollStrategy::Bottom => ScrollSurfaceRevealStrategy::Bottom,
-    }
 }
 
 const fn valid_index(index: usize, item_count: usize) -> Option<usize> {

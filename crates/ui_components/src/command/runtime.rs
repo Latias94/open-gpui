@@ -3,7 +3,8 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ElementId, Entity, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window, div, px, rgba,
+    ParentElement, Pixels, RevealTargetExt, RevealTargetHandle, ScrollHandle,
+    StatefulInteractiveElement, Styled, Window, div, px, rgba,
 };
 use open_gpui_ui_core::{
     AccessibleAction, LivePoliteness, Role, SemanticDescriptor, Sizable, ThemeTokens, UiPx, ui_px,
@@ -21,7 +22,7 @@ use crate::overlay::{
     OverlayInsideRegionId, OverlayLayerBinding, OverlayOpenIntent, WindowOverlayRuntime,
 };
 use crate::scroll_area::ScrollArea;
-use crate::scroll_surface::{ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, reveal_fixed_row};
+use crate::scroll_surface::{ScrollSurfaceRuntime, materialize_fixed_row};
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
 use crate::theme::{ThemeContext, ThemeResolver, gpui_elevation_shadow};
@@ -144,6 +145,7 @@ pub(super) fn command_dialog_layer_element(
     debug_id: String,
     state: CommandState,
     scroll_handle: ScrollHandle,
+    reveal_target: RevealTargetHandle,
     viewport_extent: UiPx,
     scroll_offset: UiPx,
     window_overlay_runtime: WindowOverlayRuntime,
@@ -197,6 +199,7 @@ pub(super) fn command_dialog_layer_element(
                         debug_id,
                         state,
                         scroll_handle,
+                        reveal_target,
                         viewport_extent,
                         scroll_offset,
                         input_controller,
@@ -220,6 +223,7 @@ pub(super) fn command_content_element(
     debug_id: String,
     state: CommandState,
     scroll_handle: ScrollHandle,
+    reveal_target: RevealTargetHandle,
     viewport_extent: UiPx,
     scroll_offset: UiPx,
     input_controller: Entity<TextInputController>,
@@ -325,8 +329,9 @@ pub(super) fn command_content_element(
                     window.prevent_default();
                     key_runtime.update(cx, |runtime, cx| {
                         runtime.set_active(target.value.clone(), cx);
+                        runtime.scroll_surface.queue_vertical_bring_into_view();
                     });
-                    scroll_command_item_into_view(&key_scroll_handle, &key_state, target.index);
+                    materialize_command_item(&key_scroll_handle, &key_state, target.index);
                 }
                 CommandKeyboardAction::Select(selection) => {
                     cx.stop_propagation();
@@ -342,7 +347,10 @@ pub(super) fn command_content_element(
                         window,
                         cx,
                     );
-                    scroll_command_item_into_view(&key_scroll_handle, &key_state, selection_index);
+                    materialize_command_item(&key_scroll_handle, &key_state, selection_index);
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.scroll_surface.queue_vertical_bring_into_view();
+                    });
                 }
                 CommandKeyboardAction::Ignore => {}
             }
@@ -456,6 +464,7 @@ pub(super) fn command_content_element(
                             selection_mode,
                             on_select,
                             on_selected_values_change,
+                            reveal_target,
                             theme,
                         ),
                     )
@@ -711,6 +720,7 @@ fn render_command_results_body(
     selection_mode: CommandSelectionMode,
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
+    reveal_target: RevealTargetHandle,
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let command_id = command_id.to_owned();
@@ -750,6 +760,7 @@ fn render_command_results_body(
             selection_mode,
             on_select,
             on_selected_values_change,
+            reveal_target,
             theme,
         ))
 }
@@ -767,6 +778,7 @@ fn command_result_children(
     selection_mode: CommandSelectionMode,
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
+    reveal_target: RevealTargetHandle,
     theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     if state.empty() {
@@ -805,9 +817,9 @@ fn command_result_children(
                 selection_mode,
                 on_select.clone(),
                 on_selected_values_change.clone(),
+                reveal_target,
                 theme,
             )
-            .into_any_element()
         })
         .collect()
 }
@@ -824,8 +836,9 @@ fn render_command_result_row(
     selection_mode: CommandSelectionMode,
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
+    reveal_target: RevealTargetHandle,
     theme: &ThemeContext,
-) -> impl IntoElement {
+) -> AnyElement {
     let option_value = row.value().to_owned();
     let render_key = row.render_key().to_owned();
     let label = row.label().to_owned();
@@ -873,7 +886,7 @@ fn render_command_result_row(
             .with_size_of_set(row.item().size_of_set());
     }
 
-    div()
+    let element = div()
         .id(format!("command-row:{render_key}"))
         .debug_selector({
             let command_id = command_id.clone();
@@ -969,7 +982,14 @@ fn render_command_result_row(
                             .child(shortcut),
                     )
                 }),
-        )
+        );
+    if active {
+        element
+            .track_reveal_target(&reveal_target)
+            .into_any_element()
+    } else {
+        element.into_any_element()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1022,10 +1042,9 @@ fn handle_command_selection(
     }
 }
 
-fn scroll_command_item_into_view(scroll_handle: &ScrollHandle, state: &CommandState, index: usize) {
-    reveal_fixed_row(
+fn materialize_command_item(scroll_handle: &ScrollHandle, state: &CommandState, index: usize) {
+    materialize_fixed_row(
         scroll_handle,
-        ScrollSurfaceRevealStrategy::Nearest,
         index,
         state.items().len(),
         state.metrics().row_height(),

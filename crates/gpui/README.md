@@ -98,6 +98,52 @@ presentation failure cannot produce stale success bookkeeping and cached commit 
 recursively redraw inside one effect cycle. `Window::blur` and `Window::disable_focus` take `cx`
 so superseded completion callbacks are always scheduled.
 
+## Bring Into View
+
+Retain a same-window `RevealTargetHandle` when an application, focus transition, or accessibility
+action needs to reveal an element through nested scrollports. Bind the handle in every rendered
+frame and submit explicit physical-axis options:
+
+```rust
+use open_gpui::{
+    BringIntoViewAlignment, BringIntoViewOptions, RevealTargetExt as _,
+};
+
+let target = content.track_reveal_target(&state.reveal_target);
+window.bring_into_view(
+    &state.reveal_target,
+    BringIntoViewOptions::vertical(BringIntoViewAlignment::Nearest),
+    cx,
+)?;
+```
+
+Create the handle once with `window.new_reveal_target()`, not during every render. A completed frame
+commits the target's checked geometry and inner-to-outer scroll ancestry. Application requests,
+the winning focus claim, and AccessKit `ScrollIntoView` share one request sequence, overlap
+arbitration, transform conversion, and cancellation contract. `bring_into_view_with_completion`
+observes the terminal outcome of one exact request; dropping its subscription does not cancel the
+request.
+
+The public axis vocabulary is physical: horizontal and vertical policies use `Nearest`, `MinEdge`,
+`Center`, or `MaxEdge`, with checked physical margins. `BringIntoViewOptions::vertical` preserves
+the horizontal offset. Virtual collections must materialize stable logical identity before binding
+the physical target; GPUI does not accept indices or collection keys. See
+[ADR 0025](../../docs/adr/0025-open-gpui-bring-into-view-authority.md) for arbitration, transforms,
+portals, Motion, and cancellation behavior.
+
+Custom two-phase adapters capture `Window::capture_deferred_bring_into_view_guard` from prepaint
+inside the intended final scroll ancestry as soon as logical materialization completes, then call
+`Window::try_bring_into_view_with_guard_and_completion` after the physical target binds. The
+opaque guard atomically checks the target, its complete scroll ancestry, and relevant direct-scroll
+interruption before a request enters window authority. `ScrollHandle::direct_scroll_revision()` remains available for a
+known-single-handle low-level adapter; it is not a scroll offset or a second bring-into-view API.
+
+For a focus handoff that spans frames, retain the opaque `ScrollChainFence` captured from the
+committed anchor chain at input time or the current prepaint ancestry after materialization, then
+use `focus_with_completion_and_scroll_fence`. Focus still settles through ordinary arbitration;
+only its implicit physical reveal is suppressed when direct input or a chain/axis change invalidates
+the fence.
+
 ### Dependencies
 
 Open GPUI has various system dependencies that it needs in order to work.

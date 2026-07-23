@@ -2,10 +2,12 @@ use open_gpui::accesskit;
 
 #[allow(dead_code)]
 pub(crate) fn assert_exact_actions(node: &accesskit::Node, expected: &[accesskit::Action]) {
+    // All published semantic nodes expose the framework-owned geometry action. Callers specify
+    // only role-specific activation and editing actions.
     for &action in open_gpui::test::ACCESSKIT_ACTIONS {
         assert_eq!(
             node.supports_action(action),
-            expected.contains(&action),
+            expected.contains(&action) || action == accesskit::Action::ScrollIntoView,
             "unexpected support for {action:?} on {:?}",
             node.role()
         );

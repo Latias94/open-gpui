@@ -21,11 +21,18 @@ use std::{
 use super::{
     AnyMouseListener, AnyPointerCancelListener, ContentMask, CursorStyleRequest, ElementStateBox,
     FocusId, HitTest, ImagePaintDiagnostic, PrepaintPublicationId, TooltipId,
+    bring_into_view::{RevealTargetBinding, RevealTargetKey, ScrollContainerBinding},
     portal_anchor::{PortalAnchorBinding, PortalAnchorId},
 };
 
 #[derive(Clone, Copy)]
 enum PortalAnchorBindingLocation {
+    Unique(usize),
+    Duplicate,
+}
+
+#[derive(Clone, Copy)]
+enum RevealTargetBindingLocation {
     Unique(usize),
     Duplicate,
 }
@@ -38,10 +45,17 @@ pub(crate) struct FrameOutput<T> {
 
 #[derive(Clone)]
 pub(crate) struct PrepaintCommit {
+    pub(super) phase: PrepaintCommitPhase,
     pub(super) publication: Option<PrepaintPublicationId>,
     pub(super) presentation: SubtreePresentation,
     pub(super) commit: Rc<dyn Fn(u64, &mut Window, &mut App)>,
     pub(super) discard: Option<Rc<dyn Fn(u64, &mut Window, &mut App)>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PrepaintCommitPhase {
+    Normal,
+    FocusStable,
 }
 
 impl<T> FrameOutput<T> {
@@ -77,6 +91,7 @@ pub(crate) struct DeferredDraw {
     pub(super) subtree_presentation: SubtreePresentation,
     pub(super) subtree_transform: ResolvedSubtreeTransform,
     pub(super) subtree_transform_validity: Option<SubtreeTransformValidity>,
+    pub(super) scroll_ancestry: SmallVec<[ScrollContainerBinding; 8]>,
     pub(super) prepaint_range: Range<PrepaintStateIndex>,
     pub(super) paint_range: Range<PaintIndex>,
 }
@@ -103,6 +118,8 @@ pub(crate) struct Frame {
     pub(super) portal_anchor_bindings: Vec<FrameOutput<PortalAnchorBinding>>,
     portal_anchor_binding_locations: FxHashMap<PortalAnchorId, PortalAnchorBindingLocation>,
     pub(super) portal_anchor_dependent_views: FxHashSet<EntityId>,
+    pub(super) reveal_target_bindings: Vec<FrameOutput<RevealTargetBinding>>,
+    reveal_target_binding_locations: FxHashMap<RevealTargetKey, RevealTargetBindingLocation>,
     pub(crate) retained_resources: Vec<Rc<dyn Any>>,
     pub(crate) prepaint_commits: Vec<FrameOutput<PrepaintCommit>>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
@@ -131,6 +148,7 @@ pub(crate) struct PrepaintStateIndex {
     pub(super) hitboxes_index: usize,
     pub(super) pointer_capture_bindings_index: usize,
     pub(super) portal_anchor_bindings_index: usize,
+    pub(super) reveal_target_bindings_index: usize,
     pub(super) retained_resources_index: usize,
     pub(super) prepaint_commits_index: usize,
     pub(super) tooltips_index: usize,
@@ -184,6 +202,8 @@ impl Frame {
             portal_anchor_bindings: Vec::new(),
             portal_anchor_binding_locations: FxHashMap::default(),
             portal_anchor_dependent_views: FxHashSet::default(),
+            reveal_target_bindings: Vec::new(),
+            reveal_target_binding_locations: FxHashMap::default(),
             retained_resources: Vec::new(),
             prepaint_commits: Vec::new(),
             window_control_hitboxes: Vec::new(),
@@ -232,6 +252,8 @@ impl Frame {
         self.portal_anchor_bindings.clear();
         self.portal_anchor_binding_locations.clear();
         self.portal_anchor_dependent_views.clear();
+        self.reveal_target_bindings.clear();
+        self.reveal_target_binding_locations.clear();
         self.retained_resources.clear();
         self.prepaint_commits.clear();
         self.window_control_hitboxes.clear();
@@ -330,6 +352,60 @@ impl Frame {
                 .entry(binding.value.id())
                 .and_modify(|location| *location = PortalAnchorBindingLocation::Duplicate)
                 .or_insert(PortalAnchorBindingLocation::Unique(index));
+        }
+    }
+
+    pub(super) fn has_reveal_target_binding(&self, key: RevealTargetKey) -> bool {
+        self.reveal_target_binding_locations.contains_key(&key)
+    }
+
+    pub(super) fn reveal_target_binding_is_duplicate(&self, key: RevealTargetKey) -> bool {
+        matches!(
+            self.reveal_target_binding_locations.get(&key),
+            Some(RevealTargetBindingLocation::Duplicate)
+        )
+    }
+
+    pub(super) fn reveal_target_binding(
+        &self,
+        key: RevealTargetKey,
+    ) -> Option<&FrameOutput<RevealTargetBinding>> {
+        let RevealTargetBindingLocation::Unique(index) =
+            *self.reveal_target_binding_locations.get(&key)?
+        else {
+            return None;
+        };
+        self.reveal_target_bindings.get(index)
+    }
+
+    pub(super) fn record_reveal_target_binding(
+        &mut self,
+        binding: FrameOutput<RevealTargetBinding>,
+    ) {
+        let key = binding.value.key();
+        let index = self.reveal_target_bindings.len();
+        self.reveal_target_binding_locations
+            .entry(key)
+            .and_modify(|location| *location = RevealTargetBindingLocation::Duplicate)
+            .or_insert(RevealTargetBindingLocation::Unique(index));
+        self.reveal_target_bindings.push(binding);
+    }
+
+    pub(super) fn truncate_reveal_target_bindings(&mut self, len: usize) {
+        if len >= self.reveal_target_bindings.len() {
+            return;
+        }
+        self.reveal_target_bindings.truncate(len);
+        self.rebuild_reveal_target_binding_locations();
+    }
+
+    fn rebuild_reveal_target_binding_locations(&mut self) {
+        self.reveal_target_binding_locations.clear();
+        for (index, binding) in self.reveal_target_bindings.iter().enumerate() {
+            self.reveal_target_binding_locations
+                .entry(binding.value.key())
+                .and_modify(|location| *location = RevealTargetBindingLocation::Duplicate)
+                .or_insert(RevealTargetBindingLocation::Unique(index));
         }
     }
 

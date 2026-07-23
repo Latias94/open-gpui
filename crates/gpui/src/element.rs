@@ -458,6 +458,7 @@ impl<E: Element> Drawable<E> {
 
                 let bounds = window.layout_bounds(layout_id);
                 let mut pushed_a11y_node = false;
+                let mut reveal_a11y_node = None;
                 if window.a11y.is_active() && window.subtree_presentation().is_interactive() {
                     if let Some(global_id) = global_id.as_ref() {
                         if let Some(role) = self.element.a11y_role()
@@ -467,11 +468,13 @@ impl<E: Element> Drawable<E> {
                             let node_id = global_id.accesskit_node_id();
                             let mut node = accesskit::Node::new(role);
                             self.element.write_a11y_info(&mut node);
+                            node.add_action(accesskit::Action::ScrollIntoView);
                             node.clear_transform();
                             node.set_bounds(accessibility_bounds);
                             pushed_a11y_node = window.a11y.nodes.push(node_id, node);
                             if pushed_a11y_node {
                                 window.a11y.record_node_bounds(node_id, displayed_bounds);
+                                reveal_a11y_node = Some(node_id);
                             }
                         }
                     }
@@ -482,6 +485,9 @@ impl<E: Element> Drawable<E> {
                     .dispatch_tree
                     .push_node_scoped(window.subtree_transform_validity());
                 let prepaint = window.with_prepaint_layout_id(layout_id, |window| {
+                    if let Some(node_id) = reveal_a11y_node {
+                        window.bind_accessibility_reveal_target(node_id, bounds);
+                    }
                     self.element.prepaint(
                         global_id.as_ref(),
                         inspector_id.as_ref(),

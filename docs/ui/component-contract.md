@@ -233,6 +233,24 @@ Every overlay inside region is committed in displayed window coordinates through
 outside-press arbitration never compares a window-space pointer against raw or clipped-away layout
 bounds, and an unrepresentable transform publishes no region.
 
+GPUI separately owns physical reveal through `RevealTargetHandle`. A completed frame binds one
+target to its final `ElementGeometry` and committed inner-to-outer scroll ancestry. Application
+requests, the winning focus claim, and AccessKit `ScrollIntoView` enter the same
+`Window::bring_into_view` authority with explicit physical axes, overlap arbitration,
+transform-correct local deltas, and typed terminal outcomes. Portals begin a new rendered ancestry;
+component adapters must not infer a source chain through an anchor or retained rectangle.
+Every successfully published semantic node exposes AccessKit `ScrollIntoView` as a geometry action,
+including disabled nodes that cannot receive activation or focus actions; stale, suppressed, and
+unpublished nodes expose no route.
+An adapter that bridges materialization and a later physical request captures
+`Window::capture_deferred_bring_into_view_guard` from prepaint inside the intended final scroll
+ancestry as soon as logical materialization completes, then submits it with
+`Window::try_bring_into_view_with_guard_and_completion` after the target binds. The opaque guard
+validates the target, the complete committed ancestry, and relevant direct-scroll revision
+atomically; a failed guard submits nothing. `ScrollHandle::direct_scroll_revision` remains a per-handle
+low-level interruption token, not a substitute for a nested reveal chain or a second reveal
+authority.
+
 UI Components accepts only `SubtreePresentation::Visible` portal snapshots for interactive overlay
 followers. An ineligible or missing target forces the layer noninteractive and dispatches
 `DismissReason::AnchorUnlinked`: uncontrolled owners commit closed state, while controlled owners
@@ -1488,6 +1506,17 @@ focusable row list. The private collection typeahead session owns printable-inpu
 the buffer, and the 700ms executor-clock deadline; the GPUI adapter supplies the event-time stable
 focused value and moves focus without selecting the matched row. Typeahead intentionally does not
 search collapsed, unloaded, or virtualized descendants.
+Tree keeps business values as callback identity, but assigns a private collision-safe render identity
+to every visible row for GPUI elements, debug selectors, and accessibility nodes. Ambiguous duplicate
+business values are non-focusable; callers cannot use render identity as a value or persistence key.
+For a virtual keyboard target, the adapter submits the stable `FocusHandle` claim at input time,
+re-resolves the current unique focusable value on the next frame, and materializes only while that
+claim remains the latest window focus revision. The physical materialization commit runs in
+Window's focus-stable prepaint phase after normal commit callbacks; focus and blur mutations are
+rejected within that terminal phase. Its retained `ScrollChainFence` spans first materialization
+and guarded focus reveal, so direct ancestor scrolling or a chain/axis change cancels before it can
+move the virtual viewport. A later focus request, removal, ambiguity, or disabled state has the
+same result.
 The private `roving_focus` implementation module now owns the shared vertical, paged, and
 typeahead target helpers used by `Listbox`, `Tabs`, `RadioGroup`, `Menu`, `Sidebar`, `Toolbar`,
 `Tree`, and `VirtualizedList`; public low-level consumers use
@@ -1499,10 +1528,25 @@ runtime plus persistent `ScrollHandle`, and keeps row rendering inside its viewp
 `VirtualizedListState` remains the renderer-neutral keyboard/navigation contract:
 active/selected keys with index diagnostics, page navigation, activation payloads, viewport item
 count, row metrics, overscan, typeahead target resolution, replacement-style multi-select range
-selection, and semantic scroll strategy labels. The private collection typeahead session owns the
-printable-input buffer and deadline. The GPUI adapter supplies the event-time stable active key and
-owns reveal side effects: typeahead moves the active row without selecting it, while Shift-range
-interaction replaces selected keys with the current selectable anchor-to-target range.
+selection, and stable-key materialization results. The private collection typeahead session owns
+the printable-input buffer and deadline. The GPUI adapter supplies the event-time stable active key
+and owns only the logical materialization phase: typeahead moves the active row without selecting
+it, while Shift-range interaction replaces selected keys with the current selectable
+anchor-to-target range. `VirtualizedList::bring_key_into_view` materializes the stable logical row,
+binds its physical `RevealTargetHandle`, and delegates final nested alignment to the window
+authority; it does not compute a final container-relative reveal offset. When materialization and
+physical submission span frames, the adapter captures `DeferredBringIntoViewGuard` from prepaint
+inside the intended final scroll ancestry as soon as logical materialization completes, then
+consumes that guard through the guarded window method after the target binds. The guard validates
+the target, its complete committed scroll ancestry, and direct-scroll revisions for the requested
+axes atomically, so wheel, scrollbar, keyboard, touch, or explicit direct scrolling on any affected
+ancestor cancels the operation rather than becoming a new baseline. If geometry
+changes after a physical request is in flight, a retry waits for its exact terminal outcome and is
+allowed only after completion; every cancellation, including `Superseded`, `ScrollOverridden`,
+`TargetUnlinked`, `AncestryChanged`, `TargetSuppressed`, `NoProgress`, and `WindowClosed`, ends
+the stale operation. The guard's retained `ScrollChainFence` also compares the complete ordered
+chain's available axes, so a reconfigured scrollport cannot turn an unobserved axis into a reveal
+path.
 `VirtualizedListBehaviorSnapshot::sticky_section` returns an optional
 `VirtualizedListStickySectionSnapshot` for the section row that owns the first visible selectable
 row. `VirtualizedListBehaviorSnapshot::sticky_overlay` returns an optional
@@ -1513,7 +1557,9 @@ accessibility roles. `VirtualizedListRowMeasureMode`
 keeps fixed rows as the default hot path and exposes measured rows as an explicit opt-in;
 `VirtualizedList::virtualizer_snapshot` seeds measured heights by stable render key, removed keys
 are dropped from emitted snapshots, and missing measurements fall back to the estimated row height
-with estimated reveal targets. Render keys are opaque adapter identities for one ordered descriptor
+for materialization only. `VirtualizedListMaterializationResult` rejects missing, duplicate,
+disabled, structural, and status-row keys; its target index and estimated flag are mounting facts,
+not final reveal geometry. Render keys are opaque adapter identities for one ordered descriptor
 snapshot: unique business identity remains `VirtualizedListItemDescriptor::key()`, while duplicate
 source keys receive a collision-safe occurrence encoding. Consumers may round-trip render keys for
 measurement but must not parse, construct, or persist their representation across source reorder.
