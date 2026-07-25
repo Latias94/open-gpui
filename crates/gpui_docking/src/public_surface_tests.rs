@@ -260,6 +260,12 @@ fn common_import_paths_compile() {
         .visual_style_resolver(root_visual_style_resolver.clone())
         .motion_preference(open_gpui_motion::MotionPreference::Reduced);
     let root_surface_change = root::DockSurfaceChange::Changed;
+    let root_surface_change_category = root::DockSurfaceChangeCategory::Selection;
+    let prelude_surface_change_category = prelude::DockSurfaceChangeCategory::ViewportTopology;
+    let root_surface_change_event: Option<root::DockSurfaceChangeEvent> = None;
+    let prelude_activation_request: Option<prelude::DockSurfaceActivationRequestId> = None;
+    let root_activation_outcome = root::DockSurfaceActivationOutcome::Committed;
+    let prelude_activation_outcome = prelude::DockSurfaceActivationOutcome::Rejected;
     let root_close_policy = root::DockViewportClosePolicy::RetainLayout;
     let prelude_panel_target = prelude::DockPanelPlacementTarget::right_rail();
     let prelude_surface_builder = prelude::DockSurface::builder("main");
@@ -338,6 +344,12 @@ fn common_import_paths_compile() {
         read_only_visual_style_resolver,
         root_surface_builder,
         root_surface_change.changed(),
+        root_surface_change_category,
+        prelude_surface_change_category,
+        root_surface_change_event,
+        prelude_activation_request,
+        root_activation_outcome,
+        prelude_activation_outcome,
         root_close_policy,
         prelude_panel_target,
         prelude_surface_builder,
@@ -377,6 +389,18 @@ fn common_import_paths_compile() {
         root_surface_export_snapshot,
         root_builder_try_snapshot,
     );
+}
+
+#[test]
+fn node_id_focus_is_not_a_public_host_command() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("presentation_commands.rs");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+
+    assert!(!source.contains("pub fn focus_pane"));
+    assert!(source.contains("pub(crate) fn focus_pane"));
 }
 
 #[test]

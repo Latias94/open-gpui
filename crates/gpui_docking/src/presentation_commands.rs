@@ -112,7 +112,8 @@ impl DockHost {
     }
 
     /// Requests focus for the selected item inside one tabs pane.
-    pub fn focus_pane(&mut self, target: DockNodeId, cx: &mut Context<Self>) -> bool {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn focus_pane(&mut self, target: DockNodeId, cx: &mut Context<Self>) -> bool {
         let scene = self.last_presentation_scene().cloned();
         let Some((item, changed)) = self.request_focus_pane_command(target, cx) else {
             return false;
@@ -157,10 +158,12 @@ impl DockHost {
         };
         self.viewport_runtime()
             .record_panel_focus(self.space().clone(), item.clone());
-        let changed =
-            self.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(
-                DockViewportFocusRequest::panel(item.clone()),
-            ));
+        let changed = self.request_viewport_focus_command_in_context(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(
+                item.clone(),
+            )),
+            cx,
+        );
         if changed {
             cx.notify();
         }

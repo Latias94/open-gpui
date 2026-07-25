@@ -109,6 +109,12 @@ pub(crate) struct DockViewportWindowFacts {
     pub(crate) input_mask: DockViewportInputMask,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct DockViewportWindowFactsChange {
+    pub(crate) changed: bool,
+    pub(crate) placement_changed: bool,
+}
+
 /// Coordinate frame for a live viewport window rectangle.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum DockViewportWindowBoundsFrame {
@@ -419,24 +425,38 @@ impl DockViewportSnapshot {
         true
     }
 
-    pub(crate) fn apply_platform_window_facts(
+    pub(crate) fn apply_platform_window_facts_with_change(
         &mut self,
         window_facts: DockViewportWindowFacts,
-    ) -> bool {
+    ) -> DockViewportWindowFactsChange {
         if self.platform_requests.close_requested {
-            return false;
+            return DockViewportWindowFactsChange::default();
         }
 
         self.platform_requests = self.platform_requests_after_window_facts(window_facts);
+        let placement_changed = self.placement_facts_differ(window_facts);
 
         if self.can_preserve_route_facts_for_platform_move(window_facts) {
-            return self.replace_window_facts_without_generation(window_facts);
+            return DockViewportWindowFactsChange {
+                changed: self.replace_window_facts_without_generation(window_facts),
+                placement_changed,
+            };
         }
 
         let changed = self.replace_window_facts_without_generation(window_facts);
-        self.lifecycle
-            .mark_stale(DockViewportStaleReason::WindowFactsChanged)
-            || changed
+        DockViewportWindowFactsChange {
+            changed: self
+                .lifecycle
+                .mark_stale(DockViewportStaleReason::WindowFactsChanged)
+                || changed,
+            placement_changed,
+        }
+    }
+
+    fn placement_facts_differ(&self, window_facts: DockViewportWindowFacts) -> bool {
+        self.display_id != window_facts.display_id
+            || self.window_bounds != Some(window_facts.window_bounds)
+            || self.current_bounds != Some(window_facts.current_bounds)
     }
 
     fn can_preserve_route_facts_for_platform_move(

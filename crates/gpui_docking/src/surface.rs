@@ -1,10 +1,14 @@
+mod activation;
 mod builder;
+mod owner;
 mod panel;
 mod state;
 mod viewport;
 mod viewport_readiness;
 
+pub use activation::{DockSurfaceActivationOutcome, DockSurfaceActivationRequestId};
 pub use builder::{DockSurfaceBuildError, DockSurfaceBuilder};
+pub use owner::{DockSurfaceChangeCategory, DockSurfaceChangeEvent};
 pub use panel::{
     DockSurfaceChange, DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError,
     DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
@@ -32,9 +36,20 @@ use crate::{
     DockController, DockHost, DockSpaceId, DockViewportClosePolicy, DockViewportRuntimeHandle,
     DockVisualStyleResolver,
 };
+pub(crate) use activation::{
+    DockSurfaceActivationBinding, DockSurfaceActivationHostRegistration,
+    DockSurfaceActivationHostRegistrationStatus, DockSurfaceActivationSettlements,
+    DockSurfaceActivationState,
+};
+#[cfg(test)]
+pub(crate) use activation::{DockSurfaceActivationDispatch, DockSurfaceActivationHostLookup};
 use open_gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels,
-    Result as GpuiResult, WindowBounds, WindowOptions,
+    AnyView, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, Pixels,
+    Result as GpuiResult, Subscription, WindowBounds, WindowOptions,
+};
+pub(crate) use owner::{
+    DockSurfaceOwner, DockSurfaceTransactionId, with_detached_root_transaction,
+    with_root_transaction,
 };
 
 /// Application-level owner for one docked workspace and its viewport runtime.
@@ -45,9 +60,8 @@ use open_gpui::{
 /// [`runtime::DockViewportRuntimeHandle`](crate::runtime::DockViewportRuntimeHandle) directly.
 #[derive(Clone, Debug)]
 pub struct DockSurface {
-    controller: Entity<DockController>,
+    owner: Entity<DockSurfaceOwner>,
     primary_space: DockSpaceId,
-    viewport_runtime: DockViewportRuntimeHandle,
 }
 
 impl DockSurface {
@@ -57,7 +71,7 @@ impl DockSurface {
     }
 
     #[cfg(test)]
-    pub(crate) fn from_controller(controller: Entity<DockController>, cx: &App) -> Self {
+    pub(crate) fn from_controller(controller: Entity<DockController>, cx: &mut App) -> Self {
         Self::from_controller_with_close_policy_and_visual_style_resolver(
             controller,
             DockViewportClosePolicy::default(),
@@ -70,7 +84,7 @@ impl DockSurface {
         controller: Entity<DockController>,
         close_policy: DockViewportClosePolicy,
         visual_style_resolver: Option<DockVisualStyleResolver>,
-        cx: &App,
+        cx: &mut App,
     ) -> Self {
         let primary_space = cx.read_entity(&controller, |controller, _| controller.space().clone());
         let viewport_runtime = match visual_style_resolver {
@@ -83,16 +97,55 @@ impl DockSurface {
             }
             None => DockViewportRuntimeHandle::with_close_policy(controller.clone(), close_policy),
         };
+        let owner =
+            cx.new(|_| DockSurfaceOwner::new(controller, viewport_runtime, primary_space.clone()));
+        let weak_owner = owner.downgrade();
+        let runtime = cx.read_entity(&owner, |owner, _| owner.runtime());
+        runtime.install_surface_owner(owner.downgrade());
+        runtime.install_surface_commit_sink(move |transaction, categories, cx| {
+            let Some(owner) = weak_owner.upgrade() else {
+                return;
+            };
+            cx.update_entity(&owner, |owner, owner_cx| {
+                if let Some(transaction) = transaction {
+                    owner.record_changes(transaction, categories.iter().copied());
+                } else {
+                    let transaction = owner.begin_root_transaction();
+                    owner.record_changes(transaction, categories.iter().copied());
+                    owner.finish_root_transaction(transaction, owner_cx);
+                }
+            });
+        });
+        let primary_space = cx.read_entity(&owner, |owner, _| owner.primary_space().clone());
+        let activation_owner = owner.downgrade();
+        cx.on_window_closed(move |cx, window_id| {
+            let Some(owner) = activation_owner.upgrade() else {
+                return;
+            };
+            let settlements = cx.update_entity(&owner, |owner, owner_cx| {
+                let settlements = owner.activation_mut().window_closed(window_id);
+                owner_cx.notify();
+                settlements
+            });
+            settlements.deliver(cx);
+        })
+        .detach();
         Self {
-            controller,
+            owner,
             primary_space,
-            viewport_runtime,
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn controller(&self) -> Entity<DockController> {
-        self.controller.clone()
+    pub(crate) fn controller<C: AppContext>(&self, cx: &C) -> Entity<DockController> {
+        cx.read_entity(&self.owner, |owner, _| owner.controller())
+    }
+
+    pub(crate) fn viewport_runtime<C: AppContext>(&self, cx: &C) -> DockViewportRuntimeHandle {
+        cx.read_entity(&self.owner, |owner, _| owner.runtime())
+    }
+
+    pub(crate) fn owner(&self) -> &Entity<DockSurfaceOwner> {
+        &self.owner
     }
 
     /// Returns the default logical dock space for primary host windows.
@@ -109,12 +162,26 @@ impl DockSurface {
         space: impl Into<DockSpaceId>,
         cx: &mut Context<DockHost>,
     ) -> DockHost {
-        DockHost::from_controller(
-            self.controller.clone(),
-            space,
-            self.viewport_runtime.clone(),
-            cx,
-        )
+        let controller = cx.read_entity(&self.owner, |owner, _| owner.controller());
+        let viewport_runtime = cx.read_entity(&self.owner, |owner, _| owner.runtime());
+        DockHost::from_surface_owner(controller, space, viewport_runtime, &self.owner, cx)
+    }
+
+    /// Returns the latest committed persistence revision shared by all surface clones.
+    pub fn revision(&self, cx: &App) -> u64 {
+        cx.read_entity(&self.owner, |owner, _| owner.revision())
+    }
+
+    /// Subscribes to lightweight metadata for committed surface changes.
+    ///
+    /// Applications own debounce, snapshot export, storage, and file-I/O policy. Dropping the
+    /// returned subscription only stops observation.
+    pub fn subscribe_changes(
+        &self,
+        cx: &mut App,
+        on_event: impl FnMut(&DockSurfaceChangeEvent, &mut App) + 'static,
+    ) -> Subscription {
+        owner::subscribe(&self.owner, cx, on_event)
     }
 
     /// Creates an erased GPUI view that renders the primary dock space inside an existing window.

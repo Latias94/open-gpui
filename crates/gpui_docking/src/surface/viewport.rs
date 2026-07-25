@@ -1,6 +1,7 @@
 use super::{
     DockSurface, DockSurfaceChange, DockSurfaceSnapshot, DockSurfaceViewportReadiness,
     DockSurfaceViewportReadinessReport, DockSurfaceViewportUnsupportedFlag,
+    with_detached_root_transaction,
 };
 use crate::{
     DockPolicyError, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
@@ -163,36 +164,37 @@ impl DockSurfaceViewportSession {
     }
 
     /// Returns the close policy used by session-opened platform viewport windows.
-    pub fn close_policy(&self) -> DockViewportClosePolicy {
-        self.surface.viewport_close_policy()
+    pub fn close_policy(&self, cx: &App) -> DockViewportClosePolicy {
+        self.surface.viewport_close_policy(cx)
     }
 
     /// Replaces the close policy used by session-opened platform viewport windows.
-    pub fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
-        self.surface.set_viewport_close_policy(close_policy);
+    pub fn set_close_policy(&self, close_policy: DockViewportClosePolicy, cx: &App) {
+        self.surface.set_viewport_close_policy(close_policy, cx);
     }
 
     /// Returns registered platform viewport spaces in stable lexical order.
-    pub fn registered_spaces(&self) -> Vec<DockSpaceId> {
-        self.surface.registered_viewport_spaces()
+    pub fn registered_spaces(&self, cx: &App) -> Vec<DockSpaceId> {
+        self.surface.registered_viewport_spaces(cx)
     }
 
     /// Returns true when a platform viewport is registered for the dock space.
-    pub fn is_open(&self, space: &DockSpaceId) -> bool {
-        self.surface.is_viewport_open(space)
+    pub fn is_open(&self, space: &DockSpaceId, cx: &App) -> bool {
+        self.surface.is_viewport_open(space, cx)
     }
 
     /// Exports serializable platform-window placement snapshots for session-opened viewports.
-    pub fn export_placement(&self) -> DockViewportPlacementLayout {
-        self.surface.export_viewport_placement()
+    pub fn export_placement(&self, cx: &App) -> DockViewportPlacementLayout {
+        self.surface.export_viewport_placement(cx)
     }
 
     /// Checks saved placement snapshots against currently registered session viewport windows.
     pub fn check_restore(
         &self,
         placement: &DockViewportPlacementLayout,
+        cx: &App,
     ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
-        self.surface.check_viewport_placement_restore(placement)
+        self.surface.check_viewport_placement_restore(placement, cx)
     }
 
     /// Checks whether a platform viewport request can open without mutating runtime state.
@@ -673,28 +675,28 @@ impl DockSurface {
     }
 
     /// Returns the close policy used by facade-opened platform viewport windows.
-    pub fn viewport_close_policy(&self) -> DockViewportClosePolicy {
-        self.viewport_runtime.close_policy()
+    pub fn viewport_close_policy(&self, cx: &App) -> DockViewportClosePolicy {
+        self.viewport_runtime(cx).close_policy()
     }
 
     /// Replaces the close policy used by facade-opened platform viewport windows.
-    pub fn set_viewport_close_policy(&self, close_policy: DockViewportClosePolicy) {
-        self.viewport_runtime.set_close_policy(close_policy);
+    pub fn set_viewport_close_policy(&self, close_policy: DockViewportClosePolicy, cx: &App) {
+        self.viewport_runtime(cx).set_close_policy(close_policy);
     }
 
     /// Returns registered platform viewport spaces in stable lexical order.
-    pub fn registered_viewport_spaces(&self) -> Vec<DockSpaceId> {
-        self.viewport_runtime.registered_viewport_spaces()
+    pub fn registered_viewport_spaces(&self, cx: &App) -> Vec<DockSpaceId> {
+        self.viewport_runtime(cx).registered_viewport_spaces()
     }
 
     /// Returns true when a facade-opened platform viewport is registered for the dock space.
-    pub fn is_viewport_open(&self, space: &DockSpaceId) -> bool {
-        self.viewport_runtime.is_viewport_open(space)
+    pub fn is_viewport_open(&self, space: &DockSpaceId, cx: &App) -> bool {
+        self.viewport_runtime(cx).is_viewport_open(space)
     }
 
     /// Exports serializable platform-window placement snapshots for facade-opened viewports.
-    pub fn export_viewport_placement(&self) -> DockViewportPlacementLayout {
-        self.viewport_runtime.export_placement()
+    pub fn export_viewport_placement(&self, cx: &App) -> DockViewportPlacementLayout {
+        self.viewport_runtime(cx).export_placement()
     }
 
     /// Checks saved placement snapshots against currently registered facade viewport windows.
@@ -705,8 +707,9 @@ impl DockSurface {
     pub fn check_viewport_placement_restore(
         &self,
         placement: &DockViewportPlacementLayout,
+        cx: &App,
     ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
-        self.viewport_runtime.check_placement_restore(placement)
+        self.viewport_runtime(cx).check_placement_restore(placement)
     }
 
     /// Checks whether a platform viewport request can open without mutating runtime state.
@@ -748,7 +751,7 @@ impl DockSurface {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockSurfaceViewportShouldCloseOutcome {
-        self.viewport_runtime
+        self.viewport_runtime(cx)
             .handle_window_should_close_with_app(window_id, cx)
             .into()
     }
@@ -759,7 +762,7 @@ impl DockSurface {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockSurfaceViewportCloseOutcome {
-        self.viewport_runtime
+        self.viewport_runtime(cx)
             .handle_window_closed_with_app(window_id, cx)
             .into()
     }
@@ -771,7 +774,7 @@ impl DockSurface {
         cx: &mut App,
     ) -> DockSurfaceChange {
         if self
-            .viewport_runtime
+            .viewport_runtime(cx)
             .cancel_window_close_request_with_app(window_id, cx)
         {
             DockSurfaceChange::Changed
@@ -813,15 +816,20 @@ impl DockSurface {
         cx: &mut App,
     ) -> DockSurfaceViewportOpenOutcome {
         let (space, options) = spec.into_parts();
-        match self
-            .viewport_runtime
-            .open_viewport_unchecked_policy(space, options, cx)
-        {
-            Ok(outcome) => DockSurfaceViewportOpenOutcome::Opened(outcome.into()),
-            Err(error) => DockSurfaceViewportOpenOutcome::Unavailable(
-                DockSurfaceViewportUnavailable::OpenFailed(error.to_string()),
-            ),
-        }
+        let runtime = self.viewport_runtime(cx);
+        with_detached_root_transaction(self.owner(), cx, |transaction, cx| {
+            match runtime.open_viewport_unchecked_policy_in_transaction(
+                space,
+                options,
+                transaction,
+                cx,
+            ) {
+                Ok(outcome) => DockSurfaceViewportOpenOutcome::Opened(outcome.into()),
+                Err(error) => DockSurfaceViewportOpenOutcome::Unavailable(
+                    DockSurfaceViewportUnavailable::OpenFailed(error.to_string()),
+                ),
+            }
+        })
     }
 
     /// Opens a batch of facade viewport requests and returns ordered outcomes.

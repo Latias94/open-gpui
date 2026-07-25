@@ -1,8 +1,9 @@
 use crate::{
     DockController, DockItemId, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
-    DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange, DockSurfacePanelError,
-    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfaceSnapshot,
-    DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
+    DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange,
+    DockSurfaceChangeCategory, DockSurfacePanelError, DockSurfacePanelLocationKind,
+    DockSurfacePanelOutcome, DockSurfaceSnapshot, DockSurfaceViewportCloseStatus,
+    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
     DockSurfaceViewportReadinessStatus, DockSurfaceViewportSession,
     DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
     DockSurfaceViewportUnsupportedFlag, DockViewportClosePolicy, DockViewportPlacement,
@@ -14,6 +15,7 @@ use open_gpui::{
     App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions, div, px, size,
 };
+use std::{cell::RefCell, rc::Rc};
 
 struct TestPanel;
 
@@ -50,11 +52,11 @@ fn surface_builder_preserves_primary_space_and_runtime_policy(cx: &mut open_gpui
 
         assert_eq!(surface.primary_space(), &DockSpaceId::from("main"));
         assert_eq!(
-            surface.viewport_close_policy(),
+            surface.viewport_close_policy(cx),
             DockViewportClosePolicy::Prevent
         );
 
-        cx.read_entity(&surface.controller(), |controller, _| {
+        cx.read_entity(&surface.controller(cx), |controller, _| {
             assert!(controller.policy().allows_floating());
             assert!(controller.panels().contains(&"editor".into()));
         });
@@ -72,7 +74,7 @@ fn surface_can_wrap_existing_controller(cx: &mut open_gpui::TestAppContext) {
         let surface = DockSurface::from_controller(controller.clone(), cx);
 
         assert_eq!(surface.primary_space(), &DockSpaceId::from("wrapped"));
-        assert_eq!(surface.controller(), controller);
+        assert_eq!(surface.controller(cx), controller);
     });
 }
 
@@ -360,7 +362,7 @@ fn surface_open_viewport_reports_policy_disabled(cx: &mut open_gpui::TestAppCont
             )
         ));
         assert_eq!(cx.windows().len(), before_windows);
-        assert!(!surface.is_viewport_open(surface.primary_space()));
+        assert!(!surface.is_viewport_open(surface.primary_space(), cx));
     });
 }
 
@@ -449,7 +451,7 @@ fn surface_open_viewport_reports_backend_unsupported_without_registration(
             )
         ));
         assert_eq!(cx.windows().len(), before_windows);
-        assert!(!surface.is_viewport_open(surface.primary_space()));
+        assert!(!surface.is_viewport_open(surface.primary_space(), cx));
     });
 }
 
@@ -528,7 +530,7 @@ fn surface_viewport_readiness_reports_unsupported_flags_without_opening(
             ]
         );
         assert_eq!(cx.windows().len(), before_windows);
-        assert!(surface.registered_viewport_spaces().is_empty());
+        assert!(surface.registered_viewport_spaces(cx).is_empty());
     });
 }
 
@@ -587,7 +589,7 @@ fn surface_open_viewport_opens_and_reuses_supported_backend(cx: &mut open_gpui::
         };
         assert_eq!(opened.status(), DockSurfaceViewportOpenStatus::Opened);
         assert_eq!(opened.space(), surface.primary_space());
-        assert!(surface.is_viewport_open(surface.primary_space()));
+        assert!(surface.is_viewport_open(surface.primary_space(), cx));
 
         let reused = surface.open_viewport("main", viewport_options(), cx);
         let reused = match reused {
@@ -637,13 +639,13 @@ fn surface_viewport_session_opens_detached_panel_space(cx: &mut open_gpui::TestA
         };
         assert_eq!(opened.status(), DockSurfaceViewportOpenStatus::Opened);
         assert_eq!(opened.space(), &child_space);
-        assert!(viewports.is_open(&child_space));
-        assert_eq!(viewports.registered_spaces(), vec![child_space.clone()]);
+        assert!(viewports.is_open(&child_space, cx));
+        assert_eq!(viewports.registered_spaces(cx), vec![child_space.clone()]);
 
-        let placement = viewports.export_placement();
+        let placement = viewports.export_placement(cx);
         assert_eq!(
             viewports
-                .check_restore(&placement)
+                .check_restore(&placement, cx)
                 .expect("session placement should validate"),
             DockViewportRestoreReadiness {
                 matched: 1,
@@ -703,7 +705,7 @@ fn surface_snapshot_roundtrips_layout_and_viewport_placement(cx: &mut open_gpui:
         assert_eq!(restore_report.len(), 1);
         assert!(restore_report.all_opened());
         assert_eq!(
-            restored.registered_viewport_spaces(),
+            restored.registered_viewport_spaces(cx),
             vec![DockSpaceId::from("preview-window")]
         );
 
@@ -727,13 +729,13 @@ fn surface_exports_and_checks_viewport_placement_restore(cx: &mut open_gpui::Tes
             other => panic!("expected viewport to open, got {other:?}"),
         };
 
-        let placement = surface.export_viewport_placement();
+        let placement = surface.export_viewport_placement(cx);
 
         assert_eq!(placement.viewports.len(), 1);
         assert_eq!(placement.viewports[0].space, DockSpaceId::from("main"));
         assert_eq!(
             surface
-                .check_viewport_placement_restore(&placement)
+                .check_viewport_placement_restore(&placement, cx)
                 .expect("exported placement should validate against live facade viewport"),
             DockViewportRestoreReadiness {
                 matched: 1,
@@ -749,7 +751,7 @@ fn surface_exports_and_checks_viewport_placement_restore(cx: &mut open_gpui::Tes
         }]);
         assert_eq!(
             surface
-                .check_viewport_placement_restore(&missing)
+                .check_viewport_placement_restore(&missing, cx)
                 .expect("missing saved placement should still validate"),
             DockViewportRestoreReadiness {
                 matched: 0,
@@ -805,7 +807,7 @@ fn surface_opens_viewports_from_saved_placement_with_keyed_report(
                 if opened.space() == &detached
         ));
         assert_eq!(
-            surface.registered_viewport_spaces(),
+            surface.registered_viewport_spaces(cx),
             vec![detached, main.clone()]
         );
     });
@@ -866,7 +868,7 @@ fn surface_saved_placement_restore_reports_invalid_placement_without_opening(
         ));
         assert_eq!(fallback_calls, 0);
         assert_eq!(cx.windows().len(), before_windows);
-        assert!(surface.registered_viewport_spaces().is_empty());
+        assert!(surface.registered_viewport_spaces(cx).is_empty());
     });
 }
 
@@ -923,7 +925,7 @@ fn surface_restore_readiness_reports_invalid_placement_without_fallback(
         }
         assert_eq!(fallback_calls, 0);
         assert_eq!(cx.windows().len(), before_windows);
-        assert!(surface.registered_viewport_spaces().is_empty());
+        assert!(surface.registered_viewport_spaces(cx).is_empty());
     });
 }
 
@@ -982,7 +984,7 @@ fn surface_viewport_close_policy_can_be_changed_without_runtime_import(
             other => panic!("expected viewport to open, got {other:?}"),
         };
 
-        surface.set_viewport_close_policy(DockViewportClosePolicy::Prevent);
+        surface.set_viewport_close_policy(DockViewportClosePolicy::Prevent, cx);
         let should_close =
             surface.handle_viewport_window_should_close(opened.window().window_id(), cx);
 
@@ -1046,13 +1048,13 @@ fn surface_viewport_merge_back_close_moves_content_to_fallback(cx: &mut open_gpu
         assert_eq!(closed.status(), DockSurfaceViewportCloseStatus::MergedBack);
         assert_eq!(closed.space(), Some(&detached));
         assert_eq!(closed.merge_target_space(), Some(&main));
-        assert!(!surface.is_viewport_open(&detached));
+        assert!(!surface.is_viewport_open(&detached, cx));
         assert_eq!(
-            surface.registered_viewport_spaces(),
+            surface.registered_viewport_spaces(cx),
             Vec::<DockSpaceId>::new()
         );
 
-        cx.read_entity(&surface.controller(), |controller, _| {
+        cx.read_entity(&surface.controller(cx), |controller, _| {
             assert_eq!(
                 controller.graph().collect_items_in_space(&main),
                 vec![
@@ -1069,6 +1071,62 @@ fn surface_viewport_merge_back_close_moves_content_to_fallback(cx: &mut open_gpu
             );
         });
     });
+}
+
+#[open_gpui::test]
+fn surface_viewport_lifecycle_commits_one_typed_event_per_root_operation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let observed = changes.clone();
+    let (surface, opened, _subscription) = cx.update(|cx| {
+        let main = DockSpaceId::from("main");
+        let detached = DockSpaceId::from("detached");
+        let surface = DockSurface::builder(main.clone())
+            .try_layout(&two_space_layout())
+            .expect("test layout should validate")
+            .panel_factory("main-panel", "Main", test_panel)
+            .panel_factory("detached-a", "Detached A", test_panel)
+            .allow_platform_viewports(true)
+            .close_policy(DockViewportClosePolicy::MergeBack {
+                target_space: main.clone(),
+            })
+            .build(cx)
+            .expect("surface layout should validate");
+        let subscription = surface.subscribe_changes(cx, move |event, _| {
+            observed.borrow_mut().push(event.clone());
+        });
+        let opened = match surface.open_viewport(detached, viewport_options(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected detached viewport to open, got {other:?}"),
+        };
+        (surface, opened, subscription)
+    });
+
+    let _ = cx.update(|cx| {
+        let window_id = opened.window().window_id();
+        let should_close = surface.handle_viewport_window_should_close(window_id, cx);
+        assert!(should_close.allows_close());
+        let _ = surface.handle_viewport_window_closed(window_id, cx);
+    });
+    cx.run_until_parked();
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(
+        changes[0].categories(),
+        &[DockSurfaceChangeCategory::ViewportTopology]
+    );
+    assert_eq!(
+        changes[1].categories(),
+        &[
+            DockSurfaceChangeCategory::Layout,
+            DockSurfaceChangeCategory::Selection,
+            DockSurfaceChangeCategory::PanelLifecycle,
+            DockSurfaceChangeCategory::ViewportTopology,
+        ]
+    );
+    assert_eq!(cx.read(|cx| surface.revision(cx)), 2);
 }
 
 #[open_gpui::test]
@@ -1098,7 +1156,7 @@ fn surface_panel_commands_open_close_and_reopen_by_item(cx: &mut open_gpui::Test
             Some(&DockPanelPlacementTarget::stacked_with("inspector").insert_index(1))
         );
 
-        cx.read_entity(&surface.controller(), |controller, _| {
+        cx.read_entity(&surface.controller(cx), |controller, _| {
             assert!(
                 controller
                     .graph()
@@ -1149,7 +1207,7 @@ fn surface_panel_commands_open_at_explicit_placement(cx: &mut open_gpui::TestApp
             DockPanelOpenPlacementSource::Explicit
         );
 
-        cx.read_entity(&surface.controller(), |controller, _| {
+        cx.read_entity(&surface.controller(cx), |controller, _| {
             let (terminal_tabs, terminal_index) = controller
                 .graph()
                 .find_item_in_space(surface.primary_space(), &"terminal".into())
@@ -1187,7 +1245,7 @@ fn surface_panel_commands_float_and_dock_back_panel(cx: &mut open_gpui::TestAppC
             .expect("registered panel should float");
         assert!(matches!(floated, DockSurfacePanelOutcome::Floated(_)));
 
-        cx.read_entity(&surface.controller(), |controller, _| {
+        cx.read_entity(&surface.controller(cx), |controller, _| {
             assert_eq!(
                 controller
                     .graph()
@@ -1205,7 +1263,7 @@ fn surface_panel_commands_float_and_dock_back_panel(cx: &mut open_gpui::TestAppC
         };
         assert!(docked.changed());
 
-        cx.read_entity(&surface.controller(), |controller, _| {
+        cx.read_entity(&surface.controller(cx), |controller, _| {
             assert!(
                 controller
                     .graph()

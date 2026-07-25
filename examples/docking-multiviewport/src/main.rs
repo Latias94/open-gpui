@@ -7,9 +7,11 @@ use open_gpui_docking::prelude::{
     DockSurfaceViewportUnavailable,
 };
 use open_gpui_platform::application;
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 const MAIN_SPACE: &str = "main";
 const SECONDARY_SPACE: &str = "preview-window";
+const SNAPSHOT_DEBOUNCE: Duration = Duration::from_millis(250);
 
 struct ExamplePanel {
     title: &'static str,
@@ -176,6 +178,39 @@ fn handle_secondary_open_outcome(outcome: DockSurfaceViewportOpenOutcome) {
 fn main() {
     application().run(|cx: &mut App| {
         let surface = build_surface(cx);
+        let snapshot_export_pending = Rc::new(Cell::new(false));
+        let pending_for_events = snapshot_export_pending.clone();
+        let surface_for_events = surface.clone();
+        surface
+            .subscribe_changes(cx, move |event, cx| {
+                log::info!(
+                    "dock commit revision={} categories={:?}",
+                    event.revision(),
+                    event.categories()
+                );
+                if pending_for_events.replace(true) {
+                    return;
+                }
+
+                let pending = pending_for_events.clone();
+                let surface = surface_for_events.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor().timer(SNAPSHOT_DEBOUNCE).await;
+                    cx.update(|cx| {
+                        let snapshot = surface.export_snapshot(cx);
+                        log::info!(
+                            "application exported dock snapshot revision={} spaces={} viewport_placements={}",
+                            snapshot.revision(),
+                            snapshot.layout().space_count(),
+                            snapshot.viewport_placement().viewports.len()
+                        );
+                        pending.set(false);
+                    });
+                })
+                .detach();
+            })
+            .detach();
+
         surface
             .open_primary_window(main_window_options(cx), cx)
             .expect("failed to open primary docking window");
@@ -208,10 +243,26 @@ fn main() {
             snapshot.layout().space_count(),
             snapshot.viewport_placement().viewports.len()
         );
-        match viewports.check_restore(snapshot.viewport_placement()) {
+        match viewports.check_restore(snapshot.viewport_placement(), cx) {
             Ok(readiness) => log::info!("viewport placement restore readiness: {readiness:?}"),
             Err(error) => log::warn!("viewport placement restore check failed: {error}"),
         }
+
+        let surface_for_activation = surface.clone();
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            cx.update(|cx| {
+                let (request, completion) = surface_for_activation
+                    .activate_panel_with_completion("editor", cx, move |outcome, _cx| {
+                        log::info!("editor activation settled: {outcome:?}");
+                    });
+                log::info!("requested editor activation sequence={}", request.sequence());
+                completion.detach();
+            });
+        })
+        .detach();
 
         cx.activate(true);
     });

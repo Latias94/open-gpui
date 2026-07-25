@@ -9,10 +9,11 @@ use crate::{
         DockFloatingBoundsRequest, DockPayloadDropRelease, DockRuntimeDragSession,
         DockSplitterResizeRequest, SplitterDragAxis,
     },
+    surface::{DockSurfaceChangeCategory, with_detached_root_transaction},
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
     workspace_move_validation::dock_target_validator,
 };
-use open_gpui::{Bounds, Context, Pixels, Point, Window};
+use open_gpui::{AppContext as _, Bounds, Context, Pixels, Point, Window};
 
 pub(crate) struct DockHostTabDragBegin {
     pub(crate) outcome: DockHostInteractionOutcome,
@@ -253,12 +254,14 @@ impl DockHost {
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
         let outcome = DockHostInteractionOutcome::from_commit_result(
-            self.mutate_controller_from_host(cx, |controller| {
-                controller.select_tab(tabs, item.clone())
-            }),
+            self.mutate_controller_from_host(
+                cx,
+                &[DockSurfaceChangeCategory::Selection],
+                |controller| controller.select_tab(tabs, item.clone()),
+            ),
             notify_on_unchanged,
         );
-        self.with_panel_focus(outcome, item.clone())
+        self.with_panel_focus(outcome, item.clone(), cx)
     }
 
     fn commit_close_item_interaction(
@@ -269,9 +272,15 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         let space = self.space().clone();
         DockHostInteractionOutcome::from_commit_result(
-            self.mutate_controller_from_host(cx, |controller| {
-                controller.close_item(space, item.clone())
-            }),
+            self.mutate_controller_from_host(
+                cx,
+                &[
+                    DockSurfaceChangeCategory::Layout,
+                    DockSurfaceChangeCategory::Selection,
+                    DockSurfaceChangeCategory::PanelLifecycle,
+                ],
+                |controller| controller.close_item(space, item.clone()),
+            ),
             notify_on_unchanged,
         )
     }
@@ -284,41 +293,111 @@ impl DockHost {
     ) -> DockHostResolvedDropCommit {
         let source_space = request.source_space.clone();
         let target_space = request.target.target_space().clone();
-        match self.mutate_controller_from_host_with(
-            cx,
-            |controller| {
-                controller
-                    .workspace_mut()
-                    .commit_resolved_payload_drop(request)
-            },
-            |outcome| outcome.changed(),
-        ) {
-            Ok(outcome) => {
-                let vacated_source_changed = if outcome.changed() {
-                    self.viewport_runtime()
-                        .vacate_empty_payload_drop_source_viewport(&source_space, &target_space, cx)
-                } else {
-                    false
-                };
-                DockHostResolvedDropCommit {
-                    outcome: DockHostInteractionOutcome::from_commit_result(
-                        Ok(outcome.action()),
-                        notify_on_unchanged,
-                    )
-                    .merge(DockHostInteractionOutcome::from_session_changed(
-                        vacated_source_changed,
-                    )),
-                    focus_item: outcome.focus_item().cloned(),
+        let categories = [
+            DockSurfaceChangeCategory::Layout,
+            DockSurfaceChangeCategory::Selection,
+            DockSurfaceChangeCategory::PanelLifecycle,
+        ];
+        let Some(owner) = self.surface_owner_entity() else {
+            return match self.mutate_controller_from_host_with(
+                cx,
+                &categories,
+                |controller| {
+                    controller
+                        .workspace_mut()
+                        .commit_resolved_payload_drop(request)
+                },
+                |outcome| outcome.changed(),
+            ) {
+                Ok(outcome) => {
+                    let vacated_source_changed = if outcome.changed() {
+                        self.viewport_runtime()
+                            .vacate_empty_payload_drop_source_viewport(
+                                &source_space,
+                                &target_space,
+                                cx,
+                            )
+                    } else {
+                        false
+                    };
+                    DockHostResolvedDropCommit {
+                        outcome: DockHostInteractionOutcome::from_commit_result(
+                            Ok(outcome.action()),
+                            notify_on_unchanged,
+                        )
+                        .merge(
+                            DockHostInteractionOutcome::from_session_changed(
+                                vacated_source_changed,
+                            ),
+                        ),
+                        focus_item: outcome.focus_item().cloned(),
+                    }
                 }
+                Err(error) => DockHostResolvedDropCommit {
+                    outcome: DockHostInteractionOutcome::from_commit_result(
+                        Err(error),
+                        notify_on_unchanged,
+                    ),
+                    focus_item: None,
+                },
+            };
+        };
+
+        let controller = self.controller_entity();
+        let runtime = self.viewport_runtime().clone();
+        with_detached_root_transaction(&owner, cx, |transaction, cx| {
+            let (result, did_change) = cx.update_entity(&controller, |controller, cx| {
+                let result = controller
+                    .workspace_mut()
+                    .commit_resolved_payload_drop(request);
+                let did_change = result
+                    .as_ref()
+                    .map(|outcome| outcome.changed())
+                    .unwrap_or(false);
+                if did_change {
+                    cx.notify();
+                }
+                (result, did_change)
+            });
+            if did_change {
+                cx.update_entity(&owner, |owner, _| {
+                    owner.record_changes(transaction, categories);
+                });
             }
-            Err(error) => DockHostResolvedDropCommit {
-                outcome: DockHostInteractionOutcome::from_commit_result(
-                    Err(error),
-                    notify_on_unchanged,
-                ),
-                focus_item: None,
-            },
-        }
+            match result {
+                Ok(outcome) => {
+                    let vacated_source_changed = if did_change {
+                        runtime.vacate_empty_payload_drop_source_viewport_with_transaction(
+                            &source_space,
+                            &target_space,
+                            Some(transaction),
+                            cx,
+                        )
+                    } else {
+                        false
+                    };
+                    DockHostResolvedDropCommit {
+                        outcome: DockHostInteractionOutcome::from_commit_result(
+                            Ok(outcome.action()),
+                            notify_on_unchanged,
+                        )
+                        .merge(
+                            DockHostInteractionOutcome::from_session_changed(
+                                vacated_source_changed,
+                            ),
+                        ),
+                        focus_item: outcome.focus_item().cloned(),
+                    }
+                }
+                Err(error) => DockHostResolvedDropCommit {
+                    outcome: DockHostInteractionOutcome::from_commit_result(
+                        Err(error),
+                        notify_on_unchanged,
+                    ),
+                    focus_item: None,
+                },
+            }
+        })
     }
 
     fn commit_resize_split_interaction(
@@ -328,9 +407,11 @@ impl DockHost {
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
-            self.mutate_controller_from_host(cx, |controller| {
-                controller.resize_splits(&request.updates)
-            }),
+            self.mutate_controller_from_host(
+                cx,
+                &[DockSurfaceChangeCategory::Layout],
+                |controller| controller.resize_splits(&request.updates),
+            ),
             notify_on_unchanged,
         )
     }
@@ -343,9 +424,13 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         let space = request.space;
         DockHostInteractionOutcome::from_commit_result(
-            self.mutate_controller_from_host(cx, |controller| {
-                controller.set_floating_bounds(space, request.floating, request.bounds)
-            }),
+            self.mutate_controller_from_host(
+                cx,
+                &[DockSurfaceChangeCategory::Layout],
+                |controller| {
+                    controller.set_floating_bounds(space, request.floating, request.bounds)
+                },
+            ),
             notify_on_unchanged,
         )
     }
@@ -359,9 +444,11 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         let space = space.clone();
         DockHostInteractionOutcome::from_commit_result(
-            self.mutate_controller_from_host(cx, |controller| {
-                controller.raise_floating(space, floating)
-            }),
+            self.mutate_controller_from_host(
+                cx,
+                &[DockSurfaceChangeCategory::Layout],
+                |controller| controller.raise_floating(space, floating),
+            ),
             notify_on_unchanged,
         )
     }
@@ -370,13 +457,15 @@ impl DockHost {
         &mut self,
         outcome: DockHostInteractionOutcome,
         item: DockItemId,
+        cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         if matches!(outcome, DockHostInteractionOutcome::Rejected(_)) {
             return outcome;
         }
-        if self.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(
-            DockViewportFocusRequest::panel(item),
-        )) {
+        if self.request_viewport_focus_command_in_context(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item)),
+            cx,
+        ) {
             outcome.merge(DockHostInteractionOutcome::Notify { changed: false })
         } else {
             outcome
@@ -387,7 +476,7 @@ impl DockHost {
         &mut self,
         outcome: DockHostInteractionOutcome,
         item: Option<DockItemId>,
-        cx: &Context<DockHost>,
+        cx: &mut Context<DockHost>,
     ) -> DockHostInteractionOutcome {
         let Some(item) = item else {
             return outcome;
@@ -403,6 +492,6 @@ impl DockHost {
         }) {
             return outcome;
         }
-        self.with_panel_focus(outcome, item)
+        self.with_panel_focus(outcome, item, cx)
     }
 }

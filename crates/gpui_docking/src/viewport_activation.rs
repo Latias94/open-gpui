@@ -1,8 +1,8 @@
 use crate::{
     DockHost, DockSpaceId, DockViewportFocusCommand, DockViewportFocusCommandSource,
-    DockViewportFocusRequest,
+    DockViewportFocusRequest, surface::DockSurfaceActivationBinding,
 };
-use open_gpui::{AnyWindowHandle, App, PlatformFocusedWindow, WindowId};
+use open_gpui::{AnyWindowHandle, App, PlatformFocusedWindow, WeakEntity, WindowId};
 use std::{cell::Cell, rc::Rc};
 
 /// Platform activation policy for a runtime viewport activation transaction.
@@ -58,6 +58,12 @@ pub(crate) struct DockViewportActivationTransaction {
     focus_source: DockViewportFocusCommandSource,
     /// Explicit focus request to apply after the window is active.
     focus_request: DockViewportFocusRequest,
+    /// Optional embedded host target for surface activation.
+    ///
+    /// A surface host may be nested below an arbitrary window root, so a window-root downcast
+    /// cannot be the only activation route.
+    target_host: Option<WeakEntity<DockHost>>,
+    surface_activation: Option<DockSurfaceActivationBinding>,
 }
 
 impl DockViewportActivationTransaction {
@@ -72,6 +78,8 @@ impl DockViewportActivationTransaction {
             window_activation: DockViewportWindowActivation::Request,
             focus_source: DockViewportFocusCommandSource::ViewportActivation,
             focus_request,
+            target_host: None,
+            surface_activation: None,
         }
     }
 
@@ -86,6 +94,26 @@ impl DockViewportActivationTransaction {
             window_activation: DockViewportWindowActivation::DoNotRequest,
             focus_source: DockViewportFocusCommandSource::CloseRecovery,
             focus_request,
+            target_host: None,
+            surface_activation: None,
+        }
+    }
+
+    pub(crate) fn surface_activation(
+        space: impl Into<DockSpaceId>,
+        window: impl Into<AnyWindowHandle>,
+        focus_request: DockViewportFocusRequest,
+        binding: DockSurfaceActivationBinding,
+        target_host: WeakEntity<DockHost>,
+    ) -> Self {
+        Self {
+            space: space.into(),
+            window: window.into(),
+            window_activation: DockViewportWindowActivation::Request,
+            focus_source: DockViewportFocusCommandSource::ViewportActivation,
+            focus_request,
+            target_host: Some(target_host),
+            surface_activation: Some(binding),
         }
     }
 
@@ -114,6 +142,14 @@ impl DockViewportActivationTransaction {
 
     pub(crate) fn focus_source(&self) -> DockViewportFocusCommandSource {
         self.focus_source
+    }
+
+    pub(crate) fn surface_activation_binding(&self) -> Option<&DockSurfaceActivationBinding> {
+        self.surface_activation.as_ref()
+    }
+
+    pub(crate) fn target_host(&self) -> Option<&WeakEntity<DockHost>> {
+        self.target_host.as_ref()
     }
 
     pub(crate) fn window_id(&self) -> WindowId {
@@ -226,6 +262,65 @@ impl DockViewportActivationBackendFocusApply {
     }
 }
 
+fn apply_activation_to_host(
+    transaction: &DockViewportActivationTransaction,
+    focus_command: &DockViewportFocusCommand,
+    should_activate_window: bool,
+    host: &mut DockHost,
+    window: &mut open_gpui::Window,
+    cx: &mut open_gpui::Context<DockHost>,
+    outcome: &Cell<DockViewportActivationApplyOutcome>,
+) {
+    if host.space() != transaction.space()
+        || window.window_handle() != transaction.window()
+        || transaction
+            .target_host()
+            .is_some_and(|target| target.entity_id() != cx.entity().entity_id())
+    {
+        outcome.set(DockViewportActivationApplyOutcome::SpaceMismatch);
+        return;
+    }
+    // Validate a surface activation before touching backend-focus state. A queued callback from
+    // an old host/window generation must be a complete no-op rather than a runtime mutation that
+    // is rejected only when the focus command reaches the host.
+    if transaction
+        .surface_activation_binding()
+        .is_some_and(|binding| !binding.is_current(cx))
+    {
+        outcome.set(DockViewportActivationApplyOutcome::NoTarget);
+        return;
+    }
+    let backend_focus = DockViewportActivationBackendFocusObservation::from_platform_focused_window(
+        cx.focused_window(),
+        transaction.window(),
+    );
+    let backend_focus_apply = host
+        .viewport_runtime()
+        .apply_activation_backend_focus(transaction, backend_focus);
+    host.viewport_runtime()
+        .settle_backend_focus_cancellation_in_context(cx);
+    let focus_changed = if backend_focus.target_focused() {
+        host.request_viewport_focus_command_in_context(focus_command.clone(), cx)
+    } else {
+        false
+    };
+    let window_activation_requested = should_activate_window && !backend_focus.target_focused();
+    if window_activation_requested {
+        window.activate_window();
+    }
+    let changed = backend_focus_apply.changed() || focus_changed || window_activation_requested;
+    outcome.set(DockViewportActivationApplyOutcome::Applied {
+        changed,
+        focus_command_queued: focus_changed,
+        window_activation_requested,
+        backend_focus,
+        backend_focus_apply,
+    });
+    if changed {
+        cx.notify();
+    }
+}
+
 /// Applies a viewport activation transaction to the matching runtime host window.
 ///
 /// Returns a structured outcome so lifecycle code can distinguish no-op from stale transactions.
@@ -237,62 +332,64 @@ pub(crate) fn apply_viewport_activation_transaction(
         return DockViewportActivationApplyOutcome::NoTarget;
     };
 
-    let focus_command = DockViewportFocusCommand::new(
-        transaction.focus_source(),
-        transaction.focus_request().clone(),
-    );
+    let focus_command = match transaction.surface_activation_binding() {
+        Some(binding) => DockViewportFocusCommand::surface_activation(
+            transaction.focus_request().clone(),
+            binding.clone(),
+        ),
+        None => DockViewportFocusCommand::new(
+            transaction.focus_source(),
+            transaction.focus_request().clone(),
+        ),
+    };
     let window_activation = transaction.window_activation();
     let outcome = Rc::new(Cell::new(
         DockViewportActivationApplyOutcome::WindowUnavailable,
     ));
-    let outcome_flag = outcome.clone();
     let should_activate_window = matches!(window_activation, DockViewportWindowActivation::Request);
-    if transaction
-        .window()
-        .update(cx, move |view, window, cx| {
-            let Ok(host) = view.downcast::<DockHost>() else {
-                outcome_flag.set(DockViewportActivationApplyOutcome::WrongRootView);
-                return;
-            };
-            if host.read(cx).space() != transaction.space() {
-                outcome_flag.set(DockViewportActivationApplyOutcome::SpaceMismatch);
+    let target_host = transaction.target_host().cloned();
+    let applied = if let Some(target_host) = target_host {
+        let transaction_for_host = transaction.clone();
+        let focus_command_for_host = focus_command.clone();
+        let outcome_for_host = outcome.clone();
+        target_host.update_in(cx, move |host, window, cx| {
+            if window.window_handle().window_id() != transaction_for_host.window_id() {
+                outcome_for_host.set(DockViewportActivationApplyOutcome::WindowUnavailable);
                 return;
             }
+            apply_activation_to_host(
+                &transaction_for_host,
+                &focus_command_for_host,
+                should_activate_window,
+                host,
+                window,
+                cx,
+                &outcome_for_host,
+            );
+        })
+    } else {
+        let transaction_for_window = transaction.clone();
+        let focus_command_for_window = focus_command.clone();
+        let outcome_for_window = outcome.clone();
+        transaction.window().update(cx, move |view, window, cx| {
+            let Ok(host) = view.downcast::<DockHost>() else {
+                outcome_for_window.set(DockViewportActivationApplyOutcome::WrongRootView);
+                return;
+            };
             host.update(cx, |host, cx| {
-                let backend_focus =
-                    DockViewportActivationBackendFocusObservation::from_platform_focused_window(
-                        cx.focused_window(),
-                        transaction.window(),
-                    );
-                let backend_focus_apply = host
-                    .viewport_runtime()
-                    .apply_activation_backend_focus(&transaction, backend_focus);
-                let focus_changed = if backend_focus.target_focused() {
-                    host.request_viewport_focus_command(focus_command.clone())
-                } else {
-                    false
-                };
-                let window_activation_requested =
-                    should_activate_window && !backend_focus.target_focused();
-                if window_activation_requested {
-                    window.activate_window();
-                }
-                let changed =
-                    backend_focus_apply.changed() || focus_changed || window_activation_requested;
-                outcome_flag.set(DockViewportActivationApplyOutcome::Applied {
-                    changed,
-                    focus_command_queued: focus_changed,
-                    window_activation_requested,
-                    backend_focus,
-                    backend_focus_apply,
-                });
-                if changed {
-                    cx.notify();
-                }
+                apply_activation_to_host(
+                    &transaction_for_window,
+                    &focus_command_for_window,
+                    should_activate_window,
+                    host,
+                    window,
+                    cx,
+                    &outcome_for_window,
+                )
             });
         })
-        .is_err()
-    {
+    };
+    if applied.is_err() {
         return DockViewportActivationApplyOutcome::WindowUnavailable;
     }
 

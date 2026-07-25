@@ -1,10 +1,14 @@
 #[cfg(test)]
 use crate::DockViewportActivationTransaction;
+use crate::surface::{
+    DockSurfaceActivationOutcome, DockSurfaceChangeCategory, DockSurfaceOwner,
+    DockSurfaceTransactionId, with_detached_root_transaction,
+};
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockNodeId,
-    DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
+    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformFocusRestoreGate, DockViewportResolvedDropRoute,
     DockViewportResolvedDropRouteOutcome, DockViewportRestoreReadiness,
     DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeStatus,
@@ -39,8 +43,8 @@ use crate::{
 #[cfg(test)]
 use open_gpui::WindowBounds;
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription,
-    Window, WindowId, WindowOptions,
+    AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels, Point, Result,
+    Subscription, WeakEntity, Window, WindowId, WindowOptions,
 };
 #[cfg(test)]
 use std::cell::{Ref, RefMut};
@@ -62,6 +66,68 @@ mod scene_ops;
 pub struct DockViewportRuntimeHandle {
     runtime: Rc<RefCell<DockViewportRuntime>>,
     window_closed_observer_installed: Rc<Cell<bool>>,
+    surface_commit_sink: DockViewportRuntimeCommitSink,
+    active_surface_transaction: Rc<Cell<Option<DockSurfaceTransactionId>>>,
+    surface_owner: Rc<RefCell<Option<WeakEntity<DockSurfaceOwner>>>>,
+}
+
+type DockViewportRuntimeCommitCallback =
+    dyn Fn(Option<DockSurfaceTransactionId>, &[DockSurfaceChangeCategory], &mut App);
+
+#[derive(Clone, Default)]
+struct DockViewportRuntimeCommitSink {
+    callback: Rc<RefCell<Option<Rc<DockViewportRuntimeCommitCallback>>>>,
+}
+
+impl std::fmt::Debug for DockViewportRuntimeCommitSink {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DockViewportRuntimeCommitSink")
+            .field("installed", &self.callback.borrow().is_some())
+            .finish()
+    }
+}
+
+impl DockViewportRuntimeCommitSink {
+    fn install(
+        &self,
+        callback: impl Fn(Option<DockSurfaceTransactionId>, &[DockSurfaceChangeCategory], &mut App)
+        + 'static,
+    ) {
+        let mut slot = self.callback.borrow_mut();
+        assert!(
+            slot.is_none(),
+            "dock viewport runtime surface commit sink is already installed"
+        );
+        *slot = Some(Rc::new(callback));
+    }
+
+    fn publish(
+        &self,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+        categories: &[DockSurfaceChangeCategory],
+        cx: &mut App,
+    ) {
+        if categories.is_empty() {
+            return;
+        }
+        let callback = self.callback.borrow().clone();
+        if let Some(callback) = callback {
+            callback(surface_transaction, categories, cx);
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DockViewportRuntimeTransactionScope {
+    active: Rc<Cell<Option<DockSurfaceTransactionId>>>,
+    previous: Option<DockSurfaceTransactionId>,
+}
+
+impl Drop for DockViewportRuntimeTransactionScope {
+    fn drop(&mut self) {
+        self.active.set(self.previous);
+    }
 }
 
 fn clear_dockhost_drop_preview_for_window(window: AnyWindowHandle, cx: &mut App) -> bool {
@@ -94,13 +160,22 @@ fn clear_dockhost_drop_previews(
     changed
 }
 
-fn apply_runtime_update<C: open_gpui::AppContext>(
+fn refresh_runtime_update_with_commit(
     runtime: &DockViewportRuntimeHandle,
     update: DockViewportRuntimeUpdate,
-    cx: &mut C,
+    cx: &mut App,
+) -> bool {
+    runtime.publish_surface_commit(&update, cx);
+    refresh_runtime_update(update, cx)
+}
+
+fn apply_runtime_update(
+    runtime: &DockViewportRuntimeHandle,
+    update: DockViewportRuntimeUpdate,
+    cx: &mut App,
 ) -> bool {
     let reconciled = runtime.reconcile_viewport_frame(cx);
-    let changed = refresh_runtime_update(update, cx);
+    let changed = refresh_runtime_update_with_commit(runtime, update, cx);
     changed || reconciled
 }
 
@@ -112,7 +187,7 @@ fn apply_runtime_update_from_window(
 ) -> bool {
     let reconciled =
         runtime.reconcile_viewport_frame_except_window(window.window_handle().window_id(), cx);
-    let changed = refresh_runtime_update(update, cx);
+    let changed = refresh_runtime_update_with_commit(runtime, update, cx);
     changed || reconciled
 }
 
@@ -136,6 +211,15 @@ fn apply_close_recovery_activation_for_runtime(
     apply_viewport_activation_transaction(recovery.activation, cx)
 }
 
+fn viewport_close_removed_runtime_mapping(outcome: &DockViewportCloseOutcome) -> bool {
+    matches!(
+        outcome.status(),
+        DockViewportCloseStatus::Closed
+            | DockViewportCloseStatus::MergedBack
+            | DockViewportCloseStatus::MergeBackFailed
+    )
+}
+
 fn install_should_close_hook(
     runtime: DockViewportRuntimeHandle,
     window: AnyWindowHandle,
@@ -152,6 +236,51 @@ fn install_should_close_hook(
 }
 
 impl DockViewportRuntimeHandle {
+    /// Runs runtime work inside the current surface transaction, or opens one when this handle
+    /// belongs to a facade-owned surface.
+    ///
+    /// Runtime callbacks can synchronously re-enter GPUI while a platform window is opening or
+    /// closing. The explicit scope keeps those nested observations attached to the same owner
+    /// transaction without holding an entity borrow across the re-entry.
+    pub(crate) fn with_surface_transaction<R>(
+        &self,
+        cx: &mut App,
+        update: impl FnOnce(Option<DockSurfaceTransactionId>, &mut App) -> R,
+    ) -> R {
+        if let Some(transaction) = self.active_surface_transaction.get() {
+            return update(Some(transaction), cx);
+        }
+        let Some(owner) = self.surface_owner() else {
+            return update(None, cx);
+        };
+        with_detached_root_transaction(&owner, cx, |transaction, cx| {
+            let _scope = self.enter_surface_transaction(transaction);
+            update(Some(transaction), cx)
+        })
+    }
+
+    fn settle_backend_focus_cancellation(&self, cx: &mut App) {
+        self.settle_backend_focus_cancellations(cx);
+    }
+
+    /// Settles every surface activation displaced by backend-focus bookkeeping performed since
+    /// the previous runtime boundary.
+    ///
+    /// Runtime state can be sampled more than once during one route resolution. The queue is
+    /// drained only after the runtime borrow ends, and each binding schedules delivery from the
+    /// owner context so callbacks cannot re-enter an active owner update.
+    pub(crate) fn settle_backend_focus_cancellations<C: open_gpui::AppContext>(&self, cx: &mut C) {
+        let cancellations = self.runtime.borrow_mut().take_backend_focus_cancellations();
+        if cancellations.is_empty() {
+            return;
+        }
+        for activation in cancellations {
+            if let Some(binding) = activation.surface_activation_binding() {
+                binding.settle(DockSurfaceActivationOutcome::Superseded, cx);
+            }
+        }
+    }
+
     /// Creates a handle around a runtime with the default close policy.
     pub fn new(controller: Entity<DockController>) -> Self {
         DockViewportRuntime::new(controller).into_handle()
@@ -196,7 +325,78 @@ impl DockViewportRuntimeHandle {
         Self {
             runtime: Rc::new(RefCell::new(runtime)),
             window_closed_observer_installed: Rc::new(Cell::new(false)),
+            surface_commit_sink: DockViewportRuntimeCommitSink::default(),
+            active_surface_transaction: Rc::new(Cell::new(None)),
+            surface_owner: Rc::new(RefCell::new(None)),
         }
+    }
+
+    pub(crate) fn install_surface_owner(&self, owner: WeakEntity<DockSurfaceOwner>) {
+        let mut installed = self.surface_owner.borrow_mut();
+        assert!(
+            installed.is_none(),
+            "dock viewport runtime surface owner is already installed"
+        );
+        *installed = Some(owner);
+    }
+
+    fn surface_owner(&self) -> Option<Entity<DockSurfaceOwner>> {
+        self.surface_owner
+            .borrow()
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+    }
+
+    pub(crate) fn install_surface_commit_sink(
+        &self,
+        callback: impl Fn(Option<DockSurfaceTransactionId>, &[DockSurfaceChangeCategory], &mut App)
+        + 'static,
+    ) {
+        self.surface_commit_sink.install(callback);
+    }
+
+    fn publish_surface_commit(&self, update: &DockViewportRuntimeUpdate, cx: &mut App) {
+        let active_transaction = self.active_surface_transaction.get();
+        if let (Some(update_transaction), Some(active_transaction)) =
+            (update.surface_transaction(), active_transaction)
+        {
+            assert_eq!(
+                update_transaction, active_transaction,
+                "viewport runtime commit belongs to a different active surface transaction"
+            );
+        }
+        self.surface_commit_sink.publish(
+            update.surface_transaction().or(active_transaction),
+            update.change_categories(),
+            cx,
+        );
+    }
+
+    fn enter_surface_transaction(
+        &self,
+        transaction: DockSurfaceTransactionId,
+    ) -> DockViewportRuntimeTransactionScope {
+        let previous = self.active_surface_transaction.get();
+        assert!(
+            previous.is_none() || previous == Some(transaction),
+            "cannot nest viewport runtime work from different surface transactions"
+        );
+        self.active_surface_transaction.set(Some(transaction));
+        DockViewportRuntimeTransactionScope {
+            active: self.active_surface_transaction.clone(),
+            previous,
+        }
+    }
+
+    fn publish_viewport_topology_commit(
+        &self,
+        changed: bool,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+        cx: &mut App,
+    ) {
+        let mut update = DockViewportRuntimeUpdate::default();
+        update.mark_viewport_topology(changed, surface_transaction);
+        self.publish_surface_commit(&update, cx);
     }
 
     pub(crate) fn visual_style_resolver(&self) -> Option<crate::DockVisualStyleResolver> {
@@ -260,18 +460,23 @@ impl DockViewportRuntimeHandle {
         platform_focus_restore_gate: DockViewportPlatformFocusRestoreGate,
         cx: &mut App,
     ) -> crate::DockViewportConfirmedBackendFocusOutcome {
-        self.runtime
+        let outcome = self
+            .runtime
             .borrow_mut()
             .confirmed_backend_window_focus_outcome(
                 space,
                 window_id,
                 platform_focus_restore_gate,
                 cx,
-            )
+            );
+        self.settle_backend_focus_cancellation(cx);
+        outcome
     }
 
     pub(crate) fn reconcile_backend_window_focus(&self, cx: &mut App) -> bool {
-        self.runtime.borrow_mut().reconcile_backend_window_focus(cx)
+        let changed = self.runtime.borrow_mut().reconcile_backend_window_focus(cx);
+        self.settle_backend_focus_cancellation(cx);
+        changed
     }
 
     pub(crate) fn apply_activation_backend_focus(
@@ -282,6 +487,10 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .apply_activation_backend_focus(activation, backend_focus)
+    }
+
+    pub(crate) fn settle_backend_focus_cancellation_in_context(&self, cx: &mut Context<DockHost>) {
+        self.settle_backend_focus_cancellations(cx);
     }
 
     #[cfg(test)]
@@ -329,7 +538,13 @@ impl DockViewportRuntimeHandle {
         outcome: &DockViewportCloseOutcome,
         cx: &mut App,
     ) -> DockViewportActivationApplyOutcome {
-        apply_close_recovery_activation_for_runtime(&self.runtime, outcome, cx)
+        let activation = apply_close_recovery_activation_for_runtime(&self.runtime, outcome, cx);
+        self.publish_viewport_topology_commit(
+            viewport_close_removed_runtime_mapping(outcome),
+            None,
+            cx,
+        );
+        activation
     }
 
     #[cfg(test)]
@@ -362,7 +577,7 @@ impl DockViewportRuntimeHandle {
             .runtime
             .borrow_mut()
             .apply_platform_window_facts(window_id, window_facts);
-        refresh_runtime_update(update, cx)
+        refresh_runtime_update_with_commit(self, update, cx)
     }
 
     #[cfg(test)]
@@ -589,16 +804,42 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
+        self.open_viewport_unchecked_policy_for_surface_transaction(space, options, None, cx)
+    }
+
+    pub(crate) fn open_viewport_unchecked_policy_in_transaction(
+        &self,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        surface_transaction: DockSurfaceTransactionId,
+        cx: &mut App,
+    ) -> Result<DockViewportOpenOutcome> {
+        let _surface_transaction_scope = self.enter_surface_transaction(surface_transaction);
+        self.open_viewport_unchecked_policy_for_surface_transaction(
+            space,
+            options,
+            Some(surface_transaction),
+            cx,
+        )
+    }
+
+    fn open_viewport_unchecked_policy_for_surface_transaction(
+        &self,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+        cx: &mut App,
+    ) -> Result<DockViewportOpenOutcome> {
         self.ensure_platform_viewport_windows_supported(cx)?;
         self.ensure_window_closed_observer(cx);
 
         let space = space.into();
-        let (reusable, reusable_effects) = {
-            self.runtime
-                .borrow_mut()
-                .reusable_window_for_space_with_cleanup(&space, cx)
-                .into_parts()
-        };
+        let reusable_outcome = self
+            .runtime
+            .borrow_mut()
+            .reusable_window_for_space_with_cleanup(&space, cx);
+        let reusable_topology_changed = reusable_outcome.topology_changed();
+        let (reusable, reusable_effects) = reusable_outcome.into_parts();
         let status = match reusable {
             DockViewportReusableWindow::Reused(window) => {
                 if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
@@ -638,14 +879,25 @@ impl DockViewportRuntimeHandle {
             DockViewportReusableWindow::Missing => DockViewportOpenStatus::Opened,
         };
         apply_viewport_window_effects(reusable_effects, cx);
+        let mut stale_cleanup_update = DockViewportRuntimeUpdate::default();
+        stale_cleanup_update.mark_viewport_topology(reusable_topology_changed, surface_transaction);
+        self.publish_surface_commit(&stale_cleanup_update, cx);
 
         let controller = self.runtime.borrow().controller_entity();
         let host_space = space.clone();
         let host_runtime = self.clone();
+        let surface_owner = self.surface_owner();
         let window = cx
             .open_window(options, move |_, cx| {
-                cx.new(move |cx| {
-                    DockHost::from_controller(controller, host_space, host_runtime, cx)
+                cx.new(move |cx| match surface_owner {
+                    Some(surface_owner) => DockHost::from_surface_owner(
+                        controller,
+                        host_space,
+                        host_runtime,
+                        &surface_owner,
+                        cx,
+                    ),
+                    None => DockHost::from_controller(controller, host_space, host_runtime, cx),
                 })
             })?
             .into();
@@ -655,10 +907,21 @@ impl DockViewportRuntimeHandle {
             return Err(error);
         }
 
-        let registration = self
-            .runtime
-            .borrow_mut()
-            .register_opened_viewport_with_cleanup(space.clone(), window);
+        let registration = match surface_transaction {
+            Some(surface_transaction) => self
+                .runtime
+                .borrow_mut()
+                .register_opened_viewport_with_cleanup_in_transaction(
+                    space.clone(),
+                    window,
+                    surface_transaction,
+                ),
+            None => self
+                .runtime
+                .borrow_mut()
+                .register_opened_viewport_with_cleanup(space.clone(), window),
+        };
+        self.publish_surface_commit(registration.runtime_update(), cx);
         apply_viewport_window_effects(registration.window_effects(), cx);
         refresh_windows(vec![window], cx);
 
@@ -677,9 +940,19 @@ impl DockViewportRuntimeHandle {
 
         let controller = self.runtime.borrow().controller_entity();
         let host_runtime = self.clone();
+        let surface_owner = self.surface_owner();
         let window = cx
             .open_window(options, move |_, cx| {
-                cx.new(move |cx| DockHost::from_controller(controller, space, host_runtime, cx))
+                cx.new(move |cx| match surface_owner {
+                    Some(surface_owner) => DockHost::from_surface_owner(
+                        controller,
+                        space,
+                        host_runtime,
+                        &surface_owner,
+                        cx,
+                    ),
+                    None => DockHost::from_controller(controller, space, host_runtime, cx),
+                })
             })?
             .into();
 
@@ -802,13 +1075,23 @@ impl DockViewportRuntimeHandle {
                 }
             }
         };
-        let outcome = {
+        let (outcome, runtime_update) = {
             let mut runtime = self.runtime.borrow_mut();
-            let completed = runtime.complete_committed_tear_off_window(committed, window, cx);
+            let (completed, runtime_update) =
+                runtime.complete_committed_tear_off_window(committed, window, cx);
             let outcome = DockViewportTearOffOpenOutcome::Completed(completed);
             runtime.record_tear_off_outcome(&outcome);
-            outcome
+            (outcome, runtime_update)
         };
+        self.publish_surface_commit(&runtime_update, cx);
+        if let DockViewportTearOffOpenOutcome::Completed(completed) = &outcome {
+            let mut graph_update = DockViewportRuntimeUpdate::default();
+            graph_update.mark_graph_commit(
+                completed.action().changed(),
+                self.active_surface_transaction.get(),
+            );
+            self.publish_surface_commit(&graph_update, cx);
+        }
         if let DockViewportTearOffOpenOutcome::Completed(completed) = &outcome {
             apply_viewport_window_effects(completed.window_effects(), cx);
         }

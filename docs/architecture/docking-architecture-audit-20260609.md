@@ -149,6 +149,28 @@ Native dogfood:
 - `docs/verification.md` now carries the manual native-window dogfood checklist so the final
   physical verification run has a stable command and acceptance path.
 
+Application surface authority:
+
+- Every facade-created `DockSurface` clone shares one private owner entity for its controller,
+  viewport runtime, monotonic revision, and activation state. Advanced low-level construction
+  remains available through explicit modules without exposing that owner.
+- Facade, host, and runtime root mutations allocate explicit private transaction identities.
+  Nested controller and viewport commits carrying one identity coalesce into one typed metadata
+  event; independent commands in one App turn remain independent revisions.
+- Durable categories are layout, selection, panel lifecycle, viewport topology, and observed
+  viewport placement. Rendering, style, focus requests, unchanged work, and platform mutation
+  dispatch are not persistence facts.
+- `DockSurface::export_snapshot` pairs layout and viewport placement with the current committed
+  revision in one owner read. Applications subscribe, debounce, serialize, and store explicitly;
+  Docking owns no timer, path, or file I/O.
+- Stable-item activation uses one committed host generation per logical space and settles from
+  exact descendant GPUI focus completion. Duplicate live hosts reject instead of silently
+  replacing the incumbent, and stale request or host generations cannot retarget a later host.
+- Dear ImGui remains a behavior oracle for one dock owner, request/commit ordering,
+  selection-versus-focus separation, and effective host uniqueness. Its global immediate context,
+  pointer requests, frame-liveness lifecycle, and automatic settings writer are intentionally not
+  ported.
+
 Test locality:
 
 - `crates/gpui_docking/src/viewport_test_support.rs` keeps viewport mapping, placement, close, and

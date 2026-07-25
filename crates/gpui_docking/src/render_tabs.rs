@@ -46,6 +46,7 @@ impl DockHost {
         let drop_root = session.drop_root_for_tabs(node);
         let source_space = session.space().clone();
         let entity = cx.entity();
+        let window_binding = self.current_window_binding();
         let tabs_style = &session.visual_style().tabs;
         let stack_title = if items.len() == 1 {
             session.panel_title(&selected_item)
@@ -79,6 +80,9 @@ impl DockHost {
                     return;
                 }
                 anchor_entity.update(cx, |host, _| {
+                    if !host.accepts_bound_window(window_binding) {
+                        return;
+                    }
                     host.record_payload_drag_anchor_from_render(
                         anchor_space.clone(),
                         node,
@@ -88,6 +92,11 @@ impl DockHost {
             })
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    if !this
+                        .accepts_window_callback(window_binding, window.window_handle().window_id())
+                    {
+                        return;
+                    }
                     let payload = event.drag().clone();
                     if payload.source_space == source_space && payload.source_node == node {
                         let cursor_position = this
@@ -161,6 +170,11 @@ impl DockHost {
             .bg(tabs_style.strip_background)
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    if !this
+                        .accepts_window_callback(window_binding, window.window_handle().window_id())
+                    {
+                        return;
+                    }
                     let Ok(position) = event.target_layout_position() else {
                         return;
                     };
@@ -208,6 +222,11 @@ impl DockHost {
             .on_drag(stack_payload, move |payload, geometry, window, cx| {
                 let source_drag_visual_style = stack_drag_visual_style.clone();
                 let frozen_drag_visual_style = stack_drag_entity.update(cx, |host, cx| {
+                    if !host
+                        .accepts_window_callback(window_binding, window.window_handle().window_id())
+                    {
+                        return source_drag_visual_style.clone();
+                    }
                     host.focus_host_for_drag_from_render(window, cx);
                     let drag_session = host.begin_payload_drag_from_render_with_drag_visual_style(
                         payload,
@@ -308,19 +327,34 @@ impl DockHost {
                         .bg(tab_hover_palette.background)
                         .text_color(tab_hover_palette.text)
                 })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.select_tab_from_render(node, tab_item.clone(), cx);
+                .on_click(cx.listener({
+                    let window_binding = window_binding;
+                    move |this, _, _, cx| {
+                        if !this.accepts_bound_window(window_binding) {
+                            return;
+                        }
+                        this.select_tab_from_render(node, tab_item.clone(), cx);
+                    }
                 }))
-                .on_a11y_action(
-                    gpui_accessible_action_from_ui(AccessibleAction::Focus),
+                .on_a11y_action(gpui_accessible_action_from_ui(AccessibleAction::Focus), {
+                    let window_binding = window_binding;
                     move |_, _, cx| {
                         focus_entity.update(cx, |host, cx| {
+                            if !host.accepts_bound_window(window_binding) {
+                                return;
+                            }
                             host.select_tab_from_render(node, focus_item.clone(), cx);
                         });
-                    },
-                )
+                    }
+                })
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                        if !this.accepts_window_callback(
+                            window_binding,
+                            window.window_handle().window_id(),
+                        ) {
+                            return;
+                        }
                         let Ok(layout_position) = event.target_layout_position() else {
                             return;
                         };
@@ -346,6 +380,12 @@ impl DockHost {
                 ))
                 .on_drag(payload, move |payload, geometry, window, cx| {
                     let frozen_drag_visual_style = drag_entity.update(cx, |host, cx| {
+                        if !host.accepts_window_callback(
+                            window_binding,
+                            window.window_handle().window_id(),
+                        ) {
+                            return drag_visual_style.clone();
+                        }
                         host.focus_host_for_drag_from_render(window, cx);
                         let drag_session = host
                             .begin_tab_item_drag_from_render_with_drag_visual_style(
@@ -430,9 +470,15 @@ impl DockHost {
                             .text_color(close_hover_palette.text)
                     })
                     .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.close_item_from_render(close_item.clone(), cx);
-                        cx.stop_propagation();
+                    .on_click(cx.listener({
+                        let window_binding = window_binding;
+                        move |this, _, _, cx| {
+                            if !this.accepts_bound_window(window_binding) {
+                                return;
+                            }
+                            this.close_item_from_render(close_item.clone(), cx);
+                            cx.stop_propagation();
+                        }
                     }))
                     .child("x");
                 tab = tab.child(close);

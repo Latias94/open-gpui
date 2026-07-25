@@ -230,6 +230,76 @@ and tear-off behavior. This change does not copy ImGui's colors, immediate `ImGu
 binary node tree, builder API, or settings format. See
 [ADR 0027](../adr/0027-open-gpui-dock-visual-style-authority.md).
 
+## Dock Surface Change And Activation Authority
+
+`DockSurface` is now a cloneable handle to one private application-level owner instead of a loose
+controller/runtime facade. All clones share one monotonic committed revision and one typed change
+stream. Subscribe to lightweight metadata, apply application-owned debounce, and export the
+revision-consistent snapshot only when your persistence policy requires it:
+
+```rust
+use open_gpui_docking::prelude::DockSurface;
+use std::{cell::Cell, rc::Rc, time::Duration};
+
+let pending = Rc::new(Cell::new(false));
+let pending_for_events = pending.clone();
+let surface_for_events = surface.clone();
+
+surface
+    .subscribe_changes(cx, move |event, cx| {
+        log::debug!(
+            "dock revision={} categories={:?}",
+            event.revision(),
+            event.categories()
+        );
+        if pending_for_events.replace(true) {
+            return;
+        }
+
+        let pending = pending_for_events.clone();
+        let surface = surface_for_events.clone();
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
+            cx.update(|cx| {
+                persist(surface.export_snapshot(cx));
+                pending.set(false);
+            });
+        })
+        .detach();
+    })
+    .detach();
+```
+
+The event contains only a revision and bounded categories: layout, selection, panel lifecycle,
+viewport topology, and observed viewport placement. It does not contain a snapshot. Failed,
+unchanged, focus-only, style-only, and native-mutation-dispatch-only work does not advance the
+revision. `DockSurfaceSnapshot::revision()` identifies the committed revision paired with both its
+layout and viewport-placement facts; older serialized snapshots without the field load as revision
+zero.
+
+Use stable item ids for product activation:
+
+```rust
+let (_request, completion) =
+    surface.activate_panel_with_completion("editor", cx, |outcome, _cx| {
+        log::debug!("editor activation settled: {outcome:?}");
+    });
+completion.detach();
+```
+
+`select_panel` remains selection-only. Activation may first commit selection and later settle as
+`Committed`, `Rejected`, `Superseded`, `Unavailable`, `DuplicateHostConflict`, or `WindowClosed`
+from exact descendant GPUI focus completion. Dropping the returned subscription stops observing
+the result but does not cancel the issued intent. Product code must no longer call node-id
+`DockHost::focus_pane`; that primitive is crate-private.
+
+Applications should delete generic-notify, end-of-turn, render-count, or snapshot-diff persistence
+inference. Docking intentionally has no persistence timer, built-in debounce duration, path
+setting, or file writer. See
+[ADR 0028](../adr/0028-open-gpui-dock-surface-change-and-activation-authority.md).
+
 ## Deterministic Collection Typeahead
 
 Collection typeahead now uses one crate-private, instance-owned session with GPUI executor time.

@@ -1,6 +1,8 @@
 use crate::{
     DockSpaceId, DockViewportAdapter, DockViewportHostGeometry, DockViewportWindowFacts,
-    viewport_registry::{DockViewportInputMask, DockViewportStaleReason},
+    viewport_registry::{
+        DockViewportInputMask, DockViewportStaleReason, DockViewportWindowFactsChange,
+    },
 };
 use open_gpui::{AnyWindowHandle, AppContext, Pixels, Point, WindowId, point};
 
@@ -134,18 +136,28 @@ impl DockViewportAdapter {
     ///
     /// Pure window moves keep the rendered host-local facts current. Resizes still demote the
     /// snapshot until a host render republishes layout facts for the new content size.
+    #[cfg(test)]
     pub(crate) fn apply_platform_window_facts(
         &mut self,
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
     ) -> bool {
+        self.apply_platform_window_facts_with_change(window_id, window_facts)
+            .changed
+    }
+
+    pub(crate) fn apply_platform_window_facts_with_change(
+        &mut self,
+        window_id: WindowId,
+        window_facts: DockViewportWindowFacts,
+    ) -> DockViewportWindowFactsChange {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
-            return false;
+            return DockViewportWindowFactsChange::default();
         };
         let Some(snapshot) = self.snapshot_mut(&space) else {
-            return false;
+            return DockViewportWindowFactsChange::default();
         };
-        snapshot.apply_platform_window_facts(window_facts)
+        snapshot.apply_platform_window_facts_with_change(window_facts)
     }
 
     /// Marks a registered window as closing until the platform close callback unregisters it.

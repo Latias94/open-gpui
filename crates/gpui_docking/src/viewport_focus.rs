@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockSpaceId};
+use crate::{DockItemId, DockSpaceId, surface::DockSurfaceActivationBinding};
 use std::collections::HashMap;
 
 /// Last dock-panel focus state used to restore focus after platform viewport activation.
@@ -107,6 +107,7 @@ pub(crate) enum DockViewportFocusCommandSource {
 pub(crate) struct DockViewportFocusCommand {
     source: DockViewportFocusCommandSource,
     request: DockViewportFocusRequest,
+    surface_activation: Option<DockSurfaceActivationBinding>,
 }
 
 impl DockViewportFocusCommand {
@@ -114,7 +115,11 @@ impl DockViewportFocusCommand {
         source: DockViewportFocusCommandSource,
         request: DockViewportFocusRequest,
     ) -> Self {
-        Self { source, request }
+        Self {
+            source,
+            request,
+            surface_activation: None,
+        }
     }
 
     pub(crate) fn platform_activation(request: DockViewportFocusRequest) -> Self {
@@ -125,11 +130,26 @@ impl DockViewportFocusCommand {
         Self::new(DockViewportFocusCommandSource::ViewportActivation, request)
     }
 
+    pub(crate) fn surface_activation(
+        request: DockViewportFocusRequest,
+        binding: DockSurfaceActivationBinding,
+    ) -> Self {
+        Self {
+            source: DockViewportFocusCommandSource::ViewportActivation,
+            request,
+            surface_activation: Some(binding),
+        }
+    }
+
     pub(crate) fn request(&self) -> &DockViewportFocusRequest {
         &self.request
     }
 
     pub(crate) fn source(&self) -> DockViewportFocusCommandSource {
         self.source
+    }
+
+    pub(crate) fn surface_activation_binding(&self) -> Option<&DockSurfaceActivationBinding> {
+        self.surface_activation.as_ref()
     }
 }

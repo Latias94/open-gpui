@@ -3,6 +3,7 @@ use open_gpui::{Bounds, ElementGeometry, HitTestSnapshot, Hitbox, Pixels, Point}
 #[derive(Clone, Debug, PartialEq)]
 enum DockViewportHostHitRegion {
     Committed(HitTestSnapshot),
+    #[cfg(test)]
     Synthetic(Bounds<Pixels>),
 }
 
@@ -34,6 +35,7 @@ impl DockViewportHostGeometry {
             DockViewportHostHitRegion::Committed(snapshot) => {
                 snapshot.is_window_point_target(position)
             }
+            #[cfg(test)]
             DockViewportHostHitRegion::Synthetic(bounds) => bounds.contains(&position),
         };
         if !eligible {

@@ -196,11 +196,13 @@ struct DockDropPreviewPayloadTab {
 impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
+        self.ensure_surface_activation_host_registration(window, cx);
         self.ensure_viewport_activation_subscription(window, cx);
         self.ensure_viewport_bounds_subscription(window, cx);
         self.ensure_viewport_release_subscription(window, cx);
         self.prepare_pending_focus_selection_from_render(window, cx);
         let raw_drag_pointer_capture = self.ensure_pointer_session(window);
+        let window_binding = self.current_window_binding();
         let visual_style = self.resolve_visual_style(window, cx);
         #[cfg(test)]
         {
@@ -226,6 +228,7 @@ impl Render for DockHost {
             move |_, _, window, _app| {
                 let weak_host = weak_host.clone();
                 let frame_payload = pointer_session_payload.clone();
+                let window_binding = window_binding;
                 window.on_pointer_cancel(move |_, phase, window, app| {
                     if phase != DispatchPhase::Capture {
                         return;
@@ -238,6 +241,12 @@ impl Render for DockHost {
                         .cloned()
                         .or_else(|| frame_payload.clone());
                     let changed = host.update(app, |host, cx| {
+                        if !host.accepts_window_callback(
+                            window_binding,
+                            window.window_handle().window_id(),
+                        ) {
+                            return false;
+                        }
                         host.cancel_pointer_interactions_from_render(payload.as_ref(), window, cx)
                     });
                     if changed {
@@ -259,8 +268,14 @@ impl Render for DockHost {
             .overflow_hidden()
             .text_color(session.visual_style().host.foreground)
             .child(pointer_session_listener)
-            .on_drag_move(cx.listener(
+            .on_drag_move(cx.listener({
+                let window_binding = window_binding;
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    if !this
+                        .accepts_window_callback(window_binding, window.window_handle().window_id())
+                    {
+                        return;
+                    }
                     let payload = event.drag().clone();
                     let Ok(layout_position) = event.target_layout_position() else {
                         return;
@@ -272,10 +287,16 @@ impl Render for DockHost {
                         window,
                         cx,
                     );
-                },
-            ))
-            .on_drop(cx.listener(
+                }
+            }))
+            .on_drop(cx.listener({
+                let window_binding = window_binding;
                 move |this, event: &DropEvent<DockDragPayload>, window, cx| {
+                    if !this
+                        .accepts_window_callback(window_binding, window.window_handle().window_id())
+                    {
+                        return;
+                    }
                     let payload = event.value();
                     let Ok(layout_position) = event.pointer().target_layout_position() else {
                         return;
@@ -295,8 +316,8 @@ impl Render for DockHost {
                         window,
                         cx,
                     );
-                },
-            ));
+                }
+            }));
 
         if active_docking_drag {
             let host_focus = self.host_focus_handle();
@@ -304,17 +325,26 @@ impl Render for DockHost {
             host = host
                 .track_focus(&host_focus)
                 .focus_visible(move |style| style.shadow(focus_ring.clone()))
-                .capture_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                    if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
-                        return;
+                .capture_key_down(cx.listener({
+                    let window_binding = window_binding;
+                    move |this, event: &KeyDownEvent, window, cx| {
+                        if !this.accepts_window_callback(
+                            window_binding,
+                            window.window_handle().window_id(),
+                        ) || event.keystroke.key != "escape"
+                            || event.keystroke.modifiers.modified()
+                        {
+                            return;
+                        }
+                        let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned()
+                        else {
+                            return;
+                        };
+                        if this.cancel_payload_drag_from_render(&payload, window, cx) {
+                            window.refresh();
+                        }
+                        cx.stop_propagation();
                     }
-                    let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
-                        return;
-                    };
-                    if this.cancel_payload_drag_from_render(&payload, window, cx) {
-                        window.refresh();
-                    }
-                    cx.stop_propagation();
                 }));
         }
 
@@ -638,6 +668,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entity = cx.entity();
+        let window_binding = self.current_window_binding();
         let session = session.clone();
         let prepaint_entity = entity.clone();
         let prepaint_session = session.clone();
@@ -687,6 +718,7 @@ impl DockHost {
                     let scene = scene.clone();
                     let hit_map = hit_map.clone();
                     let hitbox = hitbox.clone();
+                    let window_binding = window_binding;
                     move |event: &MouseDownEvent, phase, window, app| {
                         if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
                             return;
@@ -708,6 +740,12 @@ impl DockHost {
                             .capture_pointer(&pointer_capture, MouseButton::Left)
                             .is_ok();
                         let began = entity.update(app, |host, cx| {
+                            if !host.accepts_window_callback(
+                                window_binding,
+                                window.window_handle().window_id(),
+                            ) {
+                                return false;
+                            }
                             host.begin_divider_drag_from_scene(&scene, &target, layout_position, cx)
                         });
                         if !began {
@@ -723,7 +761,8 @@ impl DockHost {
                 window.on_mouse_event({
                     let entity = entity.clone();
                     let hitbox = hitbox.clone();
-                    move |event: &MouseMoveEvent, phase, _, app| {
+                    let window_binding = window_binding;
+                    move |event: &MouseMoveEvent, phase, window, app| {
                         if phase != DispatchPhase::Capture
                             || event.pressed_button != Some(MouseButton::Left)
                         {
@@ -734,18 +773,33 @@ impl DockHost {
                             return;
                         };
                         entity.update(app, |host, cx| {
+                            if !host.accepts_window_callback(
+                                window_binding,
+                                window.window_handle().window_id(),
+                            ) {
+                                return;
+                            }
                             host.update_splitter_drag_from_render(layout_position, cx);
                         });
                     }
                 });
 
-                window.on_mouse_event(move |event: &MouseUpEvent, phase, _, app| {
-                    if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
-                        return;
+                window.on_mouse_event({
+                    let window_binding = window_binding;
+                    move |event: &MouseUpEvent, phase, window, app| {
+                        if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
+                            return;
+                        }
+                        entity.update(app, |host, cx| {
+                            if !host.accepts_window_callback(
+                                window_binding,
+                                window.window_handle().window_id(),
+                            ) {
+                                return;
+                            }
+                            host.finish_splitter_drag_from_render(cx);
+                        });
                     }
-                    entity.update(app, |host, cx| {
-                        host.finish_splitter_drag_from_render(cx);
-                    });
                 });
             },
         )
@@ -785,6 +839,7 @@ impl DockHost {
     // terminal mouse-up for Dock payloads without weakening GPUI's window-local drag contract.
     fn render_payload_drag_event_layer(&self, cx: &mut Context<Self>) -> AnyElement {
         let entity = cx.entity();
+        let window_binding = self.current_window_binding();
 
         canvas(
             |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
@@ -792,6 +847,7 @@ impl DockHost {
                 window.on_mouse_event({
                     let entity = entity.clone();
                     let hitbox = hitbox.clone();
+                    let window_binding = window_binding;
                     move |event: &MouseMoveEvent, phase, window, app| {
                         if phase != DispatchPhase::Capture
                             || event.pressed_button != Some(MouseButton::Left)
@@ -811,6 +867,9 @@ impl DockHost {
                         };
                         let receiver_window_id = window.window_handle().window_id();
                         let handled = entity.update(app, |host, cx| {
+                            if !host.accepts_window_callback(window_binding, receiver_window_id) {
+                                return None;
+                            }
                             if !host
                                 .viewport_runtime()
                                 .is_foreign_payload_drag_for_window(&payload, receiver_window_id)
@@ -837,6 +896,7 @@ impl DockHost {
                 window.on_mouse_event({
                     let entity = entity.clone();
                     let hitbox = hitbox.clone();
+                    let window_binding = window_binding;
                     move |event: &MouseUpEvent, phase, window, app| {
                         if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
                             return;
@@ -851,6 +911,9 @@ impl DockHost {
                             .then(|| hitbox.window_to_layout_point(event.position).ok())
                             .flatten();
                         let handled = entity.update(app, |host, cx| {
+                            if !host.accepts_window_callback(window_binding, receiver_window_id) {
+                                return false;
+                            }
                             if host.active_payload_drag_session(&payload).is_none() {
                                 return false;
                             }

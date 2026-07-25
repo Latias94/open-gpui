@@ -20,6 +20,7 @@ pub(crate) struct DockViewportUnregisteredSpace {
 
 #[derive(Default)]
 pub(crate) struct DockViewportVacatedTearOffSource {
+    pub(crate) changed: bool,
     pub(crate) windows: Vec<AnyWindowHandle>,
     pub(crate) affected_windows: Vec<AnyWindowHandle>,
 }
@@ -181,6 +182,7 @@ pub(crate) enum DockViewportReusableWindow {
 pub(crate) struct DockViewportReusableWindowOutcome {
     window: DockViewportReusableWindow,
     window_effects: DockViewportWindowEffects,
+    topology_changed: bool,
 }
 
 impl DockViewportReusableWindowOutcome {
@@ -188,6 +190,7 @@ impl DockViewportReusableWindowOutcome {
         Self {
             window: DockViewportReusableWindow::Missing,
             window_effects: DockViewportWindowEffects::default(),
+            topology_changed: false,
         }
     }
 
@@ -195,11 +198,16 @@ impl DockViewportReusableWindowOutcome {
         Self {
             window: DockViewportReusableWindow::Reused(window),
             window_effects: DockViewportWindowEffects::default(),
+            topology_changed: false,
         }
     }
 
     pub(crate) fn stale() -> Self {
-        Self::stale_with_affected_windows(Vec::new())
+        Self {
+            window: DockViewportReusableWindow::Stale,
+            window_effects: DockViewportWindowEffects::default(),
+            topology_changed: false,
+        }
     }
 
     pub(crate) fn stale_with_affected_windows(affected_windows: Vec<AnyWindowHandle>) -> Self {
@@ -210,7 +218,12 @@ impl DockViewportReusableWindowOutcome {
                 affected_windows,
                 Vec::new(),
             ),
+            topology_changed: true,
         }
+    }
+
+    pub(crate) fn topology_changed(&self) -> bool {
+        self.topology_changed
     }
 
     pub(crate) fn into_parts(self) -> (DockViewportReusableWindow, DockViewportWindowEffects) {

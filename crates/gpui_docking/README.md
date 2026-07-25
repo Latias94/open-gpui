@@ -13,9 +13,11 @@ Low-level controller, graph, action, workspace, host, raw layout parts, and runt
 
 ## What This Crate Owns
 
-- `DockSurface` as the app-level owner for controller state, host-window creation, panel commands, and typed viewport capability outcomes.
-- `DockSurfaceSnapshot` as the app-level persistence payload that combines durable layout with
-  facade-opened viewport placement hints.
+- `DockSurface` as the app-level owner for controller state, host-window creation, panel commands,
+  one monotonic committed revision stream, stable-item activation, and typed viewport capability
+  outcomes.
+- `DockSurfaceSnapshot` as the revision-consistent app-level persistence payload that combines
+  durable layout with facade-opened viewport placement hints.
 - `DockSurfaceViewportSession`, `DockSurfaceViewportSpec`, `DockSurfaceViewportReadinessReport`,
   `DockSurfaceViewportOpenReport`, and `DockSurfaceViewportRestoreReport` as facade-level platform
   window lifecycle, requests, capability checks, and batch outcomes for multi-viewport applications.
@@ -57,6 +59,27 @@ Platform viewport windows fail closed unless both gates are true:
 Use `DockSurface::export_snapshot` for the common persistence path. The snapshot stores `DockLayout` for logical dock spaces plus `DockViewportPlacementLayout` for platform-window hints, without storing GPUI views or platform window handles. Applications that need custom storage can still persist `DockLayout` and viewport placement separately; `DockSurfaceViewportSpec::with_saved_placement` applies placement hints to fallback GPUI window options before a viewport opens. Applications can call `DockSurface::export_viewport_placement` to snapshot only facade-opened platform windows and `DockSurface::check_viewport_placement_restore` to validate saved placement before reopening windows, without importing `DockViewportRuntimeHandle`.
 
 Use `DockSurfaceBuilder::close_policy` or `DockSurface::set_viewport_close_policy` to choose how detached platform windows close. `DockViewportClosePolicy::RetainLayout` removes only the runtime window mapping, `Prevent` vetoes the platform close, and `MergeBack` moves a closing viewport's dock content into a fallback space. Applications with custom GPUI window hooks can call `DockSurface::handle_viewport_window_should_close`, `DockSurface::handle_viewport_window_closed`, and `DockSurface::cancel_viewport_window_close` without importing the low-level runtime handle.
+
+## Change Events, Persistence, And Activation
+
+Every `DockSurface` clone points to one private owner and observes the same monotonic revision.
+`subscribe_changes` publishes metadata only after a durable root operation commits. An event
+contains the revision and stable categories for layout, selection, panel lifecycle, viewport
+topology, and observed viewport placement. Rendering, focus intent, visual style changes, rejected
+or unchanged commands, and queued platform mutation requests do not create persistence revisions.
+
+Applications own debounce and storage. Keep the subscription alive, coalesce events according to
+product policy, then call `export_snapshot`. The returned `DockSurfaceSnapshot::revision()` is
+paired with both its layout and viewport-placement facts; Docking does not allocate a snapshot for
+each event, start a timer, or write files.
+
+Use `select_panel` when only tab selection is intended. Use stable-item `activate_panel` or
+`activate_panel_with_completion` when the application also needs window activation and descendant
+GPUI focus. The completion callback is `FnOnce(outcome, &mut App)` and runs after the owner state
+has been released, so it may safely issue a follow-up activation. Completion reports `Committed`,
+`Rejected`, `Superseded`, `Unavailable`, `DuplicateHostConflict`, or `WindowClosed`. Dropping the
+completion subscription stops observation without cancelling the issued intent. Generated graph
+node ids are not a product focus API.
 
 ## Restoring Platform Viewports
 
@@ -127,7 +150,7 @@ Run the facade-level multi-viewport example when checking native platform-window
 cargo run -p open-gpui-docking-multiviewport
 ```
 
-This example opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, detaches a preview panel into a child dock space through `DockSurface::detach_panel_to_space`, opens that space through `DockSurface::viewports`, and handles unsupported backends through typed facade outcomes.
+This example opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, detaches a preview panel into a child dock space through `DockSurface::detach_panel_to_space`, opens that space through `DockSurface::viewports`, and handles unsupported backends through typed facade outcomes. It also logs committed revisions, performs application-owned debounced snapshot export, and activates a panel by stable item id with a typed terminal outcome.
 
 Run the normal-checkout native dogfood example when working on viewport runtime behavior or
 diagnostics:
@@ -175,9 +198,11 @@ Cancellation and close retire that snapshot before reopen. The crate has no prod
 on UI Components; the native example is the reference application-owned theme adapter.
 
 Dear ImGui informs docking interaction behavior, including tab states, inner and outer targets,
-accepted/rejected previews, and tear-off. Open GPUI retains its own `DockGraph`, n-ary splits,
-transactions, viewport generations, and persistence, and does not copy ImGui's default colors,
-immediate Dock context, binary node tree, builder API, or settings format.
+accepted/rejected previews, tear-off, one effective host per node, and commit-before-settings
+ordering. Open GPUI retains its own `DockGraph`, n-ary splits, explicit transactions, viewport and
+activation generations, typed focus completion, and application-owned persistence. It does not
+copy ImGui's default colors, immediate Dock context, pointer identities, binary node tree, builder
+API, frame-liveness inference, or settings format.
 
 ## Minimal Shape
 

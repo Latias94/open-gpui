@@ -173,7 +173,8 @@ impl DockSurfaceViewportReadiness {
         restore: Option<DockViewportRestoreReadiness>,
         cx: &mut App,
     ) -> Self {
-        let status = match cx.read_entity(&surface.controller, |controller, _| {
+        let controller = surface.controller(cx);
+        let status = match cx.read_entity(&controller, |controller, _| {
             controller.policy().validate_platform_viewports()
         }) {
             Ok(()) if cx.viewport_capabilities().platform_viewport_windows => {
@@ -234,7 +235,7 @@ impl DockSurfaceViewportReadiness {
             cx.viewport_flag_capabilities(),
         );
         let lifecycle = surface
-            .viewport_runtime
+            .viewport_runtime(cx)
             .runtime_status()
             .viewport_lifecycle
             .into_iter()
@@ -360,7 +361,7 @@ impl DockSurfaceViewportReadinessReport {
         cx: &mut App,
     ) -> Self {
         let default_options = WindowOptions::default();
-        let restore = match surface.check_viewport_placement_restore(placement) {
+        let restore = match surface.check_viewport_placement_restore(placement, cx) {
             Ok(restore) => restore,
             Err(error) => {
                 return Self::new(

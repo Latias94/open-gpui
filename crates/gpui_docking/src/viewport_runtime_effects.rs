@@ -1,3 +1,4 @@
+use crate::surface::{DockSurfaceChangeCategory, DockSurfaceTransactionId};
 use open_gpui::{AnyWindowHandle, App};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -60,6 +61,8 @@ impl DockViewportWindowEffects {
 pub(crate) struct DockViewportRuntimeUpdate {
     changed: bool,
     windows: Vec<AnyWindowHandle>,
+    surface_transaction: Option<DockSurfaceTransactionId>,
+    change_categories: Vec<DockSurfaceChangeCategory>,
 }
 
 impl DockViewportRuntimeUpdate {
@@ -71,17 +74,108 @@ impl DockViewportRuntimeUpdate {
         self.changed |= changed;
     }
 
+    pub(crate) fn mark_viewport_topology(
+        &mut self,
+        changed: bool,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+    ) {
+        self.mark_category(
+            changed,
+            surface_transaction,
+            DockSurfaceChangeCategory::ViewportTopology,
+        );
+    }
+
+    pub(crate) fn mark_graph_commit(
+        &mut self,
+        changed: bool,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+    ) {
+        for category in [
+            DockSurfaceChangeCategory::Layout,
+            DockSurfaceChangeCategory::Selection,
+            DockSurfaceChangeCategory::PanelLifecycle,
+        ] {
+            self.mark_category(changed, surface_transaction, category);
+        }
+    }
+
+    pub(crate) fn mark_observed_viewport_placement(
+        &mut self,
+        changed: bool,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+    ) {
+        self.mark_category(
+            changed,
+            surface_transaction,
+            DockSurfaceChangeCategory::ObservedViewportPlacement,
+        );
+    }
+
+    pub(crate) fn surface_transaction(&self) -> Option<DockSurfaceTransactionId> {
+        self.surface_transaction
+    }
+
+    pub(crate) fn change_categories(&self) -> &[DockSurfaceChangeCategory] {
+        &self.change_categories
+    }
+
     pub(crate) fn extend_windows(&mut self, windows: impl IntoIterator<Item = AnyWindowHandle>) {
         extend_unique_windows(&mut self.windows, windows);
     }
 
     pub(crate) fn merge(&mut self, update: DockViewportRuntimeUpdate) {
-        self.mark_changed(update.changed);
-        self.extend_windows(update.windows);
+        let DockViewportRuntimeUpdate {
+            changed,
+            windows,
+            surface_transaction,
+            change_categories,
+        } = update;
+        self.mark_changed(changed);
+        self.extend_windows(windows);
+        if !change_categories.is_empty() {
+            self.merge_surface_transaction(surface_transaction);
+        }
+        self.extend_change_categories(change_categories);
     }
 
     pub(crate) fn into_windows(self) -> Vec<AnyWindowHandle> {
         self.windows
+    }
+
+    fn mark_category(
+        &mut self,
+        changed: bool,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+        category: DockSurfaceChangeCategory,
+    ) {
+        self.mark_changed(changed);
+        if changed {
+            self.merge_surface_transaction(surface_transaction);
+            self.extend_change_categories([category]);
+        }
+    }
+
+    fn merge_surface_transaction(&mut self, surface_transaction: Option<DockSurfaceTransactionId>) {
+        if self.change_categories.is_empty() {
+            self.surface_transaction = surface_transaction;
+        } else {
+            assert_eq!(
+                self.surface_transaction, surface_transaction,
+                "cannot merge viewport runtime commits from different surface transactions"
+            );
+        }
+    }
+
+    fn extend_change_categories(
+        &mut self,
+        categories: impl IntoIterator<Item = DockSurfaceChangeCategory>,
+    ) {
+        for category in categories {
+            if !self.change_categories.contains(&category) {
+                self.change_categories.push(category);
+            }
+        }
     }
 }
 
@@ -155,8 +249,8 @@ pub(crate) fn refresh_viewport_window_effects<C: open_gpui::AppContext>(
 
 #[cfg(test)]
 mod tests {
-    use super::unique_windows;
-    use crate::viewport_test_support::handle;
+    use super::{DockViewportRuntimeUpdate, unique_windows};
+    use crate::{surface::DockSurfaceChangeCategory, viewport_test_support::handle};
 
     #[test]
     fn unique_windows_preserves_first_occurrence_order() {
@@ -166,6 +260,36 @@ mod tests {
         assert_eq!(
             unique_windows(vec![first, second, first, second, first]),
             vec![first, second]
+        );
+    }
+
+    #[test]
+    fn generic_runtime_changes_do_not_claim_surface_commit_categories() {
+        let mut update = DockViewportRuntimeUpdate::default();
+
+        update.mark_changed(true);
+
+        assert!(update.changed());
+        assert!(update.change_categories().is_empty());
+        assert_eq!(update.surface_transaction(), None);
+    }
+
+    #[test]
+    fn explicit_runtime_commit_categories_merge_without_duplicates() {
+        let mut update = DockViewportRuntimeUpdate::default();
+        update.mark_viewport_topology(true, None);
+        update.mark_viewport_topology(true, None);
+
+        let mut observed = DockViewportRuntimeUpdate::default();
+        observed.mark_observed_viewport_placement(true, None);
+        update.merge(observed);
+
+        assert_eq!(
+            update.change_categories(),
+            [
+                DockSurfaceChangeCategory::ViewportTopology,
+                DockSurfaceChangeCategory::ObservedViewportPlacement,
+            ]
         );
     }
 }

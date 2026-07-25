@@ -160,6 +160,10 @@ mod spatial_navigation_tests;
 mod split_geometry;
 mod surface;
 #[cfg(test)]
+mod surface_activation_tests;
+#[cfg(test)]
+mod surface_owner_tests;
+#[cfg(test)]
 mod surface_tests;
 mod transition_executor;
 mod transition_geometry;
@@ -305,18 +309,19 @@ pub use panel_catalog::{DockPanelCatalog, DockPanelDescriptor, DockPanelReopenPo
 pub use panel_registry::{DockPanelAttachError, DockPanelRegistration, DockPanelRegistry};
 pub use policy::{DockPolicy, DockPolicyError};
 pub use surface::{
-    DockSurface, DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange,
-    DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError, DockSurfacePanelLocation,
-    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePanelSnapshot,
-    DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
-    DockSurfaceViewportFlagCapabilities, DockSurfaceViewportFlagWarning,
-    DockSurfaceViewportInputStatus, DockSurfaceViewportLifecycleReadiness,
-    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportOpened, DockSurfaceViewportPlatformCapabilities,
-    DockSurfaceViewportPlatformReadiness, DockSurfaceViewportReadiness,
-    DockSurfaceViewportReadinessReport, DockSurfaceViewportReadinessStatus,
-    DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
-    DockSurfaceViewportRouteStatus, DockSurfaceViewportSession,
+    DockSurface, DockSurfaceActivationOutcome, DockSurfaceActivationRequestId,
+    DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange, DockSurfaceChangeCategory,
+    DockSurfaceChangeEvent, DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError,
+    DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
+    DockSurfacePanelSnapshot, DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome,
+    DockSurfaceViewportCloseStatus, DockSurfaceViewportFlagCapabilities,
+    DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
+    DockSurfaceViewportLifecycleReadiness, DockSurfaceViewportOpenOutcome,
+    DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
+    DockSurfaceViewportPlatformCapabilities, DockSurfaceViewportPlatformReadiness,
+    DockSurfaceViewportReadiness, DockSurfaceViewportReadinessReport,
+    DockSurfaceViewportReadinessStatus, DockSurfaceViewportRestoreOutcome,
+    DockSurfaceViewportRestoreReport, DockSurfaceViewportRouteStatus, DockSurfaceViewportSession,
     DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
     DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportStaleReason,
     DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag,

@@ -1,6 +1,6 @@
 use super::DockSurface;
 use crate::{DockLayout, DockViewportPlacementLayout};
-use open_gpui::App;
+use open_gpui::{App, AppContext as _};
 use serde::{Deserialize, Serialize};
 
 /// Serializable application-level snapshot for one docking surface.
@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 /// It never stores live GPUI views or platform window handles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockSurfaceSnapshot {
+    #[serde(default)]
+    revision: u64,
     layout: DockLayout,
     viewport_placement: DockViewportPlacementLayout,
 }
@@ -17,9 +19,27 @@ impl DockSurfaceSnapshot {
     /// Creates a snapshot from durable layout and viewport placement data.
     pub fn new(layout: DockLayout, viewport_placement: DockViewportPlacementLayout) -> Self {
         Self {
+            revision: 0,
             layout,
             viewport_placement,
         }
+    }
+
+    pub(crate) fn from_committed_parts(
+        revision: u64,
+        layout: DockLayout,
+        viewport_placement: DockViewportPlacementLayout,
+    ) -> Self {
+        Self {
+            revision,
+            layout,
+            viewport_placement,
+        }
+    }
+
+    /// Returns the committed surface revision paired with this snapshot.
+    pub const fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Returns the durable dock layout portion of this snapshot.
@@ -39,8 +59,18 @@ impl DockSurfaceSnapshot {
 }
 
 impl DockSurface {
-    /// Exports durable layout and facade-opened viewport placement as one app-level snapshot.
+    /// Exports one revision-consistent durable layout and viewport-placement snapshot.
     pub fn export_snapshot(&self, cx: &App) -> DockSurfaceSnapshot {
-        DockSurfaceSnapshot::new(self.export_layout(cx), self.export_viewport_placement())
+        cx.read_entity(self.owner(), |owner, cx| {
+            let controller = owner.controller();
+            let layout = cx.read_entity(&controller, |controller, _| {
+                controller.graph().export_layout()
+            });
+            DockSurfaceSnapshot::from_committed_parts(
+                owner.revision(),
+                layout,
+                owner.runtime().export_placement(),
+            )
+        })
     }
 }

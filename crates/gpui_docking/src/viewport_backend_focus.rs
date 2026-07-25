@@ -20,16 +20,43 @@ pub(crate) struct DockViewportBackendFocusState {
     destroyed_previous_focus_suppression: Option<DockViewportDestroyedPreviousFocusSuppression>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Result of replacing the one backend-focus activation slot.
+///
+/// The displaced transaction is returned to the runtime owner instead of being silently dropped.
+/// A surface activation carried by that transaction must be settled before the replacement can
+/// dispatch a focus command.
+#[derive(Debug, Default)]
+pub(crate) struct DockViewportPendingActivationUpdate {
+    changed: bool,
+    displaced: Option<DockViewportActivationTransaction>,
+}
+
+impl DockViewportPendingActivationUpdate {
+    pub(crate) fn changed(&self) -> bool {
+        self.changed
+    }
+
+    pub(crate) fn displaced(self) -> Option<DockViewportActivationTransaction> {
+        self.displaced
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportBackendFocusRecord {
     focused_changed: bool,
-    pending_activation_changed: bool,
+    cleared_pending_activation: Option<DockViewportActivationTransaction>,
     z_order_stamp_changed: bool,
 }
 
 impl DockViewportBackendFocusRecord {
     pub(crate) fn changed(self) -> bool {
-        self.focused_changed || self.pending_activation_changed || self.z_order_stamp_changed
+        self.focused_changed
+            || self.cleared_pending_activation.is_some()
+            || self.z_order_stamp_changed
+    }
+
+    pub(crate) fn cleared_pending_activation(&self) -> Option<&DockViewportActivationTransaction> {
+        self.cleared_pending_activation.as_ref()
     }
 }
 
@@ -165,15 +192,26 @@ impl DockViewportBackendFocusState {
         self.pending_activation.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn record_pending_activation(
         &mut self,
         activation: DockViewportActivationTransaction,
     ) -> bool {
+        self.record_pending_activation_with_displaced(activation)
+            .changed()
+    }
+
+    pub(crate) fn record_pending_activation_with_displaced(
+        &mut self,
+        activation: DockViewportActivationTransaction,
+    ) -> DockViewportPendingActivationUpdate {
         if self.pending_activation.as_ref() == Some(&activation) {
-            return false;
+            return DockViewportPendingActivationUpdate::default();
         }
-        self.pending_activation = Some(activation);
-        true
+        DockViewportPendingActivationUpdate {
+            changed: true,
+            displaced: self.pending_activation.replace(activation),
+        }
     }
 
     pub(crate) fn record_viewport_created(&mut self, window_id: WindowId) {
@@ -187,15 +225,7 @@ impl DockViewportBackendFocusState {
         space: &DockSpaceId,
         window_id: WindowId,
     ) -> bool {
-        if !self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.matches_window(space, window_id))
-        {
-            return false;
-        }
-        self.pending_activation = None;
-        true
+        self.take_pending_activation_for(space, window_id).is_some()
     }
 
     pub(crate) fn record_confirmed_backend_focused_window(
@@ -209,7 +239,11 @@ impl DockViewportBackendFocusState {
 
         let previous_focused_window = self.last_confirmed_backend_focused_window;
         let focused_changed = previous_focused_window != Some(window_id);
-        let mut pending_activation_changed = false;
+        let cleared_pending_activation = if focused_changed {
+            self.clear_pending_activation_except_window(window_id)
+        } else {
+            None
+        };
         if focused_changed {
             self.destroyed_previous_focus_suppression = if previous_focused_window
                 .is_none_or(|previous| !is_live_docking_window(previous))
@@ -220,7 +254,6 @@ impl DockViewportBackendFocusState {
             } else {
                 None
             };
-            pending_activation_changed = self.clear_pending_activation_except_window(window_id);
         }
         self.last_confirmed_backend_focused_window = Some(window_id);
         let z_order_stamp_changed =
@@ -230,7 +263,7 @@ impl DockViewportBackendFocusState {
         }
         Some(DockViewportBackendFocusRecord {
             focused_changed,
-            pending_activation_changed,
+            cleared_pending_activation,
             z_order_stamp_changed,
         })
     }
@@ -301,12 +334,24 @@ impl DockViewportBackendFocusState {
         // activations from drop, tear-off, or close recovery already carry their target focus.
         if let Some(activation) = self.take_pending_activation_for(space, window_id) {
             changed = true;
+            let focus_command = activation
+                .surface_activation_binding()
+                .cloned()
+                .map(|binding| {
+                    DockViewportFocusCommand::surface_activation(
+                        activation.focus_request().clone(),
+                        binding,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    DockViewportFocusCommand::new(
+                        activation.focus_source(),
+                        activation.focus_request().clone(),
+                    )
+                });
             return DockViewportConfirmedBackendFocusOutcome::pending_activation(
                 changed,
-                DockViewportFocusCommand::new(
-                    activation.focus_source(),
-                    activation.focus_request().clone(),
-                ),
+                focus_command,
             );
         }
         if !platform_focus_restore_policy.allows_restore() {
@@ -324,19 +369,21 @@ impl DockViewportBackendFocusState {
         DockViewportConfirmedBackendFocusOutcome::platform_restore(changed, focus_command)
     }
 
-    fn clear_pending_activation_except_window(&mut self, window_id: WindowId) -> bool {
+    fn clear_pending_activation_except_window(
+        &mut self,
+        window_id: WindowId,
+    ) -> Option<DockViewportActivationTransaction> {
         if !self
             .pending_activation
             .as_ref()
             .is_some_and(|activation| activation.window_id() != window_id)
         {
-            return false;
+            return None;
         }
-        self.pending_activation = None;
-        true
+        self.pending_activation.take()
     }
 
-    fn take_pending_activation_for(
+    pub(crate) fn take_pending_activation_for(
         &mut self,
         space: &DockSpaceId,
         window_id: WindowId,
@@ -377,6 +424,69 @@ mod tests {
         DockViewportFocusCommandSource, DockViewportFocusRequest,
         viewport_test_support::{handle, item, space},
     };
+
+    #[test]
+    fn replacing_pending_activation_returns_displaced_transaction_once() {
+        let mut state = DockViewportBackendFocusState::default();
+        let first_window = handle(1);
+        let second_window = handle(2);
+        let first = DockViewportActivationTransaction::new(
+            space("first"),
+            first_window,
+            DockViewportFocusRequest::panel("first"),
+        );
+        let second = DockViewportActivationTransaction::new(
+            space("second"),
+            second_window,
+            DockViewportFocusRequest::panel("second"),
+        );
+
+        let first_update = state.record_pending_activation_with_displaced(first.clone());
+        assert!(first_update.changed());
+        assert_eq!(first_update.displaced(), None);
+
+        let replacement = state.record_pending_activation_with_displaced(second.clone());
+        assert!(replacement.changed());
+        assert_eq!(replacement.displaced(), Some(first));
+        assert_eq!(state.pending_activation(), Some(&second));
+
+        let duplicate = state.record_pending_activation_with_displaced(second);
+        assert!(!duplicate.changed());
+        assert_eq!(duplicate.displaced(), None);
+    }
+
+    #[test]
+    fn backend_focus_clear_is_reported_only_on_focus_transition() {
+        let mut state = DockViewportBackendFocusState::default();
+        let pending_window = handle(1);
+        let confirmed_window = handle(2);
+        let pending = DockViewportActivationTransaction::new(
+            space("pending"),
+            pending_window,
+            DockViewportFocusRequest::panel("pending"),
+        );
+        state.record_pending_activation(pending.clone());
+
+        let first_record = state
+            .record_confirmed_backend_focused_window(confirmed_window.window_id(), |window| {
+                window == pending_window.window_id() || window == confirmed_window.window_id()
+            })
+            .expect("confirmed window should be live");
+        assert_eq!(
+            first_record.cleared_pending_activation(),
+            Some(&pending),
+            "a focus transition should return the displaced pending activation"
+        );
+
+        let second_record = state
+            .record_confirmed_backend_focused_window(confirmed_window.window_id(), |_| true)
+            .expect("repeated confirmed window should remain live");
+        assert_eq!(
+            second_record.cleared_pending_activation(),
+            None,
+            "a no-op backend sample must not manufacture a second cancellation"
+        );
+    }
 
     #[test]
     fn backend_focus_on_another_live_window_clears_pending_activation() {

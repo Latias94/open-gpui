@@ -1,6 +1,7 @@
 use super::*;
 
 impl DockViewportRuntimeHandle {
+    #[cfg(test)]
     pub(crate) fn deliver_drop_commit_delivery(
         &self,
         delivery: DockDropDelivery,
@@ -15,24 +16,39 @@ impl DockViewportRuntimeHandle {
         live_window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let result = match delivery.into_tear_off_request() {
-            Ok(request) => self.commit_tear_off_drop_route(request, cx),
-            Err(delivery) => {
-                let mut runtime = self.runtime.borrow_mut();
-                match live_window {
-                    Some(window) => runtime
-                        .deliver_drop_commit_delivery_from_live_window_with_outcome(
-                            delivery, window, cx,
-                        ),
-                    None => runtime.deliver_drop_commit_delivery_with_outcome(delivery, cx),
+        self.with_surface_transaction(cx, |surface_transaction, cx| {
+            let result = match delivery.into_tear_off_request() {
+                Ok(request) => self.commit_tear_off_drop_route(request, cx),
+                Err(delivery) => {
+                    let result = {
+                        let mut runtime = self.runtime.borrow_mut();
+                        match live_window {
+                            Some(window) => runtime
+                                .deliver_drop_commit_delivery_from_live_window_with_runtime_update(
+                                    delivery,
+                                    window,
+                                    surface_transaction,
+                                    cx,
+                                ),
+                            None => runtime.deliver_drop_commit_delivery_with_runtime_update(
+                                delivery,
+                                surface_transaction,
+                                cx,
+                            ),
+                        }
+                    };
+                    if let Ok((_, update)) = &result {
+                        self.publish_surface_commit(update, cx);
+                    }
+                    result.map(|(outcome, _)| outcome)
                 }
+            };
+            self.clear_routed_drop_preview(cx);
+            if let Ok(DockViewportDropRouteOutcome::Action(outcome)) = &result {
+                apply_viewport_window_effects(outcome.window_effects(), cx);
             }
-        };
-        self.clear_routed_drop_preview(cx);
-        if let Ok(DockViewportDropRouteOutcome::Action(outcome)) = &result {
-            apply_viewport_window_effects(outcome.window_effects(), cx);
-        }
-        result
+            result
+        })
     }
 
     fn commit_tear_off_drop_route(
@@ -90,10 +106,11 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut C,
     ) -> DockViewportResolvedDropRouteOutcome {
-        let refresh = self
-            .runtime
-            .borrow_mut()
-            .resolve_payload_drop_delivery_with_outcome(request, cx);
+        let refresh = {
+            let mut runtime = self.runtime.borrow_mut();
+            runtime.resolve_payload_drop_delivery_with_outcome(request, cx)
+        };
+        self.settle_backend_focus_cancellations(cx);
         refresh_viewport_window_effects(refresh.window_effects(), cx);
         refresh.outcome
     }
@@ -112,10 +129,11 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut C,
     ) -> DockViewportResolvedDropRouteOutcome {
-        let refresh = self
-            .runtime
-            .borrow_mut()
-            .resolve_payload_drop_delivery_for_request_with_outcome(request, cx);
+        let refresh = {
+            let mut runtime = self.runtime.borrow_mut();
+            runtime.resolve_payload_drop_delivery_for_request_with_outcome(request, cx)
+        };
+        self.settle_backend_focus_cancellations(cx);
         refresh_viewport_window_effects(refresh.window_effects(), cx);
         refresh.outcome
     }
@@ -164,13 +182,34 @@ impl DockViewportRuntimeHandle {
         target_space: &DockSpaceId,
         cx: &mut App,
     ) -> bool {
-        let effects = self
+        self.vacate_empty_payload_drop_source_viewport_with_transaction(
+            source_space,
+            target_space,
+            self.active_surface_transaction.get(),
+            cx,
+        )
+    }
+
+    pub(crate) fn vacate_empty_payload_drop_source_viewport_with_transaction(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+        cx: &mut App,
+    ) -> bool {
+        let (effects, topology_changed) = self
             .runtime
             .borrow_mut()
-            .vacate_empty_payload_drop_source_viewport_with_cleanup(source_space, target_space, cx);
-        let changed = effects.has_effects();
+            .vacate_empty_payload_drop_source_viewport_with_cleanup_and_change(
+                source_space,
+                target_space,
+                cx,
+            );
+        let mut update = DockViewportRuntimeUpdate::default();
+        update.mark_viewport_topology(topology_changed, surface_transaction);
+        self.publish_surface_commit(&update, cx);
         apply_viewport_window_effects(effects, cx);
-        changed
+        topology_changed
     }
 
     pub(crate) fn routed_drop_preview_for(
@@ -235,6 +274,7 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Resolves and commits a rendered payload release from a screen-space point.
+    #[cfg(test)]
     pub(crate) fn commit_payload_drop_from_screen(
         &self,
         request: &DockViewportDropRouteRequest,

@@ -532,6 +532,15 @@ impl DockInteractionRuntime {
         }
         None
     }
+
+    pub(crate) fn reset_window_bound_state(&mut self) {
+        self.splitter_drag = None;
+        self.floating_drag = None;
+        self.payload_drag_anchor = None;
+        self.drop.clear();
+        self.outside_release_poll = None;
+        self.viewport_host_scene_frame = None;
+    }
 }
 
 impl DockInteractionRuntime {

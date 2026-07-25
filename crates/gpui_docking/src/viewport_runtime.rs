@@ -30,6 +30,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     extend_unique_windows,
     interaction::DockRuntimeDragSession,
+    surface::DockSurfaceTransactionId,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
         DockViewportHostSceneSnapshot,
@@ -71,6 +72,7 @@ pub(crate) struct DockViewportRuntime {
     window_ownership: DockViewportWindowOwnership,
     focus: DockViewportFocusCoordinator,
     backend_focus: DockViewportBackendFocusState,
+    backend_focus_cancellations: Vec<DockViewportActivationTransaction>,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewState,
     status: DockViewportRuntimeStatus,
@@ -80,18 +82,30 @@ pub(crate) struct DockViewportRuntime {
 pub(crate) struct DockViewportRuntimeRegistration {
     pub(crate) outcome: DockViewportRegisterOutcome,
     window_effects: DockViewportWindowEffects,
+    runtime_update: DockViewportRuntimeUpdate,
 }
 
 impl DockViewportRuntimeRegistration {
     pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
         self.window_effects.clone()
     }
+
+    pub(crate) fn runtime_update(&self) -> &DockViewportRuntimeUpdate {
+        &self.runtime_update
+    }
 }
 
 #[derive(Debug, Default)]
 struct DockViewportVacatedPayloadDropSource {
+    changed: bool,
     windows: Vec<AnyWindowHandle>,
     affected_windows: Vec<AnyWindowHandle>,
+}
+
+impl DockViewportVacatedPayloadDropSource {
+    fn changed(&self) -> bool {
+        self.changed
+    }
 }
 
 #[derive(Debug)]
@@ -172,6 +186,7 @@ impl DockViewportRuntime {
             window_ownership: DockViewportWindowOwnership::default(),
             focus: DockViewportFocusCoordinator::default(),
             backend_focus: DockViewportBackendFocusState::default(),
+            backend_focus_cancellations: Vec::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -197,6 +212,7 @@ impl DockViewportRuntime {
             window_ownership: DockViewportWindowOwnership::default(),
             focus: DockViewportFocusCoordinator::default(),
             backend_focus: DockViewportBackendFocusState::default(),
+            backend_focus_cancellations: Vec::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -385,7 +401,20 @@ impl DockViewportRuntime {
                 adapter.space_for_window_id(candidate).is_some()
                     && !adapter.window_close_requested(candidate)
             })
-            .map(|focus_record| focus_record.changed())
+            .map(|focus_record| {
+                if let Some(cancellation) = focus_record.cleared_pending_activation() {
+                    if cancellation.surface_activation_binding().is_some() {
+                        self.backend_focus_cancellations.push(cancellation.clone());
+                    }
+                }
+                focus_record.changed()
+            })
+    }
+
+    pub(crate) fn take_backend_focus_cancellations(
+        &mut self,
+    ) -> Vec<DockViewportActivationTransaction> {
+        std::mem::take(&mut self.backend_focus_cancellations)
     }
 
     pub(crate) fn record_confirmed_backend_focus_for_window(
@@ -427,7 +456,11 @@ impl DockViewportRuntime {
             && !backend_focus.target_focused()
             && self.record_pending_activation(activation.clone());
         let pending_backend_focus_cleared = if backend_focus.target_focused() {
-            self.clear_pending_activation_for(activation.space(), activation.window_id())
+            let cleared =
+                self.take_pending_activation_for(activation.space(), activation.window_id());
+            let cleared_present = cleared.is_some();
+            self.queue_displaced_activation(cleared, Some(activation));
+            cleared_present
         } else {
             false
         };
@@ -451,7 +484,12 @@ impl DockViewportRuntime {
         &mut self,
         activation: DockViewportActivationTransaction,
     ) -> bool {
-        self.backend_focus.record_pending_activation(activation)
+        let update = self
+            .backend_focus
+            .record_pending_activation_with_displaced(activation.clone());
+        let changed = update.changed();
+        self.queue_displaced_activation(update.displaced(), Some(&activation));
+        changed
     }
 
     pub(crate) fn clear_pending_activation_for(
@@ -461,6 +499,31 @@ impl DockViewportRuntime {
     ) -> bool {
         self.backend_focus
             .clear_pending_activation_for(space, window_id)
+    }
+
+    fn take_pending_activation_for(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockViewportActivationTransaction> {
+        self.backend_focus
+            .take_pending_activation_for(space, window_id)
+    }
+
+    fn queue_displaced_activation(
+        &mut self,
+        displaced: Option<DockViewportActivationTransaction>,
+        replacement: Option<&DockViewportActivationTransaction>,
+    ) {
+        let Some(displaced) = displaced else {
+            return;
+        };
+        let displaced_binding = displaced.surface_activation_binding();
+        let replacement_binding =
+            replacement.and_then(DockViewportActivationTransaction::surface_activation_binding);
+        if displaced_binding != replacement_binding && displaced_binding.is_some() {
+            self.backend_focus_cancellations.push(displaced);
+        }
     }
 
     #[cfg(test)]
@@ -610,11 +673,12 @@ impl DockViewportRuntime {
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
     ) -> DockViewportRuntimeUpdate {
+        let facts_change = self
+            .adapter
+            .apply_platform_window_facts_with_change(window_id, window_facts);
         let mut update = DockViewportRuntimeUpdate::default();
-        update.mark_changed(
-            self.adapter
-                .apply_platform_window_facts(window_id, window_facts),
-        );
+        update.mark_observed_viewport_placement(facts_change.placement_changed, None);
+        update.mark_changed(facts_change.changed);
         update.merge(self.clear_preview_for_unready_window_route(window_id));
         update
     }
@@ -940,7 +1004,7 @@ impl DockViewportRuntime {
         }
         let mut update = self.finish_payload_drag_for_source_space(space);
         if let Some(unregistered) = self.unregister_space_runtime_state(space) {
-            update.mark_changed(true);
+            update.mark_viewport_topology(true, None);
             update.extend_windows(unregistered.affected_windows);
             self.retire_window(unregistered.window.window_id());
         }
@@ -1010,14 +1074,26 @@ impl DockViewportRuntime {
         space: DockSpaceId,
         window: AnyWindowHandle,
     ) -> DockViewportRuntimeRegistration {
-        self.register_runtime_viewport(space, window)
+        self.register_runtime_viewport(space, window, None)
+    }
+
+    pub(crate) fn register_opened_viewport_with_cleanup_in_transaction(
+        &mut self,
+        space: DockSpaceId,
+        window: AnyWindowHandle,
+        surface_transaction: DockSurfaceTransactionId,
+    ) -> DockViewportRuntimeRegistration {
+        self.register_runtime_viewport(space, window, Some(surface_transaction))
     }
 
     fn register_runtime_viewport(
         &mut self,
         space: DockSpaceId,
         window: AnyWindowHandle,
+        surface_transaction: Option<DockSurfaceTransactionId>,
     ) -> DockViewportRuntimeRegistration {
+        let topology_changed = self.adapter.window_for_space(&space) != Some(window)
+            || self.adapter.space_for_window_id(window.window_id()) != Some(&space);
         let outcome = self
             .adapter
             .register_viewport_with_outcome(space.clone(), window);
@@ -1026,6 +1102,8 @@ impl DockViewportRuntime {
             .register_runtime_window(window.window_id());
         self.backend_focus
             .record_viewport_created(window.window_id());
+        let mut runtime_update = DockViewportRuntimeUpdate::default();
+        runtime_update.mark_viewport_topology(topology_changed, surface_transaction);
         DockViewportRuntimeRegistration {
             outcome,
             window_effects: DockViewportWindowEffects::new(
@@ -1033,6 +1111,7 @@ impl DockViewportRuntime {
                 cleanup.affected_windows,
                 Vec::new(),
             ),
+            runtime_update,
         }
     }
 
@@ -1097,7 +1176,7 @@ impl DockViewportRuntime {
                 self.backend_focus
                     .record_viewport_created(window.window_id());
                 let mut update = DockViewportRuntimeUpdate::default();
-                update.mark_changed(true);
+                update.mark_viewport_topology(true, None);
                 update.extend_windows(cleanup.affected_windows);
                 update.extend_windows(cleanup.replaced_windows);
                 update
@@ -1105,27 +1184,54 @@ impl DockViewportRuntime {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn deliver_drop_commit_delivery_with_outcome(
         &mut self,
         delivery: DockDropDelivery,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let result = self.deliver_payload_drop_inner(delivery, None, cx);
+        let result = self
+            .deliver_payload_drop_inner(delivery, None, None, cx)
+            .map(|(outcome, _)| outcome);
         self.status.record_drop_result(&result);
         result
     }
 
-    pub(crate) fn deliver_drop_commit_delivery_from_live_window_with_outcome(
+    pub(crate) fn deliver_drop_commit_delivery_with_runtime_update(
+        &mut self,
+        delivery: DockDropDelivery,
+        surface_transaction: Option<DockSurfaceTransactionId>,
+        cx: &mut App,
+    ) -> Result<(DockViewportDropRouteOutcome, DockViewportRuntimeUpdate), DockActionApplyError>
+    {
+        let result = self.deliver_payload_drop_inner(delivery, None, surface_transaction, cx);
+        self.status.record_drop_result(
+            &result
+                .as_ref()
+                .map(|(outcome, _)| outcome.clone())
+                .map_err(|error| error.clone()),
+        );
+        result
+    }
+
+    pub(crate) fn deliver_drop_commit_delivery_from_live_window_with_runtime_update(
         &mut self,
         delivery: DockDropDelivery,
         live_window: AnyWindowHandle,
+        surface_transaction: Option<DockSurfaceTransactionId>,
         cx: &mut App,
-    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let result = self.deliver_payload_drop_inner(delivery, Some(live_window), cx);
-        self.status.record_drop_result(&result);
+    ) -> Result<(DockViewportDropRouteOutcome, DockViewportRuntimeUpdate), DockActionApplyError>
+    {
+        let result =
+            self.deliver_payload_drop_inner(delivery, Some(live_window), surface_transaction, cx);
+        self.status.record_drop_result(
+            &result
+                .as_ref()
+                .map(|(outcome, _)| outcome.clone())
+                .map_err(|error| error.clone()),
+        );
         result
     }
-
     #[cfg(test)]
     pub(crate) fn validate_payload_drop_delivery(
         &self,
@@ -1178,8 +1284,10 @@ impl DockViewportRuntime {
         &mut self,
         delivery: DockDropDelivery,
         live_window: Option<AnyWindowHandle>,
+        surface_transaction: Option<DockSurfaceTransactionId>,
         cx: &mut App,
-    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+    ) -> Result<(DockViewportDropRouteOutcome, DockViewportRuntimeUpdate), DockActionApplyError>
+    {
         self.validate_payload_drag_session(delivery.drag_session())?;
         let DockDropWorkspaceCommit {
             source_space,
@@ -1238,6 +1346,7 @@ impl DockViewportRuntime {
             live_window,
             cx,
         );
+        let reusable_topology_changed = reusable.topology_changed();
         let (activation, reusable_effects) = DockViewportWindowLifecycleController::drop_activation(
             reusable,
             target_space.clone(),
@@ -1245,29 +1354,42 @@ impl DockViewportRuntime {
         );
         let vacated_source =
             self.vacate_empty_payload_drop_source_viewport(&source_space, &target_space, cx);
+        let mut runtime_update = DockViewportRuntimeUpdate::default();
+        runtime_update.mark_graph_commit(drop_outcome.changed(), surface_transaction);
+        runtime_update.mark_viewport_topology(
+            reusable_topology_changed || vacated_source.changed(),
+            surface_transaction,
+        );
         let window_effects = reusable_effects.merge(DockViewportWindowEffects::new(
             Vec::new(),
             vacated_source.affected_windows,
             vacated_source.windows,
         ));
-        Ok(DockViewportDropRouteOutcome::Action(
-            DockViewportDropActionOutcome::new(drop_outcome.action(), activation)
-                .with_window_effects(window_effects),
+        Ok((
+            DockViewportDropRouteOutcome::Action(
+                DockViewportDropActionOutcome::new(drop_outcome.action(), activation)
+                    .with_window_effects(window_effects),
+            ),
+            runtime_update,
         ))
     }
 
-    pub(crate) fn vacate_empty_payload_drop_source_viewport_with_cleanup(
+    pub(crate) fn vacate_empty_payload_drop_source_viewport_with_cleanup_and_change(
         &mut self,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
         cx: &App,
-    ) -> DockViewportWindowEffects {
+    ) -> (DockViewportWindowEffects, bool) {
         let vacated_source =
             self.vacate_empty_payload_drop_source_viewport(source_space, target_space, cx);
-        DockViewportWindowEffects::new(
-            Vec::new(),
-            vacated_source.affected_windows,
-            vacated_source.windows,
+        let changed = vacated_source.changed();
+        (
+            DockViewportWindowEffects::new(
+                Vec::new(),
+                vacated_source.affected_windows,
+                vacated_source.windows,
+            ),
+            changed,
         )
     }
 
@@ -1302,6 +1424,7 @@ impl DockViewportRuntime {
             Vec::new()
         };
         DockViewportVacatedPayloadDropSource {
+            changed: true,
             windows,
             affected_windows: unregistered.affected_windows,
         }
@@ -1533,7 +1656,7 @@ impl DockViewportRuntime {
         committed: DockViewportCommittedTearOffMove,
         window: impl Into<AnyWindowHandle>,
         cx: &App,
-    ) -> DockViewportTearOffCompleted {
+    ) -> (DockViewportTearOffCompleted, DockViewportRuntimeUpdate) {
         self.complete_tear_off_registration(committed, window.into(), cx)
     }
 
@@ -1555,23 +1678,28 @@ impl DockViewportRuntime {
         committed: DockViewportCommittedTearOffMove,
         window: AnyWindowHandle,
         cx: &App,
-    ) -> DockViewportTearOffCompleted {
+    ) -> (DockViewportTearOffCompleted, DockViewportRuntimeUpdate) {
         let commit = committed.into_commit();
         let vacated_source = self.vacate_empty_tear_off_source_viewport(&commit.pending, cx);
         let registration =
-            self.register_runtime_viewport(commit.pending.target_space().clone(), window);
+            self.register_runtime_viewport(commit.pending.target_space().clone(), window, None);
         let DockViewportRuntimeRegistration {
             outcome,
             window_effects,
+            mut runtime_update,
         } = registration;
-        DockViewportTearOffCompleted::new(
-            commit.pending,
-            outcome,
-            window_effects.close_now().to_vec(),
-            window_effects.refresh().to_vec(),
-            vacated_source.windows,
-            vacated_source.affected_windows,
-            commit.action,
+        runtime_update.mark_viewport_topology(vacated_source.changed, None);
+        (
+            DockViewportTearOffCompleted::new(
+                commit.pending,
+                outcome,
+                window_effects.close_now().to_vec(),
+                window_effects.refresh().to_vec(),
+                vacated_source.windows,
+                vacated_source.affected_windows,
+                commit.action,
+            ),
+            runtime_update,
         )
     }
 
@@ -1594,14 +1722,19 @@ impl DockViewportRuntime {
         if !source_is_empty {
             return DockViewportVacatedTearOffSource::default();
         }
-        let (window, affected_windows) =
+        let (window, affected_windows, changed) =
             if let Some(unregistered) = self.unregister_space_runtime_state(source_space) {
-                (Some(unregistered.window), unregistered.affected_windows)
+                (
+                    Some(unregistered.window),
+                    unregistered.affected_windows,
+                    true,
+                )
             } else {
-                (pending.source_window(), Vec::new())
+                (pending.source_window(), Vec::new(), false)
             };
         let Some(window) = window else {
             return DockViewportVacatedTearOffSource {
+                changed,
                 windows: Vec::new(),
                 affected_windows,
             };
@@ -1615,6 +1748,7 @@ impl DockViewportRuntime {
             Vec::new()
         };
         DockViewportVacatedTearOffSource {
+            changed,
             windows,
             affected_windows,
         }

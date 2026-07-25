@@ -1,4 +1,4 @@
-use super::DockSurface;
+use super::{DockSurface, DockSurfaceChangeCategory, with_root_transaction};
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockGraphDropTarget, DockItemId,
     DockLayout, DockNodeId, DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome,
@@ -261,15 +261,15 @@ impl From<DockActionApplyError> for DockSurfacePanelError {
 impl DockSurface {
     /// Returns logical dock spaces known to the surface graph.
     pub fn dock_spaces(&self, cx: &App) -> Vec<DockSpaceId> {
-        cx.read_entity(&self.controller, |controller, _| {
-            controller.graph().spaces()
-        })
+        let controller = self.controller(cx);
+        cx.read_entity(&controller, |controller, _| controller.graph().spaces())
     }
 
     /// Returns open item ids reachable from one dock space.
     pub fn items_in_space(&self, space: impl Into<DockSpaceId>, cx: &App) -> Vec<DockItemId> {
         let space = space.into();
-        cx.read_entity(&self.controller, |controller, _| {
+        let controller = self.controller(cx);
+        cx.read_entity(&controller, |controller, _| {
             controller.graph().collect_items_in_space(&space)
         })
     }
@@ -281,7 +281,8 @@ impl DockSurface {
         cx: &App,
     ) -> Vec<DockItemId> {
         let space = space.into();
-        cx.read_entity(&self.controller, |controller, _| {
+        let controller = self.controller(cx);
+        cx.read_entity(&controller, |controller, _| {
             let graph = controller.graph();
             graph
                 .tabs_in_space(&space)
@@ -307,7 +308,8 @@ impl DockSurface {
         cx: &App,
     ) -> Vec<DockSurfaceFloatingPanelSnapshot> {
         let space = space.into();
-        cx.read_entity(&self.controller, |controller, _| {
+        let controller = self.controller(cx);
+        cx.read_entity(&controller, |controller, _| {
             let graph = controller.graph();
             graph
                 .floating_containers(&space)
@@ -330,14 +332,16 @@ impl DockSurface {
         cx: &App,
     ) -> Option<DockSurfacePanelLocation> {
         let item = item.into();
-        cx.read_entity(&self.controller, |controller, _| {
+        let controller = self.controller(cx);
+        cx.read_entity(&controller, |controller, _| {
             panel_location(controller, &item)
         })
     }
 
     /// Returns descriptor and lifecycle snapshots for registered panels in stable item-id order.
     pub fn registered_panels(&self, cx: &App) -> Vec<DockSurfacePanelSnapshot> {
-        cx.read_entity(&self.controller, |controller, _| {
+        let controller = self.controller(cx);
+        cx.read_entity(&controller, |controller, _| {
             controller
                 .panels()
                 .descriptors()
@@ -357,7 +361,8 @@ impl DockSurface {
 
     /// Exports durable dock layout state without exposing the graph controller.
     pub fn export_layout(&self, cx: &App) -> DockLayout {
-        cx.read_entity(&self.controller, |controller, _| {
+        let controller = self.controller(cx);
+        cx.read_entity(&controller, |controller, _| {
             controller.graph().export_layout()
         })
     }
@@ -379,11 +384,19 @@ impl DockSurface {
         item: impl Into<DockItemId>,
         cx: &mut App,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
-        self.update_controller(cx, |controller| {
-            controller
-                .reopen_panel(space, item)
-                .map(DockSurfacePanelOutcome::Opened)
-        })
+        self.update_controller(
+            cx,
+            &[
+                DockSurfaceChangeCategory::Layout,
+                DockSurfaceChangeCategory::Selection,
+                DockSurfaceChangeCategory::PanelLifecycle,
+            ],
+            |controller| {
+                controller
+                    .reopen_panel(space, item)
+                    .map(DockSurfacePanelOutcome::Opened)
+            },
+        )
     }
 
     /// Opens a registered panel at an explicit product placement in the primary dock space.
@@ -403,11 +416,19 @@ impl DockSurface {
         placement: DockPanelPlacement,
         cx: &mut App,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
-        self.update_controller(cx, |controller| {
-            controller
-                .open_panel_at_placement(space, placement)
-                .map(DockSurfacePanelOutcome::Opened)
-        })
+        self.update_controller(
+            cx,
+            &[
+                DockSurfaceChangeCategory::Layout,
+                DockSurfaceChangeCategory::Selection,
+                DockSurfaceChangeCategory::PanelLifecycle,
+            ],
+            |controller| {
+                controller
+                    .open_panel_at_placement(space, placement)
+                    .map(DockSurfacePanelOutcome::Opened)
+            },
+        )
     }
 
     /// Docks a floating panel back into the primary dock space at an explicit product placement.
@@ -428,25 +449,32 @@ impl DockSurface {
         cx: &mut App,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
         let space = space.into();
-        self.update_controller(cx, |controller| {
-            let graph = controller.graph();
-            let target_tabs = graph
-                .target_tabs_for_panel_placement(&space, &placement)
-                .ok_or(DockActionApplyError::DropTargetUnavailable)?;
-            let floating = graph
-                .floating_containers(&space)
-                .iter()
-                .find(|container| graph.subtree_contains_item(container.node, placement.item()))
-                .map(|container| container.node)
-                .ok_or_else(|| DockActionApplyError::PanelNotRegistered {
-                    item: placement.item().clone(),
-                })?;
+        self.update_controller(
+            cx,
+            &[
+                DockSurfaceChangeCategory::Layout,
+                DockSurfaceChangeCategory::Selection,
+            ],
+            |controller| {
+                let graph = controller.graph();
+                let target_tabs = graph
+                    .target_tabs_for_panel_placement(&space, &placement)
+                    .ok_or(DockActionApplyError::DropTargetUnavailable)?;
+                let floating = graph
+                    .floating_containers(&space)
+                    .iter()
+                    .find(|container| graph.subtree_contains_item(container.node, placement.item()))
+                    .map(|container| container.node)
+                    .ok_or_else(|| DockActionApplyError::PanelNotRegistered {
+                        item: placement.item().clone(),
+                    })?;
 
-            controller
-                .merge_floating_into(space, floating, target_tabs)
-                .map(DockSurfaceChange::from)
-                .map(DockSurfacePanelOutcome::Docked)
-        })
+                controller
+                    .merge_floating_into(space, floating, target_tabs)
+                    .map(DockSurfaceChange::from)
+                    .map(DockSurfacePanelOutcome::Docked)
+            },
+        )
     }
 
     /// Closes a registered panel in the primary dock space.
@@ -466,11 +494,19 @@ impl DockSurface {
         item: impl Into<DockItemId>,
         cx: &mut App,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
-        self.update_controller(cx, |controller| {
-            controller
-                .close_panel(space, item)
-                .map(DockSurfacePanelOutcome::Closed)
-        })
+        self.update_controller(
+            cx,
+            &[
+                DockSurfaceChangeCategory::Layout,
+                DockSurfaceChangeCategory::Selection,
+                DockSurfaceChangeCategory::PanelLifecycle,
+            ],
+            |controller| {
+                controller
+                    .close_panel(space, item)
+                    .map(DockSurfacePanelOutcome::Closed)
+            },
+        )
     }
 
     /// Selects a registered panel in the primary dock space without exposing tabs node ids.
@@ -492,22 +528,26 @@ impl DockSurface {
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
         let space = space.into();
         let item = item.into();
-        self.update_controller_with_panel_error(cx, |controller| {
-            if controller
-                .graph()
-                .find_item_in_space(&space, &item)
-                .is_none()
-            {
-                return Err(DockSurfacePanelError::PanelUnavailable { item });
-            }
+        self.update_controller_with_panel_error(
+            cx,
+            &[DockSurfaceChangeCategory::Selection],
+            |controller| {
+                if controller
+                    .graph()
+                    .find_item_in_space(&space, &item)
+                    .is_none()
+                {
+                    return Err(DockSurfacePanelError::PanelUnavailable { item });
+                }
 
-            controller
-                .workspace_mut()
-                .select_item_in_space(space, item)
-                .map(DockSurfaceChange::from)
-                .map(DockSurfacePanelOutcome::Selected)
-                .map_err(DockSurfacePanelError::from)
-        })
+                controller
+                    .workspace_mut()
+                    .select_item_in_space(space, item)
+                    .map(DockSurfaceChange::from)
+                    .map(DockSurfacePanelOutcome::Selected)
+                    .map_err(DockSurfacePanelError::from)
+            },
+        )
     }
 
     /// Moves a panel from the primary dock space into an in-window floating container.
@@ -530,12 +570,19 @@ impl DockSurface {
         bounds: Bounds<Pixels>,
         cx: &mut App,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
-        self.update_controller(cx, |controller| {
-            controller
-                .float_item_in_window(source_space, item, target_space, bounds)
-                .map(DockSurfaceChange::from)
-                .map(DockSurfacePanelOutcome::Floated)
-        })
+        self.update_controller(
+            cx,
+            &[
+                DockSurfaceChangeCategory::Layout,
+                DockSurfaceChangeCategory::Selection,
+            ],
+            |controller| {
+                controller
+                    .float_item_in_window(source_space, item, target_space, bounds)
+                    .map(DockSurfaceChange::from)
+                    .map(DockSurfacePanelOutcome::Floated)
+            },
+        )
     }
 
     /// Moves an open panel into an empty logical dock space without exposing graph node ids.
@@ -552,33 +599,47 @@ impl DockSurface {
         let source_space = source_space.into();
         let item = item.into();
         let target_space = target_space.into();
-        let controller = self.controller.clone();
-        cx.update_entity(&controller, |controller, cx| {
-            if !controller.panels().contains(&item) {
-                return Err(DockSurfacePanelError::PanelNotRegistered { item });
+        let controller = self.controller(cx);
+        with_root_transaction(self.owner(), cx, |owner, transaction, cx| {
+            let outcome = cx.update_entity(&controller, |controller, cx| {
+                if !controller.panels().contains(&item) {
+                    return Err(DockSurfacePanelError::PanelNotRegistered { item });
+                }
+
+                let (source_tabs, _) = controller
+                    .graph()
+                    .find_item_in_space(&source_space, &item)
+                    .ok_or_else(|| DockSurfacePanelError::PanelUnavailable {
+                        item: item.clone(),
+                    })?;
+
+                controller
+                    .workspace_mut()
+                    .commit_tab_move(
+                        &source_space,
+                        source_tabs,
+                        &item,
+                        &target_space,
+                        DockGraphDropTarget::empty_space(),
+                    )
+                    .map(DockSurfaceChange::from)
+                    .map_err(DockSurfacePanelError::from)
+                    .inspect(|change| {
+                        if change.changed() {
+                            cx.notify();
+                        }
+                    })
+            });
+            if outcome.as_ref().is_ok_and(|change| change.changed()) {
+                owner.record_changes(
+                    transaction,
+                    [
+                        DockSurfaceChangeCategory::Layout,
+                        DockSurfaceChangeCategory::Selection,
+                    ],
+                );
             }
-
-            let (source_tabs, _) = controller
-                .graph()
-                .find_item_in_space(&source_space, &item)
-                .ok_or_else(|| DockSurfacePanelError::PanelUnavailable { item: item.clone() })?;
-
-            controller
-                .workspace_mut()
-                .commit_tab_move(
-                    &source_space,
-                    source_tabs,
-                    &item,
-                    &target_space,
-                    DockGraphDropTarget::empty_space(),
-                )
-                .map(DockSurfaceChange::from)
-                .map_err(DockSurfacePanelError::from)
-                .inspect(|change| {
-                    if change.changed() {
-                        cx.notify();
-                    }
-                })
+            outcome
         })
     }
 
@@ -603,14 +664,18 @@ impl DockSurface {
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
         let space = space.into();
         let item = item.into();
-        self.update_controller_with_panel_error(cx, |controller| {
-            let floating = floating_container_for_item(controller, &space, &item)?;
-            controller
-                .set_floating_bounds(space, floating, bounds)
-                .map(DockSurfaceChange::from)
-                .map(DockSurfacePanelOutcome::FloatingBoundsSet)
-                .map_err(DockSurfacePanelError::from)
-        })
+        self.update_controller_with_panel_error(
+            cx,
+            &[DockSurfaceChangeCategory::Layout],
+            |controller| {
+                let floating = floating_container_for_item(controller, &space, &item)?;
+                controller
+                    .set_floating_bounds(space, floating, bounds)
+                    .map(DockSurfaceChange::from)
+                    .map(DockSurfacePanelOutcome::FloatingBoundsSet)
+                    .map_err(DockSurfacePanelError::from)
+            },
+        )
     }
 
     /// Raises an in-window floating panel container in the primary dock space.
@@ -632,24 +697,29 @@ impl DockSurface {
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
         let space = space.into();
         let item = item.into();
-        self.update_controller_with_panel_error(cx, |controller| {
-            let floating = floating_container_for_item(controller, &space, &item)?;
-            controller
-                .raise_floating(space, floating)
-                .map(DockSurfaceChange::from)
-                .map(DockSurfacePanelOutcome::FloatingRaised)
-                .map_err(DockSurfacePanelError::from)
-        })
+        self.update_controller_with_panel_error(
+            cx,
+            &[DockSurfaceChangeCategory::Layout],
+            |controller| {
+                let floating = floating_container_for_item(controller, &space, &item)?;
+                controller
+                    .raise_floating(space, floating)
+                    .map(DockSurfaceChange::from)
+                    .map(DockSurfacePanelOutcome::FloatingRaised)
+                    .map_err(DockSurfacePanelError::from)
+            },
+        )
     }
 
     fn update_controller(
         &self,
         cx: &mut App,
+        categories: &[DockSurfaceChangeCategory],
         update: impl FnOnce(
             &mut DockController,
         ) -> Result<DockSurfacePanelOutcome, DockActionApplyError>,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
-        self.update_controller_with_panel_error(cx, |controller| {
+        self.update_controller_with_panel_error(cx, categories, |controller| {
             update(controller).map_err(DockSurfacePanelError::from)
         })
     }
@@ -657,19 +727,30 @@ impl DockSurface {
     fn update_controller_with_panel_error(
         &self,
         cx: &mut App,
+        categories: &[DockSurfaceChangeCategory],
         update: impl FnOnce(
             &mut DockController,
         ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError>,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
-        let controller = self.controller.clone();
-        cx.update_entity(&controller, |controller, cx| {
-            let outcome = update(controller);
+        let controller = self.controller(cx);
+        with_root_transaction(self.owner(), cx, |owner, transaction, cx| {
+            let outcome = cx.update_entity(&controller, |controller, cx| {
+                let outcome = update(controller);
+                if outcome
+                    .as_ref()
+                    .map(DockSurfacePanelOutcome::changed)
+                    .unwrap_or(false)
+                {
+                    cx.notify();
+                }
+                outcome
+            });
             if outcome
                 .as_ref()
                 .map(DockSurfacePanelOutcome::changed)
                 .unwrap_or(false)
             {
-                cx.notify();
+                owner.record_changes(transaction, categories.iter().copied());
             }
             outcome
         })

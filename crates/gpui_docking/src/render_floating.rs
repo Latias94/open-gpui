@@ -131,6 +131,7 @@ impl DockHost {
         let floating = container.node;
         let bounds = container.bounds;
         let entity = cx.entity();
+        let window_binding = self.current_window_binding();
         let chrome_target = session.floating_chrome_target(floating);
         let floating_style = &session.visual_style().floating;
 
@@ -199,6 +200,12 @@ impl DockHost {
                             tear_off_geometry.with_display_work_area(display.visible_bounds());
                     }
                     let frozen_drag_visual_style = drag_entity.update(cx, |host, cx| {
+                        if !host.accepts_window_callback(
+                            window_binding,
+                            window.window_handle().window_id(),
+                        ) {
+                            return Some(drag_visual_style.clone());
+                        }
                         host.focus_host_for_drag_from_render(window, cx);
                         if !host.begin_floating_drag_from_render(
                             drag_space.clone(),
@@ -236,6 +243,12 @@ impl DockHost {
                 })
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                        if !this.accepts_window_callback(
+                            window_binding,
+                            window.window_handle().window_id(),
+                        ) {
+                            return;
+                        }
                         let payload = event.drag().clone();
                         let Ok(layout_position) = event.target_layout_position() else {
                             return;
@@ -310,6 +323,7 @@ impl DockHost {
                             let entity = entity.clone();
                             let space = space.clone();
                             let hitbox = hitbox.clone();
+                            let window_binding = window_binding;
                             move |event: &MouseDownEvent, phase, window, app| {
                                 if phase != DispatchPhase::Bubble
                                     || event.button != MouseButton::Left
@@ -329,6 +343,12 @@ impl DockHost {
                                     .capture_pointer(&pointer_capture, MouseButton::Left)
                                     .is_ok();
                                 let began = entity.update(app, |host, cx| {
+                                    if !host.accepts_window_callback(
+                                        window_binding,
+                                        window.window_handle().window_id(),
+                                    ) {
+                                        return false;
+                                    }
                                     host.begin_floating_drag_from_render(
                                         space.clone(),
                                         floating,
@@ -350,7 +370,8 @@ impl DockHost {
                         window.on_mouse_event({
                             let entity = entity.clone();
                             let hitbox = hitbox.clone();
-                            move |event: &MouseMoveEvent, phase, _, app| {
+                            let window_binding = window_binding;
+                            move |event: &MouseMoveEvent, phase, window, app| {
                                 if phase != DispatchPhase::Capture
                                     || event.pressed_button != Some(MouseButton::Left)
                                 {
@@ -364,20 +385,36 @@ impl DockHost {
                                 };
 
                                 entity.update(app, |host, cx| {
+                                    if !host.accepts_window_callback(
+                                        window_binding,
+                                        window.window_handle().window_id(),
+                                    ) {
+                                        return;
+                                    }
                                     host.update_floating_drag_from_render(layout_position, cx);
                                 });
                             }
                         });
 
-                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, app| {
-                            if phase != DispatchPhase::Capture || event.button != MouseButton::Left
-                            {
-                                return;
-                            }
+                        window.on_mouse_event({
+                            let window_binding = window_binding;
+                            move |event: &MouseUpEvent, phase, window, app| {
+                                if phase != DispatchPhase::Capture
+                                    || event.button != MouseButton::Left
+                                {
+                                    return;
+                                }
 
-                            entity.update(app, |host, cx| {
-                                host.finish_floating_drag_from_render(cx);
-                            });
+                                entity.update(app, |host, cx| {
+                                    if !host.accepts_window_callback(
+                                        window_binding,
+                                        window.window_handle().window_id(),
+                                    ) {
+                                        return;
+                                    }
+                                    host.finish_floating_drag_from_render(cx);
+                                });
+                            }
                         });
                     },
                 )

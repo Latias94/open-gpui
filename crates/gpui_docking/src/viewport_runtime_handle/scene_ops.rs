@@ -95,7 +95,8 @@ impl DockViewportRuntimeHandle {
         );
         let registration_update = self
             .register_rendered_host_viewport_with_cleanup(space.clone(), window.window_handle());
-        let registration_changed = refresh_runtime_update(registration_update, cx);
+        let registration_changed =
+            refresh_runtime_update_with_commit(self, registration_update, cx);
         let (registration, route_preview_update) = {
             let mut runtime = self.runtime.borrow_mut();
             let registration = runtime.commit_viewport_host_scene_snapshot(
