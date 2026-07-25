@@ -3,8 +3,8 @@ use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
-    DockViewportRuntimeHandle,
-    geometry::DockDropGuideStyle,
+    DockViewportRuntimeHandle, DockVisualStyle, DockVisualStyleResolver,
+    geometry::DockDropGuideMetrics,
     host_render_session::DockHostRenderSession,
     interaction::{DockInteractionRuntime, DockPendingFocusCommand},
     presentation_scene::DockPresentationScene,
@@ -18,7 +18,7 @@ use open_gpui::{
     PrepaintPublicationId, Subscription, Window, WindowId, px,
 };
 use open_gpui_motion::MotionPreference;
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 #[derive(Debug)]
 struct DockPanelFocusTracker {
@@ -49,8 +49,8 @@ pub struct DockHostOptions {
     pub split_min_size: Pixels,
     /// Hit target and visual thickness for rendered splitter handles.
     pub splitter_handle_size: Pixels,
-    /// Style inputs used to size and hit-test dock drop guides.
-    pub drop_guide_style: DockDropGuideStyle,
+    /// Structural metrics used to size and hit-test dock drop guides.
+    pub drop_guide_metrics: DockDropGuideMetrics,
     /// Host-owned motion preference applied before constructing docking transition specs.
     pub motion_preference: MotionPreference,
 }
@@ -62,7 +62,7 @@ impl Default for DockHostOptions {
             missing_panel_prefix: "Missing panel".to_string(),
             split_min_size: px(96.0),
             splitter_handle_size: px(6.0),
-            drop_guide_style: DockDropGuideStyle::default(),
+            drop_guide_metrics: DockDropGuideMetrics::default(),
             motion_preference: MotionPreference::Animated,
         }
     }
@@ -80,6 +80,8 @@ pub struct DockHost {
     space: DockSpaceId,
     focus_handle: FocusHandle,
     viewport_runtime: DockViewportRuntimeHandle,
+    visual_style_resolver: Option<DockVisualStyleResolver>,
+    fallback_visual_style: Rc<DockVisualStyle>,
     viewport_scene_publication: PrepaintPublicationId,
     raw_drag_pointer_capture: Option<PointerCaptureHandle>,
     viewport_activation_subscription: Option<Subscription>,
@@ -91,6 +93,8 @@ pub struct DockHost {
     debug: DockDebugInstrumentation,
     #[cfg(test)]
     pub(crate) debug_recording_suppression_depth: usize,
+    #[cfg(test)]
+    last_resolved_visual_style: Option<Rc<DockVisualStyle>>,
     interaction: DockInteractionRuntime,
     zoom: DockZoomState,
     transitions: DockTransitionExecutor,
@@ -107,12 +111,48 @@ impl DockHost {
         viewport_runtime: DockViewportRuntimeHandle,
         cx: &mut Context<Self>,
     ) -> Self {
+        let visual_style_resolver = viewport_runtime.visual_style_resolver();
+        Self::from_controller_with_optional_visual_style_resolver(
+            controller,
+            space,
+            viewport_runtime,
+            visual_style_resolver,
+            cx,
+        )
+    }
+
+    /// Creates a low-level host with an explicit immutable visual-style resolver.
+    pub fn from_controller_with_visual_style_resolver(
+        controller: Entity<DockController>,
+        space: impl Into<DockSpaceId>,
+        viewport_runtime: DockViewportRuntimeHandle,
+        visual_style_resolver: DockVisualStyleResolver,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::from_controller_with_optional_visual_style_resolver(
+            controller,
+            space,
+            viewport_runtime,
+            Some(visual_style_resolver),
+            cx,
+        )
+    }
+
+    fn from_controller_with_optional_visual_style_resolver(
+        controller: Entity<DockController>,
+        space: impl Into<DockSpaceId>,
+        viewport_runtime: DockViewportRuntimeHandle,
+        visual_style_resolver: Option<DockVisualStyleResolver>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&controller, |_, _, cx| cx.notify()).detach();
         Self {
             controller,
             space: space.into(),
             focus_handle: cx.focus_handle(),
             viewport_runtime,
+            visual_style_resolver,
+            fallback_visual_style: Rc::new(DockVisualStyle::built_in()),
             viewport_scene_publication: PrepaintPublicationId::new(),
             raw_drag_pointer_capture: None,
             viewport_activation_subscription: None,
@@ -124,6 +164,8 @@ impl DockHost {
             debug: DockDebugInstrumentation::default(),
             #[cfg(test)]
             debug_recording_suppression_depth: 0,
+            #[cfg(test)]
+            last_resolved_visual_style: None,
             interaction: DockInteractionRuntime::default(),
             zoom: DockZoomState::default(),
             transitions: DockTransitionExecutor::default(),
@@ -131,6 +173,27 @@ impl DockHost {
             last_visual_affordance_scene: None,
             last_presentation_scene: None,
         }
+    }
+
+    pub(crate) fn resolve_visual_style(
+        &self,
+        window: &mut Window,
+        cx: &mut open_gpui::App,
+    ) -> Rc<DockVisualStyle> {
+        self.visual_style_resolver
+            .as_ref()
+            .map(|resolver| resolver.resolve(window, cx))
+            .unwrap_or_else(|| self.fallback_visual_style.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_resolved_visual_style(&self) -> Option<&DockVisualStyle> {
+        self.last_resolved_visual_style.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_resolved_visual_style_for_test(&mut self, style: Rc<DockVisualStyle>) {
+        self.last_resolved_visual_style = Some(style);
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {

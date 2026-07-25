@@ -1,5 +1,5 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockDropGuideStyle,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockDropGuideMetrics,
     DockGraph, DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError,
     DockNodeId, DockPanel, DockPanelAttachError, DockPanelCloseOutcome, DockPanelDescriptor,
     DockPanelOpenOutcome, DockPanelPlacement, DockPanelRegistration, DockPanelRegistry, DockPolicy,
@@ -356,9 +356,9 @@ impl DockControllerBuilder {
         self
     }
 
-    /// Replaces the style inputs used to size and hit-test dock drop guides.
-    pub fn drop_guide_style(mut self, style: DockDropGuideStyle) -> Self {
-        self.options.drop_guide_style = style;
+    /// Replaces the structural metrics used to size and hit-test dock drop guides.
+    pub fn drop_guide_metrics(mut self, metrics: DockDropGuideMetrics) -> Self {
+        self.options.drop_guide_metrics = metrics;
         self
     }
 

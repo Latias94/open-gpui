@@ -1962,6 +1962,34 @@ mod tests {
     }
 
     #[open_gpui::test]
+    fn window_state_can_be_queried_without_initializing_or_mutating(cx: &mut TestAppContext) {
+        let window = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+
+        let absent = cx
+            .update_window(window, |_, window, _| {
+                window.window_state::<WindowLocalProbe>()
+            })
+            .expect("window should remain open");
+        assert!(absent.is_none());
+
+        let initialized = cx
+            .update_window(window, |_, window, cx| {
+                window.use_window_state(cx, |_, _| WindowLocalProbe)
+            })
+            .expect("window should remain open");
+        let queried = cx
+            .update_window(window, |_, window, _| {
+                window.window_state::<WindowLocalProbe>()
+            })
+            .expect("window should remain open")
+            .expect("initialized state should be queryable");
+
+        assert_eq!(queried.entity_id(), initialized.entity_id());
+    }
+
+    #[open_gpui::test]
     fn window_state_can_retry_after_direct_recursive_initialization_panics(
         cx: &mut TestAppContext,
     ) {

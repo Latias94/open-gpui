@@ -18,8 +18,8 @@ impl DockHost {
     ) -> bool {
         let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
-        let drop_guide_style =
-            self.with_workspace(cx, |workspace| workspace.options().drop_guide_style);
+        let drop_guide_metrics =
+            self.with_workspace(cx, |workspace| workspace.options().drop_guide_metrics);
         let window_id = window.window_handle().window_id();
         if runtime.window_id_for_space(&space) != Some(window_id) {
             self.interaction_mut().set_viewport_host_scene_frame(None);
@@ -37,7 +37,7 @@ impl DockHost {
             DockViewportWindowFacts::from_window(window, cx),
             host_geometry,
             host_position,
-            drop_guide_style,
+            drop_guide_metrics,
         );
         let Some(registration) = registration else {
             self.interaction_mut().set_viewport_host_scene_frame(None);

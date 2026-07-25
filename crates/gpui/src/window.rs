@@ -2394,6 +2394,24 @@ impl Window {
         state
     }
 
+    /// Returns an already initialized state entity owned by this window.
+    ///
+    /// Unlike [`Window::use_window_state`], this query never initializes or mutates window state.
+    /// It returns `None` when the state is absent or still being initialized.
+    pub fn window_state<S: 'static>(&self) -> Option<Entity<S>> {
+        let state_type = TypeId::of::<S>();
+        let states = self.window_states.borrow();
+        let WindowStateSlot::Ready(state) = states.get(&state_type)? else {
+            return None;
+        };
+        Some(
+            state
+                .clone()
+                .downcast::<S>()
+                .unwrap_or_else(|_| panic!("window state type id did not match its entity")),
+        )
+    }
+
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
         if self.invalidator.can_schedule_refresh() {

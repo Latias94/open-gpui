@@ -165,12 +165,42 @@ impl DockViewportRuntimeHandle {
         DockViewportRuntime::with_close_policy(controller, close_policy).into_handle()
     }
 
+    /// Creates a handle whose hosts resolve visual style in their active render context.
+    pub fn with_visual_style_resolver(
+        controller: Entity<DockController>,
+        visual_style_resolver: crate::DockVisualStyleResolver,
+    ) -> Self {
+        Self::with_close_policy_and_visual_style_resolver(
+            controller,
+            DockViewportClosePolicy::default(),
+            visual_style_resolver,
+        )
+    }
+
+    /// Creates a handle with explicit close policy and host visual-style resolution.
+    pub fn with_close_policy_and_visual_style_resolver(
+        controller: Entity<DockController>,
+        close_policy: DockViewportClosePolicy,
+        visual_style_resolver: crate::DockVisualStyleResolver,
+    ) -> Self {
+        DockViewportRuntime::with_close_policy_and_visual_style_resolver(
+            controller,
+            close_policy,
+            Some(visual_style_resolver),
+        )
+        .into_handle()
+    }
+
     /// Creates a handle from a prepared runtime.
     pub(crate) fn from_runtime(runtime: DockViewportRuntime) -> Self {
         Self {
             runtime: Rc::new(RefCell::new(runtime)),
             window_closed_observer_installed: Rc::new(Cell::new(false)),
         }
+    }
+
+    pub(crate) fn visual_style_resolver(&self) -> Option<crate::DockVisualStyleResolver> {
+        self.runtime.borrow().visual_style_resolver()
     }
 
     #[cfg(test)]
@@ -340,6 +370,7 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow_mut().begin_payload_drag(payload)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_payload_drag_with_app(
         &self,
         payload: &DockDragPayload,
@@ -354,9 +385,10 @@ impl DockViewportRuntimeHandle {
         session
     }
 
-    pub(crate) fn begin_payload_drag_from_window(
+    pub(crate) fn begin_payload_drag_from_window_with_drag_visual_style(
         &self,
         payload: &DockDragPayload,
+        drag_visual_style: crate::DockDragVisualStyle,
         window: &mut Window,
         cx: &mut App,
     ) -> DockRuntimeDragSession {
@@ -364,7 +396,11 @@ impl DockViewportRuntimeHandle {
         let session = self
             .runtime
             .borrow_mut()
-            .begin_payload_drag_with_focus(payload, focus_item);
+            .begin_payload_drag_with_focus_and_drag_visual_style(
+                payload,
+                focus_item,
+                drag_visual_style,
+            );
         self.reconcile_viewport_frame_except_window(window.window_handle().window_id(), cx);
         session
     }
@@ -384,6 +420,15 @@ impl DockViewportRuntimeHandle {
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
         self.runtime.borrow().active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn active_payload_drag_visual_style(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<crate::DockDragVisualStyle> {
+        self.runtime
+            .borrow()
+            .active_payload_drag_visual_style(session)
     }
 
     pub(crate) fn active_payload_drag_source_window_id(
@@ -432,6 +477,7 @@ impl DockViewportRuntimeHandle {
             .active_payload_drag_tear_off_geometry(session)
     }
 
+    #[cfg(test)]
     pub(crate) fn finish_payload_drag_with_app(
         &self,
         session: &DockRuntimeDragSession,

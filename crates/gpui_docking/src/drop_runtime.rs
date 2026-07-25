@@ -6,7 +6,7 @@ use crate::{
         DockLeafDropTarget, DockResolvedDropTarget, DockRootDropTarget, DockTabBarDropTarget,
         DockTabLabelDropTarget,
     },
-    geometry::DockDropGuideStyle,
+    geometry::DockDropGuideMetrics,
 };
 use open_gpui::{Bounds, Pixels, Point, Size};
 
@@ -31,7 +31,7 @@ pub(crate) struct DockDropRuntime {
 pub(crate) struct DockHostDropScene {
     pub(crate) position: Point<Pixels>,
     payload_size: Option<Size<Pixels>>,
-    drop_guide_style: DockDropGuideStyle,
+    drop_guide_metrics: DockDropGuideMetrics,
     excluded_nodes: Vec<DockNodeId>,
     pub(crate) tab_labels: Vec<DockTabLabelDropTarget>,
     pub(crate) tab_bars: Vec<DockTabBarDropTarget>,
@@ -57,7 +57,7 @@ impl DockHostDropScene {
         Self {
             position,
             payload_size: None,
-            drop_guide_style: DockDropGuideStyle::default(),
+            drop_guide_metrics: DockDropGuideMetrics::default(),
             excluded_nodes: Vec::new(),
             tab_labels: Vec::new(),
             tab_bars: Vec::new(),
@@ -91,13 +91,13 @@ impl DockHostDropScene {
         self
     }
 
-    pub(crate) fn with_drop_guide_style(mut self, style: DockDropGuideStyle) -> Self {
-        self.drop_guide_style = style;
+    pub(crate) fn with_drop_guide_metrics(mut self, metrics: DockDropGuideMetrics) -> Self {
+        self.drop_guide_metrics = metrics;
         self
     }
 
-    pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
-        self.drop_guide_style
+    pub(crate) fn drop_guide_metrics(&self) -> DockDropGuideMetrics {
+        self.drop_guide_metrics
     }
 
     pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
@@ -184,7 +184,7 @@ impl DockHostDropScene {
         drop_target::resolve_layout_drop(DockDropResolverInput {
             position: self.position,
             payload_size: self.payload_size,
-            drop_guide_style: self.drop_guide_style,
+            drop_guide_metrics: self.drop_guide_metrics,
             policy,
             target_validator,
             edge_plan_resolver,
@@ -206,7 +206,7 @@ impl DockHostDropScene {
         drop_target::resolve_layout_drop_guide(DockDropResolverInput {
             position: self.position,
             payload_size: self.payload_size,
-            drop_guide_style: self.drop_guide_style,
+            drop_guide_metrics: self.drop_guide_metrics,
             policy,
             target_validator,
             edge_plan_resolver,
@@ -273,7 +273,7 @@ impl DockDropRuntime {
         self.push_scene_fact_with_validator(
             position,
             None,
-            DockDropGuideStyle::default(),
+            DockDropGuideMetrics::default(),
             excluded_nodes,
             fact,
             policy,
@@ -286,7 +286,7 @@ impl DockDropRuntime {
         &mut self,
         position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
-        drop_guide_style: DockDropGuideStyle,
+        drop_guide_metrics: DockDropGuideMetrics,
         excluded_nodes: Vec<DockNodeId>,
         fact: DockHostDropSceneFact,
         policy: &DockPolicy,
@@ -294,7 +294,7 @@ impl DockDropRuntime {
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> bool {
         let scene =
-            self.scene_for_position(position, payload_size, drop_guide_style, excluded_nodes);
+            self.scene_for_position(position, payload_size, drop_guide_metrics, excluded_nodes);
         scene.push_fact(fact);
         let scene = scene.clone();
         self.resolve_scene(&scene, policy, target_validator, edge_plan_resolver)
@@ -422,10 +422,10 @@ impl DockDropRuntime {
         self.scene.as_ref().map(|scene| scene.position)
     }
 
-    pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
+    pub(crate) fn drop_guide_metrics(&self) -> DockDropGuideMetrics {
         self.scene
             .as_ref()
-            .map(|scene| scene.drop_guide_style)
+            .map(|scene| scene.drop_guide_metrics)
             .unwrap_or_default()
     }
 
@@ -433,20 +433,20 @@ impl DockDropRuntime {
         &mut self,
         position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
-        drop_guide_style: DockDropGuideStyle,
+        drop_guide_metrics: DockDropGuideMetrics,
         excluded_nodes: Vec<DockNodeId>,
     ) -> &mut DockHostDropScene {
         let should_reset = self.scene.as_ref().is_none_or(|scene| {
             scene.position != position
                 || scene.payload_size != payload_size
-                || scene.drop_guide_style != drop_guide_style
+                || scene.drop_guide_metrics != drop_guide_metrics
                 || scene.excluded_nodes != excluded_nodes
         });
         if should_reset {
             self.scene = Some(
                 DockHostDropScene::new(position)
                     .with_payload_size(payload_size)
-                    .with_drop_guide_style(drop_guide_style)
+                    .with_drop_guide_metrics(drop_guide_metrics)
                     .excluding_nodes(excluded_nodes),
             );
         }

@@ -32,3 +32,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }
+open_gpui_ui_components.workspace = true

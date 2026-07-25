@@ -5,7 +5,7 @@ use crate::{
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
         DockRootDropTarget, DockTabBarDropTarget, DockTabLabelDropTarget,
     },
-    host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
+    host_render_session::{DockFloatingChromeTarget, DockHostPresentationSession},
     presentation_scene::{DockPresentationPaneKind, DockPresentationScene},
 };
 use open_gpui::{Bounds, Pixels};
@@ -91,7 +91,7 @@ pub(crate) fn floating_title_bar(
 
 pub(crate) fn presentation_scene_drop_facts(
     scene: &DockPresentationScene,
-    session: &DockHostRenderSession,
+    session: &DockHostPresentationSession,
 ) -> Vec<DockHostDropSceneFact> {
     let mut facts = Vec::new();
 

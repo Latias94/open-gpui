@@ -1818,6 +1818,23 @@ cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewpo
 cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast
 ```
 
+For Dock visual-style authority changes, also run:
+
+```sh
+cargo nextest run --locked -p open-gpui-docking -E 'test(/visual_style/) or test(/viewport_payload_drag::tests/)' --no-fail-fast
+cargo nextest run --locked -p open-gpui-docking-native theme_adapter_produces_distinct_complete_dock_styles --no-fail-fast
+cargo run --locked -p xtask -- scan-ui-contract
+```
+
+The style gate requires one complete `DockVisualStyle` for every render path, a read-only
+per-surface or explicit-host resolver, unchanged graph and surface revisions for style-only updates,
+window and subtree isolation, source-opening versus live-target drag semantics, payload identity
+stability, retired-session cleanup, and the structural `DockDropGuideMetrics` name. The source scan
+rejects production UI Components dependencies, retired guide-style names, competing theme lookups,
+`Default` implementations for complete Dock visual inputs, and color or shadow literals outside
+the exact built-in style definition scopes. The native example maps light, dark, and high-contrast
+snapshots in the application layer; Docking itself remains theme-independent.
+
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
 controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
@@ -1828,6 +1845,10 @@ from placement facts so platform-boundary regressions are visible during native 
 placement restore line reports matched and missing restored windows, and the tear-off status line
 reports whether a viewport opened from suggested bounds or drag-source geometry, so placement
 authority regressions are visible in the same panel.
+The primary, secondary, and central hosts deliberately use light, dark, and high-contrast contexts.
+During a routed drag, the source-owned deferred visual must keep the source opening-generation
+style, while target guides and previews must immediately use the destination host style. Closing or
+cancelling and reopening the same payload must capture a new source generation.
 
 Docking target previews are scene-owned. During dogfood, every target-window preview should be
 explainable from the same capability model: `DockPresentationScene` resolves panes, tab bars,

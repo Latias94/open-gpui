@@ -1,7 +1,7 @@
 use crate::{
     DockEdgeDockPlan, DockEdgeDockSizing, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId,
     DropZone,
-    geometry::{DockDropBox, DockDropBoxKind, DockDropGuideStyle},
+    geometry::{DockDropBox, DockDropBoxKind, DockDropGuideMetrics},
 };
 use open_gpui::{Bounds, Pixels, Point, Size};
 
@@ -186,7 +186,7 @@ pub(crate) struct DockEmptySpaceDropTarget {
 pub(crate) struct DockDropResolverInput<'a> {
     pub(crate) position: Point<Pixels>,
     pub(crate) payload_size: Option<Size<Pixels>>,
-    pub(crate) drop_guide_style: DockDropGuideStyle,
+    pub(crate) drop_guide_metrics: DockDropGuideMetrics,
     pub(crate) policy: &'a DockPolicy,
     pub(crate) target_validator: Option<&'a DockDropTargetValidator<'a>>,
     pub(crate) edge_plan_resolver: Option<&'a DockEdgePlanResolver<'a>>,
@@ -204,7 +204,7 @@ impl<'a> DockDropResolverInput<'a> {
         Self {
             position,
             payload_size: None,
-            drop_guide_style: DockDropGuideStyle::default(),
+            drop_guide_metrics: DockDropGuideMetrics::default(),
             policy,
             target_validator: None,
             edge_plan_resolver: None,

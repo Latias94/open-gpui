@@ -1,10 +1,11 @@
 use crate::{
-    DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, DockWorkspace,
-    geometry::DockDropGuideStyle, panel_registry::DockPanelRenderRegistration,
+    DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId,
+    DockVisualStyle, DockWorkspace, geometry::DockDropGuideMetrics,
+    panel_registry::DockPanelRenderRegistration,
 };
 use open_gpui::{AnyView, Context, Pixels};
 use open_gpui_motion::MotionPreference;
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref, rc::Rc};
 
 pub(crate) enum DockHostPanelRenderResolution {
     Registered(AnyView),
@@ -22,7 +23,7 @@ pub(crate) enum DockFloatingChromeTarget {
 /// Render code reads this session instead of repeatedly reaching through `DockHost` into the
 /// workspace or controller. UI event callbacks still commit through the live owner when they fire.
 #[derive(Debug, Clone)]
-pub(crate) struct DockHostRenderSession {
+pub(crate) struct DockHostPresentationSession {
     space: DockSpaceId,
     selector_prefix: String,
     root: Option<DockNodeId>,
@@ -38,11 +39,11 @@ pub(crate) struct DockHostRenderSession {
     empty_message: String,
     missing_panel_prefix: String,
     splitter_handle_size: Pixels,
-    drop_guide_style: DockDropGuideStyle,
+    drop_guide_metrics: DockDropGuideMetrics,
     motion_preference: MotionPreference,
 }
 
-impl DockHostRenderSession {
+impl DockHostPresentationSession {
     fn new(space: DockSpaceId, workspace: &DockWorkspace) -> Self {
         let central = workspace.graph().central_region(&space);
         let mut session = Self {
@@ -62,7 +63,7 @@ impl DockHostRenderSession {
             empty_message: workspace.options().empty_message.clone(),
             missing_panel_prefix: workspace.options().missing_panel_prefix.clone(),
             splitter_handle_size: workspace.options().splitter_handle_size,
-            drop_guide_style: workspace.options().drop_guide_style,
+            drop_guide_metrics: workspace.options().drop_guide_metrics,
             motion_preference: workspace.options().motion_preference,
             space,
         };
@@ -223,8 +224,8 @@ impl DockHostRenderSession {
         self.splitter_handle_size
     }
 
-    pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
-        self.drop_guide_style
+    pub(crate) fn drop_guide_metrics(&self) -> DockDropGuideMetrics {
+        self.drop_guide_metrics
     }
 
     pub(crate) fn motion_preference(&self) -> MotionPreference {
@@ -318,10 +319,48 @@ impl DockHostRenderSession {
     }
 }
 
+/// Paint-only extension of a structural presentation snapshot.
+#[derive(Debug, Clone)]
+pub(crate) struct DockHostRenderSession {
+    presentation: DockHostPresentationSession,
+    visual_style: Rc<DockVisualStyle>,
+}
+
+impl DockHostRenderSession {
+    fn new(presentation: DockHostPresentationSession, visual_style: Rc<DockVisualStyle>) -> Self {
+        Self {
+            presentation,
+            visual_style,
+        }
+    }
+
+    pub(crate) fn visual_style(&self) -> &DockVisualStyle {
+        &self.visual_style
+    }
+}
+
+impl Deref for DockHostRenderSession {
+    type Target = DockHostPresentationSession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.presentation
+    }
+}
+
 impl DockHost {
-    pub(crate) fn render_session(&self, cx: &Context<Self>) -> DockHostRenderSession {
+    pub(crate) fn presentation_session(&self, cx: &Context<Self>) -> DockHostPresentationSession {
         let space = self.space().clone();
-        self.with_workspace(cx, |workspace| DockHostRenderSession::new(space, workspace))
+        self.with_workspace(cx, |workspace| {
+            DockHostPresentationSession::new(space, workspace)
+        })
+    }
+
+    pub(crate) fn render_session_with_visual_style(
+        &self,
+        visual_style: Rc<DockVisualStyle>,
+        cx: &Context<Self>,
+    ) -> DockHostRenderSession {
+        DockHostRenderSession::new(self.presentation_session(cx), visual_style)
     }
 }
 
@@ -357,7 +396,7 @@ mod tests {
         workspace.register_panel_factory("selected", "Selected", |_| unreachable!());
         workspace.register_panel_factory("inactive", "Inactive", |_| unreachable!());
 
-        let session = DockHostRenderSession::new(space(), &workspace);
+        let session = DockHostPresentationSession::new(space(), &workspace);
 
         assert_eq!(session.panel_title(&item("selected")), "Selected");
         assert_eq!(session.panel_title(&item("inactive")), "Inactive");
@@ -377,7 +416,7 @@ mod tests {
         workspace.register_panel_factory("a", "A", |_| unreachable!());
         workspace.register_panel_factory("b", "B", |_| unreachable!());
 
-        let session = DockHostRenderSession::new(space(), &workspace);
+        let session = DockHostPresentationSession::new(space(), &workspace);
 
         assert!(!session.panels.contains_key(&item("a")));
         assert!(!session.panels.contains_key(&item("b")));
@@ -390,7 +429,7 @@ mod tests {
         workspace.register_panel_factory("a", "Floating A", |_| unreachable!());
         workspace.register_panel_factory("b", "Root B", |_| unreachable!());
 
-        let session = DockHostRenderSession::new(space(), &workspace);
+        let session = DockHostPresentationSession::new(space(), &workspace);
 
         assert!(session.floating_child(floating).is_some());
         assert_eq!(session.floating_title(floating), "Floating A");
@@ -439,7 +478,7 @@ mod tests {
             });
         let workspace = DockWorkspace::new(space(), graph);
 
-        let session = DockHostRenderSession::new(space(), &workspace);
+        let session = DockHostPresentationSession::new(space(), &workspace);
 
         assert_eq!(
             session.floating_chrome_target(floating),
@@ -460,7 +499,7 @@ mod tests {
         );
         let workspace = DockWorkspace::new(space(), graph);
 
-        let session = DockHostRenderSession::new(space(), &workspace);
+        let session = DockHostPresentationSession::new(space(), &workspace);
 
         assert!(session.has_empty_central_region());
         assert!(session.empty_central_passthrough());

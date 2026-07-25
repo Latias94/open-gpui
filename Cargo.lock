@@ -4186,6 +4186,7 @@ dependencies = [
  "log",
  "open-gpui",
  "open-gpui-motion",
+ "open-gpui-ui-components",
  "open-gpui-ui-core",
  "serde",
  "serde_json",
@@ -4222,6 +4223,8 @@ dependencies = [
  "open-gpui-devtools",
  "open-gpui-docking",
  "open-gpui-platform",
+ "open-gpui-ui-components",
+ "open-gpui-ui-core",
  "serde_json",
 ]
 

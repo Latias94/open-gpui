@@ -1,17 +1,17 @@
 use crate::{
-    DockHost, DockItemId, DockNodeId,
+    DockHost, DockItemId, DockNodeId, DockTabVisualState,
     accessibility_scene::{DockAccessibilityScene, gpui_accessible_action_from_ui},
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragTearOffGeometry},
+    drag_visual::DockDragVisual,
     drop_scene_fact,
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
     render::DockViewportHostSceneCandidateSlot,
 };
 use open_gpui::{
-    AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, Empty, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
-    black, div, px, rgb, white,
+    AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::AccessibleAction;
 
@@ -46,17 +46,20 @@ impl DockHost {
         let drop_root = session.drop_root_for_tabs(node);
         let source_space = session.space().clone();
         let entity = cx.entity();
+        let tabs_style = &session.visual_style().tabs;
         let stack_title = if items.len() == 1 {
             session.panel_title(&selected_item)
         } else {
             format!("{} tabs", items.len())
         };
+        let stack_drag_title = stack_title.clone();
         let mut stack_payload =
             DockDragPayload::new_tabs(session.space().clone(), node, stack_title);
         if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(node) {
             stack_payload = stack_payload.with_preview_tabs(preview_titles);
         }
         let tab_count = items.len();
+        let stack_drag_visual_style = session.visual_style().drag.clone();
         let anchor_entity = entity.clone();
         let anchor_space = session.space().clone();
 
@@ -69,8 +72,8 @@ impl DockHost {
             .size_full()
             .overflow_hidden()
             .border_1()
-            .border_color(rgb(0xd8dde6))
-            .bg(white())
+            .border_color(tabs_style.frame_border)
+            .bg(tabs_style.frame_background)
             .capture_any_mouse_down(move |event, _window, cx| {
                 if event.window_event().button != MouseButton::Left {
                     return;
@@ -155,7 +158,7 @@ impl DockHost {
             .flex_row()
             .flex_none()
             .overflow_hidden()
-            .bg(rgb(0xe7ebf0))
+            .bg(tabs_style.strip_background)
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let Ok(position) = event.target_layout_position() else {
@@ -203,9 +206,15 @@ impl DockHost {
                 },
             ))
             .on_drag(stack_payload, move |payload, geometry, window, cx| {
-                stack_drag_entity.update(cx, |host, cx| {
+                let source_drag_visual_style = stack_drag_visual_style.clone();
+                let frozen_drag_visual_style = stack_drag_entity.update(cx, |host, cx| {
                     host.focus_host_for_drag_from_render(window, cx);
-                    host.begin_payload_drag_from_render(payload, window, cx);
+                    let drag_session = host.begin_payload_drag_from_render_with_drag_visual_style(
+                        payload,
+                        source_drag_visual_style.clone(),
+                        window,
+                        cx,
+                    );
                     let source_bounds = geometry.displayed_bounds();
                     let cursor_position = host
                         .payload_drag_anchor_position_from_render(payload)
@@ -218,13 +227,17 @@ impl DockHost {
                             node,
                         )
                         .unwrap_or(source_bounds);
-                    host.update_payload_drag_tear_off_geometry_from_render(
+                    let _ = host.update_payload_drag_tear_off_geometry_from_render(
                         payload,
                         DockDragTearOffGeometry::from_source_bounds(source_bounds, cursor_position)
                             .with_preferred_size(source_bounds.size),
                     );
+                    host.viewport_runtime()
+                        .active_payload_drag_visual_style(Some(&drag_session))
+                        .expect("new drag session must retain its captured visual style")
                 });
-                cx.new(|_| Empty)
+                let drag_title = stack_drag_title.clone();
+                cx.new(move |_| DockDragVisual::new(drag_title, frozen_drag_visual_style))
             });
         tab_bar = tab_bar_a11y.apply_to(tab_bar);
 
@@ -254,6 +267,8 @@ impl DockHost {
             let tab_item = item.clone();
             let focus_item = item.clone();
             let drag_item = item.clone();
+            let drag_visual_title = title.clone();
+            let drag_visual_style = session.visual_style().drag.clone();
             let tab_a11y = DockAccessibilityScene::tab_element_for_render(
                 node,
                 item.clone(),
@@ -261,6 +276,16 @@ impl DockHost {
                 index == selected,
                 index,
             );
+            let tab_palette = tabs_style.tab(if index == selected {
+                DockTabVisualState::Selected
+            } else {
+                DockTabVisualState::Idle
+            });
+            let tab_hover_palette = tabs_style.tab(if index == selected {
+                DockTabVisualState::SelectedHovered
+            } else {
+                DockTabVisualState::Hovered
+            });
             let mut tab = div()
                 .id(tab_a11y.id_str().to_string())
                 .debug_selector(move || selector)
@@ -273,21 +298,15 @@ impl DockHost {
                 .px_2()
                 .py_1()
                 .border_1()
-                .border_color(if index == selected {
-                    rgb(0x4b5563)
-                } else {
-                    rgb(0xd8dde6)
-                })
-                .bg(if index == selected {
-                    white()
-                } else {
-                    rgb(0xf0f3f7).into()
-                })
+                .border_color(tab_palette.border)
+                .bg(tab_palette.background)
                 .cursor_pointer()
-                .text_color(if index == selected {
-                    black()
-                } else {
-                    rgb(0x657083).into()
+                .text_color(tab_palette.text)
+                .hover(move |style| {
+                    style
+                        .border_color(tab_hover_palette.border)
+                        .bg(tab_hover_palette.background)
+                        .text_color(tab_hover_palette.text)
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.select_tab_from_render(node, tab_item.clone(), cx);
@@ -326,15 +345,17 @@ impl DockHost {
                     },
                 ))
                 .on_drag(payload, move |payload, geometry, window, cx| {
-                    drag_entity.update(cx, |host, cx| {
+                    let frozen_drag_visual_style = drag_entity.update(cx, |host, cx| {
                         host.focus_host_for_drag_from_render(window, cx);
-                        host.begin_tab_item_drag_from_render(
-                            node,
-                            drag_item.clone(),
-                            payload,
-                            window,
-                            cx,
-                        );
+                        let drag_session = host
+                            .begin_tab_item_drag_from_render_with_drag_visual_style(
+                                node,
+                                drag_item.clone(),
+                                payload,
+                                drag_visual_style.clone(),
+                                window,
+                                cx,
+                            );
                         let source_bounds = geometry.displayed_bounds();
                         let cursor_position = host
                             .payload_drag_anchor_position_from_render(payload)
@@ -347,7 +368,7 @@ impl DockHost {
                                 node,
                             )
                             .unwrap_or(source_bounds);
-                        host.update_payload_drag_tear_off_geometry_from_render(
+                        let _ = host.update_payload_drag_tear_off_geometry_from_render(
                             payload,
                             DockDragTearOffGeometry::from_source_bounds(
                                 source_bounds,
@@ -355,8 +376,12 @@ impl DockHost {
                             )
                             .with_preferred_size(source_bounds.size),
                         );
+                        host.viewport_runtime()
+                            .active_payload_drag_visual_style(Some(&drag_session))
+                            .expect("new drag session must retain its captured visual style")
                     });
-                    cx.new(|_| Empty)
+                    let drag_title = drag_visual_title.clone();
+                    cx.new(move |_| DockDragVisual::new(drag_title, frozen_drag_visual_style))
                 });
             tab = tab_a11y.apply_to(tab);
             // Tab labels are a deliberate render-measured exception: final hit bounds depend on
@@ -383,6 +408,8 @@ impl DockHost {
                     ),
                 );
                 let close_item = item.clone();
+                let close_palette = tabs_style.close_idle;
+                let close_hover_palette = tabs_style.close_hovered;
                 let close = div()
                     .id(format!("{}:a11y-close", close_selector))
                     .debug_selector(move || close_selector)
@@ -393,9 +420,15 @@ impl DockHost {
                     .w(px(16.0))
                     .h(px(16.0))
                     .border_1()
-                    .border_color(rgb(0xcbd5e1))
-                    .bg(rgb(0xf8fafc))
-                    .text_color(rgb(0x475569))
+                    .border_color(close_palette.border)
+                    .bg(close_palette.background)
+                    .text_color(close_palette.text)
+                    .hover(move |style| {
+                        style
+                            .border_color(close_hover_palette.border)
+                            .bg(close_hover_palette.background)
+                            .text_color(close_hover_palette.text)
+                    })
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.close_item_from_render(close_item.clone(), cx);
@@ -460,8 +493,8 @@ impl DockHost {
                     .justify_center()
                     .overflow_hidden()
                     .border_1()
-                    .border_color(rgb(0xf59e0b))
-                    .text_color(rgb(0x92400e))
+                    .border_color(session.visual_style().host.missing_border)
+                    .text_color(session.visual_style().host.missing_text)
                     .child(format!("{}: {}", prefix, missing))
                     .into_any_element()
             }

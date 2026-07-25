@@ -1,8 +1,9 @@
 use super::{DockSurface, DockSurfaceSnapshot};
 use crate::{
-    DockClassId, DockController, DockControllerBuilder, DockDropGuideStyle, DockItemId, DockLayout,
-    DockLayoutValidationError, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockPolicy,
-    DockSpaceId, DockViewportClosePolicy, EditorDockLayoutSpec,
+    DockClassId, DockController, DockControllerBuilder, DockDropGuideMetrics, DockItemId,
+    DockLayout, DockLayoutValidationError, DockPanel, DockPanelDescriptor, DockPanelPlacement,
+    DockPolicy, DockSpaceId, DockViewportClosePolicy, DockVisualStyleResolver,
+    EditorDockLayoutSpec,
 };
 use open_gpui::{AnyView, App, AppContext as _, Pixels};
 use open_gpui_motion::MotionPreference;
@@ -13,6 +14,7 @@ use thiserror::Error;
 pub struct DockSurfaceBuilder {
     controller: DockControllerBuilder,
     close_policy: DockViewportClosePolicy,
+    visual_style_resolver: Option<DockVisualStyleResolver>,
 }
 
 /// Error returned when a facade docking surface cannot be built.
@@ -32,6 +34,7 @@ impl DockSurfaceBuilder {
         Self {
             controller: DockController::builder(space),
             close_policy: DockViewportClosePolicy::default(),
+            visual_style_resolver: None,
         }
     }
 
@@ -121,9 +124,9 @@ impl DockSurfaceBuilder {
         self
     }
 
-    /// Replaces the style inputs used to size and hit-test dock drop guides.
-    pub fn drop_guide_style(mut self, style: DockDropGuideStyle) -> Self {
-        self.controller = self.controller.drop_guide_style(style);
+    /// Replaces the structural metrics used to size and hit-test dock drop guides.
+    pub fn drop_guide_metrics(mut self, metrics: DockDropGuideMetrics) -> Self {
+        self.controller = self.controller.drop_guide_metrics(metrics);
         self
     }
 
@@ -173,6 +176,12 @@ impl DockSurfaceBuilder {
         self
     }
 
+    /// Installs the immutable render-time visual-style resolver for every surface host.
+    pub fn visual_style_resolver(mut self, resolver: DockVisualStyleResolver) -> Self {
+        self.visual_style_resolver = Some(resolver);
+        self
+    }
+
     /// Builds the surface after validating controller graph state.
     pub fn build(self, cx: &mut App) -> Result<DockSurface, DockSurfaceBuildError> {
         let controller =
@@ -182,10 +191,13 @@ impl DockSurfaceBuilder {
                     message: error.to_string(),
                 })?;
         let controller = cx.new(|_| controller);
-        Ok(DockSurface::from_controller_with_close_policy(
-            controller,
-            self.close_policy,
-            cx,
-        ))
+        Ok(
+            DockSurface::from_controller_with_close_policy_and_visual_style_resolver(
+                controller,
+                self.close_policy,
+                self.visual_style_resolver,
+                cx,
+            ),
+        )
     }
 }

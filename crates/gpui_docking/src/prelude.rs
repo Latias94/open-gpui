@@ -1,7 +1,7 @@
 //! Common docking APIs for ordinary Open GPUI applications.
 
 pub use crate::{
-    DOCK_LAYOUT_VERSION, DOCK_VIEWPORT_PLACEMENT_VERSION, DockClassId, DockDropGuideStyle,
+    DOCK_LAYOUT_VERSION, DOCK_VIEWPORT_PLACEMENT_VERSION, DockClassId, DockDropGuideMetrics,
     DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelAttachError,
     DockPanelCatalog, DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome,
     DockPanelOpenPlacementSource, DockPanelPlacement, DockPanelPlacementTarget,
@@ -23,4 +23,5 @@ pub use crate::{
     DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag, DockViewportClosePolicy,
     DockViewportPlacement, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
+    DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
 };

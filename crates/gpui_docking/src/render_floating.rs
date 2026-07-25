@@ -3,16 +3,17 @@ use crate::{
     chrome_geometry::dock_floating_chrome_bounds,
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
+    drag_visual::DockDragVisual,
     drop_scene_fact,
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
     render::DockViewportHostSceneCandidateSlot,
 };
 use open_gpui::{
-    AnyElement, App, AppContext, Context, DispatchPhase, DragMoveEvent, Empty, HitboxBehavior,
+    AnyElement, App, AppContext, Context, DispatchPhase, DragMoveEvent, HitboxBehavior,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, PointerCaptureHandle, StatefulInteractiveElement, Styled, Window,
-    canvas, div, px, rgb, rgba, white,
+    canvas, div, px, rgba,
 };
 
 impl DockHost {
@@ -68,6 +69,7 @@ impl DockHost {
         let title = child
             .map(|child| session.floating_title(child))
             .unwrap_or_else(|| "Floating".to_string());
+        let floating_style = &session.visual_style().floating;
 
         div()
             .id(selector.clone())
@@ -82,9 +84,9 @@ impl DockHost {
             .overflow_hidden()
             .occlude()
             .border_1()
-            .border_color(rgb(0x4b5563))
-            .bg(white())
-            .shadow_md()
+            .border_color(floating_style.border)
+            .bg(floating_style.background)
+            .shadow(floating_style.shadow.clone())
             .child(self.render_floating_handle(
                 container,
                 chrome_bounds.title_bar_bounds.size.height,
@@ -130,6 +132,7 @@ impl DockHost {
         let bounds = container.bounds;
         let entity = cx.entity();
         let chrome_target = session.floating_chrome_target(floating);
+        let floating_style = &session.visual_style().floating;
 
         let handle = div()
             .id(selector.clone())
@@ -140,10 +143,10 @@ impl DockHost {
             .h(handle_height)
             .items_center()
             .px_2()
-            .bg(rgb(0xe7ebf0))
+            .bg(floating_style.title_background)
             .border_b_1()
-            .border_color(rgb(0xd8dde6))
-            .text_color(rgb(0x4b5563))
+            .border_color(floating_style.title_border)
+            .text_color(floating_style.title_text)
             .text_sm()
             .cursor_pointer();
 
@@ -154,6 +157,8 @@ impl DockHost {
             }
             let drag_entity = entity.clone();
             let drag_space = space.clone();
+            let drag_visual_title = title.clone();
+            let drag_visual_style = session.visual_style().drag.clone();
             let drag_surface_id = format!(
                 "{}:floating:{}:drag-surface",
                 session.selector_prefix(),
@@ -171,13 +176,17 @@ impl DockHost {
                 .on_drag(payload, move |payload, geometry, window, cx| {
                     let Ok(start_layout_position) = geometry.target_layout_position() else {
                         defer_rejected_payload_drag_cleanup(payload, window, cx);
-                        return cx.new(|_| Empty);
+                        let drag_title = drag_visual_title.clone();
+                        let drag_style = drag_visual_style.clone();
+                        return cx.new(move |_| DockDragVisual::new(drag_title, drag_style));
                     };
                     let Ok(source_window_bounds) =
                         geometry.geometry().layout_to_window_bounds(bounds)
                     else {
                         defer_rejected_payload_drag_cleanup(payload, window, cx);
-                        return cx.new(|_| Empty);
+                        let drag_title = drag_visual_title.clone();
+                        let drag_style = drag_visual_style.clone();
+                        return cx.new(move |_| DockDragVisual::new(drag_title, drag_style));
                     };
                     let start_window_position = geometry.window_position();
                     let mut tear_off_geometry = DockDragTearOffGeometry::from_source_bounds(
@@ -189,7 +198,7 @@ impl DockHost {
                         tear_off_geometry =
                             tear_off_geometry.with_display_work_area(display.visible_bounds());
                     }
-                    let began = drag_entity.update(cx, |host, cx| {
+                    let frozen_drag_visual_style = drag_entity.update(cx, |host, cx| {
                         host.focus_host_for_drag_from_render(window, cx);
                         if !host.begin_floating_drag_from_render(
                             drag_space.clone(),
@@ -198,19 +207,32 @@ impl DockHost {
                             bounds,
                             cx,
                         ) {
-                            return false;
+                            return None;
                         }
-                        host.begin_payload_drag_from_render(payload, window, cx);
-                        host.update_payload_drag_tear_off_geometry_from_render(
+                        let drag_session = host
+                            .begin_payload_drag_from_render_with_drag_visual_style(
+                                payload,
+                                drag_visual_style.clone(),
+                                window,
+                                cx,
+                            );
+                        let _ = host.update_payload_drag_tear_off_geometry_from_render(
                             payload,
                             tear_off_geometry,
                         );
-                        true
+                        Some(
+                            host.viewport_runtime()
+                                .active_payload_drag_visual_style(Some(&drag_session))
+                                .expect("new drag session must retain its captured visual style"),
+                        )
                     });
-                    if !began {
+                    if frozen_drag_visual_style.is_none() {
                         defer_rejected_payload_drag_cleanup(payload, window, cx);
                     }
-                    cx.new(|_| Empty)
+                    let drag_title = drag_visual_title.clone();
+                    let drag_style =
+                        frozen_drag_visual_style.unwrap_or_else(|| drag_visual_style.clone());
+                    cx.new(move |_| DockDragVisual::new(drag_title, drag_style))
                 })
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {

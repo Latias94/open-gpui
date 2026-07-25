@@ -560,7 +560,7 @@ fn visual_affordance_render_uses_host_reduced_motion_preference(cx: &mut TestApp
 
     let sample = window
         .update(cx, |host, window, cx| {
-            let session = host.render_session(cx);
+            let session = host.presentation_session(cx);
             let scene = host.presentation_scene_for_test(bounds, cx);
             host.set_last_presentation_scene(scene);
             host.sync_visual_affordance_transition_for_test(

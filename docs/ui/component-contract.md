@@ -853,6 +853,43 @@ schema, recipe, or token change cannot silently drift from its consumers or docu
 Table composition recipes follow the same rule: `TableToolbarState` exposes `TableToolbarColors`
 from the shared theme recipe rather than hand-assembling toolbar text intents in the table module.
 
+## Dock Visual Style Authority
+
+`open-gpui-docking::DockVisualStyle` is the complete immutable paint authority for every Dock host,
+tab and close action, splitter, floating container, source drag visual, target preview, guide,
+route marker, transition affordance, focus ring, and elevation layer. Render paths receive one
+resolved style; they do not select local defaults. `DockVisualPalette` is a complete semantic input
+to `DockVisualStyle::from_palette`, while `DockDropGuideMetrics` owns only guide geometry and hit
+testing. The palette and resolved style deliberately do not implement `Default`; applications must
+either map every palette field or explicitly select `built_in()`.
+
+`DockVisualStyleResolver` is immutable and installed per `DockSurface`, viewport runtime, or
+explicit low-level host. Its `Fn(&Window, &App) -> DockVisualStyle` callback can read the active
+window and subtree context but cannot initialize window state, update entities, notify, dispatch,
+change registration, or request refresh. Reentrant Dock style resolution is rejected. A host
+resolves once per relevant render generation and passes that value through all of its paint paths,
+so a style-only change cannot mutate layout, selection, focus history, the Dock graph, or the
+surface revision.
+
+Theme integration belongs to an application crate that depends on both systems. It may map
+`ThemeResolver::current_snapshot(window, cx)` into a `DockVisualPalette`; Docking has no production
+dependency on UI Components and no global theme lookup. The built-in style is the only production
+location for fallback color and shadow literals. `scan-ui-contract` enforces the dependency,
+literal, retired-name, and competing-lookup boundaries.
+
+Cross-window drag presentation follows opening-generation ownership. Runtime metadata keyed by the
+drag session freezes only the source-owned `DockDragVisualStyle`, while target guides and previews
+use the current target-host style. Close or cancellation retires that metadata before a later
+generation captures again. Visual values never enter `DockDragPayload` and cannot affect equality,
+identity, routing, validation, or persistence.
+
+Dear ImGui supplies interaction-state evidence for tabs, inner and outer docking targets,
+accepted/rejected previews, and viewport tear-off. Open GPUI does not adopt ImGui's pixel palette,
+immediate-mode Dock context, binary node identity, builder surface, settings format, or platform
+runtime. The retained `DockGraph`, n-ary same-axis splits, stable item identities, explicit
+transactions, viewport generations, and application-owned persistence remain authoritative. See
+[ADR 0027](../adr/0027-open-gpui-dock-visual-style-authority.md).
+
 ## Accessibility References
 
 Adapters may wire explicit AccessKit relationships such as controls, labelled-by, active descendant,

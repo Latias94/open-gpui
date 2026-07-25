@@ -63,6 +63,7 @@ pub(crate) struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
     close_policy: DockViewportClosePolicy,
+    visual_style_resolver: Option<crate::DockVisualStyleResolver>,
     frame_coordinator: DockViewportFrameCoordinator,
     tear_off: DockViewportTearOffMachine,
     next_tear_off_space_index: u64,
@@ -139,7 +140,11 @@ pub(crate) enum DockViewportPreparedTearOffBegin {
 impl DockViewportRuntime {
     /// Creates a runtime with the default close policy.
     pub(crate) fn new(controller: Entity<DockController>) -> Self {
-        Self::with_close_policy(controller, DockViewportClosePolicy::default())
+        Self::with_close_policy_and_visual_style_resolver(
+            controller,
+            DockViewportClosePolicy::default(),
+            None,
+        )
     }
 
     /// Creates a runtime with an explicit close policy.
@@ -147,10 +152,19 @@ impl DockViewportRuntime {
         controller: Entity<DockController>,
         close_policy: DockViewportClosePolicy,
     ) -> Self {
+        Self::with_close_policy_and_visual_style_resolver(controller, close_policy, None)
+    }
+
+    pub(crate) fn with_close_policy_and_visual_style_resolver(
+        controller: Entity<DockController>,
+        close_policy: DockViewportClosePolicy,
+        visual_style_resolver: Option<crate::DockVisualStyleResolver>,
+    ) -> Self {
         Self {
             controller,
             adapter: DockViewportAdapter::new(),
             close_policy,
+            visual_style_resolver,
             frame_coordinator: DockViewportFrameCoordinator::default(),
             tear_off: DockViewportTearOffMachine::default(),
             next_tear_off_space_index: 0,
@@ -175,6 +189,7 @@ impl DockViewportRuntime {
             controller,
             adapter,
             close_policy,
+            visual_style_resolver: None,
             frame_coordinator: DockViewportFrameCoordinator::default(),
             tear_off: DockViewportTearOffMachine::default(),
             next_tear_off_space_index: 0,
@@ -195,6 +210,10 @@ impl DockViewportRuntime {
 
     pub(crate) fn controller_entity(&self) -> Entity<DockController> {
         self.controller.clone()
+    }
+
+    pub(crate) fn visual_style_resolver(&self) -> Option<crate::DockVisualStyleResolver> {
+        self.visual_style_resolver.clone()
     }
 
     /// Returns the low-level viewport adapter.
@@ -239,15 +258,31 @@ impl DockViewportRuntime {
         self.begin_payload_drag_with_focus(payload, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_payload_drag_with_focus(
         &mut self,
         payload: &DockDragPayload,
         focus_item: Option<DockItemId>,
     ) -> DockRuntimeDragSession {
+        self.begin_payload_drag_with_focus_and_drag_visual_style(
+            payload,
+            focus_item,
+            crate::DockVisualStyle::built_in().drag,
+        )
+    }
+
+    pub(crate) fn begin_payload_drag_with_focus_and_drag_visual_style(
+        &mut self,
+        payload: &DockDragPayload,
+        focus_item: Option<DockItemId>,
+        drag_visual_style: crate::DockDragVisualStyle,
+    ) -> DockRuntimeDragSession {
         let source_window = self
             .adapter
             .window_for_space(payload.identity().source_space());
-        let session = self.payload_drag.begin(payload, focus_item, source_window);
+        let session =
+            self.payload_drag
+                .begin(payload, focus_item, source_window, drag_visual_style);
         self.clear_routed_drop_preview();
         session
     }
@@ -273,6 +308,13 @@ impl DockViewportRuntime {
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
         self.payload_drag.active_session_for_payload(payload)
+    }
+
+    pub(crate) fn active_payload_drag_visual_style(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<crate::DockDragVisualStyle> {
+        self.payload_drag.drag_visual_style(session).cloned()
     }
 
     pub(crate) fn active_payload_drag_source_window_id(
@@ -665,7 +707,7 @@ impl DockViewportRuntime {
             window_facts,
             host_geometry,
             host_position,
-            crate::DockDropGuideStyle::default(),
+            crate::DockDropGuideMetrics::default(),
         )
         .is_some_and(|registration| registration.changed)
     }
@@ -678,7 +720,7 @@ impl DockViewportRuntime {
         window_facts: DockViewportWindowFacts,
         host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
-        drop_guide_style: crate::DockDropGuideStyle,
+        drop_guide_metrics: crate::DockDropGuideMetrics,
     ) -> Option<DockViewportHostSceneRegistration> {
         self.begin_viewport_host_scene_frame_with_facts(
             space,
@@ -686,7 +728,7 @@ impl DockViewportRuntime {
             window_facts,
             host_geometry,
             host_position,
-            drop_guide_style,
+            drop_guide_metrics,
             Vec::new(),
         )
     }
@@ -698,7 +740,7 @@ impl DockViewportRuntime {
         window_facts: DockViewportWindowFacts,
         host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
-        drop_guide_style: crate::DockDropGuideStyle,
+        drop_guide_metrics: crate::DockDropGuideMetrics,
         initial_facts: Vec<DockHostDropSceneFact>,
     ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
@@ -708,7 +750,7 @@ impl DockViewportRuntime {
             window_facts.current_bounds,
             host_geometry,
             host_position,
-            drop_guide_style,
+            drop_guide_metrics,
             initial_facts,
         );
         self.commit_viewport_host_scene_snapshot(snapshot, window_facts)

@@ -255,7 +255,7 @@ fn render_floating_bounds_match_presentation_scene_container(cx: &mut TestAppCon
         size(px(320.0), px(220.0)),
     );
     let (floating_tabs, scene) = host.update(cx, |host, cx| {
-        let session = host.render_session(cx);
+        let session = host.presentation_session(cx);
         (
             session
                 .floating_child(floating)

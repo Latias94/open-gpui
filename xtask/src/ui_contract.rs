@@ -121,6 +121,7 @@ pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
     failures.extend(old_authority_residue_failures(root));
     failures.extend(presentation_authority_residue_failures(root));
     failures.extend(transient_announcement_consumer_failures(root));
+    failures.extend(docking_visual_style_failures(root));
 
     if !failures.is_empty() {
         eprintln!("Federated UI contract scan failed:");
@@ -874,6 +875,338 @@ fn transient_announcement_source_violation(source: &str) -> bool {
     source.contains("AccessibilityAnnouncement") || source.contains(".announce(")
 }
 
+fn docking_visual_style_failures(root: &Path) -> Vec<String> {
+    let mut failures = Vec::new();
+    let manifest_path = root.join("crates/gpui_docking/Cargo.toml");
+    let manifest_label = repo_relative_path(root, &manifest_path);
+    match fs::read_to_string(&manifest_path) {
+        Ok(source) => match toml::from_str::<toml::Value>(&source) {
+            Ok(manifest) if docking_manifest_has_ui_components_production_dependency(&manifest) => {
+                failures.push(format!(
+                    "{manifest_label}: Docking production dependencies must not include open-gpui-ui-components"
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => failures.push(format!(
+                "{manifest_label}: failed to parse Docking manifest: {error}"
+            )),
+        },
+        Err(error) => failures.push(format!(
+            "{manifest_label}: failed to read Docking manifest: {error}"
+        )),
+    }
+
+    let mut files = Vec::new();
+    collect_rust_files(
+        &root.join("crates/gpui_docking/src"),
+        &mut files,
+        &mut failures,
+    );
+    for path in files {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if file_name.contains("_test") {
+            continue;
+        }
+        let label = repo_relative_path(root, &path);
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                failures.push(format!("{label}: failed to read: {error}"));
+                continue;
+            }
+        };
+        for removed in ["DockDropGuideStyle", "drop_guide_style"] {
+            if source.contains(removed) {
+                failures.push(format!(
+                    "{label}: removed Dock visual authority name `{removed}` remains"
+                ));
+            }
+        }
+        if source.contains("open_gpui_ui_components") {
+            failures.push(format!(
+                "{label}: Docking production source must not import open-gpui-ui-components"
+            ));
+        }
+        let violations = if file_name == "visual_style.rs" {
+            docking_visual_style_definition_violations(&source)
+        } else {
+            docking_style_source_violations(&source)
+        };
+        for violation in violations {
+            failures.push(format!(
+                "{label}: Dock visual literals must remain inside the allowlisted built-in style definitions; {violation}"
+            ));
+        }
+    }
+    failures
+}
+
+fn docking_style_source_violations(source: &str) -> Vec<String> {
+    docking_style_source_violations_with_options(source, false)
+}
+
+fn docking_visual_style_definition_violations(source: &str) -> Vec<String> {
+    docking_style_source_violations_with_options(source, true)
+}
+
+fn docking_style_source_violations_with_options(
+    source: &str,
+    allow_builtin_definition_scopes: bool,
+) -> Vec<String> {
+    use syn::visit_mut::VisitMut as _;
+
+    let mut file = match syn::parse_file(source) {
+        Ok(file) => file,
+        Err(error) => return vec![format!("failed to parse Rust source: {error}")],
+    };
+    let mut visitor = DockingStyleLiteralVisitor {
+        allow_builtin_definition_scopes,
+        ..DockingStyleLiteralVisitor::default()
+    };
+    visitor.visit_file_mut(&mut file);
+    visitor.violations
+}
+
+#[derive(Default)]
+struct DockingStyleLiteralVisitor {
+    violations: Vec<String>,
+    allow_builtin_definition_scopes: bool,
+}
+
+impl syn::visit_mut::VisitMut for DockingStyleLiteralVisitor {
+    fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
+        if item.attrs.iter().any(attribute_mentions_test_cfg) {
+            return;
+        }
+        syn::visit_mut::visit_item_mod_mut(self, item);
+    }
+
+    fn visit_item_struct_mut(&mut self, item: &mut syn::ItemStruct) {
+        if self.allow_builtin_definition_scopes
+            && matches!(
+                item.ident.to_string().as_str(),
+                "DockVisualPalette" | "DockVisualStyle"
+            )
+            && item.attrs.iter().any(attribute_derives_default)
+        {
+            self.violations.push(format!(
+                "`#[derive(Default)]` is forbidden for complete Dock visual input `{}`",
+                item.ident
+            ));
+        }
+        syn::visit_mut::visit_item_struct_mut(self, item);
+    }
+
+    fn visit_item_impl_mut(&mut self, item: &mut syn::ItemImpl) {
+        if !self.allow_builtin_definition_scopes {
+            syn::visit_mut::visit_item_impl_mut(self, item);
+            return;
+        }
+
+        let owner = impl_self_type_name(item);
+        if item
+            .trait_
+            .as_ref()
+            .and_then(|(_, path, _)| path.segments.last())
+            .is_some_and(|segment| segment.ident == "Default")
+            && owner
+                .as_deref()
+                .is_some_and(|name| matches!(name, "DockVisualPalette" | "DockVisualStyle"))
+        {
+            self.violations.push(format!(
+                "`Default` must not be implemented for complete Dock visual input `{}`",
+                owner.as_deref().unwrap_or_default()
+            ));
+        }
+
+        for impl_item in &mut item.items {
+            let method_name = match impl_item {
+                syn::ImplItem::Fn(method) => Some(method.sig.ident.to_string()),
+                _ => None,
+            };
+            let allow = matches!(
+                (owner.as_deref(), method_name.as_deref()),
+                (Some("DockVisualPalette"), Some("built_in"))
+                    | (Some("DockVisualStyle"), Some("from_palette"))
+            );
+            if !allow {
+                self.visit_impl_item_mut(impl_item);
+            }
+        }
+    }
+
+    fn visit_item_fn_mut(&mut self, item: &mut syn::ItemFn) {
+        if self.allow_builtin_definition_scopes
+            && matches!(
+                item.sig.ident.to_string().as_str(),
+                "with_alpha" | "shadow_layer"
+            )
+        {
+            return;
+        }
+        syn::visit_mut::visit_item_fn_mut(self, item);
+    }
+
+    fn visit_expr_call_mut(&mut self, call: &mut syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref() {
+            let segments = path.path.segments.iter().collect::<Vec<_>>();
+            let function = segments.last().map(|segment| segment.ident.to_string());
+            let owner = segments
+                .iter()
+                .rev()
+                .nth(1)
+                .map(|segment| segment.ident.to_string());
+            if function.as_deref() == Some("rgba") && transparent_routing_rgba(call) {
+                syn::visit_mut::visit_expr_call_mut(self, call);
+                return;
+            }
+            if function.as_deref().is_some_and(|name| {
+                matches!(
+                    name,
+                    "rgb"
+                        | "rgba"
+                        | "hsla"
+                        | "black"
+                        | "white"
+                        | "red"
+                        | "green"
+                        | "blue"
+                        | "yellow"
+                        | "transparent_black"
+                        | "shadow_layer"
+                )
+            }) || owner
+                .as_deref()
+                .is_some_and(|name| matches!(name, "Rgba" | "Hsla" | "BoxShadow"))
+            {
+                self.violations.push(format!(
+                    "literal constructor `{}` remains",
+                    path.path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>()
+                        .join("::")
+                ));
+            }
+        }
+        syn::visit_mut::visit_expr_call_mut(self, call);
+    }
+
+    fn visit_expr_struct_mut(&mut self, expression: &mut syn::ExprStruct) {
+        if expression.path.segments.last().is_some_and(|segment| {
+            matches!(
+                segment.ident.to_string().as_str(),
+                "Rgba" | "Hsla" | "BoxShadow"
+            )
+        }) {
+            self.violations.push(format!(
+                "literal `{}` remains",
+                expression
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            ));
+        }
+        syn::visit_mut::visit_expr_struct_mut(self, expression);
+    }
+}
+
+fn impl_self_type_name(item: &syn::ItemImpl) -> Option<String> {
+    let syn::Type::Path(path) = item.self_ty.as_ref() else {
+        return None;
+    };
+    path.path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
+}
+
+fn attribute_mentions_test_cfg(attribute: &syn::Attribute) -> bool {
+    if !attribute.path().is_ident("cfg") {
+        return false;
+    }
+    let mut mentions_test = false;
+    let _ = attribute.parse_nested_meta(|meta| {
+        if meta.path.is_ident("test") {
+            mentions_test = true;
+        }
+        if meta.input.peek(syn::token::Paren) {
+            meta.parse_nested_meta(|nested| {
+                if nested.path.is_ident("test") {
+                    mentions_test = true;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    });
+    mentions_test
+}
+
+fn attribute_derives_default(attribute: &syn::Attribute) -> bool {
+    if !attribute.path().is_ident("derive") {
+        return false;
+    }
+    let mut derives_default = false;
+    let _ = attribute.parse_nested_meta(|meta| {
+        if meta.path.is_ident("Default") {
+            derives_default = true;
+        }
+        Ok(())
+    });
+    derives_default
+}
+
+fn transparent_routing_rgba(call: &syn::ExprCall) -> bool {
+    let Some(syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Int(value),
+        ..
+    })) = call.args.first()
+    else {
+        return false;
+    };
+    call.args.len() == 1
+        && value
+            .base10_parse::<u32>()
+            .is_ok_and(|value| matches!(value, 0 | 1))
+}
+
+fn docking_manifest_has_ui_components_production_dependency(manifest: &toml::Value) -> bool {
+    let root_has_dependency = ["dependencies", "build-dependencies"]
+        .into_iter()
+        .filter_map(|key| manifest.get(key).and_then(toml::Value::as_table))
+        .any(dependency_table_has_ui_components);
+    let target_has_dependency = manifest
+        .get("target")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|targets| targets.values())
+        .filter_map(toml::Value::as_table)
+        .flat_map(|target| ["dependencies", "build-dependencies"].map(move |key| target.get(key)))
+        .flatten()
+        .filter_map(toml::Value::as_table)
+        .any(dependency_table_has_ui_components);
+    root_has_dependency || target_has_dependency
+}
+
+fn dependency_table_has_ui_components(dependencies: &toml::map::Map<String, toml::Value>) -> bool {
+    dependencies.iter().any(|(name, specification)| {
+        name.replace('_', "-") == "open-gpui-ui-components"
+            || specification
+                .as_table()
+                .and_then(|table| table.get("package"))
+                .and_then(toml::Value::as_str)
+                == Some("open-gpui-ui-components")
+    })
+}
+
 fn removed_presentation_authorities(source: &str) -> Vec<&'static str> {
     let mut removed = REMOVED_PRESENTATION_AUTHORITIES
         .iter()
@@ -1306,6 +1639,123 @@ mod tests {
         assert!(!transient_announcement_source_violation(
             "SemanticDescriptor::new(Role::Status).with_live_text(label)"
         ));
+    }
+
+    #[test]
+    fn dock_visual_style_scan_allows_only_transparent_routing_literals() {
+        let allowed = r#"
+            fn render() {
+                let transparent = rgba(0x00000000);
+                let routed_hitbox = rgba(0x00000001);
+                let shadow = style.drag.shadow.clone();
+            }
+        "#;
+        assert!(docking_style_source_violations(allowed).is_empty());
+
+        let rejected = r#"
+            fn render() {
+                let surface = rgb(0xffffff);
+                let almost_transparent = rgba(0x00000002);
+                let named = white();
+                let elevation = BoxShadow { ..Default::default() };
+            }
+        "#;
+        let violations = docking_style_source_violations(rejected).join("\n");
+        assert!(violations.contains("rgb"));
+        assert!(violations.contains("rgba"));
+        assert!(violations.contains("white"));
+        assert!(violations.contains("BoxShadow"));
+    }
+
+    #[test]
+    fn dock_visual_style_definition_scan_has_exact_literal_scopes() {
+        let allowed = r#"
+            struct DockVisualPalette;
+            struct DockVisualStyle;
+
+            impl DockVisualPalette {
+                fn built_in() {
+                    let surface = rgb(0xffffff);
+                }
+            }
+
+            impl DockVisualStyle {
+                fn from_palette() {
+                    let shadow = shadow_layer(rgba(0x1118273d));
+                }
+            }
+
+            fn with_alpha() {
+                let color = Rgba { a: 0.5 };
+            }
+
+            fn shadow_layer() {
+                let shadow = BoxShadow { color: rgb(0x000000) };
+            }
+        "#;
+        assert!(docking_visual_style_definition_violations(allowed).is_empty());
+
+        let rejected = r#"
+            struct DockVisualPalette;
+            #[derive(Default)]
+            struct DockVisualStyle;
+
+            impl Default for DockVisualPalette {
+                fn default() -> Self {
+                    Self
+                }
+            }
+
+            impl DockVisualStyle {
+                fn rogue_palette() {
+                    let surface = rgb(0xffffff);
+                }
+            }
+
+            fn rogue_shadow() {
+                let shadow = BoxShadow { color: rgba(0x1118273d) };
+            }
+        "#;
+        let violations = docking_visual_style_definition_violations(rejected).join("\n");
+        assert!(violations.contains("Default"));
+        assert!(violations.contains("#[derive(Default)]"));
+        assert!(violations.contains("rgb"));
+        assert!(violations.contains("BoxShadow"));
+    }
+
+    #[test]
+    fn dock_manifest_scan_allows_only_dev_ui_components_dependency() {
+        let dev_only = toml::from_str::<toml::Value>(
+            r#"
+                [dev-dependencies]
+                open_gpui_ui_components = { workspace = true }
+            "#,
+        )
+        .unwrap();
+        assert!(!docking_manifest_has_ui_components_production_dependency(
+            &dev_only
+        ));
+
+        for source in [
+            r#"
+                [dependencies]
+                open_gpui_ui_components = { workspace = true }
+            "#,
+            r#"
+                [dependencies.theme_adapter]
+                package = "open-gpui-ui-components"
+                workspace = true
+            "#,
+            r#"
+                [target.'cfg(windows)'.dependencies]
+                open_gpui_ui_components = { workspace = true }
+            "#,
+        ] {
+            let manifest = toml::from_str::<toml::Value>(source).unwrap();
+            assert!(docking_manifest_has_ui_components_production_dependency(
+                &manifest
+            ));
+        }
     }
 
     #[test]

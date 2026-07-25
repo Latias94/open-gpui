@@ -216,7 +216,7 @@ fn presentation_scene_exports_viewport_drop_facts(cx: &mut TestAppContext) {
 
     let bounds = host_bounds(500.0, 300.0);
     let (scene, facts) = host.update(cx, |host, cx| {
-        let session = host.render_session(cx);
+        let session = host.presentation_session(cx);
         let scene = host.presentation_scene_for_test(bounds, cx);
         let facts = presentation_scene_drop_facts(&scene, &session);
         (scene, facts)

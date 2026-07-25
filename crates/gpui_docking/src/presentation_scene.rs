@@ -3,7 +3,7 @@ use crate::{
     chrome_geometry::{
         dock_floating_chrome_bounds, dock_presentation_tab_label_bounds, dock_tab_bar_bounds,
     },
-    host_render_session::DockHostRenderSession,
+    host_render_session::DockHostPresentationSession,
     split_geometry::resolve_dock_split_layout,
 };
 #[cfg(test)]
@@ -103,8 +103,8 @@ pub(crate) struct DockPresentationOverlayAnchor {
 }
 
 impl DockPresentationScene {
-    pub(crate) fn from_render_session(
-        session: &DockHostRenderSession,
+    pub(crate) fn from_presentation_session(
+        session: &DockHostPresentationSession,
         bounds: Bounds<Pixels>,
     ) -> Self {
         let mut scene = Self {
@@ -166,7 +166,7 @@ impl DockPresentationScene {
 
     fn collect_node(
         &mut self,
-        session: &DockHostRenderSession,
+        session: &DockHostPresentationSession,
         node_id: DockNodeId,
         bounds: Bounds<Pixels>,
         floating: Option<DockNodeId>,
@@ -194,7 +194,7 @@ impl DockPresentationScene {
 
     fn collect_split(
         &mut self,
-        session: &DockHostRenderSession,
+        session: &DockHostPresentationSession,
         split: DockNodeId,
         axis: SplitAxis,
         children: Vec<DockNodeId>,
@@ -242,7 +242,7 @@ impl DockPresentationScene {
 
     fn collect_tabs(
         &mut self,
-        session: &DockHostRenderSession,
+        session: &DockHostPresentationSession,
         tabs: DockNodeId,
         items: Vec<DockItemId>,
         selected: Option<DockItemId>,
@@ -332,8 +332,8 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         cx: &Context<Self>,
     ) -> DockPresentationScene {
-        let session = self.render_session(cx);
-        let base = DockPresentationScene::from_render_session(&session, bounds);
+        let session = self.presentation_session(cx);
+        let base = DockPresentationScene::from_presentation_session(&session, bounds);
         self.zoom_state()
             .resolve(&base, session.motion_preference())
             .map(|zoom| zoom.scene)

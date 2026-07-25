@@ -3,7 +3,7 @@ use crate::{
     DockNodeId, DockPolicy, DockSpaceId, DockViewportHostGeometry, DockViewportIdentity,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropResolution, DockDropTargetValidator, DockEdgePlanResolver},
-    geometry::DockDropGuideStyle,
+    geometry::DockDropGuideMetrics,
     viewport_registry::DockViewportWindowBoundsFrame,
 };
 #[cfg(test)]
@@ -67,7 +67,7 @@ impl DockViewportHostSceneSnapshot {
         current_bounds: DockViewportWindowBoundsFrame,
         host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
-        drop_guide_style: DockDropGuideStyle,
+        drop_guide_metrics: DockDropGuideMetrics,
     ) -> Self {
         let host_geometry = host_geometry.into();
         let layout_position = host_geometry
@@ -79,7 +79,8 @@ impl DockViewportHostSceneSnapshot {
             current_bounds,
             host_geometry,
             generation: 0,
-            scene: DockHostDropScene::new(layout_position).with_drop_guide_style(drop_guide_style),
+            scene: DockHostDropScene::new(layout_position)
+                .with_drop_guide_metrics(drop_guide_metrics),
         }
     }
 
@@ -89,7 +90,7 @@ impl DockViewportHostSceneSnapshot {
         current_bounds: DockViewportWindowBoundsFrame,
         host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
-        drop_guide_style: DockDropGuideStyle,
+        drop_guide_metrics: DockDropGuideMetrics,
         initial_facts: impl IntoIterator<Item = DockHostDropSceneFact>,
     ) -> Self {
         let mut snapshot = Self::new(
@@ -98,7 +99,7 @@ impl DockViewportHostSceneSnapshot {
             current_bounds,
             host_geometry,
             host_position,
-            drop_guide_style,
+            drop_guide_metrics,
         );
         for fact in initial_facts {
             snapshot.push_fact(fact);
@@ -183,7 +184,7 @@ pub(crate) struct DockViewportHostSceneRegistry {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportResolvedFrame {
     pub(crate) frame: DockViewportHostSceneFrame,
-    pub(crate) drop_guide_style: DockDropGuideStyle,
+    pub(crate) drop_guide_metrics: DockDropGuideMetrics,
     pub(crate) resolution: DockViewportFrameResolution,
 }
 
@@ -391,7 +392,7 @@ impl DockViewportHostSceneRegistry {
             return None;
         }
         let frame = snapshot.frame();
-        let drop_guide_style = snapshot.scene.drop_guide_style();
+        let drop_guide_metrics = snapshot.scene.drop_guide_metrics();
         let mut scene = snapshot.scene.clone().excluding_nodes(excluded_nodes);
         scene.position = snapshot.host_geometry.host_to_layout(host_position)?;
         scene = scene.with_payload_size(payload_size);
@@ -412,7 +413,7 @@ impl DockViewportHostSceneRegistry {
         };
         Some(DockViewportResolvedFrame {
             frame,
-            drop_guide_style,
+            drop_guide_metrics,
             resolution,
         })
     }
@@ -712,7 +713,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(screen_bounds),
                 host_bounds,
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -765,7 +766,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::WindowLocal(bounds(0.0, 0.0, 320.0, 240.0)),
                 host_bounds,
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -850,7 +851,7 @@ mod tests {
             DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 200.0, 120.0)),
             bounds(0.0, 0.0, 200.0, 120.0),
             point(px(10.0), px(10.0)),
-            crate::DockDropGuideStyle::default(),
+            crate::DockDropGuideMetrics::default(),
         )
     }
 
@@ -865,7 +866,7 @@ mod tests {
             DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 200.0, 120.0)),
             bounds(0.0, 0.0, 200.0, 120.0),
             point(px(10.0), px(10.0)),
-            crate::DockDropGuideStyle::default(),
+            crate::DockDropGuideMetrics::default(),
             facts,
         )
     }

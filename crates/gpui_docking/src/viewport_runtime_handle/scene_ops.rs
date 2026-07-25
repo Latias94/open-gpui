@@ -40,7 +40,7 @@ impl DockViewportRuntimeHandle {
         window_facts: DockViewportWindowFacts,
         host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
-        drop_guide_style: crate::DockDropGuideStyle,
+        drop_guide_metrics: crate::DockDropGuideMetrics,
     ) -> Option<DockViewportHostSceneRegistration> {
         self.begin_viewport_host_scene_frame_with_facts(
             space,
@@ -48,7 +48,7 @@ impl DockViewportRuntimeHandle {
             window_facts,
             host_geometry,
             host_position,
-            drop_guide_style,
+            drop_guide_metrics,
             Vec::new(),
         )
     }
@@ -60,7 +60,7 @@ impl DockViewportRuntimeHandle {
         window_facts: DockViewportWindowFacts,
         host_geometry: impl Into<DockViewportHostGeometry>,
         host_position: Point<Pixels>,
-        drop_guide_style: crate::DockDropGuideStyle,
+        drop_guide_metrics: crate::DockDropGuideMetrics,
         initial_facts: Vec<DockHostDropSceneFact>,
     ) -> Option<DockViewportHostSceneRegistration> {
         self.runtime
@@ -71,7 +71,7 @@ impl DockViewportRuntimeHandle {
                 window_facts,
                 host_geometry,
                 host_position,
-                drop_guide_style,
+                drop_guide_metrics,
                 initial_facts,
             )
     }

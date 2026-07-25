@@ -30,6 +30,7 @@ pub use viewport_readiness::{
 
 use crate::{
     DockController, DockHost, DockSpaceId, DockViewportClosePolicy, DockViewportRuntimeHandle,
+    DockVisualStyleResolver,
 };
 use open_gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels,
@@ -57,17 +58,31 @@ impl DockSurface {
 
     #[cfg(test)]
     pub(crate) fn from_controller(controller: Entity<DockController>, cx: &App) -> Self {
-        Self::from_controller_with_close_policy(controller, DockViewportClosePolicy::default(), cx)
+        Self::from_controller_with_close_policy_and_visual_style_resolver(
+            controller,
+            DockViewportClosePolicy::default(),
+            None,
+            cx,
+        )
     }
 
-    pub(crate) fn from_controller_with_close_policy(
+    pub(crate) fn from_controller_with_close_policy_and_visual_style_resolver(
         controller: Entity<DockController>,
         close_policy: DockViewportClosePolicy,
+        visual_style_resolver: Option<DockVisualStyleResolver>,
         cx: &App,
     ) -> Self {
         let primary_space = cx.read_entity(&controller, |controller, _| controller.space().clone());
-        let viewport_runtime =
-            DockViewportRuntimeHandle::with_close_policy(controller.clone(), close_policy);
+        let viewport_runtime = match visual_style_resolver {
+            Some(resolver) => {
+                DockViewportRuntimeHandle::with_close_policy_and_visual_style_resolver(
+                    controller.clone(),
+                    close_policy,
+                    resolver,
+                )
+            }
+            None => DockViewportRuntimeHandle::with_close_policy(controller.clone(), close_policy),
+        };
         Self {
             controller,
             primary_space,

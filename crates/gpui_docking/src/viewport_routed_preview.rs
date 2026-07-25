@@ -239,12 +239,12 @@ pub(crate) fn routed_drop_preview_from_target(
     let mut preview = if target.is_preview_only() {
         crate::drop_preview::DockDropPreview::from_guide_target(
             target.target(),
-            target.drop_guide_style(),
+            target.drop_guide_metrics(),
         )?
     } else {
         crate::drop_preview::DockDropPreview::from_resolved_target(
             target.target(),
-            target.drop_guide_style(),
+            target.drop_guide_metrics(),
         )?
     };
     preview.populate_payload_tabs(payload);
@@ -265,7 +265,7 @@ pub(crate) fn routed_rejected_drop_preview_from_target(
     let space = target.target_space().clone();
     let mut preview = crate::drop_preview::DockDropPreview::from_rejected_target(
         target.target(),
-        target.drop_guide_style(),
+        target.drop_guide_metrics(),
     )?;
     preview.populate_payload_tabs(payload);
     Some(DockViewportRoutedDropPreview::new(

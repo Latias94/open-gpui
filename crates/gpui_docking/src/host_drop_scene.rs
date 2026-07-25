@@ -3,7 +3,7 @@ use crate::{
     drag::DockDragPayload,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_scene_fact,
-    geometry::DockDropGuideStyle,
+    geometry::DockDropGuideMetrics,
     host_interaction_outcome::DockHostInteractionOutcome,
     host_render_actions::DockRenderedPointerPosition,
     workspace_move_validation::dock_target_validator,
@@ -17,12 +17,12 @@ impl DockHost {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let (policy, payload_classes, drop_guide_style, graph) =
+        let (policy, payload_classes, drop_guide_metrics, graph) =
             self.with_workspace(cx, |workspace| {
                 (
                     workspace.policy().clone(),
                     workspace.payload_dock_classes_for_drag_payload(payload),
-                    workspace.options().drop_guide_style,
+                    workspace.options().drop_guide_metrics,
                     workspace.graph().clone(),
                 )
             });
@@ -39,7 +39,7 @@ impl DockHost {
             self.interaction_mut().begin_drop_scene_with_validator(
                 DockHostDropScene::new(position)
                     .with_payload_size(payload_size)
-                    .with_drop_guide_style(drop_guide_style)
+                    .with_drop_guide_metrics(drop_guide_metrics)
                     .excluding_nodes(excluded_nodes),
                 &policy,
                 Some(&target_validator),
@@ -57,12 +57,12 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let position = position.into();
-        let (policy, payload_classes, drop_guide_style, graph) =
+        let (policy, payload_classes, drop_guide_metrics, graph) =
             self.with_workspace(cx, |workspace| {
                 (
                     workspace.policy().clone(),
                     workspace.payload_dock_classes_for_drag_payload(payload),
-                    workspace.options().drop_guide_style,
+                    workspace.options().drop_guide_metrics,
                     workspace.graph().clone(),
                 )
             });
@@ -79,7 +79,7 @@ impl DockHost {
             self.push_drop_scene_fact_interaction(
                 position.layout,
                 payload_size,
-                drop_guide_style,
+                drop_guide_metrics,
                 excluded_nodes,
                 fact,
                 window,
@@ -133,7 +133,7 @@ impl DockHost {
         &mut self,
         position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
-        drop_guide_style: DockDropGuideStyle,
+        drop_guide_metrics: DockDropGuideMetrics,
         excluded_nodes: Vec<DockNodeId>,
         fact: DockHostDropSceneFact,
         window: &Window,
@@ -154,7 +154,7 @@ impl DockHost {
         self.interaction_mut().push_drop_scene_fact_with_validator(
             position,
             payload_size,
-            drop_guide_style,
+            drop_guide_metrics,
             excluded_nodes,
             fact,
             policy,

@@ -52,15 +52,32 @@ impl DockHost {
         self.interaction().payload_drag_anchor_position(payload)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_payload_drag_from_render(
         &mut self,
         payload: &DockDragPayload,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockRuntimeDragSession {
-        self.begin_payload_drag_interaction(payload, window, cx)
+        self.begin_payload_drag_from_render_with_drag_visual_style(
+            payload,
+            crate::DockVisualStyle::built_in().drag,
+            window,
+            cx,
+        )
     }
 
+    pub(crate) fn begin_payload_drag_from_render_with_drag_visual_style(
+        &mut self,
+        payload: &DockDragPayload,
+        drag_visual_style: crate::DockDragVisualStyle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DockRuntimeDragSession {
+        self.begin_payload_drag_interaction(payload, drag_visual_style, window, cx)
+    }
+
+    #[cfg(test)]
     pub(crate) fn begin_tab_item_drag_from_render(
         &mut self,
         tabs: DockNodeId,
@@ -69,7 +86,33 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockRuntimeDragSession {
-        let begin = self.begin_tab_item_drag_interaction(tabs, item, payload, window, cx);
+        self.begin_tab_item_drag_from_render_with_drag_visual_style(
+            tabs,
+            item,
+            payload,
+            crate::DockVisualStyle::built_in().drag,
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn begin_tab_item_drag_from_render_with_drag_visual_style(
+        &mut self,
+        tabs: DockNodeId,
+        item: DockItemId,
+        payload: &DockDragPayload,
+        drag_visual_style: crate::DockDragVisualStyle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DockRuntimeDragSession {
+        let begin = self.begin_tab_item_drag_interaction(
+            tabs,
+            item,
+            payload,
+            drag_visual_style,
+            window,
+            cx,
+        );
         begin.outcome.finish(cx);
         begin.drag_session
     }

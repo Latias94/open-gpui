@@ -473,7 +473,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
                 bounds(0.0, 0.0, 320.0, 240.0),
                 point(px(24.0), px(24.0)),
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -616,7 +616,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 360.0, 240.0)),
                 bounds(0.0, 0.0, 360.0, 240.0),
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         let frame = host_scenes
@@ -727,7 +727,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
                 bounds(0.0, 0.0, 320.0, 240.0),
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -853,7 +853,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
                 bounds(0.0, 0.0, 320.0, 240.0),
                 point(px(24.0), px(24.0)),
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -1010,7 +1010,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
                 bounds(0.0, 0.0, 320.0, 240.0),
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         let frame = host_scenes
@@ -1031,7 +1031,7 @@ mod tests {
             target_space.clone(),
             Some(target_window.window_id()),
             frame,
-            crate::DockDropGuideStyle::default(),
+            crate::DockDropGuideMetrics::default(),
             Some(facts_generation),
             host_position,
             None,
@@ -1100,7 +1100,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
                 bounds(0.0, 0.0, 320.0, 240.0),
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         let current_frame = host_scenes
@@ -1122,7 +1122,7 @@ mod tests {
             target_space.clone(),
             Some(target_window.window_id()),
             stale_frame,
-            crate::DockDropGuideStyle::default(),
+            crate::DockDropGuideMetrics::default(),
             Some(facts_generation),
             host_position,
             None,
@@ -1197,7 +1197,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 1000.0, 600.0)),
                 bounds(0.0, 0.0, 1000.0, 600.0),
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -1307,7 +1307,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
                 bounds(0.0, 0.0, 320.0, 240.0),
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -1395,7 +1395,7 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(500.0, 220.0, 920.0, 672.0)),
                 bounds(0.0, 0.0, 920.0, 640.0),
                 host_position,
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         assert!(
@@ -1486,14 +1486,14 @@ mod tests {
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 320.0, 240.0)),
                 bounds(0.0, 0.0, 320.0, 240.0),
                 point(px(0.0), px(0.0)),
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             ))
             .frame;
         DockViewportResolvedDropTargetSnapshot::new(
             target_space.clone(),
             Some(target_window_id),
             frame,
-            crate::DockDropGuideStyle::default(),
+            crate::DockDropGuideMetrics::default(),
             Some(facts_generation),
             point(px(0.0), px(0.0)),
             None,

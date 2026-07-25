@@ -264,6 +264,23 @@ fn window_theme_state(window: &mut Window, cx: &mut App) -> Entity<WindowThemeSt
     window.use_window_state(cx, WindowThemeState::new)
 }
 
+fn refresh_windows_without_theme_state(previous: &ThemeContext, cx: &mut App) {
+    let current = app_theme_context(cx);
+    if previous.has_same_effective_identity(&current) {
+        return;
+    }
+
+    // Mutable resolution installs the precise per-window observer. Pure snapshot consumers cannot
+    // mutate during render, so an app-theme change must invalidate windows without that observer.
+    for window in cx.windows() {
+        let _ = window.update(cx, |_, window, _| {
+            if window.window_state::<WindowThemeState>().is_none() {
+                window.refresh();
+            }
+        });
+    }
+}
+
 fn replace_window_theme_base(
     state: &Entity<WindowThemeState>,
     authority: WindowThemeAuthority,
@@ -390,6 +407,7 @@ pub fn install_theme_registry(
     registry: ThemeRegistry,
     app_theme_id: impl Into<String>,
 ) -> Result<(), ThemeSelectionError> {
+    let previous_app_context = app_theme_context(cx);
     let app_theme_id = app_theme_id.into();
     let registered = registry
         .context(&app_theme_id)
@@ -416,6 +434,7 @@ pub fn install_theme_registry(
     if cx.try_global::<AppThemeState>() != Some(&next) {
         cx.set_global(next);
     }
+    refresh_windows_without_theme_state(&previous_app_context, cx);
     Ok(())
 }
 
@@ -424,6 +443,7 @@ pub fn register_theme(
     cx: &mut App,
     definition: ThemeDefinition,
 ) -> Result<ThemeContext, ThemeValidationError> {
+    let previous_app_context = app_theme_context(cx);
     let mut next = cx
         .try_global::<AppThemeState>()
         .cloned()
@@ -446,6 +466,7 @@ pub fn register_theme(
     if cx.try_global::<AppThemeState>() != Some(&next) {
         cx.set_global(next);
     }
+    refresh_windows_without_theme_state(&previous_app_context, cx);
     Ok(entry_context)
 }
 
@@ -484,6 +505,7 @@ pub fn app_theme_id(cx: &App) -> &str {
 
 /// Selects the application fallback theme.
 pub fn set_app_theme(cx: &mut App, theme_id: impl Into<String>) -> Result<(), ThemeSelectionError> {
+    let previous_app_context = app_theme_context(cx);
     let theme_id = theme_id.into();
     if let Some(state) = cx.try_global::<AppThemeState>() {
         if state.selected_id == theme_id {
@@ -499,6 +521,7 @@ pub fn set_app_theme(cx: &mut App, theme_id: impl Into<String>) -> Result<(), Th
             theme_id,
         )?);
     }
+    refresh_windows_without_theme_state(&previous_app_context, cx);
     Ok(())
 }
 
@@ -608,6 +631,23 @@ pub(crate) fn current_theme_context(window: &mut Window, cx: &mut App) -> ThemeC
         window.refresh();
     }
     context
+}
+
+pub(crate) fn current_theme_snapshot(window: &Window, cx: &App) -> ThemeSnapshot {
+    let Some(state) = window.window_state::<WindowThemeState>() else {
+        return app_theme_context(cx).snapshot().clone();
+    };
+    let state = state.read(cx);
+    if let Some(context) = state.scope_stack.borrow().last() {
+        return context.snapshot().clone();
+    }
+    match &state.authority {
+        WindowThemeAuthority::InheritApp => app_theme_context(cx).snapshot().clone(),
+        WindowThemeAuthority::Selected(theme_id) => registered_theme_context(cx, theme_id)
+            .map(|context| context.snapshot().clone())
+            .unwrap_or_else(|_| state.base_context.snapshot().clone()),
+        WindowThemeAuthority::Override => state.base_context.snapshot().clone(),
+    }
 }
 
 pub(crate) fn theme_scope_stack(

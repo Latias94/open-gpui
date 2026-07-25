@@ -3,7 +3,7 @@ use crate::{
     drag::DockDragPayload,
     drop_runtime::resolution_target,
     drop_target::{DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind},
-    geometry::{self, DockDropBox, DockDropBoxKind, DockDropBoxSet, DockDropGuideStyle},
+    geometry::{self, DockDropBox, DockDropBoxKind, DockDropBoxSet, DockDropGuideMetrics},
 };
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 
@@ -192,7 +192,7 @@ pub(crate) struct DockRoutePreviewVisualDescriptor {
 impl DockDropPreview {
     pub(crate) fn from_resolution(
         resolution: &DockDropResolution,
-        style: DockDropGuideStyle,
+        style: DockDropGuideMetrics,
     ) -> Option<Self> {
         let target = resolution_target(resolution)?;
         let decision = match resolution {
@@ -206,21 +206,21 @@ impl DockDropPreview {
 
     pub(crate) fn from_resolved_target(
         target: &DockResolvedDropTarget,
-        style: DockDropGuideStyle,
+        style: DockDropGuideMetrics,
     ) -> Option<Self> {
         Self::from_target(target, DockPreviewDecision::allowed(), style)
     }
 
     pub(crate) fn from_guide_target(
         target: &DockResolvedDropTarget,
-        style: DockDropGuideStyle,
+        style: DockDropGuideMetrics,
     ) -> Option<Self> {
         Self::from_target(target, DockPreviewDecision::guide_only(), style)
     }
 
     pub(crate) fn from_rejected_target(
         target: &DockResolvedDropTarget,
-        style: DockDropGuideStyle,
+        style: DockDropGuideMetrics,
     ) -> Option<Self> {
         Self::from_target(target, DockPreviewDecision::rejected(None), style)
     }
@@ -228,7 +228,7 @@ impl DockDropPreview {
     fn from_target(
         target: &DockResolvedDropTarget,
         decision: DockPreviewDecision,
-        style: DockDropGuideStyle,
+        style: DockDropGuideMetrics,
     ) -> Option<Self> {
         let preview_bounds = match &target.kind {
             DockResolvedDropTargetKind::TabBar { .. }
@@ -291,7 +291,7 @@ impl DockPreviewScene {
         target_tabs: Option<DockNodeId>,
         insert_index: Option<usize>,
         decision: DockPreviewDecision,
-        style: DockDropGuideStyle,
+        style: DockDropGuideMetrics,
     ) -> Self {
         let body_bounds = if decision.is_guide_only() {
             Bounds::new(body_bounds.origin, size(px(0.0), px(0.0)))
@@ -480,7 +480,7 @@ fn preview_layers_for_target(
     target: &DockResolvedDropTarget,
     bounds: Bounds<Pixels>,
     decision: &DockPreviewDecision,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> Vec<DockPreviewLayer> {
     let mut layers = Vec::new();
     if let Some(inner_bounds) = inner_layer_bounds_for_target(target, bounds) {
@@ -509,7 +509,7 @@ fn preview_layer_for_target(
     bounds: Bounds<Pixels>,
     kind: DockPreviewLayerKind,
     decision: &DockPreviewDecision,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> DockPreviewLayer {
     let active = active_layer_for_target(target) == Some(kind) && !decision.is_guide_only();
     let zone = active
@@ -616,7 +616,7 @@ fn preview_drop_boxes_for_layer(
     bounds: Bounds<Pixels>,
     layer: DockPreviewLayerKind,
     decision: &DockPreviewDecision,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> Vec<DockPreviewDropBox> {
     let set = match layer {
         DockPreviewLayerKind::Inner => DockDropBoxSet::Inner,
@@ -817,7 +817,7 @@ mod tests {
                 },
                 Some(drop_box(DockDropBoxKind::Center)),
             ),
-            DockDropGuideStyle::default(),
+            DockDropGuideMetrics::default(),
         )
         .expect("center target should produce preview");
 
@@ -858,7 +858,7 @@ mod tests {
                 },
                 None,
             ),
-            DockDropGuideStyle::default(),
+            DockDropGuideMetrics::default(),
         )
         .expect("guide target should produce preview");
         let visual = preview.visual_descriptor();
@@ -893,7 +893,7 @@ mod tests {
                 },
                 None,
             ),
-            DockDropGuideStyle::default(),
+            DockDropGuideMetrics::default(),
         )
         .expect("root guide target should produce preview");
         let visual = preview.visual_descriptor();
@@ -926,7 +926,7 @@ mod tests {
                 },
                 Some(drop_box(DockDropBoxKind::InnerEdge(DropZone::Left))),
             ),
-            DockDropGuideStyle::default(),
+            DockDropGuideMetrics::default(),
         )
         .expect("edge target should produce preview");
 
@@ -972,7 +972,7 @@ mod tests {
                 },
                 Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
             ),
-            DockDropGuideStyle::default(),
+            DockDropGuideMetrics::default(),
         )
         .expect("root edge target should produce preview");
 
@@ -1014,8 +1014,9 @@ mod tests {
         );
         target.is_central_region = true;
 
-        let preview = DockDropPreview::from_resolved_target(&target, DockDropGuideStyle::default())
-            .expect("root edge target should produce preview");
+        let preview =
+            DockDropPreview::from_resolved_target(&target, DockDropGuideMetrics::default())
+                .expect("root edge target should produce preview");
 
         assert_eq!(preview.scene.layers.len(), 2);
         assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
@@ -1042,7 +1043,7 @@ mod tests {
                 target,
                 reason: DockPolicyError::CenterMergeDisabled,
             }),
-            DockDropGuideStyle::default(),
+            DockDropGuideMetrics::default(),
         )
         .expect("rejected target should still produce preview");
 

@@ -242,12 +242,22 @@ fn common_import_paths_compile() {
             space: "main".into(),
         };
     let root_panel_placement = root::DockPanelPlacement::center("editor");
+    let root_visual_style = root::DockVisualStyle::built_in();
+    let root_visual_style_resolver =
+        root::DockVisualStyleResolver::fixed(root_visual_style.clone());
+    let prelude_visual_style =
+        prelude::DockVisualStyle::from_palette(prelude::DockVisualPalette::built_in());
+    let read_only_visual_style_resolver =
+        root::DockVisualStyleResolver::new(|_: &open_gpui::Window, _: &open_gpui::App| {
+            root::DockVisualStyle::built_in()
+        });
     let root_surface_builder = root::DockSurface::builder("main")
         .empty_message("No panels")
         .missing_panel_prefix("Missing")
         .split_min_size(open_gpui::px(80.0))
         .splitter_handle_size(open_gpui::px(8.0))
-        .drop_guide_style(root::DockDropGuideStyle::default())
+        .drop_guide_metrics(root::DockDropGuideMetrics::default())
+        .visual_style_resolver(root_visual_style_resolver.clone())
         .motion_preference(open_gpui_motion::MotionPreference::Reduced);
     let root_surface_change = root::DockSurfaceChange::Changed;
     let root_close_policy = root::DockViewportClosePolicy::RetainLayout;
@@ -322,6 +332,10 @@ fn common_import_paths_compile() {
         root_placement_validation_error,
         prelude_placement_validation_error,
         root_panel_placement.item(),
+        root_visual_style,
+        root_visual_style_resolver,
+        prelude_visual_style,
+        read_only_visual_style_resolver,
         root_surface_builder,
         root_surface_change.changed(),
         root_close_policy,
@@ -363,6 +377,26 @@ fn common_import_paths_compile() {
         root_surface_export_snapshot,
         root_builder_try_snapshot,
     );
+}
+
+#[test]
+fn removed_drop_guide_style_name_is_absent_from_public_authority_sources() {
+    for file_name in [
+        "lib.rs",
+        "prelude.rs",
+        "geometry.rs",
+        "host.rs",
+        "controller.rs",
+        "surface/builder.rs",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join(file_name);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+        assert!(!source.contains("DockDropGuideStyle"));
+        assert!(!source.contains("drop_guide_style"));
+    }
 }
 
 #[test]

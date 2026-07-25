@@ -5,7 +5,7 @@ use crate::{
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropTargetValidator, DockEdgePlanResolver, DockResolvedDropTarget},
-    geometry::DockDropGuideStyle,
+    geometry::DockDropGuideMetrics,
     viewport_drop_scene::DockViewportHostSceneFrame,
     workspace_drop_target::DockWorkspaceResolvedDropTarget,
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
@@ -636,6 +636,14 @@ impl DockInteractionRuntime {
         self.splitter_drag.is_some()
     }
 
+    pub(crate) fn splitter_drag_matches(&self, split: DockNodeId, handle_index: usize) -> bool {
+        self.splitter_drag.as_ref().is_some_and(|drag| {
+            drag.axes
+                .iter()
+                .any(|axis| axis.split == split && axis.handle_index == handle_index)
+        })
+    }
+
     pub(crate) fn finish_splitter_drag(&mut self) -> bool {
         self.splitter_drag.take().is_some()
     }
@@ -720,7 +728,7 @@ impl DockInteractionRuntime {
         &mut self,
         position: Point<Pixels>,
         payload_size: Option<open_gpui::Size<Pixels>>,
-        drop_guide_style: DockDropGuideStyle,
+        drop_guide_metrics: DockDropGuideMetrics,
         excluded_nodes: Vec<DockNodeId>,
         fact: DockHostDropSceneFact,
         policy: &DockPolicy,
@@ -730,7 +738,7 @@ impl DockInteractionRuntime {
         self.drop.push_scene_fact_with_validator(
             position,
             payload_size,
-            drop_guide_style,
+            drop_guide_metrics,
             excluded_nodes,
             fact,
             policy,
@@ -950,11 +958,11 @@ impl DockInteractionRuntime {
         self.drop
             .drop_resolution()
             .and_then(|resolution| {
-                DockDropPreview::from_resolution(resolution, self.drop.drop_guide_style())
+                DockDropPreview::from_resolution(resolution, self.drop.drop_guide_metrics())
             })
             .or_else(|| {
                 self.drop.guide_target().and_then(|target| {
-                    DockDropPreview::from_guide_target(target, self.drop.drop_guide_style())
+                    DockDropPreview::from_guide_target(target, self.drop.drop_guide_metrics())
                 })
             })
     }

@@ -47,9 +47,9 @@ pub(crate) fn bounds_from_motion_rect(rect: MotionRect) -> Bounds<Pixels> {
     )
 }
 
-/// Style inputs used to calculate dock drop guide hit rectangles.
+/// Structural metrics used to calculate dock drop guide hit rectangles.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DockDropGuideStyle {
+pub struct DockDropGuideMetrics {
     /// Font-size equivalent used by the guide cluster sizing formula.
     pub font_size: Pixels,
     /// Minimum preview strip extent for edge split guides.
@@ -58,7 +58,7 @@ pub struct DockDropGuideStyle {
     pub max_split_preview_extent: Pixels,
 }
 
-impl Default for DockDropGuideStyle {
+impl Default for DockDropGuideMetrics {
     fn default() -> Self {
         Self {
             font_size: px(DEFAULT_DROP_GUIDE_FONT_SIZE),
@@ -180,7 +180,7 @@ impl LocalRect {
 pub(crate) fn resolve_inner_drop_geometry_with_style(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> Option<DockDropGeometry> {
     resolve_drop_geometry(bounds, position, DockDropBoxSet::Inner, style)
 }
@@ -190,13 +190,13 @@ fn resolve_inner_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
 ) -> Option<DockDropGeometry> {
-    resolve_inner_drop_geometry_with_style(bounds, position, DockDropGuideStyle::default())
+    resolve_inner_drop_geometry_with_style(bounds, position, DockDropGuideMetrics::default())
 }
 
 pub(crate) fn resolve_outer_drop_geometry_with_style(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> Option<DockDropGeometry> {
     resolve_drop_geometry(bounds, position, DockDropBoxSet::Outer, style)
 }
@@ -206,18 +206,18 @@ fn resolve_outer_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
 ) -> Option<DockDropGeometry> {
-    resolve_outer_drop_geometry_with_style(bounds, position, DockDropGuideStyle::default())
+    resolve_outer_drop_geometry_with_style(bounds, position, DockDropGuideMetrics::default())
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn drop_boxes(bounds: Bounds<Pixels>, set: DockDropBoxSet) -> Vec<DockDropBox> {
-    drop_boxes_with_style(bounds, set, DockDropGuideStyle::default())
+    drop_boxes_with_style(bounds, set, DockDropGuideMetrics::default())
 }
 
 pub(crate) fn drop_boxes_with_style(
     bounds: Bounds<Pixels>,
     set: DockDropBoxSet,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> Vec<DockDropBox> {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
@@ -261,7 +261,7 @@ fn resolve_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
     set: DockDropBoxSet,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> Option<DockDropGeometry> {
     if !bounds.contains(&position) {
         return None;
@@ -279,7 +279,7 @@ fn valid_extent(value: f32) -> bool {
     value.is_finite() && value > 0.0
 }
 
-fn drop_box_metrics(width: f32, height: f32, style: DockDropGuideStyle) -> DockDropBoxMetrics {
+fn drop_box_metrics(width: f32, height: f32, style: DockDropGuideMetrics) -> DockDropBoxMetrics {
     let shortest = width.min(height);
     let font_size = drop_guide_font_size(style);
     let central_half = (font_size * 1.5).min((font_size * 0.5).max(shortest / 8.0));
@@ -309,11 +309,11 @@ fn drop_box_metrics(width: f32, height: f32, style: DockDropGuideStyle) -> DockD
     }
 }
 
-fn drop_guide_font_size(style: DockDropGuideStyle) -> f32 {
+fn drop_guide_font_size(style: DockDropGuideMetrics) -> f32 {
     positive_or_default(style.font_size, DEFAULT_DROP_GUIDE_FONT_SIZE)
 }
 
-fn split_preview_extent_limits(style: DockDropGuideStyle) -> (f32, f32) {
+fn split_preview_extent_limits(style: DockDropGuideMetrics) -> (f32, f32) {
     let min = positive_or_default(
         style.min_split_preview_extent,
         DEFAULT_MIN_SPLIT_PREVIEW_EXTENT,
@@ -445,7 +445,7 @@ fn drop_box_contains_position(
     drop_box: DockDropBox,
     position: Point<Pixels>,
     set: DockDropBoxSet,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> bool {
     if set == DockDropBoxSet::Inner
         && let Some(kind) = inner_radial_drop_box_kind(bounds, position, style)
@@ -459,7 +459,7 @@ fn drop_box_contains_position(
 fn inner_radial_drop_box_kind(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
-    style: DockDropGuideStyle,
+    style: DockDropGuideMetrics,
 ) -> Option<DockDropBoxKind> {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);

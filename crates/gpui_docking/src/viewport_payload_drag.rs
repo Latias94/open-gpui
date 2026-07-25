@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockItemId, DockViewportIdentity,
+    DockActionApplyError, DockDragVisualStyle, DockItemId, DockViewportIdentity,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     interaction::DockRuntimeDragSession,
 };
@@ -18,9 +18,10 @@ struct DockRuntimeDragTearOffGeometry {
     geometry: DockDragTearOffGeometry,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct DockViewportActivePayloadDrag {
     session: DockRuntimeDragSession,
+    drag_visual_style: DockDragVisualStyle,
     source_window: Option<AnyWindowHandle>,
     last_routed_viewport_identity: Option<DockViewportIdentity>,
     last_hovered_viewport_identity: Option<DockViewportIdentity>,
@@ -32,11 +33,13 @@ impl DockViewportPayloadDragState {
         payload: &DockDragPayload,
         focus_item: Option<DockItemId>,
         source_window: Option<AnyWindowHandle>,
+        drag_visual_style: DockDragVisualStyle,
     ) -> DockRuntimeDragSession {
         let session = self.next_session(payload, focus_item);
         self.active = Some(DockViewportActivePayloadDrag::new(
             session.clone(),
             source_window,
+            drag_visual_style,
         ));
         self.tear_off_geometry = None;
         session
@@ -137,6 +140,17 @@ impl DockViewportPayloadDragState {
         self.active
             .as_ref()
             .map(DockViewportActivePayloadDrag::session)
+    }
+
+    pub(crate) fn drag_visual_style(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<&DockDragVisualStyle> {
+        let session = session?;
+        self.active
+            .as_ref()
+            .filter(|drag| drag.matches_session(session))
+            .map(DockViewportActivePayloadDrag::drag_visual_style)
     }
 
     pub(crate) fn matches_session(&self, session: Option<&DockRuntimeDragSession>) -> bool {
@@ -248,9 +262,14 @@ impl DockRuntimeDragTearOffGeometry {
 }
 
 impl DockViewportActivePayloadDrag {
-    fn new(session: DockRuntimeDragSession, source_window: Option<AnyWindowHandle>) -> Self {
+    fn new(
+        session: DockRuntimeDragSession,
+        source_window: Option<AnyWindowHandle>,
+        drag_visual_style: DockDragVisualStyle,
+    ) -> Self {
         Self {
             session,
+            drag_visual_style,
             source_window,
             last_routed_viewport_identity: None,
             last_hovered_viewport_identity: None,
@@ -259,6 +278,10 @@ impl DockViewportActivePayloadDrag {
 
     fn session(&self) -> &DockRuntimeDragSession {
         &self.session
+    }
+
+    fn drag_visual_style(&self) -> &DockDragVisualStyle {
+        &self.drag_visual_style
     }
 
     fn source_window(&self) -> Option<AnyWindowHandle> {
@@ -314,5 +337,70 @@ impl DockViewportActivePayloadDrag {
             self.last_routed_viewport_identity = None;
             self.last_hovered_viewport_identity = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DockNodeId, DockSpaceId, DockVisualPalette};
+    use open_gpui::rgb;
+    use slotmap::Key;
+
+    fn payload() -> DockDragPayload {
+        DockDragPayload::new_tabs(
+            DockSpaceId::from("main"),
+            DockNodeId::null(),
+            "Source tabs".to_string(),
+        )
+    }
+
+    fn drag_style(surface: u32) -> DockDragVisualStyle {
+        let mut palette = DockVisualPalette::built_in();
+        palette.surface = rgb(surface);
+        palette.surface_muted = rgb(surface);
+        crate::DockVisualStyle::from_palette(palette).drag
+    }
+
+    #[test]
+    fn drag_visual_style_is_keyed_by_session_and_cleared_on_finish() {
+        let payload = payload();
+        let first_style = drag_style(0x112233);
+        let second_style = drag_style(0x445566);
+        let mut state = DockViewportPayloadDragState::default();
+
+        let first = state.begin(&payload, None, None, first_style.clone());
+        assert_eq!(state.drag_visual_style(Some(&first)), Some(&first_style));
+
+        let second = state.begin(&payload, None, None, second_style.clone());
+        assert_ne!(first.id(), second.id());
+        assert_eq!(state.drag_visual_style(Some(&first)), None);
+        assert_eq!(state.drag_visual_style(Some(&second)), Some(&second_style));
+
+        assert!(state.finish(&second).is_some());
+        assert_eq!(state.drag_visual_style(Some(&second)), None);
+    }
+
+    #[test]
+    fn visual_snapshots_do_not_change_payload_identity() {
+        let payload = payload();
+        let identity = payload.identity();
+        let mut state = DockViewportPayloadDragState::default();
+
+        let first = state.begin(&payload, None, None, drag_style(0x112233));
+        assert_eq!(payload.identity(), identity);
+        assert!(state.validate_session(Some(&first)).is_ok());
+        assert!(state.finish(&first).is_some());
+
+        let second = state.begin(&payload, None, None, drag_style(0x445566));
+        assert_eq!(payload.identity(), identity);
+        assert_eq!(
+            state.validate_session(Some(&first)),
+            Err(DockActionApplyError::DropDragSessionStale {
+                session: first.id(),
+            })
+        );
+        assert!(state.validate_session(Some(&second)).is_ok());
+        assert!(state.matches_session(Some(&second)));
     }
 }

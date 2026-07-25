@@ -169,7 +169,13 @@ struct RenderThemeProbe {
 
 impl RenderOnce for RenderThemeProbe {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let read_only_snapshot = ThemeResolver::current_snapshot(window, cx);
         let theme = ThemeResolver::current(window, cx);
+        assert_eq!(
+            read_only_snapshot,
+            *theme.snapshot(),
+            "read-only theme resolution must match the mutable runtime authority"
+        );
         record_theme(&self.observations, self.label, ProbePhase::Render, &theme);
         Empty
     }
@@ -356,6 +362,7 @@ impl Render for WindowThemeProbe {
 fn app_window_and_explicit_override_precedence_is_isolated_between_windows(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    let _: fn(&Window, &App) -> ThemeSnapshot = ThemeResolver::current_snapshot;
     cx.update(|app| set_app_theme(app, DARK_THEME_ID).expect("built-in app theme should resolve"));
 
     let first_observations = Observations::default();

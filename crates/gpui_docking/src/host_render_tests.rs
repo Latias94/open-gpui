@@ -759,7 +759,7 @@ fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
     let expected_boxes = crate::geometry::drop_boxes_with_style(
         tabs_bounds,
         crate::geometry::DockDropBoxSet::Inner,
-        crate::DockDropGuideStyle::default(),
+        crate::DockDropGuideMetrics::default(),
     );
 
     for zone in [
@@ -1538,7 +1538,7 @@ fn root_drop_guides_use_outer_edge_drop_box_geometry(cx: &mut TestAppContext) {
     let expected_boxes = crate::geometry::drop_boxes_with_style(
         root_bounds,
         crate::geometry::DockDropBoxSet::Outer,
-        crate::DockDropGuideStyle::default(),
+        crate::DockDropGuideMetrics::default(),
     );
     let outer_left_hit = expected_boxes
         .iter()
@@ -1634,7 +1634,7 @@ fn root_edge_hover_keeps_target_leaf_side_guides_visible(cx: &mut TestAppContext
     let outer_boxes = crate::geometry::drop_boxes_with_style(
         root_bounds,
         crate::geometry::DockDropBoxSet::Outer,
-        crate::DockDropGuideStyle::default(),
+        crate::DockDropGuideMetrics::default(),
     );
     let outer_right_hit = outer_boxes
         .iter()
@@ -1680,7 +1680,7 @@ fn root_edge_hover_keeps_target_leaf_side_guides_visible(cx: &mut TestAppContext
     let expected_inner_boxes = crate::geometry::drop_boxes_with_style(
         right_bounds,
         crate::geometry::DockDropBoxSet::Inner,
-        crate::DockDropGuideStyle::default(),
+        crate::DockDropGuideMetrics::default(),
     );
 
     assert_drop_guide_not_emitted(&visual, &host, Some(right_tabs), crate::DropZone::Center);
@@ -1773,7 +1773,7 @@ fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext
     let expected_center = crate::geometry::drop_boxes_with_style(
         empty_bounds,
         crate::geometry::DockDropBoxSet::Inner,
-        crate::DockDropGuideStyle::default(),
+        crate::DockDropGuideMetrics::default(),
     )
     .into_iter()
     .find(|drop_box| drop_box.kind == crate::geometry::DockDropBoxKind::Center)
@@ -1971,7 +1971,7 @@ fn cross_window_inner_edge_expanded_hit_area_docks(cx: &mut TestAppContext) {
     let right_box = crate::geometry::drop_boxes_with_style(
         target_bounds,
         crate::geometry::DockDropBoxSet::Inner,
-        crate::DockDropGuideStyle::default(),
+        crate::DockDropGuideMetrics::default(),
     )
     .into_iter()
     .find(|drop_box| {
@@ -2228,7 +2228,7 @@ fn root_central_leaf_hides_inner_side_guides(cx: &mut TestAppContext) {
     let outer_boxes = crate::geometry::drop_boxes_with_style(
         root_bounds,
         crate::geometry::DockDropBoxSet::Outer,
-        crate::DockDropGuideStyle::default(),
+        crate::DockDropGuideMetrics::default(),
     );
     let outer_left_hit = outer_boxes
         .iter()
@@ -2337,7 +2337,7 @@ fn render_session_uses_default_title_for_split_floating_children(cx: &mut TestAp
     let (_window, host, _visual) = open_workspace(cx, workspace, size(px(320.0), px(200.0)));
 
     let (title, chrome_target) = host.update(cx, |host, cx| {
-        let session = host.render_session(cx);
+        let session = host.presentation_session(cx);
         (
             session.floating_title(floating),
             session.floating_chrome_target(floating),

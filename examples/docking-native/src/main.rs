@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use open_gpui::{
     App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Pixels, Render, Styled, TargetedEvent, Window, WindowBounds, WindowOptions, div, point,
+    Pixels, Render, Rgba, Styled, TargetedEvent, Window, WindowBounds, WindowOptions, div, point,
     prelude::*, px, rgb, size,
 };
 use open_gpui_devtools::{
@@ -14,7 +14,7 @@ use open_gpui_devtools::{
 use open_gpui_docking::{
     DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
     DockPanelPlacement, DockSpaceId, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportWindowBounds,
+    DockViewportWindowBounds, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
     advanced::{
         DockViewportCoordinateSpaceRecord, DockViewportCoordinateStatusRecord,
         DockViewportDropOutcomeKind, DockViewportDropOutcomeRecord, DockViewportInputStatus,
@@ -34,6 +34,14 @@ use open_gpui_docking::{
     runtime::{DockViewportClosePolicy, DockViewportRuntimeHandle},
 };
 use open_gpui_platform::application;
+use open_gpui_ui_components::{
+    ColorState,
+    theme::{
+        DARK_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID, ThemeResolver, ThemeSnapshot,
+        set_window_theme,
+    },
+};
+use open_gpui_ui_core::{TokenKey, semantic};
 
 const SPACE: &str = "docking-demo";
 const SECONDARY_SPACE: &str = "docking-preview";
@@ -1565,6 +1573,100 @@ fn viewport_title(space: &DockSpaceId) -> &'static str {
     }
 }
 
+fn dock_visual_style_from_theme(theme: &ThemeSnapshot) -> DockVisualStyle {
+    let mut palette = DockVisualPalette::built_in();
+    palette.surface = theme_color(
+        theme,
+        semantic::SURFACE,
+        ColorState::Default,
+        palette.surface,
+    );
+    palette.surface_muted = theme_color(
+        theme,
+        semantic::SURFACE_MUTED,
+        ColorState::Default,
+        palette.surface_muted,
+    );
+    palette.surface_hovered = theme_color(
+        theme,
+        semantic::SURFACE_MUTED,
+        ColorState::Hover,
+        palette.surface_hovered,
+    );
+    palette.surface_disabled = theme_color(
+        theme,
+        semantic::SURFACE_MUTED,
+        ColorState::Disabled,
+        palette.surface_disabled,
+    );
+    palette.border = theme_color(theme, semantic::BORDER, ColorState::Default, palette.border);
+    palette.text = theme_color(theme, semantic::TEXT, ColorState::Default, palette.text);
+    palette.text_muted = theme_color(
+        theme,
+        semantic::TEXT_MUTED,
+        ColorState::Default,
+        palette.text_muted,
+    );
+    palette.text_disabled = theme_color(
+        theme,
+        semantic::TEXT,
+        ColorState::Disabled,
+        palette.text_disabled,
+    );
+    palette.accent = theme_color(theme, semantic::ACCENT, ColorState::Default, palette.accent);
+    palette.accent_hovered = theme_color(
+        theme,
+        semantic::ACCENT,
+        ColorState::Hover,
+        palette.accent_hovered,
+    );
+    palette.accent_foreground = theme_color(
+        theme,
+        semantic::ACCENT_FOREGROUND,
+        ColorState::Default,
+        palette.accent_foreground,
+    );
+    palette.focus_ring = theme_color(
+        theme,
+        semantic::FOCUS_RING,
+        ColorState::FocusVisible,
+        palette.focus_ring,
+    );
+    palette.destructive = theme_color(
+        theme,
+        semantic::DESTRUCTIVE,
+        ColorState::Default,
+        palette.destructive,
+    );
+    palette.destructive_foreground = theme_color(
+        theme,
+        semantic::DESTRUCTIVE_FOREGROUND,
+        ColorState::Default,
+        palette.destructive_foreground,
+    );
+    let shadow = theme_color(
+        theme,
+        semantic::OVERLAY,
+        ColorState::Overlay,
+        palette.shadow,
+    );
+    palette.shadow = Rgba {
+        a: palette.shadow.a,
+        ..shadow
+    };
+    DockVisualStyle::from_palette(palette)
+}
+
+fn theme_color(theme: &ThemeSnapshot, token: TokenKey, state: ColorState, fallback: Rgba) -> Rgba {
+    theme.color_rgb(token, state).map(rgb).unwrap_or(fallback)
+}
+
+fn dock_visual_style_resolver() -> DockVisualStyleResolver {
+    DockVisualStyleResolver::new(|window, cx| {
+        dock_visual_style_from_theme(&ThemeResolver::current_snapshot(window, cx))
+    })
+}
+
 fn main() {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,open_gpui_docking=info,open_gpui=info"),
@@ -1574,7 +1676,10 @@ fn main() {
     log::info!("{DOCKING_DEBUG_PREFIX} starting docking native example");
     application().run(|cx: &mut App| {
         let controller = cx.new(|_| build_controller());
-        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let runtime = DockViewportRuntimeHandle::with_visual_style_resolver(
+            controller.clone(),
+            dock_visual_style_resolver(),
+        );
         let primary_bounds = Bounds::centered(None, size(px(920.0), px(640.0)), cx);
         let secondary_bounds = Bounds::new(
             point(
@@ -1613,6 +1718,11 @@ fn main() {
         let primary_opened = runtime
             .open_viewport(SPACE, primary_options, cx)
             .expect("failed to open primary docking viewport");
+        cx.update_window(primary_opened.window(), |_, window, cx| {
+            set_window_theme(window, cx, LIGHT_THEME_ID)
+                .expect("primary light theme should be registered");
+        })
+        .expect("primary docking viewport should remain open");
         log::info!(
             "{DOCKING_DEBUG_PREFIX} opened primary viewport space={} window_id={:?}",
             SPACE,
@@ -1632,15 +1742,25 @@ fn main() {
 
         let secondary_options =
             restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);
-        let _secondary_opened = runtime
+        let secondary_opened = runtime
             .open_viewport(SECONDARY_SPACE, secondary_options, cx)
             .expect("failed to open secondary docking viewport");
+        cx.update_window(secondary_opened.window(), |_, window, cx| {
+            set_window_theme(window, cx, DARK_THEME_ID)
+                .expect("secondary dark theme should be registered");
+        })
+        .expect("secondary docking viewport should remain open");
         log::info!("{DOCKING_DEBUG_PREFIX} opened secondary viewport space={SECONDARY_SPACE}");
 
         let central_options = restored_viewport_options(&placement, CENTRAL_SPACE, central_bounds);
-        let _central_opened = runtime
+        let central_opened = runtime
             .open_viewport(CENTRAL_SPACE, central_options, cx)
             .expect("failed to open empty central docking viewport");
+        cx.update_window(central_opened.window(), |_, window, cx| {
+            set_window_theme(window, cx, HIGH_CONTRAST_THEME_ID)
+                .expect("central high-contrast theme should be registered");
+        })
+        .expect("central docking viewport should remain open");
         log::info!("{DOCKING_DEBUG_PREFIX} opened central viewport space={CENTRAL_SPACE}");
 
         cx.activate(true);
@@ -1667,6 +1787,24 @@ mod tests {
 
     fn item(id: &str) -> DockItemId {
         DockItemId::from(id)
+    }
+
+    #[test]
+    fn theme_adapter_produces_distinct_complete_dock_styles() {
+        let light = dock_visual_style_from_theme(&ThemeSnapshot::light());
+        let dark = dock_visual_style_from_theme(&ThemeSnapshot::dark());
+        let high_contrast = dock_visual_style_from_theme(&ThemeSnapshot::high_contrast());
+
+        assert_ne!(light, dark);
+        assert_ne!(dark, high_contrast);
+        assert_ne!(light, high_contrast);
+        assert_eq!(
+            high_contrast.host.background,
+            ThemeSnapshot::high_contrast()
+                .color_rgb(semantic::SURFACE_MUTED, ColorState::Default)
+                .map(rgb)
+                .expect("built-in high-contrast theme should define muted surface")
+        );
     }
 
     fn tabs_items(graph: &DockGraph, tabs: DockNodeId) -> (Vec<DockItemId>, usize) {
@@ -1722,10 +1860,41 @@ mod tests {
         end: open_gpui::Point<Pixels>,
     ) {
         let threshold = point(start.x + px(24.0), start.y);
+        begin_left_drag(source, start, threshold);
+        continue_cross_window_left_drag(target, end);
+        end_cross_window_left_drag(target, end);
+    }
+
+    fn begin_left_drag(
+        source: &mut VisualTestContext,
+        start: open_gpui::Point<Pixels>,
+        threshold: open_gpui::Point<Pixels>,
+    ) {
+        source.set_platform_hovered_window(Some(source.window_handle()));
+        source.update(|window, _| window.activate_window());
+        source.run_until_parked();
         source.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
         source.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-        target.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
-        target.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        assert!(
+            source.update(|_, cx| cx.has_active_drag()),
+            "cross-window dogfood drag should cross GPUI's activation and movement threshold"
+        );
+    }
+
+    fn continue_cross_window_left_drag(
+        target: &mut VisualTestContext,
+        position: open_gpui::Point<Pixels>,
+    ) {
+        target.set_platform_hovered_window(Some(target.window_handle()));
+        target.simulate_mouse_move(position, MouseButton::Left, Modifiers::none());
+    }
+
+    fn end_cross_window_left_drag(
+        target: &mut VisualTestContext,
+        position: open_gpui::Point<Pixels>,
+    ) {
+        target.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
+        target.set_platform_hovered_window(None);
     }
 
     fn open_dogfood_viewport(
@@ -2130,9 +2299,8 @@ mod tests {
         let end = debug_bounds(&mut primary_visual, tabs_selector(SPACE, editor_tabs)).center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        begin_left_drag(&mut secondary_visual, start, threshold);
+        continue_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
         assert!(
             debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
@@ -2142,7 +2310,7 @@ mod tests {
             "primary viewport should render a host-local drop preview during cross-window drag"
         );
 
-        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        end_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -2281,9 +2449,8 @@ mod tests {
         let editor_hover = editor_bounds.center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-        primary_visual.simulate_mouse_move(editor_hover, MouseButton::Left, Modifiers::none());
+        begin_left_drag(&mut secondary_visual, start, threshold);
+        continue_cross_window_left_drag(&mut primary_visual, editor_hover);
         cx.run_until_parked();
 
         let left_edge = debug_bounds(
@@ -2291,7 +2458,7 @@ mod tests {
             drop_guide_selector(SPACE, editor_tabs, DropZone::Left),
         )
         .center();
-        primary_visual.simulate_mouse_move(left_edge, MouseButton::Left, Modifiers::none());
+        continue_cross_window_left_drag(&mut primary_visual, left_edge);
         cx.run_until_parked();
         assert!(
             debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
@@ -2301,7 +2468,7 @@ mod tests {
             "primary editor stack should render a left-edge split preview"
         );
 
-        primary_visual.simulate_mouse_up(left_edge, MouseButton::Left, Modifiers::none());
+        end_cross_window_left_drag(&mut primary_visual, left_edge);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -2394,9 +2561,8 @@ mod tests {
         .center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        begin_left_drag(&mut secondary_visual, start, threshold);
+        continue_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
 
         assert!(
@@ -2407,7 +2573,7 @@ mod tests {
             "primary viewport should render a drop preview on the floating title bar"
         );
 
-        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        end_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -2486,16 +2652,15 @@ mod tests {
         let target_hover = target_bounds.center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-        primary_visual.simulate_mouse_move(target_hover, MouseButton::Left, Modifiers::none());
+        begin_left_drag(&mut secondary_visual, start, threshold);
+        continue_cross_window_left_drag(&mut primary_visual, target_hover);
         cx.run_until_parked();
         let end = debug_bounds(
             &mut primary_visual,
             drop_guide_selector(SPACE, problem_tabs, zone),
         )
         .center();
-        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        continue_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
 
         assert!(
@@ -2506,7 +2671,7 @@ mod tests {
             "primary viewport should render a {zone:?} drop preview inside the floating stack"
         );
 
-        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        end_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -2668,11 +2833,10 @@ mod tests {
         .center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        begin_left_drag(&mut secondary_visual, start, threshold);
+        continue_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
-        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        end_cross_window_left_drag(&mut primary_visual, end);
         cx.run_until_parked();
 
         let merged_problem_tabs = controller.read_with(cx, |controller, _| {
@@ -2695,16 +2859,15 @@ mod tests {
         let diff_hover = diff_end.center();
         let diff_threshold = point(diff_start.x + px(24.0), diff_start.y);
 
-        secondary_visual.simulate_mouse_down(diff_start, MouseButton::Left, Modifiers::none());
-        secondary_visual.simulate_mouse_move(diff_threshold, MouseButton::Left, Modifiers::none());
-        primary_visual.simulate_mouse_move(diff_hover, MouseButton::Left, Modifiers::none());
+        begin_left_drag(&mut secondary_visual, diff_start, diff_threshold);
+        continue_cross_window_left_drag(&mut primary_visual, diff_hover);
         cx.run_until_parked();
         let diff_target = debug_bounds(
             &mut primary_visual,
             drop_guide_selector(SPACE, merged_problem_tabs, DropZone::Bottom),
         )
         .center();
-        primary_visual.simulate_mouse_move(diff_target, MouseButton::Left, Modifiers::none());
+        continue_cross_window_left_drag(&mut primary_visual, diff_target);
         cx.run_until_parked();
 
         assert!(
@@ -2715,7 +2878,7 @@ mod tests {
             "primary viewport should render a split preview inside the floating stack"
         );
 
-        primary_visual.simulate_mouse_up(diff_target, MouseButton::Left, Modifiers::none());
+        end_cross_window_left_drag(&mut primary_visual, diff_target);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {

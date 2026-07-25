@@ -193,7 +193,7 @@ pub(crate) struct DockViewportResolvedDropTargetSnapshot {
     target_space: DockSpaceId,
     target_window_id: Option<WindowId>,
     frame: DockViewportHostSceneFrame,
-    drop_guide_style: crate::DockDropGuideStyle,
+    drop_guide_metrics: crate::DockDropGuideMetrics,
     facts_generation: Option<u64>,
     host_position: Point<Pixels>,
     payload_size: Option<Size<Pixels>>,
@@ -237,7 +237,7 @@ impl DockViewportResolvedDropTargetSnapshot {
         target_space: DockSpaceId,
         target_window_id: Option<WindowId>,
         frame: DockViewportHostSceneFrame,
-        drop_guide_style: crate::DockDropGuideStyle,
+        drop_guide_metrics: crate::DockDropGuideMetrics,
         facts_generation: Option<u64>,
         host_position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
@@ -248,7 +248,7 @@ impl DockViewportResolvedDropTargetSnapshot {
             target_space,
             target_window_id,
             frame,
-            drop_guide_style,
+            drop_guide_metrics,
             facts_generation,
             host_position,
             payload_size,
@@ -262,7 +262,7 @@ impl DockViewportResolvedDropTargetSnapshot {
         target_space: DockSpaceId,
         target_window_id: Option<WindowId>,
         frame: DockViewportHostSceneFrame,
-        drop_guide_style: crate::DockDropGuideStyle,
+        drop_guide_metrics: crate::DockDropGuideMetrics,
         facts_generation: Option<u64>,
         host_position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
@@ -272,7 +272,7 @@ impl DockViewportResolvedDropTargetSnapshot {
             target_space,
             target_window_id,
             frame,
-            drop_guide_style,
+            drop_guide_metrics,
             facts_generation,
             host_position,
             payload_size,
@@ -290,8 +290,8 @@ impl DockViewportResolvedDropTargetSnapshot {
         &self.frame
     }
 
-    pub(crate) fn drop_guide_style(&self) -> crate::DockDropGuideStyle {
-        self.drop_guide_style
+    pub(crate) fn drop_guide_metrics(&self) -> crate::DockDropGuideMetrics {
+        self.drop_guide_metrics
     }
 
     pub(crate) fn host_position(&self) -> Point<Pixels> {

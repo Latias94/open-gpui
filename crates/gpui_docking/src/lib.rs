@@ -110,6 +110,7 @@ mod divider_hit_map;
 #[cfg(test)]
 mod dock_op_fixture_tests;
 mod drag;
+mod drag_visual;
 mod drop_preview;
 mod drop_runtime;
 mod drop_scene_fact;
@@ -198,6 +199,7 @@ mod viewport_tear_off_placement;
 mod viewport_window_lifecycle;
 mod viewport_window_ownership;
 mod visual_affordance_scene;
+mod visual_style;
 mod workspace;
 mod workspace_action;
 mod workspace_drop_target;
@@ -268,6 +270,8 @@ mod public_surface_tests;
 #[cfg(test)]
 mod viewport_test_support;
 #[cfg(test)]
+mod visual_style_runtime_tests;
+#[cfg(test)]
 mod workspace_move_tests;
 #[cfg(test)]
 mod workspace_panel_lifecycle_tests;
@@ -280,7 +284,7 @@ pub(crate) use builder::EditorDockLayoutSpec;
 pub use builder::{DockPanelPlacement, DockPanelPlacementTarget};
 pub(crate) use controller::{DockController, DockControllerBuilder};
 pub(crate) use debug::DockVisualAffordanceDebugSummary;
-pub use geometry::DockDropGuideStyle;
+pub use geometry::DockDropGuideMetrics;
 pub(crate) use graph::{
     DockCentralRegion, DockEdgeDockPlan, DockEdgeDockSizing, DockEdgeDockSizingScope,
     DockFloatingContainer, DockGraph, DockGraphValidationError, DockNode, DropZone, SplitAxis,
@@ -388,4 +392,11 @@ pub(crate) use viewport_window_lifecycle::{
     DockViewportReusableWindow, DockViewportReusableWindowOutcome,
 };
 pub(crate) use viewport_window_ownership::*;
+pub use visual_style::{
+    DockDragVisualStyle, DockDropGuidePalette, DockDropGuideVisualState, DockFloatingVisualStyle,
+    DockHostVisualStyle, DockPreviewVisualStyle, DockRoutePreviewPalette,
+    DockRoutePreviewVisualState, DockSplitterVisualState, DockSplitterVisualStyle, DockTabPalette,
+    DockTabVisualState, DockTabsVisualStyle, DockTargetPreviewPalette,
+    DockTargetPreviewVisualState, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
+};
 pub(crate) use workspace::DockWorkspace;

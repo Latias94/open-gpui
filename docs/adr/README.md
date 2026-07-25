@@ -34,3 +34,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0024: Open GPUI Typed Committed Portal Anchor Authority](0024-open-gpui-typed-committed-portal-anchor-authority.md)
 - [ADR 0025: Open GPUI Bring Into View Authority](0025-open-gpui-bring-into-view-authority.md)
 - [ADR 0026: Open GPUI Rounded Subtree Clip Authority](0026-open-gpui-rounded-subtree-clip-authority.md)
+- [ADR 0027: Open GPUI Dock Visual Style Authority](0027-open-gpui-dock-visual-style-authority.md)

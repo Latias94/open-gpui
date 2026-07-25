@@ -1,5 +1,5 @@
 use crate::{
-    DockHost, DockNodeId, SplitAxis,
+    DockHost, DockNodeId, DockSplitterVisualState, SplitAxis,
     accessibility_scene::{DockAccessibilityScene, gpui_accessible_action_from_ui},
     debug::DockDebugRegion,
     host_render_session::DockHostRenderSession,
@@ -8,7 +8,7 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, div, px, relative, rgb,
+    StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
 use open_gpui_ui_core::AccessibleAction;
 
@@ -127,12 +127,23 @@ impl DockHost {
                 );
                 let increment_entity = cx.entity();
                 let decrement_entity = cx.entity();
+                let splitter_state = if self.interaction().splitter_drag_matches(node, handle_index)
+                {
+                    DockSplitterVisualState::Active
+                } else {
+                    DockSplitterVisualState::Idle
+                };
+                let splitter_color = session.visual_style().splitters.color(splitter_state);
+                let splitter_hover_color = session
+                    .visual_style()
+                    .splitters
+                    .color(DockSplitterVisualState::Hovered);
                 let mut handle = div()
                     .id(accessible.id_str().to_string())
                     .debug_selector(move || selector)
                     .absolute()
-                    .bg(rgb(0xc8d0dc))
-                    .hover(|this| this.bg(rgb(0x94a3b8)))
+                    .bg(splitter_color)
+                    .hover(move |this| this.bg(splitter_hover_color))
                     .cursor(cursor_for_split_axis(axis))
                     .on_a11y_action(
                         gpui_accessible_action_from_ui(AccessibleAction::Increment),

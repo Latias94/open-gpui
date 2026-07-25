@@ -12,7 +12,7 @@ use crate::{
         DockDropRejection, DockDropResolution, DockDropResolveSource, DockResolvedDropTarget,
         DockResolvedDropTargetAvailability, DockResolvedDropTargetKind,
     },
-    geometry::{DockDropBox, DockDropBoxKind, DockDropGuideStyle},
+    geometry::{DockDropBox, DockDropBoxKind, DockDropGuideMetrics},
     viewport_test_support::{handle, space},
     visual_affordance_scene::{
         DockPayloadTabPreviewLayout, DockPayloadTabPreviewPlacement, DockVisualAffordanceKind,
@@ -74,7 +74,7 @@ fn center_preview_descriptor_reports_body_center_and_payload_tab_capability() {
             },
             Some(drop_box(DockDropBoxKind::Center)),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("center target should produce preview");
 
@@ -109,7 +109,7 @@ fn center_preview_descriptor_includes_ordered_payload_tabs() {
             },
             Some(drop_box(DockDropBoxKind::Center)),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("center target should produce preview");
     let payload = DockDragPayload::new_tabs(space("source"), tabs, "Preview / Diff".to_string())
@@ -156,7 +156,7 @@ fn edge_preview_descriptor_suppresses_payload_tabs_and_reports_active_zone() {
             },
             Some(drop_box(DockDropBoxKind::InnerEdge(DropZone::Left))),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("edge target should produce preview");
 
@@ -186,7 +186,7 @@ fn rejected_preview_descriptor_suppresses_payload_tabs() {
             target,
             reason: DockPolicyError::CenterMergeDisabled,
         }),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("rejected target should still produce preview");
 
@@ -210,7 +210,7 @@ fn visual_affordance_scene_describes_center_tab_insertion_and_payload_tabs() {
             },
             Some(drop_box(DockDropBoxKind::Center)),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("center target should produce preview");
     let payload = DockDragPayload::new_tabs(space("source"), tabs, "Preview / Diff".to_string())
@@ -292,7 +292,7 @@ fn visual_affordance_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts
             },
             Some(drop_box(DockDropBoxKind::Center)),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("center target should produce preview");
     let payload = DockDragPayload::new_tabs(space("source"), tabs, "Preview / Diff".to_string())
@@ -363,7 +363,7 @@ fn visual_affordance_scene_suppresses_tab_insertion_for_edge_and_adds_rejected_s
             },
             Some(drop_box(DockDropBoxKind::InnerEdge(DropZone::Left))),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("edge target should produce preview");
     let edge_scene = DockVisualAffordanceScene::from_preview(&edge_preview.scene);
@@ -392,7 +392,7 @@ fn visual_affordance_scene_suppresses_tab_insertion_for_edge_and_adds_rejected_s
             target,
             reason: DockPolicyError::CenterMergeDisabled,
         }),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("rejected target should still produce preview");
     let rejected_scene = DockVisualAffordanceScene::from_preview(&rejected.scene);
@@ -424,7 +424,7 @@ fn visual_affordance_scene_preserves_passive_inner_guides_when_outer_root_edge_i
             },
             Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("root edge target should produce preview");
 
@@ -485,7 +485,7 @@ fn tab_bar_preview_descriptor_reports_explicit_insert_index() {
             },
             Some(drop_box(DockDropBoxKind::Center)),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("tab bar target should produce preview");
 
@@ -555,7 +555,7 @@ fn visual_affordance_scene_preserves_overlay_layer_scope_state_and_motion_identi
             },
             Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
         ),
-        DockDropGuideStyle::default(),
+        DockDropGuideMetrics::default(),
     )
     .expect("root edge target should produce preview");
 

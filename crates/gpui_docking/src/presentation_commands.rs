@@ -60,8 +60,8 @@ impl DockHost {
     /// Clears the presentation-only zoom state for this host.
     pub fn unzoom(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(previous) = self.last_presentation_scene().cloned() {
-            let final_scene = DockPresentationScene::from_render_session(
-                &self.render_session(cx),
+            let final_scene = DockPresentationScene::from_presentation_session(
+                &self.presentation_session(cx),
                 previous.bounds,
             );
             let preference = self.motion_preference(cx);

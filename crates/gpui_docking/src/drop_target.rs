@@ -78,7 +78,7 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
             leaf,
             input.position,
             input.payload_size,
-            input.drop_guide_style,
+            input.drop_guide_metrics,
             input.edge_plan_resolver,
         ) else {
             continue;

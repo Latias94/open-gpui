@@ -1,6 +1,7 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, DockSpaceId, DockViewportHostGeometry,
-    DockViewportRuntimeHandle, DropZone,
+    DockDropGuideVisualState, DockHost, DockNode, DockNodeId, DockRoutePreviewVisualState,
+    DockSpaceId, DockSplitterVisualState, DockSplitterVisualStyle, DockTargetPreviewVisualState,
+    DockViewportHostGeometry, DockViewportRuntimeHandle, DropZone,
     accessibility_scene::DockAccessibilityScene,
     debug::DockDebugRegion,
     divider_hit_map::{DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget},
@@ -28,8 +29,8 @@ use open_gpui::{
     AnyElement, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
     DropEvent, Entity, HitboxBehavior, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PointerCaptureHandle,
-    PrepaintPublicationId, Render, Rgba, SharedString, Styled, Window, WindowId, black, canvas,
-    div, point, px, quad, rgb, rgba,
+    PrepaintPublicationId, Render, Rgba, SharedString, Styled, Window, WindowId, canvas, div,
+    point, px, quad, rgba,
 };
 use open_gpui_motion::MotionTransition;
 use std::{cell::RefCell, rc::Rc};
@@ -200,7 +201,12 @@ impl Render for DockHost {
         self.ensure_viewport_release_subscription(window, cx);
         self.prepare_pending_focus_selection_from_render(window, cx);
         let raw_drag_pointer_capture = self.ensure_pointer_session(window);
-        let session = self.render_session(cx);
+        let visual_style = self.resolve_visual_style(window, cx);
+        #[cfg(test)]
+        {
+            self.record_resolved_visual_style_for_test(visual_style.clone());
+        }
+        let session = self.render_session_with_visual_style(visual_style, cx);
         self.sync_panel_focus_trackers(session.visible_panel_items(), window, cx);
         let drop_host_space = session.space().clone();
         let viewport_host_scene_frame =
@@ -251,7 +257,7 @@ impl Render for DockHost {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .text_color(black())
+            .text_color(session.visual_style().host.foreground)
             .child(pointer_session_listener)
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
@@ -294,8 +300,11 @@ impl Render for DockHost {
 
         if active_docking_drag {
             let host_focus = self.host_focus_handle();
-            host = host.track_focus(&host_focus).capture_key_down(cx.listener(
-                move |this, event: &KeyDownEvent, window, cx| {
+            let focus_ring = session.visual_style().focus_ring.clone();
+            host = host
+                .track_focus(&host_focus)
+                .focus_visible(move |style| style.shadow(focus_ring.clone()))
+                .capture_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
                         return;
                     }
@@ -306,20 +315,19 @@ impl Render for DockHost {
                         window.refresh();
                     }
                     cx.stop_propagation();
-                },
-            ));
+                }));
         }
 
         if session.empty_central_passthrough() {
             host = host.bg(rgba(0x00000000));
         } else {
-            host = host.bg(rgb(0xf7f8fa));
+            host = host.bg(session.visual_style().host.background);
         }
 
         host = host.child(self.render_viewport_host_scene_probe(
             &viewport_host_scene_frame,
             &session,
-            session.drop_guide_style(),
+            session.drop_guide_metrics(),
             session.empty_central_requests_platform_pointer_passthrough(),
             cx,
         ));
@@ -664,9 +672,12 @@ impl DockHost {
                     window.paint_quad(quad(
                         affordance.corner.bounds,
                         px(3.0),
-                        background_for_divider_affordance_state(affordance.state),
+                        background_for_divider_affordance_state(
+                            affordance.state,
+                            &session.visual_style().splitters,
+                        ),
                         px(1.0),
-                        rgba(0xffffffb3),
+                        session.visual_style().splitters.corner_border,
                         BorderStyle::Solid,
                     ));
                 }
@@ -747,10 +758,10 @@ impl DockHost {
 
     fn resolved_render_presentation_scene(
         &mut self,
-        session: &DockHostRenderSession,
+        session: &crate::host_render_session::DockHostPresentationSession,
         bounds: Bounds<Pixels>,
     ) -> DockPresentationScene {
-        let base = DockPresentationScene::from_render_session(session, bounds);
+        let base = DockPresentationScene::from_presentation_session(session, bounds);
         let space = session.space().clone();
         self.zoom_state_mut().clear_missing_target(&space, &base);
         self.zoom_state()
@@ -765,7 +776,7 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         cx: &Context<Self>,
     ) -> DockPresentationScene {
-        let session = self.render_session(cx);
+        let session = self.presentation_session(cx);
         self.resolved_render_presentation_scene(&session, bounds)
     }
 
@@ -945,7 +956,7 @@ impl DockHost {
         let background = if session.empty_central_passthrough() {
             rgba(0x00000000)
         } else {
-            rgba(0xf7f8faff)
+            session.visual_style().host.transition_occlusion
         };
         div()
             .id(selector.clone())
@@ -1039,7 +1050,7 @@ impl DockHost {
             .w(divider.bounds.size.width)
             .h(divider.bounds.size.height)
             .rounded_sm()
-            .bg(rgba(0x2563ebcc))
+            .bg(session.visual_style().previews.transition_divider)
             .into_any_element()
     }
 
@@ -1066,8 +1077,11 @@ impl DockHost {
             .h(affordance.bounds.size.height)
             .rounded_sm()
             .border_1()
-            .border_color(rgb(0x2563eb))
-            .bg(rgba(0x3b82f633))
+            .border_color(session.visual_style().previews.transition_affordance_border)
+            .bg(session
+                .visual_style()
+                .previews
+                .transition_affordance_background)
             .into_any_element()
     }
 
@@ -1091,8 +1105,8 @@ impl DockHost {
             .items_center()
             .justify_center()
             .border_1()
-            .border_color(rgb(0xd8dde6))
-            .text_color(rgb(0x657083))
+            .border_color(session.visual_style().host.empty_border)
+            .text_color(session.visual_style().host.empty_text)
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag().clone();
@@ -1171,8 +1185,8 @@ impl DockHost {
             .items_center()
             .justify_center()
             .border_1()
-            .border_color(rgb(0xb42318))
-            .text_color(rgb(0xb42318))
+            .border_color(session.visual_style().host.missing_border)
+            .text_color(session.visual_style().host.missing_text)
             .child(format!("Missing dock node: {}", node.as_u64()))
             .into_any_element()
     }
@@ -1251,8 +1265,10 @@ impl DockHost {
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
         );
-        let theme = dock_preview_theme();
-        let palette = theme.target_preview(&scene.decision);
+        let palette = session
+            .visual_style()
+            .previews
+            .target(target_preview_visual_state(&scene.decision));
         let mut element = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -1342,7 +1358,7 @@ impl DockHost {
                         .bg(palette.tab_background)
                         .text_color(palette.tab_text)
                         .text_sm()
-                        .shadow_sm()
+                        .shadow(session.visual_style().previews.payload_tab_shadow.clone())
                         .truncate()
                         .rounded_t_sm()
                         .rounded_br_sm()
@@ -1421,8 +1437,10 @@ impl DockHost {
             DockDebugRegion::DropRoutePreview { kind: preview.kind },
             format!("{}:drop-route-preview", session.selector_prefix()),
         );
-        let theme = dock_preview_theme();
-        let palette = theme.route_preview(&preview);
+        let palette = session
+            .visual_style()
+            .previews
+            .route(route_preview_visual_state(&preview));
 
         div()
             .id(selector.clone())
@@ -1441,14 +1459,14 @@ impl DockHost {
 
     fn sync_visual_affordance_transition_for_render(
         &mut self,
-        session: &DockHostRenderSession,
+        session: &crate::host_render_session::DockHostPresentationSession,
         affordance_scene: &DockVisualAffordanceScene,
         fallback_bounds: Bounds<Pixels>,
         window: &Window,
     ) -> Option<DockTransitionSample> {
         if self.last_visual_affordance_scene() != Some(affordance_scene) {
             let final_scene = self.last_presentation_scene().cloned().unwrap_or_else(|| {
-                DockPresentationScene::from_render_session(session, fallback_bounds)
+                DockPresentationScene::from_presentation_session(session, fallback_bounds)
             });
             let plan = DockTransitionPlan::from_visual_affordance_scene(
                 &final_scene,
@@ -1470,7 +1488,7 @@ impl DockHost {
     #[cfg(test)]
     pub(crate) fn sync_visual_affordance_transition_for_test(
         &mut self,
-        session: &DockHostRenderSession,
+        session: &crate::host_render_session::DockHostPresentationSession,
         affordance_scene: &DockVisualAffordanceScene,
         fallback_bounds: Bounds<Pixels>,
         window: &Window,
@@ -1497,8 +1515,10 @@ impl DockHost {
             format!("{}:drop-guide:{selector_suffix}", session.selector_prefix()),
         );
         let local_bounds = localize_bounds(drop_box.draw_bounds, container_bounds.origin);
-        let theme = dock_preview_theme();
-        let palette = theme.drop_guide(drop_box.kind, drop_box.active);
+        let palette = session
+            .visual_style()
+            .previews
+            .guide(drop_guide_visual_state(drop_box.kind, drop_box.active));
         let cue = guide_directional_cue(zone, local_bounds.size, palette.cue);
         let inset = guide_inset_outline(local_bounds.size, palette.inset);
 
@@ -1532,7 +1552,7 @@ impl DockHost {
         &self,
         frame_slot: &DockViewportHostSceneCandidateSlot,
         session: &DockHostRenderSession,
-        drop_guide_style: geometry::DockDropGuideStyle,
+        drop_guide_metrics: geometry::DockDropGuideMetrics,
         passthrough_pointer_input: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1574,7 +1594,7 @@ impl DockHost {
                     window_facts.current_bounds,
                     DockViewportHostGeometry::from_hitbox(&hitbox),
                     host_position,
-                    drop_guide_style,
+                    drop_guide_metrics,
                     drop_scene_fact::presentation_scene_drop_facts(&scene, &session),
                 );
                 frame_slot
@@ -1673,13 +1693,16 @@ fn cursor_for_divider_target(target: &DockDividerHitTarget) -> CursorStyle {
     }
 }
 
-fn background_for_divider_affordance_state(state: DockDividerAffordanceState) -> Rgba {
-    match state {
-        DockDividerAffordanceState::Idle => rgba(0x64748b4d),
-        DockDividerAffordanceState::Hover => rgba(0x2563eb99),
-        DockDividerAffordanceState::Active => rgba(0x1d4ed8cc),
-        DockDividerAffordanceState::Disabled => rgba(0x94a3b84d),
-    }
+fn background_for_divider_affordance_state(
+    state: DockDividerAffordanceState,
+    style: &DockSplitterVisualStyle,
+) -> Rgba {
+    style.color(match state {
+        DockDividerAffordanceState::Idle => DockSplitterVisualState::Idle,
+        DockDividerAffordanceState::Hover => DockSplitterVisualState::Hovered,
+        DockDividerAffordanceState::Active => DockSplitterVisualState::Active,
+        DockDividerAffordanceState::Disabled => DockSplitterVisualState::Disabled,
+    })
 }
 
 fn guide_directional_cue(
@@ -1748,132 +1771,44 @@ fn drop_box_selector_suffix(drop_box: DockPreviewDropBox) -> String {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct DockPreviewTheme {
-    accepted_target: DockTargetPreviewTokens,
-    rejected_target: DockTargetPreviewTokens,
-    guide_center_active: DockDropGuideTokens,
-    guide_center_inactive: DockDropGuideTokens,
-    guide_edge_active: DockDropGuideTokens,
-    guide_edge_inactive: DockDropGuideTokens,
-    route_known_viewport: DockRoutePreviewTokens,
-    route_tear_off: DockRoutePreviewTokens,
-    route_rejected: DockRoutePreviewTokens,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct DockTargetPreviewTokens {
-    border: Rgba,
-    body_background: Rgba,
-    tab_background: Rgba,
-    tab_text: Rgba,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct DockDropGuideTokens {
-    border: Rgba,
-    background: Rgba,
-    cue: Rgba,
-    inset: Rgba,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct DockRoutePreviewTokens {
-    border: Rgba,
-    background: Rgba,
-}
-
-impl DockPreviewTheme {
-    fn default_tokens() -> Self {
-        Self {
-            accepted_target: DockTargetPreviewTokens {
-                border: rgb(0x2563eb),
-                body_background: rgba(0x3b82f647),
-                tab_background: rgba(0x2563ebd9),
-                tab_text: rgb(0xffffff),
-            },
-            rejected_target: DockTargetPreviewTokens {
-                border: rgb(0xdc2626),
-                body_background: rgba(0xfca5a547),
-                tab_background: rgba(0xdc2626dd),
-                tab_text: rgb(0xffffff),
-            },
-            guide_center_active: DockDropGuideTokens {
-                border: rgb(0x2563eb),
-                background: rgba(0x93c5fd59),
-                cue: rgb(0x1d4ed8),
-                inset: rgba(0xffffff73),
-            },
-            guide_center_inactive: DockDropGuideTokens {
-                border: rgba(0x3b82f680),
-                background: rgba(0xdbeafe45),
-                cue: rgba(0x2563ebad),
-                inset: rgba(0xffffff52),
-            },
-            guide_edge_active: DockDropGuideTokens {
-                border: rgb(0x1d4ed8),
-                background: rgba(0x60a5fa52),
-                cue: rgb(0x1e40af),
-                inset: rgba(0xffffff6b),
-            },
-            guide_edge_inactive: DockDropGuideTokens {
-                border: rgba(0x3b82f666),
-                background: rgba(0xbfdbfe33),
-                cue: rgba(0x2563eb94),
-                inset: rgba(0xffffff40),
-            },
-            route_known_viewport: DockRoutePreviewTokens {
-                border: rgb(0x2563eb),
-                background: rgba(0x3b82f64f),
-            },
-            route_tear_off: DockRoutePreviewTokens {
-                border: rgb(0x475569),
-                background: rgba(0x94a3b847),
-            },
-            route_rejected: DockRoutePreviewTokens {
-                border: rgb(0xdc2626),
-                background: rgba(0xfca5a547),
-            },
-        }
-    }
-
-    fn target_preview(
-        &self,
-        decision: &crate::drop_preview::DockPreviewDecision,
-    ) -> DockTargetPreviewTokens {
-        if decision.is_allowed() {
-            self.accepted_target
-        } else {
-            self.rejected_target
-        }
-    }
-
-    fn drop_guide(&self, kind: geometry::DockDropBoxKind, active: bool) -> DockDropGuideTokens {
-        match (kind.is_center(), active) {
-            (true, true) => self.guide_center_active,
-            (true, false) => self.guide_center_inactive,
-            (false, true) => self.guide_edge_active,
-            (false, false) => self.guide_edge_inactive,
-        }
-    }
-
-    fn route_preview(&self, preview: &DockDropRoutePreview) -> DockRoutePreviewTokens {
-        if preview.rejected {
-            return self.route_rejected;
-        }
-
-        match preview.kind {
-            crate::drop_preview::DockDropRoutePreviewKind::KnownViewport => {
-                self.route_known_viewport
-            }
-            crate::drop_preview::DockDropRoutePreviewKind::TearOff => self.route_tear_off,
-            crate::drop_preview::DockDropRoutePreviewKind::Rejected => self.route_rejected,
-        }
+fn target_preview_visual_state(
+    decision: &crate::drop_preview::DockPreviewDecision,
+) -> DockTargetPreviewVisualState {
+    if decision.is_allowed() {
+        DockTargetPreviewVisualState::Accepted
+    } else {
+        DockTargetPreviewVisualState::Rejected
     }
 }
 
-fn dock_preview_theme() -> DockPreviewTheme {
-    DockPreviewTheme::default_tokens()
+fn drop_guide_visual_state(
+    kind: geometry::DockDropBoxKind,
+    active: bool,
+) -> DockDropGuideVisualState {
+    match (kind.is_center(), active) {
+        (true, true) => DockDropGuideVisualState::CenterActive,
+        (true, false) => DockDropGuideVisualState::CenterIdle,
+        (false, true) => DockDropGuideVisualState::EdgeActive,
+        (false, false) => DockDropGuideVisualState::EdgeIdle,
+    }
+}
+
+fn route_preview_visual_state(preview: &DockDropRoutePreview) -> DockRoutePreviewVisualState {
+    if preview.rejected {
+        return DockRoutePreviewVisualState::Rejected;
+    }
+
+    match preview.kind {
+        crate::drop_preview::DockDropRoutePreviewKind::KnownViewport => {
+            DockRoutePreviewVisualState::KnownViewport
+        }
+        crate::drop_preview::DockDropRoutePreviewKind::TearOff => {
+            DockRoutePreviewVisualState::TearOff
+        }
+        crate::drop_preview::DockDropRoutePreviewKind::Rejected => {
+            DockRoutePreviewVisualState::Rejected
+        }
+    }
 }
 
 fn preview_tab_width(text_width: Pixels) -> Pixels {
@@ -1967,10 +1902,15 @@ mod tests {
 
     #[test]
     fn active_center_guides_have_stronger_palette_than_inactive_edge_guides() {
-        let theme = dock_preview_theme();
-        let active_center = theme.drop_guide(geometry::DockDropBoxKind::Center, true);
-        let inactive_edge =
-            theme.drop_guide(geometry::DockDropBoxKind::InnerEdge(DropZone::Left), false);
+        let style = crate::DockVisualStyle::built_in();
+        let active_center = style.previews.guide(drop_guide_visual_state(
+            geometry::DockDropBoxKind::Center,
+            true,
+        ));
+        let inactive_edge = style.previews.guide(drop_guide_visual_state(
+            geometry::DockDropBoxKind::InnerEdge(DropZone::Left),
+            false,
+        ));
 
         assert_ne!(active_center.border, inactive_edge.border);
         assert_ne!(active_center.background, inactive_edge.background);
@@ -1979,34 +1919,47 @@ mod tests {
 
     #[test]
     fn rejected_drop_preview_uses_rejected_palette() {
-        let theme = dock_preview_theme();
-        let accepted = theme.target_preview(&preview(false, false).scene.decision);
-        let rejected = theme.target_preview(&preview(true, false).scene.decision);
+        let style = crate::DockVisualStyle::built_in();
+        let accepted = style.previews.target(target_preview_visual_state(
+            &preview(false, false).scene.decision,
+        ));
+        let rejected = style.previews.target(target_preview_visual_state(
+            &preview(true, false).scene.decision,
+        ));
 
         assert_ne!(accepted, rejected);
-        assert_eq!(rejected.border, rgb(0xdc2626));
+        assert_eq!(rejected, style.previews.rejected_target);
     }
 
     #[test]
     fn payload_tab_preview_uses_stronger_selected_tab_palette() {
-        let theme = dock_preview_theme();
-        let palette = theme.target_preview(&preview(false, true).scene.decision);
+        let style = crate::DockVisualStyle::built_in();
+        let palette = style.previews.target(target_preview_visual_state(
+            &preview(false, true).scene.decision,
+        ));
 
         assert!(palette.tab_background.a > palette.body_background.a);
-        assert_eq!(palette.tab_text, rgb(0xffffff));
+        assert_eq!(
+            palette.tab_text,
+            crate::DockVisualPalette::built_in().accent_foreground
+        );
     }
 
     #[test]
     fn route_preview_kinds_keep_distinct_palettes() {
-        let theme = dock_preview_theme();
-        let known = theme.route_preview(&route_preview(
-            DockDropRoutePreviewKind::KnownViewport,
-            false,
-        ));
-        let tear_off =
-            theme.route_preview(&route_preview(DockDropRoutePreviewKind::TearOff, false));
-        let rejected =
-            theme.route_preview(&route_preview(DockDropRoutePreviewKind::Rejected, true));
+        let style = crate::DockVisualStyle::built_in();
+        let known_preview = route_preview(DockDropRoutePreviewKind::KnownViewport, false);
+        let tear_off_preview = route_preview(DockDropRoutePreviewKind::TearOff, false);
+        let rejected_preview = route_preview(DockDropRoutePreviewKind::Rejected, true);
+        let known = style
+            .previews
+            .route(route_preview_visual_state(&known_preview));
+        let tear_off = style
+            .previews
+            .route(route_preview_visual_state(&tear_off_preview));
+        let rejected = style
+            .previews
+            .route(route_preview_visual_state(&rejected_preview));
 
         assert_ne!(known, tear_off);
         assert_ne!(known, rejected);
@@ -2015,6 +1968,7 @@ mod tests {
 
     #[test]
     fn divider_affordance_states_have_distinct_feedback_colors() {
+        let style = crate::DockVisualStyle::built_in();
         let states = [
             DockDividerAffordanceState::Idle,
             DockDividerAffordanceState::Hover,
@@ -2025,8 +1979,8 @@ mod tests {
         for (index, state) in states.iter().enumerate() {
             for other in states.iter().skip(index + 1) {
                 assert_ne!(
-                    background_for_divider_affordance_state(*state),
-                    background_for_divider_affordance_state(*other),
+                    background_for_divider_affordance_state(*state, &style.splitters),
+                    background_for_divider_affordance_state(*other, &style.splitters),
                     "{state:?} and {other:?} should be visually distinguishable"
                 );
             }

@@ -1,6 +1,6 @@
 use crate::{
     DockEdgeDockSizing, DockNodeId, DropZone, SplitAxis,
-    geometry::{self, DockDropBox, DockDropGeometry, DockDropGuideStyle},
+    geometry::{self, DockDropBox, DockDropGeometry, DockDropGuideMetrics},
 };
 use open_gpui::{Bounds, Pixels, Point, Size, px, size};
 
@@ -33,7 +33,7 @@ pub(super) fn resolve_root_edge_drop(
     let geometry = geometry::resolve_outer_drop_geometry_with_style(
         root.bounds,
         input.position,
-        input.drop_guide_style,
+        input.drop_guide_metrics,
     )?;
 
     let metadata = edge_drop_metadata(root.bounds, geometry.drop_box, input.payload_size);
@@ -97,11 +97,14 @@ pub(super) fn resolve_leaf_drop(
     leaf: &DockLeafDropTarget,
     position: Point<Pixels>,
     payload_size: Option<Size<Pixels>>,
-    drop_guide_style: DockDropGuideStyle,
+    drop_guide_metrics: DockDropGuideMetrics,
     edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
 ) -> Option<DockResolvedDropTarget> {
-    let geometry =
-        geometry::resolve_inner_drop_geometry_with_style(leaf.bounds, position, drop_guide_style)?;
+    let geometry = geometry::resolve_inner_drop_geometry_with_style(
+        leaf.bounds,
+        position,
+        drop_guide_metrics,
+    )?;
     target_from_leaf_geometry(leaf, geometry, payload_size, edge_plan_resolver)
 }
 

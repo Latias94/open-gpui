@@ -2740,7 +2740,7 @@ mod handle_suite {
                 DockViewportWindowFacts::from_window_bounds(window_bounds),
                 host_bounds,
                 target_center_host_position(),
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             )
             .expect("first scene frame should register")
             .frame;
@@ -2760,7 +2760,7 @@ mod handle_suite {
                 DockViewportWindowFacts::from_window_bounds(window_bounds),
                 host_bounds,
                 target_center_host_position(),
-                crate::DockDropGuideStyle::default(),
+                crate::DockDropGuideMetrics::default(),
             )
             .expect("second scene frame should register")
             .frame;
@@ -2939,7 +2939,7 @@ mod handle_suite {
                     DockViewportWindowFacts::from_window(window, cx).current_bounds,
                     floating_bounds(0.0, 0.0, 360.0, 220.0),
                     target_center_host_position(),
-                    crate::DockDropGuideStyle::default(),
+                    crate::DockDropGuideMetrics::default(),
                     Vec::new(),
                 );
                 runtime.commit_rendered_viewport_host_scene_snapshot(snapshot, window, cx, false)

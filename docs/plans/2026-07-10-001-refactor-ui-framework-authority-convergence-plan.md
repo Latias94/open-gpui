@@ -1569,7 +1569,7 @@ Every Dock visual path consumes one immutable `DockVisualStyle` resolved in the 
 
 **Behavioral work**
 
-- Inventory every Dock paint fact: host background, empty/missing states, tab strip and selected/hovered/disabled tabs, splitter states, floating frame/title/actions, focus ring, drag payload, inner/outer guides, accepted/rejected previews, and transparent routing surfaces.
+- Inventory every Dock paint fact: host background, empty/missing states, tab strip and every reachable selected/hovered tab state, splitter states, floating frame/title/actions, focus ring, drag payload, inner/outer guides, accepted/rejected previews, and transparent routing surfaces. Do not publish speculative disabled-tab states until the Dock model owns corresponding disabled behavior.
 - Define one complete immutable style value with explicit state palettes and visual elevation/shadow inputs. Keep layout geometry, hit slop, splitter thickness, and drop-guide sizing in structural options. Rename public `DockDropGuideStyle` to `DockDropGuideMetrics` in the breaking migration so two public values cannot claim visual-style authority.
 - Add one named render-time resolver owned by Docking. The immutable resolver value is installed per `DockSurface` or passed explicitly to a low-level `DockHost`; no mutable app-global registry or fallback lookup exists. Its synchronous callback accepts only the active GPUI render context, returns a complete style, and must not update entities, notify, dispatch, mutate registration, or reenter rendering.
 - Resolve each host from its current window/subtree context on every relevant render generation. U7 ancestor-only theme changes must invalidate cached Dock rendering without mutating DockGraph or surface revision.

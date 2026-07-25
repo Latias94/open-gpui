@@ -31,6 +31,9 @@ Low-level controller, graph, action, workspace, host, raw layout parts, and runt
 - `open_gpui_docking::runtime::DockHost` as the GPUI renderer for one logical dock space, including
   tab chrome, splitter interaction, floating panels, drop previews, accessibility descriptors, and
   motion-backed visual affordances.
+- `DockVisualStyle` as the complete immutable paint authority and `DockVisualStyleResolver` as the
+  read-only per-surface or explicit-host adapter for application-owned window and subtree themes.
+  `DockDropGuideMetrics` remains structural and does not carry colors.
 - `open_gpui_docking::runtime::DockHostOptions::motion_preference` as the host-owned reduced-motion
   policy input for zoom, unzoom, and visual-affordance transitions.
 - `DockPanelRegistry` and `DockPanelCatalog` for lazy panel factories, descriptor-only restore
@@ -116,6 +119,7 @@ cargo run -p open-gpui-docking-minimal
 ```
 
 This example uses `DockSurface::builder`, lazy panel factories, and `DockSurface::open_primary_window`. It enables in-window floating, but it does not enable platform viewport windows.
+It deliberately uses Docking's deterministic built-in visual fallback.
 
 Run the facade-level multi-viewport example when checking native platform-window behavior:
 
@@ -134,7 +138,46 @@ cargo run -p open-gpui-docking-native
 
 The dogfood example demonstrates a controller-backed host with registered panels, tab stacks, split
 layout, floating behavior, capability-gated platform viewport windows, and the runtime diagnostic
-paths used by the docking tests.
+paths used by the docking tests. Its application-side adapter maps UI Components light, dark, and
+high-contrast theme snapshots into complete Dock styles. Real cross-window dragging proves that the
+source drag visual keeps its opening-generation style while target guides use the destination
+host's current style.
+
+## Visual Style
+
+Applications may use the built-in fallback, install a fixed style, or resolve a complete style from
+their own theme authority:
+
+```rust
+use open_gpui_docking::{
+    DockSurface, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
+};
+
+let resolver = DockVisualStyleResolver::new(|window, cx| {
+    let palette = application_dock_palette(window, cx);
+    DockVisualStyle::from_palette(palette)
+});
+
+let surface = DockSurface::builder("main")
+    .visual_style_resolver(resolver)
+    .build(cx)?;
+```
+
+The resolver callback receives read-only `Window` and `App` references. Prepare mutable theme or
+registry state before rendering; the callback cannot update entities, notify, dispatch, register,
+refresh, or reenter Dock style resolution. A multi-window low-level integration installs the same
+resolver through `DockViewportRuntimeHandle::with_visual_style_resolver`; a single explicit host can
+use `DockHost::from_controller_with_visual_style_resolver`.
+
+The style does not belong in `DockDragPayload`. Runtime metadata freezes the source drag visual for
+one opening generation, while destination guides and previews resolve their target host live.
+Cancellation and close retire that snapshot before reopen. The crate has no production dependency
+on UI Components; the native example is the reference application-owned theme adapter.
+
+Dear ImGui informs docking interaction behavior, including tab states, inner and outer targets,
+accepted/rejected previews, and tear-off. Open GPUI retains its own `DockGraph`, n-ary splits,
+transactions, viewport generations, and persistence, and does not copy ImGui's default colors,
+immediate Dock context, binary node tree, builder API, or settings format.
 
 ## Minimal Shape
 
@@ -195,6 +238,7 @@ cargo check -p open-gpui-docking-minimal --locked
 cargo check -p open-gpui-docking-multiviewport --locked
 cargo check -p open-gpui-docking-native --locked
 cargo nextest run -p open-gpui-docking host_viewport_platform_capability_tests --no-fail-fast
+cargo run -p xtask -- scan-ui-contract
 ```
 
 For render-authority, preview, splitter, motion, accessibility, and viewport work, use the narrower

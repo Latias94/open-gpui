@@ -159,6 +159,77 @@ component motion preferences merge to the stricter value: either side can reques
 and an explicit animated request cannot override a reduced theme. Adaptive device density remains
 an application-shell recommendation rather than an implicit theme override.
 
+## Dock Visual Style Authority
+
+`open-gpui-docking` no longer chooses colors and shadows independently in each render path.
+Every host resolves one complete immutable `DockVisualStyle`. Applications that do not install a
+resolver receive the deterministic built-in style. Applications with a theme system install a
+read-only resolver on the facade:
+
+```rust
+use open_gpui_docking::{
+    DockSurface, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
+};
+use open_gpui_ui_components::theme::ThemeResolver;
+
+let resolver = DockVisualStyleResolver::new(|window, cx| {
+    let theme = ThemeResolver::current_snapshot(window, cx);
+    let palette = application_dock_palette(&theme);
+    DockVisualStyle::from_palette(palette)
+});
+
+let surface = DockSurface::builder("main")
+    .visual_style_resolver(resolver)
+    // Register panels and policy as before.
+    .build(cx)?;
+```
+
+The application-owned `application_dock_palette` helper must construct every
+`DockVisualPalette` field deliberately. Neither `DockVisualPalette` nor `DockVisualStyle`
+implements `Default`; use `built_in()` only when the application explicitly chooses the
+deterministic fallback. `DockVisualStyle::from_palette` returns
+the complete host, tab, splitter, floating, drag, preview, guide, route, transition, focus, and
+elevation style; Docking never fills a partial application style during rendering.
+`ThemeResolver::current_snapshot` is the read-only adapter boundary. It observes subtree, window,
+app, and built-in precedence without initializing window state, updating entities, notifying,
+dispatching, or scheduling a refresh.
+
+Low-level multi-window integrations install the same immutable resolver with
+`DockViewportRuntimeHandle::with_visual_style_resolver` or
+`with_close_policy_and_visual_style_resolver`. An explicit `DockHost` may use
+`from_controller_with_visual_style_resolver`. The resolver is evaluated in each host's active
+window and subtree context. It must not reenter Dock rendering.
+
+Source and destination visuals intentionally use different timing. A source-owned drag preview
+freezes its `DockDragVisualStyle` for the drag session's opening generation. Target-owned guides
+and previews resolve the destination host's current style. Cancellation clears the captured
+metadata, and reopening the same payload captures again. No style enters `DockDragPayload`, so
+payload equality, route validation, and persistence are unchanged.
+
+`DockDropGuideStyle`, the `drop_guide_style` builders, and the
+`DockHostOptions::drop_guide_style` field are deleted without aliases. The value contained only
+structural dimensions and hit-test sizing, so migrate both builder calls and direct option
+struct literals to `DockDropGuideMetrics` and `drop_guide_metrics`:
+
+```rust
+// Before
+let builder = builder.drop_guide_style(DockDropGuideStyle::default());
+
+// After
+let builder = builder.drop_guide_metrics(DockDropGuideMetrics::default());
+
+// Direct DockHostOptions literals
+let options = DockHostOptions {
+    drop_guide_metrics: DockDropGuideMetrics::default(),
+    ..DockHostOptions::default()
+};
+```
+
+Dear ImGui remains an interaction reference for tab, inner/outer target, accepted/rejected preview,
+and tear-off behavior. This change does not copy ImGui's colors, immediate `ImGuiDockContext`,
+binary node tree, builder API, or settings format. See
+[ADR 0027](../adr/0027-open-gpui-dock-visual-style-authority.md).
+
 ## Deterministic Collection Typeahead
 
 Collection typeahead now uses one crate-private, instance-owned session with GPUI executor time.
