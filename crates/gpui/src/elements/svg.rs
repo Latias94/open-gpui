@@ -2,7 +2,8 @@ use std::{fs, path::Path, sync::Arc};
 
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled, Window,
+    Interactivity, IntoElement, LayoutId, Pixels, PreparedSubtreeClip, SharedString,
+    StyleRefinement, Styled, Window,
 };
 use open_gpui_core_util::ResultExt;
 
@@ -39,7 +40,7 @@ impl Svg {
 
 impl Element for Svg {
     type RequestLayoutState = ();
-    type PrepaintState = Option<Hitbox>;
+    type PrepaintState = (Option<Hitbox>, Option<PreparedSubtreeClip>);
 
     fn id(&self) -> Option<crate::ElementId> {
         self.interactivity.element_id.clone()
@@ -74,7 +75,7 @@ impl Element for Svg {
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Hitbox> {
+    ) -> Self::PrepaintState {
         self.interactivity.prepaint(
             global_id,
             inspector_id,
@@ -92,7 +93,7 @@ impl Element for Svg {
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        hitbox: &mut Option<Hitbox>,
+        prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) where
@@ -102,7 +103,8 @@ impl Element for Svg {
             global_id,
             inspector_id,
             bounds,
-            hitbox.as_ref(),
+            prepaint.0.as_ref(),
+            prepaint.1.as_ref(),
             window,
             cx,
             |style, window, cx| {

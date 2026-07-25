@@ -4,7 +4,7 @@ struct SubpixelSprite {
     order: u32,
     pad: u32,
     bounds: Bounds,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
     color: Hsla,
     tile: AtlasTile,
     transform: PrimitiveTransform,
@@ -15,7 +15,8 @@ struct SubpixelSpriteOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
-    @location(3) clip_distances: vec4<f32>,
+    @location(2) @interpolate(flat) sprite_id: u32,
+    @location(3) window_position: vec2<f32>,
 }
 
 struct SubpixelSpriteFragmentOutput {
@@ -34,7 +35,8 @@ fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_i
     out.position = to_device_position_impl(window_position);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect_impl(window_position, sprite.content_mask);
+    out.sprite_id = instance_id;
+    out.window_position = window_position;
     return out;
 }
 
@@ -46,8 +48,8 @@ fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutp
     }
     let alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, gamma_params.subpixel_enhanced_contrast, gamma_params.gamma_ratios);
 
-    // Alpha clip after using the derivatives.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    let sprite = b_subpixel_sprites[input.sprite_id];
+    if (!clip_envelope_contains(input.window_position, sprite.clip)) {
         return SubpixelSpriteFragmentOutput(vec4<f32>(0.0), vec4<f32>(0.0));
     }
 

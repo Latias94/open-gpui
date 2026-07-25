@@ -1399,7 +1399,7 @@ pub struct PlatformInputHandler {
     focus_id: FocusId,
     handler: Box<dyn InputHandler>,
     transform: ResolvedSubtreeTransform,
-    validity: Option<crate::geometry::SubtreeTransformValidity>,
+    validity: Option<crate::geometry::SubtreeGeometryValidity>,
 }
 
 #[expect(missing_docs)]
@@ -1416,7 +1416,7 @@ impl PlatformInputHandler {
         focus_id: FocusId,
         handler: Box<dyn InputHandler>,
         transform: ResolvedSubtreeTransform,
-        validity: Option<crate::geometry::SubtreeTransformValidity>,
+        validity: Option<crate::geometry::SubtreeGeometryValidity>,
     ) -> Self {
         Self {
             cx,
@@ -1427,7 +1427,7 @@ impl PlatformInputHandler {
         }
     }
 
-    pub(crate) fn validity(&self) -> Option<crate::geometry::SubtreeTransformValidity> {
+    pub(crate) fn validity(&self) -> Option<crate::geometry::SubtreeGeometryValidity> {
         self.validity.clone()
     }
 
@@ -1437,7 +1437,7 @@ impl PlatformInputHandler {
 
     pub(crate) fn set_validity(
         &mut self,
-        validity: Option<crate::geometry::SubtreeTransformValidity>,
+        validity: Option<crate::geometry::SubtreeGeometryValidity>,
     ) {
         self.validity = validity;
     }

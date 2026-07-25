@@ -298,7 +298,9 @@ impl Render for PublishedActionProbeView {
                 node.set_numeric_value(activations as f64);
                 node.add_action(AccessibleAction::Click);
                 assert!(window.a11y.nodes.push(node_id, node));
-                window.a11y.record_node_bounds(node_id, bounds);
+                window
+                    .a11y
+                    .record_node_bounds(node_id, bounds, Some(bounds.center()));
                 window.on_a11y_action(node_id, AccessibleAction::Click, move |_, _, cx| {
                     click_target
                         .update(cx, |this, cx| {
@@ -347,7 +349,11 @@ impl Render for TransactionalAccessibilityProbeView {
                                     node.set_label("Discarded transaction node");
                                     node.add_action(AccessibleAction::Click);
                                     assert!(window.a11y.nodes.push(node_id, node));
-                                    window.a11y.record_node_bounds(node_id, bounds);
+                                    window.a11y.record_node_bounds(
+                                        node_id,
+                                        bounds,
+                                        Some(bounds.center()),
+                                    );
                                     window.a11y.record_focus_id(node_id, leaked_focus_id);
                                     window.on_a11y_action(
                                         node_id,
@@ -382,7 +388,9 @@ impl Render for TransactionalAccessibilityProbeView {
                         node.set_label("Committed transaction node");
                         node.add_action(AccessibleAction::Click);
                         assert!(window.a11y.nodes.push(node_id, node));
-                        window.a11y.record_node_bounds(node_id, bounds);
+                        window
+                            .a11y
+                            .record_node_bounds(node_id, bounds, Some(bounds.center()));
                         window.a11y.nodes.pop();
                     },
                     |_, _, _, _| {},

@@ -24,6 +24,8 @@ float4 distance_from_clip_rect_impl(float2 position,
 float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                            Bounds_ScaledPixels clip_bounds,
                                            PrimitiveTransform transform);
+bool clip_stack_contains(float2 position, ClipEnvelope clip,
+                         constant GpuClipShape *clip_shapes);
 float corner_dash_velocity(float dv1, float dv2);
 float dash_alpha(float t, float period, float length, float dash_velocity,
                  float antialias_threshold);
@@ -86,7 +88,7 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
       to_device_position_transformed(unit_vertex, quad.bounds, quad.transform,
                                      viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(
-      unit_vertex, quad.bounds, quad.content_mask.bounds, quad.transform);
+      unit_vertex, quad.bounds, quad.clip.conservative_bounds, quad.transform);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
   GradientColor gradient = prepare_fill_color(
@@ -110,8 +112,13 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
 
 fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
-                              [[buffer(QuadInputIndex_Quads)]]) {
+                              [[buffer(QuadInputIndex_Quads)]],
+                              constant GpuClipShape *clip_shapes
+                              [[buffer(GlobalInputIndex_ClipShapes)]]) {
   Quad quad = quads[input.quad_id];
+  if (!clip_stack_contains(input.position.xy, quad.clip, clip_shapes)) {
+    return float4(0.0);
+  }
   float4 background_color = fill_color(quad.background, input.local_position, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
 
@@ -501,7 +508,7 @@ vertex ShadowVertexOutput shadow_vertex(
       to_device_position_transformed(unit_vertex, bounds, shadow.transform,
                                      viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(
-      unit_vertex, bounds, shadow.content_mask.bounds, shadow.transform);
+      unit_vertex, bounds, shadow.clip.conservative_bounds, shadow.transform);
   float4 color = hsla_to_rgba(shadow.color);
 
   return ShadowVertexOutput{
@@ -514,8 +521,13 @@ vertex ShadowVertexOutput shadow_vertex(
 
 fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                                 constant Shadow *shadows
-                                [[buffer(ShadowInputIndex_Shadows)]]) {
+                                [[buffer(ShadowInputIndex_Shadows)]],
+                                constant GpuClipShape *clip_shapes
+                                [[buffer(GlobalInputIndex_ClipShapes)]]) {
   Shadow shadow = shadows[input.shadow_id];
+  if (!clip_stack_contains(input.position.xy, shadow.clip, clip_shapes)) {
+    return float4(0.0);
+  }
 
   float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
   float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
@@ -603,7 +615,7 @@ vertex UnderlineVertexOutput underline_vertex(
       to_device_position_transformed(unit_vertex, underline.bounds,
                                      underline.transform, viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(
-      unit_vertex, underline.bounds, underline.content_mask.bounds,
+      unit_vertex, underline.bounds, underline.clip.conservative_bounds,
       underline.transform);
   float4 color = hsla_to_rgba(underline.color);
   return UnderlineVertexOutput{
@@ -616,11 +628,16 @@ vertex UnderlineVertexOutput underline_vertex(
 
 fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
                                    constant Underline *underlines
-                                   [[buffer(UnderlineInputIndex_Underlines)]]) {
+                                   [[buffer(UnderlineInputIndex_Underlines)]],
+                                   constant GpuClipShape *clip_shapes
+                                   [[buffer(GlobalInputIndex_ClipShapes)]]) {
+  Underline underline = underlines[input.underline_id];
+  if (!clip_stack_contains(input.position.xy, underline.clip, clip_shapes)) {
+    return float4(0.0);
+  }
   const float WAVE_FREQUENCY = 2.0;
   const float WAVE_HEIGHT_RATIO = 0.8;
 
-  Underline underline = underlines[input.underline_id];
   if (underline.wavy) {
     float half_thickness = underline.thickness * 0.5;
     float2 origin =
@@ -649,6 +666,7 @@ struct MonochromeSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
+  uint sprite_id [[flat]];
   float4 clip_distance;
 };
 
@@ -656,6 +674,7 @@ struct MonochromeSpriteFragmentInput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
+  uint sprite_id [[flat]];
   float4 clip_distance;
 };
 
@@ -672,21 +691,25 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   float4 device_position = to_device_position_transformed(
       unit_vertex, sprite.bounds, sprite.transform, viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(
-      unit_vertex, sprite.bounds, sprite.content_mask.bounds, sprite.transform);
+      unit_vertex, sprite.bounds, sprite.clip.conservative_bounds, sprite.transform);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{
       device_position,
       tile_position,
       color,
+      sprite_id,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 monochrome_sprite_fragment(
     MonochromeSpriteFragmentInput input [[stage_in]],
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    constant GpuClipShape *clip_shapes [[buffer(GlobalInputIndex_ClipShapes)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
-  if (any(input.clip_distance < float4(0.0))) {
+  MonochromeSprite sprite = sprites[input.sprite_id];
+  if (any(input.clip_distance < float4(0.0)) ||
+      !clip_stack_contains(input.position.xy, sprite.clip, clip_shapes)) {
     return float4(0.0);
   }
 
@@ -733,7 +756,7 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
       to_device_position_transformed(unit_vertex, sprite.bounds,
                                      sprite.transform, viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(
-      unit_vertex, sprite.bounds, sprite.content_mask.bounds, sprite.transform);
+      unit_vertex, sprite.bounds, sprite.clip.conservative_bounds, sprite.transform);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   return PolychromeSpriteVertexOutput{
       device_position,
@@ -746,8 +769,12 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
 fragment float4 polychrome_sprite_fragment(
     PolychromeSpriteFragmentInput input [[stage_in]],
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    constant GpuClipShape *clip_shapes [[buffer(GlobalInputIndex_ClipShapes)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
   PolychromeSprite sprite = sprites[input.sprite_id];
+  if (!clip_stack_contains(input.position.xy, sprite.clip, clip_shapes)) {
+    return float4(0.0);
+  }
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
   float4 sample =
@@ -794,7 +821,7 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
       apply_primitive_transform(local_position, v.transform);
   float4 position = to_device_position_impl(window_position, viewport_size);
   float4 clip_distance =
-      distance_from_clip_rect_impl(window_position, v.content_mask.bounds);
+      distance_from_clip_rect_impl(window_position, v.clip.conservative_bounds);
   return PathRasterizationVertexOutput{
       position,
       float2(v.st_position.x, v.st_position.y),
@@ -806,12 +833,16 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
 
 fragment float4 path_rasterization_fragment(
   PathRasterizationFragmentInput input [[stage_in]],
-  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
+  constant GpuClipShape *clip_shapes [[buffer(GlobalInputIndex_ClipShapes)]]
 ) {
+  PathRasterizationVertex v = vertices[input.vertex_id];
   float2 dx = dfdx(input.st_position);
   float2 dy = dfdy(input.st_position);
+  if (!clip_stack_contains(input.position.xy, v.clip, clip_shapes)) {
+    return float4(0.0);
+  }
 
-  PathRasterizationVertex v = vertices[input.vertex_id];
   Background background = v.color;
   Bounds_ScaledPixels path_bounds = v.local_bounds;
   float alpha;
@@ -860,7 +891,7 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
 ) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PathSprite sprite = sprites[sprite_id];
-  // The transform and content mask were applied while rasterizing into the
+  // The transform and exact clip stack were applied while rasterizing into the
   // screen-space intermediate texture. Applying either again would double it.
   float4 device_position =
       to_device_position(unit_vertex, sprite.bounds, viewport_size);
@@ -885,12 +916,14 @@ fragment float4 path_sprite_fragment(
 struct SurfaceVertexOutput {
   float4 position [[position]];
   float2 texture_position;
+  uint surface_id [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
 struct SurfaceFragmentInput {
   float4 position [[position]];
   float2 texture_position;
+  uint surface_id [[flat]];
 };
 
 vertex SurfaceVertexOutput surface_vertex(
@@ -907,7 +940,7 @@ vertex SurfaceVertexOutput surface_vertex(
       to_device_position_transformed(unit_vertex, surface.bounds,
                                      surface.transform, viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(
-      unit_vertex, surface.bounds, surface.content_mask.bounds,
+      unit_vertex, surface.bounds, surface.clip.conservative_bounds,
       surface.transform);
   // We are going to copy the whole texture, so the texture position corresponds
   // to the current vertex of the unit triangle.
@@ -915,14 +948,23 @@ vertex SurfaceVertexOutput surface_vertex(
   return SurfaceVertexOutput{
       device_position,
       texture_position,
+      surface_id,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
+                                 constant SurfaceBounds *surfaces
+                                 [[buffer(SurfaceInputIndex_Surfaces)]],
+                                 constant GpuClipShape *clip_shapes
+                                 [[buffer(GlobalInputIndex_ClipShapes)]],
                                  texture2d<float> y_texture
                                  [[texture(SurfaceInputIndex_YTexture)]],
                                  texture2d<float> cb_cr_texture
                                  [[texture(SurfaceInputIndex_CbCrTexture)]]) {
+  SurfaceBounds surface = surfaces[input.surface_id];
+  if (!clip_stack_contains(input.position.xy, surface.clip, clip_shapes)) {
+    return float4(0.0);
+  }
   constexpr sampler texture_sampler(mag_filter::linear, min_filter::linear);
   const float4x4 ycbcrToRGBTransform =
       float4x4(float4(+1.0000f, +1.0000f, +1.0000f, +0.0000f),
@@ -1165,6 +1207,84 @@ float4 distance_from_clip_rect_transformed(float2 unit_vertex,
       float2(bounds.origin.x, bounds.origin.y);
   return distance_from_clip_rect_impl(
       apply_primitive_transform(position, transform), clip_bounds);
+}
+
+bool rounded_clip_corner_contains(float2 position, float2 center,
+                                  float2 radii, bool in_corner) {
+  if (!in_corner || radii.x == 0.0 || radii.y == 0.0) {
+    return true;
+  }
+  float2 delta = (position - center) / radii;
+  return dot(delta, delta) <= 1.0;
+}
+
+bool rounded_clip_shape_contains(float2 position, GpuClipShape clip) {
+  float left = clip.bounds.origin.x;
+  float top = clip.bounds.origin.y;
+  float right = left + clip.bounds.size.width;
+  float bottom = top + clip.bounds.size.height;
+  if (clip.bounds.size.width <= 0.0 || clip.bounds.size.height <= 0.0 ||
+      position.x < left || position.x > right ||
+      position.y < top || position.y > bottom) {
+    return false;
+  }
+
+  float2 top_left_radii =
+      float2(clip.radii_x.top_left, clip.radii_y.top_left);
+  float2 top_right_radii =
+      float2(clip.radii_x.top_right, clip.radii_y.top_right);
+  float2 bottom_right_radii =
+      float2(clip.radii_x.bottom_right, clip.radii_y.bottom_right);
+  float2 bottom_left_radii =
+      float2(clip.radii_x.bottom_left, clip.radii_y.bottom_left);
+
+  return rounded_clip_corner_contains(
+             position, float2(left, top) + top_left_radii,
+             top_left_radii,
+             position.x < left + top_left_radii.x &&
+                 position.y < top + top_left_radii.y) &&
+         rounded_clip_corner_contains(
+             position,
+             float2(right - top_right_radii.x,
+                    top + top_right_radii.y),
+             top_right_radii,
+             position.x > right - top_right_radii.x &&
+                 position.y < top + top_right_radii.y) &&
+         rounded_clip_corner_contains(
+             position, float2(right, bottom) - bottom_right_radii,
+             bottom_right_radii,
+             position.x > right - bottom_right_radii.x &&
+                 position.y > bottom - bottom_right_radii.y) &&
+         rounded_clip_corner_contains(
+             position,
+             float2(left + bottom_left_radii.x,
+                    bottom - bottom_left_radii.y),
+             bottom_left_radii,
+             position.x < left + bottom_left_radii.x &&
+                 position.y > bottom - bottom_left_radii.y);
+}
+
+bool clip_stack_contains(float2 position, ClipEnvelope clip,
+                         constant GpuClipShape *clip_shapes) {
+  float left = clip.conservative_bounds.origin.x;
+  float top = clip.conservative_bounds.origin.y;
+  float right = left + clip.conservative_bounds.size.width;
+  float bottom = top + clip.conservative_bounds.size.height;
+  if (clip.clip_count == 0 ||
+      clip.conservative_bounds.size.width <= 0.0 ||
+      clip.conservative_bounds.size.height <= 0.0 ||
+      position.x < left || position.x >= right ||
+      position.y < top || position.y >= bottom) {
+    return false;
+  }
+
+  for (uint index = 0; index < clip.clip_count; index++) {
+    if (!rounded_clip_shape_contains(
+            position, clip_shapes[clip.first_clip + index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 float4 over(float4 below, float4 above) {

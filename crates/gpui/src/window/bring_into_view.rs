@@ -1,7 +1,7 @@
 use crate::{
     App, Bounds, ElementGeometry, FocusId, LayoutId, ListState, Overflow, Pixels, Point,
     ScrollHandle, Subscription, SubtreePresentation, Window, WindowId,
-    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    geometry::{ResolvedSubtreeTransform, SubtreeGeometryValidity},
     point,
 };
 use open_gpui_collections::FxHashSet;
@@ -676,7 +676,7 @@ pub(super) struct RevealTargetCapture {
     root_layout_ids: SmallVec<[LayoutId; 2]>,
     layout_bounds: Bounds<Pixels>,
     transform: ResolvedSubtreeTransform,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
     presentation: SubtreePresentation,
     ancestry: SmallVec<[ScrollContainerBinding; 4]>,
     failed: bool,
@@ -688,7 +688,7 @@ impl RevealTargetCapture {
         layout_id: LayoutId,
         layout_bounds: Bounds<Pixels>,
         transform: ResolvedSubtreeTransform,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
         presentation: SubtreePresentation,
         ancestry: SmallVec<[ScrollContainerBinding; 4]>,
     ) -> Self {
@@ -1101,14 +1101,28 @@ impl Window {
         fence: Option<ScrollChainFence>,
         cx: &mut App,
     ) {
+        let key = RevealTargetKey::Focus(focus);
+        let Some(binding) = self
+            .rendered_frame
+            .reveal_target_binding(key)
+            .filter(|binding| binding.is_valid())
+        else {
+            return;
+        };
+        let RevealTargetBindingState::Linked(snapshot) = &binding.value.state else {
+            return;
+        };
+        if snapshot.ancestry.is_empty() {
+            return;
+        }
         if let Some(fence) = fence.as_ref()
-            && !self.focus_reveal_fence_allows_committed_target(focus, fence)
+            && !self.focus_reveal_fence_allows_snapshot(snapshot, fence)
         {
             return;
         }
         let window_id = self.handle.window_id();
         let _ = self.enqueue_bring_into_view(
-            RevealTargetKey::Focus(focus),
+            key,
             window_id,
             BringIntoViewRequestSource::Focus(focus),
             BringIntoViewOptions::nearest(),
@@ -1118,25 +1132,14 @@ impl Window {
         );
     }
 
-    fn focus_reveal_fence_allows_committed_target(
+    fn focus_reveal_fence_allows_snapshot(
         &self,
-        focus: FocusId,
+        snapshot: &RevealTargetSnapshot,
         fence: &ScrollChainFence,
     ) -> bool {
         if self.scroll_chain_fence_was_interrupted(fence) {
             return false;
         }
-        let key = RevealTargetKey::Focus(focus);
-        let Some(binding) = self
-            .rendered_frame
-            .reveal_target_binding(key)
-            .filter(|binding| binding.is_valid())
-        else {
-            return false;
-        };
-        let RevealTargetBindingState::Linked(snapshot) = &binding.value.state else {
-            return false;
-        };
         fence.expected_chain.matches_chain(snapshot)
     }
 
@@ -1725,7 +1728,7 @@ impl Window {
             layout_id,
             layout_bounds,
             self.subtree_transform(),
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
             self.subtree_presentation(),
             self.current_scroll_ancestry(),
         ));
@@ -1827,7 +1830,7 @@ impl Window {
         self.next_frame
             .record_reveal_target_binding(super::FrameOutput::new(
                 RevealTargetBinding { key, state },
-                self.subtree_transform_validity(),
+                self.subtree_geometry_validity(),
             ));
     }
 
@@ -1848,7 +1851,7 @@ impl Window {
     pub(crate) fn update_reveal_target_transform(
         &mut self,
         transform: ResolvedSubtreeTransform,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     ) {
         let Some(layout_id) = self.current_prepaint_layout_id() else {
             return;

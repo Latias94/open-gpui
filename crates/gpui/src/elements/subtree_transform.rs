@@ -1,13 +1,13 @@
 use crate::{
     AnyElement, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
     LayoutId, Pixels, SubtreeTransform, SubtreeTransformError, Window,
-    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    geometry::{ResolvedSubtreeTransform, SubtreeGeometryValidity},
 };
 
 /// A layout-neutral transform applied consistently to one interactive element subtree.
 pub struct SubtreeTransformElement {
     transform: SubtreeTransform,
-    resolved: Option<(ResolvedSubtreeTransform, SubtreeTransformValidity)>,
+    resolved: Option<(ResolvedSubtreeTransform, SubtreeGeometryValidity)>,
     child: Option<AnyElement>,
     source: &'static core::panic::Location<'static>,
 }
@@ -72,8 +72,8 @@ impl Element for SubtreeTransformElement {
             }
         };
 
-        let validity = window.new_subtree_transform_validity();
-        let result = window.transact_subtree_transform(Some(validity.clone()), |window| {
+        let validity = window.new_subtree_geometry_validity();
+        let result = window.transact_subtree_geometry(Some(validity.clone()), |window| {
             window.with_resolved_subtree_transform(resolved, Some(validity.clone()), |window| {
                 child.prepaint(window, cx)
             });
@@ -81,7 +81,7 @@ impl Element for SubtreeTransformElement {
         match result {
             Ok(()) => self.resolved = Some((resolved, validity)),
             Err(error) => {
-                window.record_subtree_transform_scope_diagnostic(&validity);
+                window.record_subtree_geometry_scope_diagnostic(&validity);
                 debug_assert_eq!(validity.failure(), Some(error));
                 self.resolved = None;
             }
@@ -107,7 +107,7 @@ impl Element for SubtreeTransformElement {
         window.with_resolved_subtree_transform(*transform, Some(validity.clone()), |window| {
             child.paint(window, cx)
         });
-        window.record_subtree_transform_scope_diagnostic(validity);
+        window.record_subtree_geometry_scope_diagnostic(validity);
     }
 }
 

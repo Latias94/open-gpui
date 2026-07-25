@@ -31,7 +31,8 @@ each follower can apply its own eligibility policy.
 
 `PortalAnchorSnapshot` publishes window identity, frame generation, opaque `ElementGeometry`,
 effective presentation, and effective clip AABB. It exposes neither a resolved matrix nor mutable
-target state. Cached target journals may replay under an unchanged geometry/presentation cache key,
+target state. Cached target journals may replay only under an unchanged geometry, presentation, and
+complete exact clip-snapshot cache key,
 updating only their frame generation. Views that resolve an anchor are cross-view dependencies:
 GPUI records the resolving view and its cache ancestors, so their deferred journals rebuild on the
 next frame rather than replaying a captured linked result after the target changes elsewhere.
@@ -62,7 +63,7 @@ ContextMenu's explicit window point, GPUI-native pointer tooltip points, and ful
 surfaces remain intentionally distinct. They use named window-space paths and do not pretend a
 point or viewport is a live element target.
 Overlay inside regions are likewise committed from checked displayed `ElementGeometry` intersected
-with the effective content mask; raw or clipped-away layout bounds cannot become a second
+with the exact clip stack's conservative public AABB; raw or clipped-away layout bounds cannot become a second
 outside-press coordinate authority under subtree transforms.
 
 ## Consequences

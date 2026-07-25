@@ -4,7 +4,7 @@ use ::open_gpui_sum_tree::SumTree;
 use open_gpui_collections::FxHashMap;
 use open_gpui_sum_tree::Bias;
 
-use crate::{FocusHandle, FocusId, geometry::SubtreeTransformValidity};
+use crate::{FocusHandle, FocusId, geometry::SubtreeGeometryValidity};
 
 /// Represents a collection of focus handles using the tab-index APIs.
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub(crate) struct TabStopMap {
 pub enum TabStopOperation {
     Insert {
         focus_handle: FocusHandle,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     },
     Group(TabIndex),
     GroupEnd,
@@ -50,7 +50,7 @@ struct TabStopNode {
 
     /// Whether this node is a tab stop
     tab_stop: bool,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 impl PartialEq for TabStopNode {
@@ -92,7 +92,7 @@ impl TabStopMap {
     pub fn insert_scoped(
         &mut self,
         focus_handle: &FocusHandle,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     ) {
         self.insertion_history.push(TabStopOperation::Insert {
             focus_handle: focus_handle.clone(),
@@ -238,7 +238,7 @@ impl TabStopMap {
     pub fn replay_scoped(
         &mut self,
         nodes: &[TabStopOperation],
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     ) {
         for node in nodes {
             match node {
@@ -246,7 +246,7 @@ impl TabStopMap {
                     focus_handle,
                     validity: recorded_validity,
                 } => {
-                    let replayed_validity = SubtreeTransformValidity::replayed_under(
+                    let replayed_validity = SubtreeGeometryValidity::replayed_under(
                         recorded_validity.as_ref(),
                         validity.clone(),
                     );
@@ -283,7 +283,7 @@ impl TabStopNode {
     fn is_active(&self) -> bool {
         self.validity
             .as_ref()
-            .is_none_or(SubtreeTransformValidity::is_valid)
+            .is_none_or(SubtreeGeometryValidity::is_valid)
     }
 }
 

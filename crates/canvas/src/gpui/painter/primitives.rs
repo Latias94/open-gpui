@@ -80,30 +80,25 @@ pub(super) fn paint_label(
     let vertical_offset = ((label_bounds.size.height - label.text_height) / 2.0).max(Pixels::ZERO);
     let mut origin = Point::new(label_bounds.left(), label_bounds.top() + vertical_offset);
 
-    window.with_content_mask(
-        Some(ContentMask {
-            bounds: label_bounds,
-        }),
-        |window| {
-            for line in &label.lines {
-                if origin.y >= label_bounds.bottom() {
-                    break;
-                }
-
-                let line_height = line.size(theme.label_line_height).height;
-                line.paint(
-                    origin,
-                    theme.label_line_height,
-                    theme.label_text_align,
-                    Some(label_bounds),
-                    window,
-                    cx,
-                )
-                .ok();
-                origin.y += line_height;
+    let _ = window.with_prepared_subtree_clip(&label.clip, |window| {
+        for line in &label.lines {
+            if origin.y >= label_bounds.bottom() {
+                break;
             }
-        },
-    );
+
+            let line_height = line.size(theme.label_line_height).height;
+            line.paint(
+                origin,
+                theme.label_line_height,
+                theme.label_text_align,
+                Some(label_bounds),
+                window,
+                cx,
+            )
+            .ok();
+            origin.y += line_height;
+        }
+    });
 }
 
 pub(super) fn paint_edge(

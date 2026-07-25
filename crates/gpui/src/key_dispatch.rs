@@ -52,7 +52,7 @@
 
 use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, Window, geometry::SubtreeTransformValidity,
+    Keystroke, ModifiersChangedEvent, Window, geometry::SubtreeGeometryValidity,
 };
 use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
@@ -89,7 +89,7 @@ pub(crate) struct DispatchNode {
     pub focus_id: Option<FocusId>,
     view_id: Option<EntityId>,
     parent: Option<DispatchNodeId>,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 pub(crate) struct ReusedSubtree {
@@ -167,7 +167,7 @@ impl DispatchTree {
 
     pub fn push_node_scoped(
         &mut self,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     ) -> DispatchNodeId {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
@@ -249,8 +249,8 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source: &mut DispatchNode, validity: Option<SubtreeTransformValidity>) {
-        let validity = SubtreeTransformValidity::replayed_under(source.validity.as_ref(), validity);
+    fn move_node(&mut self, source: &mut DispatchNode, validity: Option<SubtreeGeometryValidity>) {
+        let validity = SubtreeGeometryValidity::replayed_under(source.validity.as_ref(), validity);
         self.push_node_scoped(validity);
         if let Some(context) = source.context.clone() {
             self.set_key_context(context);
@@ -273,7 +273,7 @@ impl DispatchTree {
         old_range: Range<usize>,
         source: &mut Self,
         focus: Option<FocusId>,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     ) -> ReusedSubtree {
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
 
@@ -333,7 +333,7 @@ impl DispatchTree {
             if node
                 .validity
                 .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .is_none_or(SubtreeGeometryValidity::is_valid)
             {
                 continue;
             }
@@ -647,7 +647,7 @@ impl DispatchTree {
             self.nodes[node_id.0]
                 .validity
                 .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .is_none_or(SubtreeGeometryValidity::is_valid)
         })
     }
 

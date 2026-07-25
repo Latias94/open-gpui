@@ -1,8 +1,8 @@
 use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
+    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, PreparedSubtreeClip,
+    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
 };
 use anyhow::Result;
 
@@ -263,7 +263,7 @@ pub struct ImgLayoutState {
 
 impl Element for Img {
     type RequestLayoutState = ImgLayoutState;
-    type PrepaintState = Option<Hitbox>;
+    type PrepaintState = (Option<Hitbox>, Option<PreparedSubtreeClip>);
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -459,7 +459,7 @@ impl Element for Img {
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
-        hitbox: &mut Self::PrepaintState,
+        prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -468,7 +468,8 @@ impl Element for Img {
             global_id,
             inspector_id,
             bounds,
-            hitbox.as_ref(),
+            prepaint.0.as_ref(),
+            prepaint.1.as_ref(),
             window,
             cx,
             |style, window, cx| {

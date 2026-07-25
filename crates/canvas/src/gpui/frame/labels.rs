@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn prepare_label(
     label: &CanvasPaintLabel,
+    canvas_bounds: Bounds<Pixels>,
     theme: CanvasPaintTheme,
     window: &mut Window,
 ) -> Option<CanvasPreparedPaintLabel> {
@@ -39,9 +40,12 @@ pub(super) fn prepare_label(
     let text_height = lines.iter().fold(Pixels::ZERO, |height, line| {
         height + line.size(theme.label_line_height).height
     });
+    let clip = SubtreeClip::try_rect(label.view_bounds).ok()?;
+    let clip = window.prepare_subtree_clip(&clip, canvas_bounds);
 
     Some(CanvasPreparedPaintLabel {
         view_bounds: label.view_bounds,
+        clip,
         lines: lines.into_iter().collect(),
         text_height,
     })

@@ -198,7 +198,7 @@ impl DockViewportAdapter {
         if !snapshot.is_route_ready() {
             return None;
         }
-        snapshot.host_geometry?.window_to_host(position)
+        snapshot.host_geometry.as_ref()?.window_to_host(position)
     }
 
     /// Converts a global screen point into host-local coordinates.
@@ -732,6 +732,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .host_geometry
+                .as_ref()
                 .map(DockViewportHostGeometry::layout_bounds),
             Some(next_host_bounds)
         );

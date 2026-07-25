@@ -1,8 +1,10 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use open_gpui::{BenchAppContext, Bounds, point, px, size};
+use open_gpui::{
+    BenchAppContext, Bounds, Context, IntoElement, Render, Styled, VisualContext, Window, point,
+    px, size,
+};
 use open_gpui_canvas::adapter::{
-    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, collect_visible_records,
-    prepaint_canvas_frame,
+    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view, collect_visible_records,
 };
 use open_gpui_canvas::advanced::SpatialIndex;
 use open_gpui_canvas::{
@@ -18,6 +20,20 @@ const NODE_WIDTH: f32 = 96.0;
 const NODE_HEIGHT: f32 = 56.0;
 const COLUMN_GAP: f32 = 160.0;
 const ROW_GAP: f32 = 120.0;
+
+struct LabeledCanvasBenchmarkView {
+    model: CanvasPaintModel,
+    options: CanvasPaintOptions,
+    theme: CanvasPaintTheme,
+}
+
+impl Render for LabeledCanvasBenchmarkView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        canvas_view(self.model.clone(), self.options, self.theme)
+            .w(px(1_280.0))
+            .h(px(720.0))
+    }
+}
 
 fn large_canvas_benches(c: &mut Criterion) {
     let document = build_grid_document(GRID_COLUMNS, GRID_ROWS);
@@ -63,33 +79,37 @@ fn large_canvas_benches(c: &mut Criterion) {
         b.iter(|| black_box(CanvasPaintModel::from(black_box(&editor))));
     });
 
-    c.bench_function("paint_frame_prepaint_labels", |b| {
+    c.bench_function("paint_frame_render_labels", |b| {
         let model = CanvasPaintModel::new_with_kind_registry(
             labeled_grid_document(&document),
             CanvasViewport::new(point(px(12_000.0), px(6_000.0)), 1.0)
                 .expect("benchmark viewport should be valid"),
             labeled_kind_registry(),
         );
-        let canvas_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(1_280.0), px(720.0)));
         let options = CanvasPaintOptions {
             cull_margin: px(128.0),
             ..CanvasPaintOptions::default()
         };
         let theme = CanvasPaintTheme::default();
-        let mut app = BenchAppContext::new(Some("paint_frame_prepaint_labels"));
+        let mut app = BenchAppContext::new(Some("paint_frame_render_labels"));
         let mut window = app.add_empty_window();
+        let view = window
+            .replace_root_view(move |_, _| LabeledCanvasBenchmarkView {
+                model,
+                options,
+                theme,
+            })
+            .expect("benchmark root view should remain live");
 
         b.iter(|| {
-            window.update(|window, _| {
-                let frame = prepaint_canvas_frame(
-                    black_box(&model),
-                    black_box(canvas_bounds),
-                    options,
-                    theme,
-                    window,
-                );
-                black_box(frame.prepared_label_count())
+            window
+                .update_window_entity(&view, |_, _, cx| cx.notify())
+                .expect("benchmark root view should remain live");
+            let revision = window.update(|window, cx| {
+                window.draw(cx).clear();
+                window.rendered_frame_revision()
             });
+            black_box(revision);
         });
 
         app.teardown();

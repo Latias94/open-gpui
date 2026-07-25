@@ -78,10 +78,10 @@ impl Element for Deferred {
         let element_offset = window.element_offset();
         if self.window_space {
             if let Ok(window_offset) = window.try_project_subtree_point(element_offset) {
-                window.defer_draw_in_window_space(child, window_offset, self.priority, None)
+                window.defer_draw_in_window_space(child, window_offset, self.priority)
             }
         } else {
-            window.defer_draw(child, element_offset, self.priority, None)
+            window.defer_draw(child, element_offset, self.priority)
         }
     }
 

@@ -1,15 +1,76 @@
 use super::*;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use open_gpui::{
     Context, FocusHandle, Hitbox, HitboxBehavior, IntoElement, Point, Render, Styled,
-    SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, Window, canvas,
+    SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, VisualContext,
+    Window, canvas,
 };
 
 struct TransformedCanvasInputView {
     focus: FocusHandle,
     events: Rc<RefCell<Vec<CanvasEvent>>>,
+}
+
+struct LabeledCanvasClipView {
+    model: CanvasPaintModel,
+    translated: bool,
+    prepaint_count: Rc<Cell<usize>>,
+    paint_count: Rc<Cell<usize>>,
+}
+
+impl Render for LabeledCanvasClipView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let prepaint_model = self.model.clone();
+        let paint_model = self.model.clone();
+        let prepaint_count = self.prepaint_count.clone();
+        let paint_count = self.paint_count.clone();
+        let translation = if self.translated {
+            point(px(20.0), px(12.0))
+        } else {
+            Point::default()
+        };
+
+        canvas(
+            move |bounds, window, _| {
+                prepaint_count.set(prepaint_count.get() + 1);
+                let frame = prepaint_canvas_frame(
+                    &prepaint_model,
+                    bounds,
+                    CanvasPaintOptions::default(),
+                    CanvasPaintTheme::default(),
+                    window,
+                );
+                assert_eq!(frame.prepared_label_count(), 1);
+                frame
+            },
+            move |bounds, frame, window, cx| {
+                paint_count.set(paint_count.get() + 1);
+                paint_canvas_frame(
+                    bounds,
+                    &paint_model,
+                    &frame,
+                    CanvasPaintTheme::default(),
+                    window,
+                    cx,
+                );
+            },
+        )
+        .w(px(140.0))
+        .h(px(100.0))
+        .with_subtree_transform(
+            SubtreeTransform::try_new(
+                size(1.0, 1.0),
+                translation,
+                SubtreeTransformOrigin::TOP_LEFT,
+            )
+            .unwrap(),
+        )
+    }
 }
 
 impl Render for TransformedCanvasInputView {
@@ -85,6 +146,52 @@ fn editor_adapter_inverse_projects_transformed_pointer_and_pixel_wheel_input(
             },
         ]
     );
+}
+
+#[open_gpui::test]
+fn labeled_canvas_reprepares_clip_tokens_for_each_paint_generation(cx: &mut TestAppContext) {
+    let mut node = CanvasNode::new(
+        "painted",
+        point(px(10.0), px(10.0)),
+        size(px(110.0), px(70.0)),
+    );
+    node.kind = "painted-node".to_string();
+    let model = CanvasPaintModel::new_with_kind_registry(
+        document_fixture().node(node).build(),
+        CanvasViewport::default(),
+        paint_registry(),
+    );
+    let prepaint_count = Rc::new(Cell::new(0));
+    let paint_count = Rc::new(Cell::new(0));
+    let (view, cx) = cx.add_window_view({
+        let prepaint_count = prepaint_count.clone();
+        let paint_count = paint_count.clone();
+        move |_, _| LabeledCanvasClipView {
+            model,
+            translated: false,
+            prepaint_count,
+            paint_count,
+        }
+    });
+
+    cx.update(|window, cx| window.draw(cx).clear());
+    let first_revision = cx.update(|window, _| window.rendered_frame_revision());
+    let first_prepaint_count = prepaint_count.get();
+    let first_paint_count = paint_count.get();
+    assert!(first_prepaint_count > 0);
+    assert_eq!(first_prepaint_count, first_paint_count);
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.translated = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let second_revision = cx.update(|window, _| window.rendered_frame_revision());
+
+    assert!(second_revision > first_revision);
+    assert!(prepaint_count.get() > first_prepaint_count);
+    assert!(paint_count.get() > first_paint_count);
+    assert_eq!(prepaint_count.get(), paint_count.get());
 }
 
 #[test]

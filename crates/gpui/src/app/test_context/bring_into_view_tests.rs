@@ -56,6 +56,21 @@ struct FocusScrollRevealView {
     offscreen_focus: FocusHandle,
 }
 
+struct PlainFocusView {
+    focus: FocusHandle,
+}
+
+impl Render for PlainFocusView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("plain-focus-target")
+            .w(px(20.0))
+            .h(px(20.0))
+            .focusable()
+            .track_focus(&self.focus)
+    }
+}
+
 struct GuardedFocusRevealView {
     scroll: ScrollHandle,
     scroll_chain_anchor: RevealTargetHandle,
@@ -1466,6 +1481,24 @@ fn only_the_winning_focus_claim_reveals(cx: &mut TestAppContext) {
     cx.update(|window, cx| offscreen.focus(window, cx));
     cx.run_until_parked();
     assert_eq!(scroll.offset(), point(px(-140.0), px(-140.0)));
+}
+
+#[open_gpui::test]
+fn focus_without_scroll_ancestry_does_not_allocate_reveal_authority(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| PlainFocusView {
+        focus: cx.focus_handle(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let focus = cx.update_window_entity(&view, |view, _, _| view.focus.clone());
+    let before = cx.update(|window, _| window.bring_into_view_authority_generation());
+
+    cx.update(|window, cx| focus.focus(window, cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.update(|window, _| window.bring_into_view_authority_generation()),
+        before
+    );
 }
 
 #[open_gpui::test]

@@ -261,7 +261,7 @@ impl Render for DockHost {
                     };
                     this.begin_host_drop_scene_from_render(
                         &payload,
-                        event.geometry(),
+                        DockViewportHostGeometry::from_hitbox(event.hitbox()),
                         DockRenderedPointerPosition::new(layout_position, event.window_position()),
                         window,
                         cx,

@@ -1181,10 +1181,8 @@ fn deferred_follower_waits_for_later_targets_and_resets_geometry_and_clip(cx: &m
         snapshot.geometry().displayed_bounds().bottom_right()
     );
     assert_eq!(hitbox.displayed_bounds(), hitbox.layout_bounds());
-    assert_eq!(hitbox.displayed_content_mask().bounds, viewport_bounds);
-    assert!(
-        snapshot.effective_clip_bounds().right() < hitbox.displayed_content_mask().bounds.right()
-    );
+    assert_eq!(hitbox.displayed_clip_bounds(), viewport_bounds);
+    assert!(snapshot.effective_clip_bounds().right() < hitbox.displayed_clip_bounds().right());
     assert_eq!(resolve_committed(cx, handle), Some(snapshot));
 }
 
@@ -1206,7 +1204,7 @@ fn ordinary_deferred_inherits_effective_clip_while_window_portal_resets_it(
         .as_ref()
         .expect("the ordinary deferred hitbox should exist");
     assert_eq!(
-        inherited.displayed_content_mask().bounds.size,
+        inherited.displayed_clip_bounds().size,
         size(px(40.0), px(30.0))
     );
     let portal = portal.borrow();
@@ -1214,7 +1212,7 @@ fn ordinary_deferred_inherits_effective_clip_while_window_portal_resets_it(
         .as_ref()
         .expect("the window portal hitbox should exist");
     assert_eq!(
-        portal.displayed_content_mask().bounds,
+        portal.displayed_clip_bounds(),
         Bounds::new(point(px(0.0), px(0.0)), size(px(320.0), px(200.0)))
     );
 }

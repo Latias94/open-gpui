@@ -451,6 +451,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .host_geometry
+                .as_ref()
                 .map(crate::DockViewportHostGeometry::layout_bounds),
             Some(bounds(10.0, 20.0, 300.0, 200.0))
         );

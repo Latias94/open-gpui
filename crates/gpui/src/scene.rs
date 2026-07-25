@@ -7,18 +7,16 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use crate::PlatformPixelBuffer;
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, ScaledPixels, Size, SubtreeTransformError,
+    AtlasTextureId, AtlasTile, Background, Bounds, Corners, Edges, Hsla, Pixels, Point,
+    ScaledPixels, Size, SubtreeTransformError,
     bounds_tree::BoundsTree,
-    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    geometry::{
+        ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
+        SubtreeGeometryValidity,
+    },
     point,
 };
-use std::{
-    fmt::Debug,
-    iter::Peekable,
-    ops::{Add, Range, Sub},
-    slice,
-};
+use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
 #[allow(non_camel_case_types, unused)]
 #[expect(missing_docs)]
@@ -26,6 +24,66 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
+
+/// One exact window-space rounded-rectangle clip consumed by renderer shaders.
+#[derive(Default, Debug, Copy, Clone, PartialEq)]
+#[repr(C)]
+pub struct GpuClipShape {
+    /// Window-space bounds in device-scaled pixels.
+    pub bounds: Bounds<ScaledPixels>,
+    /// Horizontal radii in top-left, top-right, bottom-right, bottom-left order.
+    pub radii_x: Corners<ScaledPixels>,
+    /// Vertical radii in top-left, top-right, bottom-right, bottom-left order.
+    pub radii_y: Corners<ScaledPixels>,
+}
+
+impl GpuClipShape {
+    fn try_from_resolved(
+        clip: &ResolvedClip,
+        scale_factor: f32,
+    ) -> Result<Self, SubtreeGeometryError> {
+        let shape = Self {
+            bounds: clip.bounds().scale(scale_factor),
+            radii_x: clip.radii_x().scale(scale_factor),
+            radii_y: clip.radii_y().scale(scale_factor),
+        };
+        if shape.is_finite() {
+            Ok(shape)
+        } else {
+            Err(SubtreeGeometryError::DeviceConversion)
+        }
+    }
+
+    fn is_finite(&self) -> bool {
+        let values = [
+            self.bounds.origin.x,
+            self.bounds.origin.y,
+            self.bounds.size.width,
+            self.bounds.size.height,
+            self.radii_x.top_left,
+            self.radii_x.top_right,
+            self.radii_x.bottom_right,
+            self.radii_x.bottom_left,
+            self.radii_y.top_left,
+            self.radii_y.top_right,
+            self.radii_y.bottom_right,
+            self.radii_y.bottom_left,
+        ];
+        values.into_iter().all(|value| value.0.is_finite())
+    }
+}
+
+/// A primitive's conservative clip bounds and range in [`Scene::clip_shapes`].
+#[derive(Default, Debug, Copy, Clone, PartialEq)]
+#[repr(C)]
+pub struct ClipEnvelope {
+    /// Conservative intersection AABB used only for culling and early rejection.
+    pub conservative_bounds: Bounds<ScaledPixels>,
+    /// First [`GpuClipShape`] element in the Scene clip arena.
+    pub first_clip: u32,
+    /// Number of consecutive [`GpuClipShape`] elements in the Scene clip arena.
+    pub clip_count: u32,
+}
 
 #[derive(Default)]
 #[expect(missing_docs)]
@@ -41,6 +99,8 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    clip_shapes: Vec<GpuClipShape>,
+    clip_stack_ranges: Vec<Range<u32>>,
 }
 
 #[expect(missing_docs)]
@@ -57,6 +117,13 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.clip_shapes.clear();
+        self.clip_stack_ranges.clear();
+    }
+
+    /// Returns the exact frame-local clip-shape arena referenced by primitive envelopes.
+    pub fn clip_shapes(&self) -> &[GpuClipShape] {
+        &self.clip_shapes
     }
 
     pub fn len(&self) -> usize {
@@ -66,7 +133,7 @@ impl Scene {
                 operation
                     .validity
                     .as_ref()
-                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .is_none_or(SubtreeGeometryValidity::is_valid)
             })
             .count()
     }
@@ -82,7 +149,7 @@ impl Scene {
     pub(crate) fn push_layer_scoped(
         &mut self,
         bounds: Bounds<ScaledPixels>,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     ) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
@@ -96,7 +163,7 @@ impl Scene {
         self.pop_layer_scoped(None);
     }
 
-    pub(crate) fn pop_layer_scoped(&mut self, validity: Option<SubtreeTransformValidity>) {
+    pub(crate) fn pop_layer_scoped(&mut self, validity: Option<SubtreeGeometryValidity>) {
         self.layer_stack.pop();
         self.paint_operations.push(PaintOperation {
             kind: PaintOperationKind::EndLayer,
@@ -104,22 +171,38 @@ impl Scene {
         });
     }
 
-    pub fn insert_primitive(
-        &mut self,
-        primitive: impl Into<Primitive>,
-    ) -> Result<(), SubtreeTransformError> {
-        self.insert_primitive_scoped(primitive, None)
-    }
-
     pub(crate) fn insert_primitive_scoped(
         &mut self,
         primitive: impl Into<Primitive>,
-        validity: Option<SubtreeTransformValidity>,
-    ) -> Result<(), SubtreeTransformError> {
+        clip_stack: &ClipStackSnapshot,
+        scale_factor: f32,
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> Result<(), SubtreeGeometryError> {
         let mut primitive = primitive.into();
+        let clip = self.intern_clip_stack(clip_stack, scale_factor)?;
+        primitive.set_clip_envelope(clip);
+        self.record_primitive(primitive, validity)
+    }
+
+    fn insert_primitive_with_gpu_clips(
+        &mut self,
+        mut primitive: Primitive,
+        clip_shapes: &[GpuClipShape],
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> Result<(), SubtreeGeometryError> {
+        let clip = self.intern_gpu_clip_stack(clip_shapes)?;
+        primitive.set_clip_envelope(clip);
+        self.record_primitive(primitive, validity)
+    }
+
+    fn record_primitive(
+        &mut self,
+        mut primitive: Primitive,
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> Result<(), SubtreeGeometryError> {
         let clipped_bounds = primitive
             .try_visual_bounds()?
-            .intersect(&primitive.content_mask().bounds);
+            .intersect(&primitive.clip_envelope().conservative_bounds);
 
         if clipped_bounds.is_empty() {
             return Ok(());
@@ -172,21 +255,92 @@ impl Scene {
         Ok(())
     }
 
+    fn intern_clip_stack(
+        &mut self,
+        snapshot: &ClipStackSnapshot,
+        scale_factor: f32,
+    ) -> Result<ClipEnvelope, SubtreeGeometryError> {
+        let shapes = snapshot
+            .clips()
+            .iter()
+            .map(|clip| GpuClipShape::try_from_resolved(clip, scale_factor))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.intern_gpu_clip_stack(&shapes)
+    }
+
+    fn intern_gpu_clip_stack(
+        &mut self,
+        shapes: &[GpuClipShape],
+    ) -> Result<ClipEnvelope, SubtreeGeometryError> {
+        let Some(first_shape) = shapes.first() else {
+            return Err(SubtreeGeometryError::DeviceConversion);
+        };
+        let conservative_bounds = shapes
+            .iter()
+            .skip(1)
+            .fold(first_shape.bounds, |bounds, shape| {
+                bounds.intersect(&shape.bounds)
+            });
+
+        for range in &self.clip_stack_ranges {
+            let start = range.start as usize;
+            let end = range.end as usize;
+            if self.clip_shapes[start..end] == *shapes {
+                return Ok(ClipEnvelope {
+                    conservative_bounds,
+                    first_clip: range.start,
+                    clip_count: range.end - range.start,
+                });
+            }
+        }
+
+        let first_clip = u32::try_from(self.clip_shapes.len())
+            .map_err(|_| SubtreeGeometryError::DeviceConversion)?;
+        let clip_count =
+            u32::try_from(shapes.len()).map_err(|_| SubtreeGeometryError::DeviceConversion)?;
+        let end = first_clip
+            .checked_add(clip_count)
+            .ok_or(SubtreeGeometryError::DeviceConversion)?;
+        self.clip_shapes.extend_from_slice(shapes);
+        self.clip_stack_ranges.push(first_clip..end);
+        Ok(ClipEnvelope {
+            conservative_bounds,
+            first_clip,
+            clip_count,
+        })
+    }
+
+    fn clip_shapes_for(
+        &self,
+        envelope: ClipEnvelope,
+    ) -> Result<&[GpuClipShape], SubtreeGeometryError> {
+        let start = envelope.first_clip as usize;
+        let end = start
+            .checked_add(envelope.clip_count as usize)
+            .ok_or(SubtreeGeometryError::DeviceConversion)?;
+        self.clip_shapes
+            .get(start..end)
+            .filter(|shapes| !shapes.is_empty())
+            .ok_or(SubtreeGeometryError::DeviceConversion)
+    }
+
     pub(crate) fn replay(
         &mut self,
         range: Range<usize>,
         prev_scene: &Scene,
-        validity: Option<SubtreeTransformValidity>,
-    ) -> Result<(), SubtreeTransformError> {
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> Result<(), SubtreeGeometryError> {
         for operation in &prev_scene.paint_operations[range] {
-            let replayed_validity = SubtreeTransformValidity::replayed_under(
+            let replayed_validity = SubtreeGeometryValidity::replayed_under(
                 operation.validity.as_ref(),
                 validity.clone(),
             );
             match &operation.kind {
-                PaintOperationKind::Primitive(primitive) => {
-                    self.insert_primitive_scoped(primitive.clone(), replayed_validity)?
-                }
+                PaintOperationKind::Primitive(primitive) => self.insert_primitive_with_gpu_clips(
+                    primitive.clone(),
+                    prev_scene.clip_shapes_for(primitive.clip_envelope())?,
+                    replayed_validity,
+                )?,
                 PaintOperationKind::StartLayer(bounds) => {
                     self.push_layer_scoped(*bounds, replayed_validity)
                 }
@@ -204,8 +358,9 @@ impl Scene {
                 .is_some_and(|validity| !validity.is_valid())
         }) {
             let operations = std::mem::take(&mut self.paint_operations);
+            let old_clip_shapes = std::mem::take(&mut self.clip_shapes);
             self.clear();
-            for operation in &operations {
+            for operation in operations {
                 if operation
                     .validity
                     .as_ref()
@@ -213,19 +368,29 @@ impl Scene {
                 {
                     continue;
                 }
-                match &operation.kind {
-                    PaintOperationKind::Primitive(primitive) => self
-                        .insert_primitive_scoped(primitive.clone(), operation.validity.clone())
-                        .expect("previously accepted scene primitive must remain representable"),
+                match operation.kind {
+                    PaintOperationKind::Primitive(mut primitive) => {
+                        let envelope = primitive.clip_envelope();
+                        let start = envelope.first_clip as usize;
+                        let end = start
+                            .checked_add(envelope.clip_count as usize)
+                            .expect("accepted clip range must remain representable");
+                        let shapes = old_clip_shapes
+                            .get(start..end)
+                            .expect("accepted primitive must reference its source clip arena");
+                        let remapped = self
+                            .intern_gpu_clip_stack(shapes)
+                            .expect("accepted clip stack must remain representable");
+                        primitive.set_clip_envelope(remapped);
+                        self.record_primitive(primitive, operation.validity)
+                            .expect("accepted scene primitive must remain representable");
+                    }
                     PaintOperationKind::StartLayer(bounds) => {
-                        self.push_layer_scoped(*bounds, operation.validity.clone())
+                        self.push_layer_scoped(bounds, operation.validity)
                     }
-                    PaintOperationKind::EndLayer => {
-                        self.pop_layer_scoped(operation.validity.clone())
-                    }
+                    PaintOperationKind::EndLayer => self.pop_layer_scoped(operation.validity),
                 }
             }
-            self.paint_operations = operations;
         }
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
@@ -291,7 +456,7 @@ pub(crate) enum PrimitiveKind {
 
 pub(crate) struct PaintOperation {
     kind: PaintOperationKind,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 pub(crate) enum PaintOperationKind {
@@ -328,16 +493,30 @@ impl Primitive {
         }
     }
 
-    pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
+    /// Returns the primitive's range into the owning Scene clip arena.
+    pub fn clip_envelope(&self) -> ClipEnvelope {
         match self {
-            Primitive::Shadow(shadow) => &shadow.content_mask,
-            Primitive::Quad(quad) => &quad.content_mask,
-            Primitive::Path(path) => &path.content_mask,
-            Primitive::Underline(underline) => &underline.content_mask,
-            Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
-            Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
-            Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
-            Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::Shadow(shadow) => shadow.clip,
+            Primitive::Quad(quad) => quad.clip,
+            Primitive::Path(path) => path.clip,
+            Primitive::Underline(underline) => underline.clip,
+            Primitive::MonochromeSprite(sprite) => sprite.clip,
+            Primitive::SubpixelSprite(sprite) => sprite.clip,
+            Primitive::PolychromeSprite(sprite) => sprite.clip,
+            Primitive::Surface(surface) => surface.clip,
+        }
+    }
+
+    fn set_clip_envelope(&mut self, clip: ClipEnvelope) {
+        match self {
+            Primitive::Shadow(shadow) => shadow.clip = clip,
+            Primitive::Quad(quad) => quad.clip = clip,
+            Primitive::Path(path) => path.clip = clip,
+            Primitive::Underline(underline) => underline.clip = clip,
+            Primitive::MonochromeSprite(sprite) => sprite.clip = clip,
+            Primitive::SubpixelSprite(sprite) => sprite.clip = clip,
+            Primitive::PolychromeSprite(sprite) => sprite.clip = clip,
+            Primitive::Surface(surface) => surface.clip = clip,
         }
     }
 
@@ -809,7 +988,7 @@ pub struct Quad {
     pub order: DrawOrder,
     pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub background: Background,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
@@ -830,7 +1009,7 @@ pub struct Underline {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub color: Hsla,
     pub thickness: ScaledPixels,
     pub wavy: u32,
@@ -851,7 +1030,7 @@ pub struct Shadow {
     pub blur_radius: ScaledPixels,
     pub bounds: Bounds<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub color: Hsla,
     pub element_bounds: Bounds<ScaledPixels>,
     pub element_corner_radii: Corners<ScaledPixels>,
@@ -895,7 +1074,7 @@ pub struct MonochromeSprite {
     pub order: DrawOrder,
     pub pad: u32,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub color: Hsla,
     pub tile: AtlasTile,
     pub(crate) transform: PrimitiveTransform,
@@ -914,7 +1093,7 @@ pub struct SubpixelSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub color: Hsla,
     pub tile: AtlasTile,
     pub(crate) transform: PrimitiveTransform,
@@ -935,7 +1114,7 @@ pub struct PolychromeSprite {
     pub grayscale: bool,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
     pub(crate) transform: PrimitiveTransform,
@@ -959,7 +1138,7 @@ impl PolychromeSprite {
 pub struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub(crate) transform: PrimitiveTransform,
     #[cfg(target_os = "macos")]
     pub image_buffer: PlatformPixelBuffer,
@@ -989,7 +1168,7 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub id: PathId,
     pub order: DrawOrder,
     pub bounds: Bounds<P>,
-    pub content_mask: ContentMask<P>,
+    pub clip: ClipEnvelope,
     pub vertices: Vec<PathVertex<P>>,
     pub color: Background,
     pub(crate) transform: PrimitiveTransform,
@@ -1018,7 +1197,7 @@ impl Path<Pixels> {
                 origin: start,
                 size: Default::default(),
             },
-            content_mask: Default::default(),
+            clip: Default::default(),
             color: Default::default(),
             transform: PrimitiveTransform::IDENTITY,
             contour_count: 0,
@@ -1031,7 +1210,7 @@ impl Path<Pixels> {
             id: self.id,
             order: self.order,
             bounds: self.bounds.scale(factor),
-            content_mask: self.content_mask.scale(factor),
+            clip: self.clip,
             vertices: self
                 .vertices
                 .iter()
@@ -1105,29 +1284,15 @@ impl Path<Pixels> {
         self.vertices.push(PathVertex {
             xy_position: xy.0,
             st_position: st.0,
-            content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.1,
             st_position: st.1,
-            content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.2,
             st_position: st.2,
-            content_mask: Default::default(),
         });
-    }
-}
-
-impl<T> Path<T>
-where
-    T: Clone + Debug + Default + PartialEq + PartialOrd + Add<T, Output = T> + Sub<Output = T>,
-{
-    #[allow(unused)]
-    #[expect(missing_docs)]
-    pub fn clipped_bounds(&self) -> Bounds<T> {
-        self.bounds.intersect(&self.content_mask.bounds)
     }
 }
 
@@ -1143,7 +1308,6 @@ impl From<Path<ScaledPixels>> for Primitive {
 pub struct PathVertex<P: Clone + Debug + Default + PartialEq> {
     pub xy_position: Point<P>,
     pub st_position: Point<f32>,
-    pub content_mask: ContentMask<P>,
 }
 
 #[expect(missing_docs)]
@@ -1152,7 +1316,6 @@ impl PathVertex<Pixels> {
         PathVertex {
             xy_position: self.xy_position.scale(factor),
             st_position: self.st_position,
-            content_mask: self.content_mask.scale(factor),
         }
     }
 }
@@ -1160,6 +1323,7 @@ impl PathVertex<Pixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SubtreeClip, SubtreeClipError, px, size};
 
     fn scaled_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
         Bounds::new(
@@ -1168,11 +1332,32 @@ mod tests {
         )
     }
 
+    fn logical_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), Size::new(px(width), px(height)))
+    }
+
+    fn rounded_stack(viewport: Bounds<Pixels>, clip_bounds: Bounds<Pixels>) -> ClipStackSnapshot {
+        let radii = Corners {
+            top_left: size(px(10.0), px(10.0)),
+            top_right: size(px(10.0), px(10.0)),
+            bottom_right: size(px(10.0), px(10.0)),
+            bottom_left: size(px(10.0), px(10.0)),
+        };
+        let clip = SubtreeClip::try_rounded_rect(clip_bounds, radii)
+            .unwrap()
+            .resolve_with_accessibility_axes(
+                Bounds::new(Point::default(), viewport.size),
+                ResolvedSubtreeTransform::IDENTITY,
+                viewport,
+                point(true, true),
+            )
+            .unwrap();
+        ClipStackSnapshot::root(viewport).push(clip)
+    }
+
     #[test]
     fn transformed_visual_bounds_drive_scene_culling_and_order() {
-        let mask = ContentMask {
-            bounds: scaled_bounds(100.0, 50.0, 40.0, 40.0),
-        };
+        let clip = ClipStackSnapshot::root(logical_bounds(100.0, 50.0, 40.0, 40.0));
         let translated = PrimitiveTransform::try_new(
             Size::new(2.0, 3.0),
             point(ScaledPixels(100.0), ScaledPixels(50.0)),
@@ -1181,11 +1366,12 @@ mod tests {
         let mut scene = Scene::default();
         let first = Quad {
             bounds: scaled_bounds(0.0, 0.0, 10.0, 10.0),
-            content_mask: mask,
             transform: translated,
             ..Default::default()
         };
-        scene.insert_primitive(first).unwrap();
+        scene
+            .insert_primitive_scoped(first, &clip, 1.0, None)
+            .unwrap();
 
         assert_eq!(scene.quads.len(), 1);
         assert_eq!(
@@ -1195,20 +1381,28 @@ mod tests {
 
         let second = Quad {
             bounds: scaled_bounds(105.0, 55.0, 10.0, 10.0),
-            content_mask: mask,
             transform: PrimitiveTransform::IDENTITY,
             ..Default::default()
         };
-        scene.insert_primitive(second).unwrap();
+        scene
+            .insert_primitive_scoped(second, &clip, 1.0, None)
+            .unwrap();
         assert!(scene.quads[1].order > scene.quads[0].order);
+        assert_eq!(
+            scene.clip_shapes().len(),
+            1,
+            "identical stacks must deduplicate"
+        );
+        assert_eq!(scene.quads[0].clip, scene.quads[1].clip);
 
         let outside = Quad {
             bounds: scaled_bounds(0.0, 0.0, 10.0, 10.0),
-            content_mask: mask,
             transform: PrimitiveTransform::IDENTITY,
             ..Default::default()
         };
-        scene.insert_primitive(outside).unwrap();
+        scene
+            .insert_primitive_scoped(outside, &clip, 1.0, None)
+            .unwrap();
         assert_eq!(scene.quads.len(), 2);
     }
 
@@ -1274,15 +1468,12 @@ mod tests {
 
     #[test]
     fn shadow_visual_bounds_include_the_shader_raster_envelope() {
-        let mask = ContentMask {
-            bounds: scaled_bounds(-100.0, -100.0, 200.0, 200.0),
-        };
         let shadow = Shadow {
             order: 0,
             blur_radius: ScaledPixels(2.0),
             bounds: scaled_bounds(10.0, 20.0, 30.0, 40.0),
             corner_radii: Corners::default(),
-            content_mask: mask,
+            clip: ClipEnvelope::default(),
             color: Hsla::default(),
             element_bounds: scaled_bounds(10.0, 20.0, 30.0, 40.0),
             element_corner_radii: Corners::default(),
@@ -1295,5 +1486,98 @@ mod tests {
             Primitive::Shadow(shadow).try_visual_bounds().unwrap(),
             scaled_bounds(4.0, 14.0, 42.0, 52.0)
         );
+    }
+
+    #[test]
+    fn scene_replay_imports_and_remaps_exact_clip_ranges() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let source_clip = rounded_stack(viewport, logical_bounds(20.0, 20.0, 80.0, 80.0));
+        let mut source = Scene::default();
+        source
+            .insert_primitive_scoped(
+                Quad {
+                    bounds: scaled_bounds(30.0, 30.0, 20.0, 20.0),
+                    ..Default::default()
+                },
+                &source_clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+
+        let seed_clip = ClipStackSnapshot::root(logical_bounds(0.0, 0.0, 10.0, 10.0));
+        let mut replayed = Scene::default();
+        replayed
+            .insert_primitive_scoped(
+                Quad {
+                    bounds: scaled_bounds(1.0, 1.0, 5.0, 5.0),
+                    ..Default::default()
+                },
+                &seed_clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        replayed
+            .replay(0..source.journal_len(), &source, None)
+            .unwrap();
+
+        let source_envelope = source.quads[0].clip;
+        let replayed_envelope = replayed.quads[1].clip;
+        assert_ne!(source_envelope.first_clip, replayed_envelope.first_clip);
+        assert_eq!(source_envelope.clip_count, replayed_envelope.clip_count);
+        let source_range = source_envelope.first_clip as usize
+            ..(source_envelope.first_clip + source_envelope.clip_count) as usize;
+        let replayed_range = replayed_envelope.first_clip as usize
+            ..(replayed_envelope.first_clip + replayed_envelope.clip_count) as usize;
+        assert_eq!(
+            &source.clip_shapes()[source_range],
+            &replayed.clip_shapes()[replayed_range]
+        );
+    }
+
+    #[test]
+    fn scene_finish_discards_invalid_operations_and_compacts_clip_ranges() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let invalid_clip = rounded_stack(viewport, logical_bounds(10.0, 10.0, 60.0, 60.0));
+        let valid_clip = rounded_stack(viewport, logical_bounds(80.0, 80.0, 60.0, 60.0));
+        let invalidity = SubtreeGeometryValidity::new(None);
+        let mut scene = Scene::default();
+        scene
+            .insert_primitive_scoped(
+                Quad {
+                    bounds: scaled_bounds(20.0, 20.0, 20.0, 20.0),
+                    ..Default::default()
+                },
+                &invalid_clip,
+                1.0,
+                Some(invalidity.clone()),
+            )
+            .unwrap();
+        scene
+            .insert_primitive_scoped(
+                Quad {
+                    bounds: scaled_bounds(90.0, 90.0, 20.0, 20.0),
+                    ..Default::default()
+                },
+                &valid_clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        let valid_shapes = {
+            let envelope = scene.quads[1].clip;
+            scene.clip_shapes()
+                [envelope.first_clip as usize..(envelope.first_clip + envelope.clip_count) as usize]
+                .to_vec()
+        };
+
+        invalidity.invalidate(SubtreeClipError::UnrepresentableResult);
+        scene.finish();
+
+        assert_eq!(scene.quads.len(), 1);
+        assert_eq!(scene.quads[0].bounds, scaled_bounds(90.0, 90.0, 20.0, 20.0));
+        assert_eq!(scene.quads[0].clip.first_clip, 0);
+        assert_eq!(scene.clip_shapes(), valid_shapes);
     }
 }

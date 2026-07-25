@@ -15,7 +15,7 @@ impl DockHost {
         window_position: Point<Pixels>,
         window: &Window,
         cx: &Context<Self>,
-    ) {
+    ) -> bool {
         let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
         let drop_guide_style =
@@ -23,13 +23,13 @@ impl DockHost {
         let window_id = window.window_handle().window_id();
         if runtime.window_id_for_space(&space) != Some(window_id) {
             self.interaction_mut().set_viewport_host_scene_frame(None);
-            return;
+            return false;
         }
 
         let host_geometry = host_geometry.into();
         let Some(host_position) = host_geometry.window_to_host(window_position) else {
             self.interaction_mut().set_viewport_host_scene_frame(None);
-            return;
+            return false;
         };
         let registration = runtime.begin_viewport_host_scene_frame(
             space,
@@ -39,8 +39,13 @@ impl DockHost {
             host_position,
             drop_guide_style,
         );
+        let Some(registration) = registration else {
+            self.interaction_mut().set_viewport_host_scene_frame(None);
+            return false;
+        };
         self.interaction_mut()
-            .set_viewport_host_scene_frame(registration.map(|registration| registration.frame));
+            .set_viewport_host_scene_frame(Some(registration.frame));
+        true
     }
 
     pub(crate) fn update_viewport_drop_route_preview_interaction(

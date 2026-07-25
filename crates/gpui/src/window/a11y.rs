@@ -89,8 +89,8 @@
 //! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
 use crate::{
-    App, Bounds, FocusId, Pixels, SharedString, Window, WindowId,
-    geometry::SubtreeTransformValidity,
+    App, Bounds, FocusId, Pixels, Point, SharedString, Window, WindowId,
+    geometry::SubtreeGeometryValidity,
 };
 use accesskit::{Action, NodeId, TreeUpdate};
 use open_gpui_collections::{FxHashMap, FxHashSet};
@@ -379,7 +379,7 @@ struct PublishedA11yDispatch {
     activation_generation: u64,
     action_masks: FxHashMap<NodeId, u32>,
     focus_ids: FxHashMap<NodeId, FocusId>,
-    node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+    node_geometry: FxHashMap<NodeId, (Bounds<Pixels>, Option<Point<Pixels>>)>,
     action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
 }
 
@@ -459,13 +459,18 @@ pub(crate) struct A11y {
     active_this_frame: bool,
     activation_generation_this_frame: u64,
     pub(crate) nodes: A11yNodeBuilder,
-    candidate_focus_ids: Vec<(NodeId, FocusId, Option<SubtreeTransformValidity>)>,
-    candidate_node_bounds: Vec<(NodeId, Bounds<Pixels>, Option<SubtreeTransformValidity>)>,
+    candidate_focus_ids: Vec<(NodeId, FocusId, Option<SubtreeGeometryValidity>)>,
+    candidate_node_geometry: Vec<(
+        NodeId,
+        Bounds<Pixels>,
+        Option<Point<Pixels>>,
+        Option<SubtreeGeometryValidity>,
+    )>,
     candidate_action_listeners: Vec<(
         NodeId,
         Action,
         A11yActionListener,
-        Option<SubtreeTransformValidity>,
+        Option<SubtreeGeometryValidity>,
     )>,
     published: Option<PublishedA11yDispatch>,
     next_published_revision: u64,
@@ -499,7 +504,7 @@ impl A11y {
             activation_generation_this_frame: 0,
             nodes: A11yNodeBuilder::new(),
             candidate_focus_ids: Vec::new(),
-            candidate_node_bounds: Vec::new(),
+            candidate_node_geometry: Vec::new(),
             candidate_action_listeners: Vec::new(),
             published: None,
             next_published_revision: 0,
@@ -535,7 +540,7 @@ impl A11y {
     /// Clear per-frame state and push the root node to start a new frame.
     pub(crate) fn begin_frame(&mut self) {
         self.candidate_focus_ids.clear();
-        self.candidate_node_bounds.clear();
+        self.candidate_node_geometry.clear();
         self.candidate_action_listeners.clear();
         self.staged_announcement_nodes.clear();
         self.nodes.begin_frame();
@@ -573,11 +578,11 @@ impl A11y {
             }
         }
 
-        published.node_bounds.clear();
+        published.node_geometry.clear();
         published
-            .node_bounds
-            .reserve(self.candidate_node_bounds.len());
-        for (id, bounds, validity) in self.candidate_node_bounds.drain(..) {
+            .node_geometry
+            .reserve(self.candidate_node_geometry.len());
+        for (id, bounds, witness, validity) in self.candidate_node_geometry.drain(..) {
             if validity
                 .as_ref()
                 .is_some_and(|validity| !validity.is_valid())
@@ -585,7 +590,7 @@ impl A11y {
                 continue;
             }
             if published.action_masks.contains_key(&id) {
-                published.node_bounds.insert(id, bounds);
+                published.node_geometry.insert(id, (bounds, witness));
             }
         }
 
@@ -884,7 +889,7 @@ impl A11y {
 
     pub(crate) fn record_focus_id(&mut self, node_id: NodeId, focus_id: FocusId) {
         self.candidate_focus_ids
-            .push((node_id, focus_id, self.nodes.current_transform_validity()));
+            .push((node_id, focus_id, self.nodes.current_geometry_validity()));
     }
 
     pub(crate) fn resolve_focus(&mut self, focus: Option<FocusId>) {
@@ -903,7 +908,7 @@ impl A11y {
                         *focus_id == focus
                             && validity
                                 .as_ref()
-                                .is_none_or(SubtreeTransformValidity::is_valid)
+                                .is_none_or(SubtreeGeometryValidity::is_valid)
                             && self.nodes.has_node(*node_id)
                     });
             let first = candidates.next().cloned();
@@ -919,9 +924,18 @@ impl A11y {
         }
     }
 
-    pub(crate) fn record_node_bounds(&mut self, node_id: NodeId, bounds: Bounds<Pixels>) {
-        self.candidate_node_bounds
-            .push((node_id, bounds, self.nodes.current_transform_validity()));
+    pub(crate) fn record_node_bounds(
+        &mut self,
+        node_id: NodeId,
+        bounds: Bounds<Pixels>,
+        witness: Option<Point<Pixels>>,
+    ) {
+        self.candidate_node_geometry.push((
+            node_id,
+            bounds,
+            witness,
+            self.nodes.current_geometry_validity(),
+        ));
     }
 
     pub(crate) fn record_action_listener(
@@ -934,7 +948,7 @@ impl A11y {
             node_id,
             action,
             listener,
-            self.nodes.current_transform_validity(),
+            self.nodes.current_geometry_validity(),
         ));
     }
 
@@ -988,8 +1002,12 @@ impl A11y {
         }
     }
 
-    pub(crate) fn published_node_bounds(&self, node_id: NodeId) -> Option<Bounds<Pixels>> {
-        self.published.as_ref()?.node_bounds.get(&node_id).copied()
+    pub(crate) fn published_node_witness(&self, node_id: NodeId) -> Option<Point<Pixels>> {
+        self.published
+            .as_ref()?
+            .node_geometry
+            .get(&node_id)
+            .and_then(|(_, witness)| *witness)
     }
 
     pub(crate) fn published_focus_id(&self, node_id: NodeId) -> Option<FocusId> {
@@ -1000,7 +1018,7 @@ impl A11y {
         A11yPrepaintCheckpoint {
             nodes: self.nodes.checkpoint(),
             focus_ids_len: self.candidate_focus_ids.len(),
-            node_bounds_len: self.candidate_node_bounds.len(),
+            node_bounds_len: self.candidate_node_geometry.len(),
             action_listeners_len: self.candidate_action_listeners.len(),
         }
     }
@@ -1017,7 +1035,7 @@ impl A11y {
     pub(crate) fn rollback_prepaint(&mut self, checkpoint: A11yPrepaintCheckpoint) {
         self.candidate_action_listeners
             .truncate(checkpoint.action_listeners_len);
-        self.candidate_node_bounds
+        self.candidate_node_geometry
             .truncate(checkpoint.node_bounds_len);
         self.candidate_focus_ids.truncate(checkpoint.focus_ids_len);
         self.nodes.rollback(checkpoint.nodes);
@@ -1032,9 +1050,9 @@ impl A11y {
 
     #[cfg(test)]
     pub(crate) fn has_candidate_node_bounds(&self, node_id: NodeId) -> bool {
-        self.candidate_node_bounds
+        self.candidate_node_geometry
             .iter()
-            .any(|(candidate, _, _)| *candidate == node_id)
+            .any(|(candidate, _, _, _)| *candidate == node_id)
     }
 
     #[cfg(test)]
@@ -1077,21 +1095,27 @@ fn announcement_node_id(
 pub(crate) struct A11yNodeBuilder {
     ids_stack: SmallVec<[NodeId; 16]>,
     nodes_stack: SmallVec<[accesskit::Node; 16]>,
-    node_validity_stack: SmallVec<[Option<SubtreeTransformValidity>; 16]>,
+    node_validity_stack: SmallVec<[Option<SubtreeGeometryValidity>; 16]>,
     /// This is the exact type required by accesskit, so we can't just make it a
     /// `HashMap<NodeId, Node>` to remove the need for `seen_ids`
-    all_nodes: Vec<(NodeId, accesskit::Node, Option<SubtreeTransformValidity>)>,
+    all_nodes: Vec<(NodeId, accesskit::Node, Option<SubtreeGeometryValidity>)>,
     seen_ids: FxHashSet<NodeId>,
     scope_stack: Rc<RefCell<SmallVec<[AccessibilityTreeScope; 8]>>>,
-    transform_validity_stack: Rc<RefCell<SmallVec<[Option<SubtreeTransformValidity>; 8]>>>,
+    geometry_validity_stack: Rc<RefCell<SmallVec<[Option<SubtreeGeometryValidity>; 8]>>>,
+    clip_owner_scope_depths: Rc<RefCell<SmallVec<[usize; 8]>>>,
+    deferred_parent_scopes: Rc<RefCell<SmallVec<[AccessibilityDeferredParentScope; 8]>>>,
+    window_portal_scopes: Rc<RefCell<SmallVec<[AccessibilityDeferredParentScope; 8]>>>,
+    parent_child_mutations: Vec<AccessibilityParentChildMutation>,
+    deferred_child_orders: FxHashMap<NodeId, AccessibilityDeferredParent>,
+    next_deferred_order: u64,
     memberships: Vec<(
         NodeId,
         AccessibilityTreeScope,
-        Option<SubtreeTransformValidity>,
+        Option<SubtreeGeometryValidity>,
     )>,
-    modal_restrictions: Vec<Option<SubtreeTransformValidity>>,
+    modal_restrictions: Vec<Option<SubtreeGeometryValidity>>,
     focus: NodeId,
-    focus_validity: Option<SubtreeTransformValidity>,
+    focus_validity: Option<SubtreeGeometryValidity>,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
 }
@@ -1102,11 +1126,15 @@ struct A11yNodeBuilderCheckpoint {
     top_children_len: usize,
     all_nodes_len: usize,
     scope_depth: usize,
-    transform_validity_depth: usize,
+    geometry_validity_depth: usize,
+    clip_owner_scope_depth: usize,
+    deferred_parent_scope_depth: usize,
+    window_portal_scope_depth: usize,
+    parent_child_mutations_len: usize,
     memberships_len: usize,
     modal_restrictions_len: usize,
     focus: NodeId,
-    focus_validity: Option<SubtreeTransformValidity>,
+    focus_validity: Option<SubtreeGeometryValidity>,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
 }
@@ -1116,9 +1144,52 @@ pub(crate) struct AccessibilityTreeScopeGuard {
     depth: usize,
 }
 
-pub(crate) struct AccessibilityTransformValidityGuard {
-    stack: Rc<RefCell<SmallVec<[Option<SubtreeTransformValidity>; 8]>>>,
+pub(crate) struct AccessibilityGeometryValidityGuard {
+    stack: Rc<RefCell<SmallVec<[Option<SubtreeGeometryValidity>; 8]>>>,
     depth: usize,
+}
+
+pub(crate) struct AccessibilityClipOwnerScopeGuard {
+    stack: Rc<RefCell<SmallVec<[usize; 8]>>>,
+    depth: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AccessibilityDeferredParent {
+    parent_id: NodeId,
+    normal_child_index: usize,
+    order_path: SmallVec<[u64; 4]>,
+    root_order: AccessibilityRootOrder,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AccessibilityRootOrder {
+    normal_child_index: usize,
+    order_path: SmallVec<[u64; 4]>,
+}
+
+#[derive(Clone)]
+struct AccessibilityDeferredParentScope {
+    depth: usize,
+    parent: AccessibilityDeferredParent,
+    next_child_order: u64,
+}
+
+pub(crate) struct AccessibilityDeferredParentScopeGuard {
+    stack: Rc<RefCell<SmallVec<[AccessibilityDeferredParentScope; 8]>>>,
+    depth: usize,
+}
+
+pub(crate) struct AccessibilityWindowPortalScopeGuard {
+    stack: Rc<RefCell<SmallVec<[AccessibilityDeferredParentScope; 8]>>>,
+    depth: usize,
+}
+
+#[derive(Clone, Copy)]
+struct AccessibilityParentChildMutation {
+    parent_id: NodeId,
+    child_id: NodeId,
+    child_index: usize,
 }
 
 impl Drop for AccessibilityTreeScopeGuard {
@@ -1133,10 +1204,46 @@ impl Drop for AccessibilityTreeScopeGuard {
     }
 }
 
-impl Drop for AccessibilityTransformValidityGuard {
+impl Drop for AccessibilityGeometryValidityGuard {
     fn drop(&mut self) {
         let mut stack = self.stack.borrow_mut();
         debug_assert_eq!(stack.len(), self.depth + 1);
+        stack.truncate(self.depth);
+    }
+}
+
+impl Drop for AccessibilityClipOwnerScopeGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        debug_assert_eq!(
+            stack.len(),
+            self.depth + 1,
+            "accessibility clip-owner scopes must be dropped in nesting order"
+        );
+        stack.truncate(self.depth);
+    }
+}
+
+impl Drop for AccessibilityDeferredParentScopeGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        debug_assert_eq!(
+            stack.len(),
+            self.depth + 1,
+            "accessibility deferred-parent scopes must be dropped in nesting order"
+        );
+        stack.truncate(self.depth);
+    }
+}
+
+impl Drop for AccessibilityWindowPortalScopeGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        debug_assert_eq!(
+            stack.len(),
+            self.depth + 1,
+            "accessibility window-portal scopes must be dropped in nesting order"
+        );
         stack.truncate(self.depth);
     }
 }
@@ -1150,7 +1257,13 @@ impl A11yNodeBuilder {
             all_nodes: Vec::new(),
             seen_ids: FxHashSet::default(),
             scope_stack: Rc::new(RefCell::new(SmallVec::new())),
-            transform_validity_stack: Rc::new(RefCell::new(SmallVec::new())),
+            geometry_validity_stack: Rc::new(RefCell::new(SmallVec::new())),
+            clip_owner_scope_depths: Rc::new(RefCell::new(SmallVec::new())),
+            deferred_parent_scopes: Rc::new(RefCell::new(SmallVec::new())),
+            window_portal_scopes: Rc::new(RefCell::new(SmallVec::new())),
+            parent_child_mutations: Vec::new(),
+            deferred_child_orders: FxHashMap::default(),
+            next_deferred_order: 0,
             memberships: Vec::new(),
             modal_restrictions: Vec::new(),
             focus: ROOT_NODE_ID,
@@ -1170,7 +1283,11 @@ impl A11yNodeBuilder {
                 .map_or(0, |node| node.children().len()),
             all_nodes_len: self.all_nodes.len(),
             scope_depth: self.scope_stack.borrow().len(),
-            transform_validity_depth: self.transform_validity_stack.borrow().len(),
+            geometry_validity_depth: self.geometry_validity_stack.borrow().len(),
+            clip_owner_scope_depth: self.clip_owner_scope_depths.borrow().len(),
+            deferred_parent_scope_depth: self.deferred_parent_scopes.borrow().len(),
+            window_portal_scope_depth: self.window_portal_scopes.borrow().len(),
+            parent_child_mutations_len: self.parent_child_mutations.len(),
             memberships_len: self.memberships.len(),
             modal_restrictions_len: self.modal_restrictions.len(),
             focus: self.focus,
@@ -1196,7 +1313,9 @@ impl A11yNodeBuilder {
 
         for (id, _, _) in &self.memberships[checkpoint.memberships_len..] {
             self.seen_ids.remove(id);
+            self.deferred_child_orders.remove(id);
         }
+        self.rollback_parent_child_mutations(checkpoint.parent_child_mutations_len);
         self.all_nodes.truncate(checkpoint.all_nodes_len);
         self.memberships.truncate(checkpoint.memberships_len);
         self.modal_restrictions
@@ -1224,9 +1343,18 @@ impl A11yNodeBuilder {
             "an accessibility transaction consumed a scope that predates its checkpoint"
         );
         scope_stack.truncate(checkpoint.scope_depth);
-        self.transform_validity_stack
+        self.geometry_validity_stack
             .borrow_mut()
-            .truncate(checkpoint.transform_validity_depth);
+            .truncate(checkpoint.geometry_validity_depth);
+        self.clip_owner_scope_depths
+            .borrow_mut()
+            .truncate(checkpoint.clip_owner_scope_depth);
+        self.deferred_parent_scopes
+            .borrow_mut()
+            .truncate(checkpoint.deferred_parent_scope_depth);
+        self.window_portal_scopes
+            .borrow_mut()
+            .truncate(checkpoint.window_portal_scope_depth);
         self.focus = checkpoint.focus;
         self.focus_validity = checkpoint.focus_validity;
         #[cfg(debug_assertions)]
@@ -1239,7 +1367,7 @@ impl A11yNodeBuilder {
     /// top-of-stack node.
     ///
     /// Returns `true` if the node was successfully pushed.
-    pub(crate) fn push(&mut self, id: NodeId, node: accesskit::Node) -> bool {
+    pub(crate) fn push(&mut self, id: NodeId, mut node: accesskit::Node) -> bool {
         debug_assert!(!self.ids_stack.is_empty(), "push called before push_root");
 
         let scope = self.effective_scope();
@@ -1257,12 +1385,26 @@ impl A11yNodeBuilder {
             return false;
         }
 
-        if let Some(parent) = self.nodes_stack.last_mut() {
-            parent.push_child(id);
+        if self.current_depth_has_clip_owner_scope() {
+            node.set_clips_children();
+        }
+
+        let Some((parent_id, deferred_parent)) = self.take_accessibility_parent_for_child() else {
+            self.seen_ids.remove(&id);
+            log::error!("a11y: node {id:?} has no current parent");
+            return false;
+        };
+        if !self.attach_child(parent_id, id, deferred_parent.as_ref()) {
+            self.seen_ids.remove(&id);
+            log::error!("a11y: node {id:?} could not resolve its recorded parent {parent_id:?}");
+            return false;
+        }
+        if let Some(deferred_parent) = deferred_parent {
+            self.deferred_child_orders.insert(id, deferred_parent);
         }
         self.ids_stack.push(id);
         self.nodes_stack.push(node);
-        let validity = self.current_transform_validity();
+        let validity = self.current_geometry_validity();
         self.node_validity_stack.push(validity.clone());
         self.memberships.push((id, scope, validity));
         true
@@ -1290,7 +1432,13 @@ impl A11yNodeBuilder {
         self.node_validity_stack.clear();
         self.seen_ids.clear();
         self.scope_stack.borrow_mut().clear();
-        self.transform_validity_stack.borrow_mut().clear();
+        self.geometry_validity_stack.borrow_mut().clear();
+        self.clip_owner_scope_depths.borrow_mut().clear();
+        self.deferred_parent_scopes.borrow_mut().clear();
+        self.window_portal_scopes.borrow_mut().clear();
+        self.parent_child_mutations.clear();
+        self.deferred_child_orders.clear();
+        self.next_deferred_order = 0;
         self.memberships.clear();
         self.modal_restrictions.clear();
         #[cfg(debug_assertions)]
@@ -1315,7 +1463,7 @@ impl A11yNodeBuilder {
             AccessibilityTreeScope::ModalRoot | AccessibilityTreeScope::ModalDescendant
         ) {
             self.modal_restrictions
-                .push(self.current_transform_validity());
+                .push(self.current_geometry_validity());
         }
 
         let depth = self.scope_stack.borrow().len();
@@ -1326,20 +1474,130 @@ impl A11yNodeBuilder {
         }
     }
 
-    pub(crate) fn enter_transform_validity(
+    pub(crate) fn enter_geometry_validity(
         &mut self,
-        validity: Option<SubtreeTransformValidity>,
-    ) -> AccessibilityTransformValidityGuard {
-        let depth = self.transform_validity_stack.borrow().len();
-        self.transform_validity_stack.borrow_mut().push(validity);
-        AccessibilityTransformValidityGuard {
-            stack: self.transform_validity_stack.clone(),
+        validity: Option<SubtreeGeometryValidity>,
+    ) -> AccessibilityGeometryValidityGuard {
+        let depth = self.geometry_validity_stack.borrow().len();
+        self.geometry_validity_stack.borrow_mut().push(validity);
+        AccessibilityGeometryValidityGuard {
+            stack: self.geometry_validity_stack.clone(),
             depth,
         }
     }
 
-    pub(crate) fn current_transform_validity(&self) -> Option<SubtreeTransformValidity> {
-        self.transform_validity_stack
+    pub(crate) fn enter_clip_owner_scope(&mut self) -> AccessibilityClipOwnerScopeGuard {
+        let depth = self.clip_owner_scope_depths.borrow().len();
+        self.clip_owner_scope_depths
+            .borrow_mut()
+            .push(self.ids_stack.len());
+        AccessibilityClipOwnerScopeGuard {
+            stack: self.clip_owner_scope_depths.clone(),
+            depth,
+        }
+    }
+
+    pub(crate) fn enter_deferred_parent_scope(
+        &mut self,
+        parent: AccessibilityDeferredParent,
+    ) -> AccessibilityDeferredParentScopeGuard {
+        let depth = self.deferred_parent_scopes.borrow().len();
+        self.deferred_parent_scopes
+            .borrow_mut()
+            .push(AccessibilityDeferredParentScope {
+                depth: self.ids_stack.len(),
+                parent,
+                next_child_order: 0,
+            });
+        AccessibilityDeferredParentScopeGuard {
+            stack: self.deferred_parent_scopes.clone(),
+            depth,
+        }
+    }
+
+    pub(crate) fn enter_window_portal_scope(
+        &mut self,
+        parent: AccessibilityDeferredParent,
+    ) -> AccessibilityWindowPortalScopeGuard {
+        let depth = self.window_portal_scopes.borrow().len();
+        self.window_portal_scopes
+            .borrow_mut()
+            .push(AccessibilityDeferredParentScope {
+                depth: self.ids_stack.len(),
+                parent,
+                next_child_order: 0,
+            });
+        AccessibilityWindowPortalScopeGuard {
+            stack: self.window_portal_scopes.clone(),
+            depth,
+        }
+    }
+
+    pub(crate) fn reserve_deferred_parent(&mut self) -> Option<AccessibilityDeferredParent> {
+        if let Some(parent) = self.take_current_scoped_parent_order() {
+            return Some(parent);
+        }
+
+        let parent_id = self.ids_stack.last().copied()?;
+        let normal_child_index = self.normal_child_count(parent_id)?;
+        let root_order = self.take_current_root_order();
+        let deferred_order = self.take_deferred_order();
+        let mut order_path = SmallVec::new();
+        order_path.push(deferred_order);
+        let root_order = if let Some(root_order) = root_order {
+            root_order
+        } else {
+            self.root_order_for_current_source(deferred_order)?
+        };
+        Some(AccessibilityDeferredParent {
+            parent_id,
+            normal_child_index,
+            order_path,
+            root_order,
+        })
+    }
+
+    pub(crate) fn reserve_window_portal_parent(&mut self) -> Option<AccessibilityDeferredParent> {
+        let root_order = if let Some(root_order) = self.take_current_root_order() {
+            root_order
+        } else {
+            let deferred_order = self.take_deferred_order();
+            self.root_order_for_current_source(deferred_order)?
+        };
+        Some(AccessibilityDeferredParent {
+            parent_id: ROOT_NODE_ID,
+            normal_child_index: root_order.normal_child_index,
+            order_path: root_order.order_path.clone(),
+            root_order,
+        })
+    }
+
+    pub(crate) fn current_depth_has_clip_owner_scope(&self) -> bool {
+        !self.current_depth_is_window_portal_scope()
+            && self
+                .clip_owner_scope_depths
+                .borrow()
+                .iter()
+                .any(|depth| *depth == self.ids_stack.len())
+    }
+
+    pub(crate) fn mark_current_node_clips_children(&mut self, id: NodeId) -> bool {
+        if self.ids_stack.last().copied() != Some(id) {
+            return false;
+        }
+        let Some(node) = self.nodes_stack.last_mut() else {
+            return false;
+        };
+        node.set_clips_children();
+        true
+    }
+
+    pub(crate) fn is_current_node(&self, id: NodeId) -> bool {
+        self.ids_stack.last().copied() == Some(id)
+    }
+
+    pub(crate) fn current_geometry_validity(&self) -> Option<SubtreeGeometryValidity> {
+        self.geometry_validity_stack
             .borrow()
             .last()
             .cloned()
@@ -1361,13 +1619,306 @@ impl A11yNodeBuilder {
         id == ROOT_NODE_ID || self.seen_ids.contains(&id)
     }
 
+    fn current_depth_is_window_portal_scope(&self) -> bool {
+        self.window_portal_scopes
+            .borrow()
+            .iter()
+            .rev()
+            .any(|scope| scope.depth == self.ids_stack.len())
+    }
+
+    fn take_accessibility_parent_for_child(
+        &mut self,
+    ) -> Option<(NodeId, Option<AccessibilityDeferredParent>)> {
+        if let Some(parent) =
+            Self::take_scoped_parent_order(&self.window_portal_scopes, self.ids_stack.len())
+        {
+            return Some((ROOT_NODE_ID, Some(parent)));
+        }
+        if let Some(parent) =
+            Self::take_scoped_parent_order(&self.deferred_parent_scopes, self.ids_stack.len())
+        {
+            return Some((parent.parent_id, Some(parent)));
+        }
+        self.ids_stack.last().copied().map(|parent| (parent, None))
+    }
+
+    fn take_current_scoped_parent_order(&self) -> Option<AccessibilityDeferredParent> {
+        Self::take_scoped_parent_order(&self.window_portal_scopes, self.ids_stack.len()).or_else(
+            || Self::take_scoped_parent_order(&self.deferred_parent_scopes, self.ids_stack.len()),
+        )
+    }
+
+    fn take_scoped_parent_order(
+        scopes: &Rc<RefCell<SmallVec<[AccessibilityDeferredParentScope; 8]>>>,
+        current_depth: usize,
+    ) -> Option<AccessibilityDeferredParent> {
+        let mut scopes = scopes.borrow_mut();
+        let scope = scopes
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.depth == current_depth)?;
+        let mut parent = scope.parent.clone();
+        let child_order = scope.next_child_order;
+        parent.order_path.push(child_order);
+        parent.root_order.order_path.push(child_order);
+        scope.next_child_order = scope
+            .next_child_order
+            .checked_add(1)
+            .expect("accessibility deferred child order overflowed");
+        Some(parent)
+    }
+
+    fn take_current_root_order(&self) -> Option<AccessibilityRootOrder> {
+        let current_depth = self.ids_stack.len();
+        let window_portal_depth =
+            Self::scoped_root_order_depth(&self.window_portal_scopes, current_depth);
+        let deferred_parent_depth =
+            Self::scoped_root_order_depth(&self.deferred_parent_scopes, current_depth);
+        match (window_portal_depth, deferred_parent_depth) {
+            (Some(_), None) => {
+                Self::take_scoped_root_order(&self.window_portal_scopes, current_depth)
+            }
+            (Some(window_portal_depth), Some(deferred_parent_depth))
+                if window_portal_depth >= deferred_parent_depth =>
+            {
+                Self::take_scoped_root_order(&self.window_portal_scopes, current_depth)
+            }
+            (None, Some(_)) | (Some(_), Some(_)) => {
+                Self::take_scoped_root_order(&self.deferred_parent_scopes, current_depth)
+            }
+            (None, None) => None,
+        }
+    }
+
+    fn scoped_root_order_depth(
+        scopes: &Rc<RefCell<SmallVec<[AccessibilityDeferredParentScope; 8]>>>,
+        current_depth: usize,
+    ) -> Option<usize> {
+        scopes
+            .borrow()
+            .iter()
+            .rev()
+            .find(|scope| scope.depth <= current_depth)
+            .map(|scope| scope.depth)
+    }
+
+    fn take_scoped_root_order(
+        scopes: &Rc<RefCell<SmallVec<[AccessibilityDeferredParentScope; 8]>>>,
+        current_depth: usize,
+    ) -> Option<AccessibilityRootOrder> {
+        let mut scopes = scopes.borrow_mut();
+        let scope = scopes
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.depth <= current_depth)?;
+        let mut root_order = scope.parent.root_order.clone();
+        root_order.order_path.push(scope.next_child_order);
+        scope.next_child_order = scope
+            .next_child_order
+            .checked_add(1)
+            .expect("accessibility deferred child order overflowed");
+        Some(root_order)
+    }
+
+    fn root_order_for_current_source(&self, deferred_order: u64) -> Option<AccessibilityRootOrder> {
+        let mut order_path = SmallVec::new();
+        order_path.push(deferred_order);
+        Some(AccessibilityRootOrder {
+            normal_child_index: self.normal_child_count(ROOT_NODE_ID)?,
+            order_path,
+        })
+    }
+
+    fn take_deferred_order(&mut self) -> u64 {
+        let order = self.next_deferred_order;
+        self.next_deferred_order = self
+            .next_deferred_order
+            .checked_add(1)
+            .expect("accessibility deferred order overflowed");
+        order
+    }
+
+    fn normal_child_count(&self, parent_id: NodeId) -> Option<usize> {
+        let parent = if let Some(index) = self.ids_stack.iter().position(|id| *id == parent_id) {
+            self.nodes_stack.get(index)?
+        } else {
+            self.all_nodes
+                .iter()
+                .find(|(id, _, _)| *id == parent_id)
+                .map(|(_, node, _)| node)?
+        };
+
+        Some(
+            parent
+                .children()
+                .iter()
+                .filter(|child_id| {
+                    self.deferred_child_orders
+                        .get(child_id)
+                        .is_none_or(|deferred| deferred.parent_id != parent_id)
+                })
+                .count(),
+        )
+    }
+
+    fn attach_child(
+        &mut self,
+        parent_id: NodeId,
+        child_id: NodeId,
+        deferred_parent: Option<&AccessibilityDeferredParent>,
+    ) -> bool {
+        if let Some(parent_index) = self.ids_stack.iter().position(|id| *id == parent_id) {
+            let insertion_index = self.child_insertion_index(
+                &self.nodes_stack[parent_index],
+                parent_id,
+                deferred_parent,
+            );
+            let previous_children_len = self.nodes_stack[parent_index].children().len();
+            if parent_index + 1 != self.nodes_stack.len()
+                || insertion_index != previous_children_len
+            {
+                self.parent_child_mutations
+                    .push(AccessibilityParentChildMutation {
+                        parent_id,
+                        child_id,
+                        child_index: insertion_index,
+                    });
+            }
+            Self::insert_child(
+                &mut self.nodes_stack[parent_index],
+                child_id,
+                insertion_index,
+            );
+            return true;
+        }
+
+        if let Some(parent_index) = self
+            .all_nodes
+            .iter()
+            .position(|(id, _, _)| *id == parent_id)
+        {
+            let insertion_index = self.child_insertion_index(
+                &self.all_nodes[parent_index].1,
+                parent_id,
+                deferred_parent,
+            );
+            self.parent_child_mutations
+                .push(AccessibilityParentChildMutation {
+                    parent_id,
+                    child_id,
+                    child_index: insertion_index,
+                });
+            Self::insert_child(
+                &mut self.all_nodes[parent_index].1,
+                child_id,
+                insertion_index,
+            );
+            return true;
+        }
+
+        false
+    }
+
+    fn child_insertion_index(
+        &self,
+        parent: &accesskit::Node,
+        parent_id: NodeId,
+        deferred_parent: Option<&AccessibilityDeferredParent>,
+    ) -> usize {
+        let Some(deferred_parent) = deferred_parent else {
+            return parent.children().len();
+        };
+
+        let mut normal_child_index = 0;
+        for (index, child_id) in parent.children().iter().enumerate() {
+            let existing_deferred = self
+                .deferred_child_orders
+                .get(child_id)
+                .filter(|existing| existing.parent_id == parent_id);
+            if let Some(existing_deferred) = existing_deferred {
+                if (
+                    existing_deferred.normal_child_index,
+                    &existing_deferred.order_path,
+                ) > (
+                    deferred_parent.normal_child_index,
+                    &deferred_parent.order_path,
+                ) {
+                    return index;
+                }
+            } else {
+                if normal_child_index >= deferred_parent.normal_child_index {
+                    return index;
+                }
+                normal_child_index += 1;
+            }
+        }
+        parent.children().len()
+    }
+
+    fn insert_child(parent: &mut accesskit::Node, child_id: NodeId, insertion_index: usize) {
+        let mut children = parent.children().to_vec();
+        children.insert(insertion_index.min(children.len()), child_id);
+        parent.set_children(children);
+    }
+
+    fn rollback_parent_child_mutations(&mut self, checkpoint_len: usize) {
+        while self.parent_child_mutations.len() > checkpoint_len {
+            let mutation = self
+                .parent_child_mutations
+                .pop()
+                .expect("mutation length was checked");
+            let parent = self
+                .ids_stack
+                .iter()
+                .position(|id| *id == mutation.parent_id)
+                .and_then(|index| self.nodes_stack.get_mut(index))
+                .or_else(|| {
+                    self.all_nodes
+                        .iter_mut()
+                        .find(|(id, _, _)| *id == mutation.parent_id)
+                        .map(|(_, node, _)| node)
+                });
+            let Some(parent) = parent else {
+                debug_assert!(
+                    false,
+                    "accessibility rollback lost parent {:?}",
+                    mutation.parent_id
+                );
+                continue;
+            };
+            let mut children = parent.children().to_vec();
+            if children.get(mutation.child_index) == Some(&mutation.child_id) {
+                children.remove(mutation.child_index);
+            } else if let Some(index) = children.iter().position(|id| *id == mutation.child_id) {
+                debug_assert_eq!(
+                    index, mutation.child_index,
+                    "accessibility child moved before rollback"
+                );
+                children.remove(index);
+            } else {
+                debug_assert!(
+                    false,
+                    "accessibility rollback lost child {:?} from parent {:?}",
+                    mutation.child_id, mutation.parent_id
+                );
+                continue;
+            }
+            if children.is_empty() {
+                parent.clear_children();
+            } else {
+                parent.set_children(children);
+            }
+        }
+    }
+
     /// Set the focused node for this frame.
     #[cfg(test)]
     pub(crate) fn set_focus(&mut self, id: NodeId) {
-        self.set_focus_with_validity(id, self.current_transform_validity());
+        self.set_focus_with_validity(id, self.current_geometry_validity());
     }
 
-    fn set_focus_with_validity(&mut self, id: NodeId, validity: Option<SubtreeTransformValidity>) {
+    fn set_focus_with_validity(&mut self, id: NodeId, validity: Option<SubtreeGeometryValidity>) {
         #[cfg(debug_assertions)]
         {
             debug_assert!(
@@ -1387,6 +1938,18 @@ impl A11yNodeBuilder {
         debug_assert!(
             self.scope_stack.borrow().is_empty(),
             "accessibility tree scope stack must be empty at frame end"
+        );
+        debug_assert!(
+            self.clip_owner_scope_depths.borrow().is_empty(),
+            "accessibility clip-owner scope stack must be empty at frame end"
+        );
+        debug_assert!(
+            self.deferred_parent_scopes.borrow().is_empty(),
+            "accessibility deferred-parent scope stack must be empty at frame end"
+        );
+        debug_assert!(
+            self.window_portal_scopes.borrow().is_empty(),
+            "accessibility window-portal scope stack must be empty at frame end"
         );
         if self.ids_stack.len() != 1 {
             log::error!(
@@ -1412,7 +1975,7 @@ impl A11yNodeBuilder {
             .filter_map(|(id, node, validity)| {
                 validity
                     .as_ref()
-                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .is_none_or(SubtreeGeometryValidity::is_valid)
                     .then_some((id, node))
             })
             .collect();
@@ -1423,7 +1986,7 @@ impl A11yNodeBuilder {
             focus: if self
                 .focus_validity
                 .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .is_none_or(SubtreeGeometryValidity::is_valid)
             {
                 self.focus
             } else {
@@ -1437,18 +2000,21 @@ impl A11yNodeBuilder {
             .filter_map(|(id, scope, validity)| {
                 validity
                     .as_ref()
-                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .is_none_or(SubtreeGeometryValidity::is_valid)
                     .then_some((*id, *scope))
             })
             .collect::<Vec<_>>();
         let modal_restricted = self.modal_restrictions.iter().any(|validity| {
             validity
                 .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .is_none_or(SubtreeGeometryValidity::is_valid)
         });
         let update = Self::filter_published_tree(update, &memberships, modal_restricted);
         self.memberships.clear();
         self.modal_restrictions.clear();
+        self.parent_child_mutations.clear();
+        self.deferred_child_orders.clear();
+        self.next_deferred_order = 0;
         Self::repair_tree_update(update)
     }
 
@@ -1471,6 +2037,21 @@ impl A11yNodeBuilder {
             .iter()
             .flat_map(|(parent, children)| children.iter().map(move |child| (*child, *parent)))
             .collect();
+        let mut source_order = FxHashMap::default();
+        let mut pending = children
+            .get(&root)
+            .into_iter()
+            .flat_map(|children| children.iter().rev().copied())
+            .collect::<Vec<_>>();
+        while let Some(id) = pending.pop() {
+            if source_order.contains_key(&id) {
+                continue;
+            }
+            source_order.insert(id, source_order.len());
+            if let Some(children) = children.get(&id) {
+                pending.extend(children.iter().rev().copied());
+            }
+        }
         let membership_by_id: FxHashMap<NodeId, AccessibilityTreeScope> =
             memberships.iter().copied().collect();
         let mut hidden = FxHashSet::default();
@@ -1518,9 +2099,10 @@ impl A11yNodeBuilder {
             })
             .collect();
 
-        let root_children: Vec<NodeId> = memberships
+        let mut root_children = memberships
             .iter()
-            .filter_map(|(id, _)| {
+            .enumerate()
+            .filter_map(|(fallback_order, (id, _))| {
                 if !retained.contains(id) {
                     return None;
                 }
@@ -1528,9 +2110,19 @@ impl A11yNodeBuilder {
                 (parent == Some(root)
                     || parent.is_none()
                     || parent.is_some_and(|parent| !retained.contains(&parent)))
-                .then_some(*id)
+                .then_some((
+                    source_order.get(id).copied().unwrap_or(usize::MAX),
+                    fallback_order,
+                    *id,
+                ))
             })
-            .collect();
+            .collect::<Vec<_>>();
+        root_children
+            .sort_by_key(|(source_order, fallback_order, _)| (*source_order, *fallback_order));
+        let root_children = root_children
+            .into_iter()
+            .map(|(_, _, id)| id)
+            .collect::<Vec<_>>();
 
         update.nodes.retain(|(id, _)| retained.contains(id));
         for (id, node) in &mut update.nodes {
@@ -2137,7 +2729,7 @@ mod tests {
                 node.add_action(Action::Click);
                 assert!(a11y.nodes.push(node_id, node));
                 a11y.record_focus_id(node_id, focus_id);
-                a11y.record_node_bounds(node_id, Bounds::default());
+                a11y.record_node_bounds(node_id, Bounds::default(), Some(Point::default()));
                 a11y.record_action_listener(node_id, Action::Click, Box::new(|_, _, _| {}));
                 a11y.nodes.pop();
             }
@@ -2153,7 +2745,7 @@ mod tests {
             (
                 published.action_masks.capacity(),
                 published.focus_ids.capacity(),
-                published.node_bounds.capacity(),
+                published.node_geometry.capacity(),
                 published.action_listeners.capacity(),
             )
         };
@@ -2165,7 +2757,7 @@ mod tests {
             (
                 published.action_masks.capacity(),
                 published.focus_ids.capacity(),
-                published.node_bounds.capacity(),
+                published.node_geometry.capacity(),
                 published.action_listeners.capacity(),
             ),
             first_dispatch_capacities
@@ -2234,7 +2826,7 @@ mod tests {
             node.add_action(Action::Click);
             assert!(a11y.nodes.push(node_id, node));
             a11y.record_focus_id(node_id, focus_id);
-            a11y.record_node_bounds(node_id, Bounds::default());
+            a11y.record_node_bounds(node_id, Bounds::default(), Some(Point::default()));
             a11y.record_action_listener(node_id, Action::Click, Box::new(|_, _, _| {}));
             a11y.nodes.pop();
         };
@@ -2292,6 +2884,325 @@ mod tests {
         a11y.rollback_prepaint(focus_checkpoint);
         let update = a11y.end_frame();
         assert_eq!(update.focus, ROOT_NODE_ID);
+    }
+
+    #[test]
+    fn clip_owner_scope_restores_before_a_later_sibling() {
+        let mut nodes = A11yNodeBuilder::new();
+        let clipped_id = NodeId(1);
+        let sibling_id = NodeId(2);
+        nodes.begin_frame();
+
+        {
+            let _scope = nodes.enter_clip_owner_scope();
+            assert!(nodes.push(clipped_id, accesskit::Node::new(accesskit::Role::Group)));
+            nodes.pop();
+        }
+        assert!(nodes.push(sibling_id, accesskit::Node::new(accesskit::Role::Group)));
+        nodes.pop();
+
+        let update = nodes.finalize();
+        let clipped = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == clipped_id)
+            .map(|(_, node)| node)
+            .unwrap();
+        let sibling = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == sibling_id)
+            .map(|(_, node)| node)
+            .unwrap();
+        assert!(clipped.clips_children());
+        assert!(!sibling.clips_children());
+    }
+
+    #[test]
+    fn rollback_removes_deferred_children_from_a_finalized_parent() {
+        let mut nodes = A11yNodeBuilder::new();
+        let parent_id = NodeId(1);
+        let rolled_back_id = NodeId(2);
+        let sibling_id = NodeId(3);
+        let first_child_id = NodeId(4);
+        let last_child_id = NodeId(5);
+        nodes.begin_frame();
+
+        assert!(nodes.push(parent_id, accesskit::Node::new(accesskit::Role::Group)));
+        assert!(nodes.push(
+            first_child_id,
+            accesskit::Node::new(accesskit::Role::Button)
+        ));
+        nodes.pop();
+        let deferred_parent = nodes.reserve_deferred_parent().unwrap();
+        assert!(nodes.push(last_child_id, accesskit::Node::new(accesskit::Role::Button)));
+        nodes.pop();
+        nodes.pop();
+        let checkpoint = nodes.checkpoint();
+        {
+            let _parent_scope = nodes.enter_deferred_parent_scope(deferred_parent);
+            let _clip_scope = nodes.enter_clip_owner_scope();
+            assert!(nodes.push(
+                rolled_back_id,
+                accesskit::Node::new(accesskit::Role::Button)
+            ));
+            nodes.pop();
+        }
+        nodes.rollback(checkpoint);
+
+        assert!(nodes.push(sibling_id, accesskit::Node::new(accesskit::Role::Button)));
+        nodes.pop();
+
+        let update = nodes.finalize();
+        let root = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .unwrap();
+        let parent = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == parent_id)
+            .map(|(_, node)| node)
+            .unwrap();
+        let sibling = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == sibling_id)
+            .map(|(_, node)| node)
+            .unwrap();
+
+        assert_eq!(root.children(), &[parent_id, sibling_id]);
+        assert_eq!(parent.children(), &[first_child_id, last_child_id]);
+        assert!(update.nodes.iter().all(|(id, _)| *id != rolled_back_id));
+        assert!(!sibling.clips_children());
+    }
+
+    #[test]
+    fn deferred_sibling_order_survives_out_of_order_scope_replay() {
+        let mut nodes = A11yNodeBuilder::new();
+        let before_id = NodeId(1);
+        let first_deferred_id = NodeId(2);
+        let second_deferred_id = NodeId(3);
+        let after_id = NodeId(4);
+        let hidden_id = NodeId(5);
+        nodes.begin_frame();
+
+        assert!(nodes.push(before_id, accesskit::Node::new(accesskit::Role::Button)));
+        nodes.pop();
+        let first_parent = nodes.reserve_deferred_parent().unwrap();
+        let second_parent = nodes.reserve_deferred_parent().unwrap();
+        assert!(nodes.push(after_id, accesskit::Node::new(accesskit::Role::Button)));
+        nodes.pop();
+        let mut hidden = accesskit::Node::new(accesskit::Role::Button);
+        hidden.set_hidden();
+        assert!(nodes.push(hidden_id, hidden));
+        nodes.pop();
+
+        {
+            let _scope = nodes.enter_deferred_parent_scope(second_parent);
+            assert!(nodes.push(
+                second_deferred_id,
+                accesskit::Node::new(accesskit::Role::Button)
+            ));
+            nodes.pop();
+        }
+        {
+            let _scope = nodes.enter_deferred_parent_scope(first_parent);
+            assert!(nodes.push(
+                first_deferred_id,
+                accesskit::Node::new(accesskit::Role::Button)
+            ));
+            nodes.pop();
+        }
+
+        let update = nodes.finalize();
+        let root = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .unwrap();
+        assert_eq!(
+            root.children(),
+            &[before_id, first_deferred_id, second_deferred_id, after_id]
+        );
+    }
+
+    #[test]
+    fn nested_window_portal_reuses_captured_root_order_after_filtering() {
+        let mut nodes = A11yNodeBuilder::new();
+        let owner_id = NodeId(1);
+        let portal_id = NodeId(2);
+        let after_id = NodeId(3);
+        let hidden_id = NodeId(4);
+        nodes.begin_frame();
+
+        let deferred_parent = {
+            let _modal_scope = nodes.enter_scope(AccessibilityTreeScope::ModalRoot);
+            assert!(nodes.push(owner_id, accesskit::Node::new(accesskit::Role::Group)));
+            let deferred_parent = nodes.reserve_deferred_parent().unwrap();
+            nodes.pop();
+            assert!(nodes.push(after_id, accesskit::Node::new(accesskit::Role::Button)));
+            nodes.pop();
+            let mut hidden = accesskit::Node::new(accesskit::Role::Button);
+            hidden.set_hidden();
+            assert!(nodes.push(hidden_id, hidden));
+            nodes.pop();
+            deferred_parent
+        };
+
+        {
+            let _modal_scope = nodes.enter_scope(AccessibilityTreeScope::ModalRoot);
+            let _deferred_scope = nodes.enter_deferred_parent_scope(deferred_parent);
+            let portal_parent = nodes.reserve_window_portal_parent().unwrap();
+            let _portal_scope = nodes.enter_window_portal_scope(portal_parent);
+            assert!(nodes.push(portal_id, accesskit::Node::new(accesskit::Role::Button)));
+            nodes.pop();
+        }
+
+        let update = nodes.finalize();
+        let root = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .unwrap();
+        assert_eq!(root.children(), &[owner_id, portal_id, after_id]);
+    }
+
+    #[test]
+    fn nested_deferred_portal_reuses_the_outer_root_order() {
+        let mut nodes = A11yNodeBuilder::new();
+        let owner_id = NodeId(1);
+        let intermediate_id = NodeId(2);
+        let portal_id = NodeId(3);
+        let after_id = NodeId(4);
+        nodes.begin_frame();
+
+        assert!(nodes.push(owner_id, accesskit::Node::new(accesskit::Role::Group)));
+        let outer_parent = nodes.reserve_deferred_parent().unwrap();
+        nodes.pop();
+        assert!(nodes.push(after_id, accesskit::Node::new(accesskit::Role::Button)));
+        nodes.pop();
+
+        let inner_parent = {
+            let _outer_scope = nodes.enter_deferred_parent_scope(outer_parent);
+            assert!(nodes.push(
+                intermediate_id,
+                accesskit::Node::new(accesskit::Role::Group)
+            ));
+            let inner_parent = nodes.reserve_deferred_parent().unwrap();
+            nodes.pop();
+            inner_parent
+        };
+
+        {
+            let _inner_scope = nodes.enter_deferred_parent_scope(inner_parent);
+            let portal_parent = nodes.reserve_window_portal_parent().unwrap();
+            let _portal_scope = nodes.enter_window_portal_scope(portal_parent);
+            assert!(nodes.push(portal_id, accesskit::Node::new(accesskit::Role::Button)));
+            nodes.pop();
+        }
+
+        let update = nodes.finalize();
+        let root = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .unwrap();
+        let owner = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == owner_id)
+            .map(|(_, node)| node)
+            .unwrap();
+        assert_eq!(root.children(), &[owner_id, portal_id, after_id]);
+        assert_eq!(owner.children(), &[intermediate_id]);
+    }
+
+    #[test]
+    fn unavailable_deferred_parent_fails_closed_without_poisoning_later_nodes() {
+        let mut nodes = A11yNodeBuilder::new();
+        let child_id = NodeId(1);
+        nodes.begin_frame();
+
+        {
+            let _scope = nodes.enter_deferred_parent_scope(AccessibilityDeferredParent {
+                parent_id: NodeId(99),
+                normal_child_index: 0,
+                order_path: SmallVec::from_slice(&[0]),
+                root_order: AccessibilityRootOrder {
+                    normal_child_index: 0,
+                    order_path: SmallVec::from_slice(&[0]),
+                },
+            });
+            assert!(!nodes.push(child_id, accesskit::Node::new(accesskit::Role::Button)));
+        }
+        assert!(!nodes.has_node(child_id));
+
+        assert!(nodes.push(child_id, accesskit::Node::new(accesskit::Role::Button)));
+        nodes.pop();
+
+        let update = nodes.finalize();
+        let root = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .unwrap();
+        assert_eq!(root.children(), &[child_id]);
+        assert_eq!(
+            update
+                .nodes
+                .iter()
+                .filter(|(id, _)| *id == child_id)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn rollback_removes_window_portal_child_from_a_non_top_root() {
+        let mut nodes = A11yNodeBuilder::new();
+        let owner_id = NodeId(1);
+        let portal_child_id = NodeId(2);
+        nodes.begin_frame();
+
+        assert!(nodes.push(owner_id, accesskit::Node::new(accesskit::Role::Group)));
+        let portal_parent = nodes.reserve_window_portal_parent().unwrap();
+        let checkpoint = nodes.checkpoint();
+        {
+            let _clip_scope = nodes.enter_clip_owner_scope();
+            let _portal_scope = nodes.enter_window_portal_scope(portal_parent);
+            assert!(nodes.push(
+                portal_child_id,
+                accesskit::Node::new(accesskit::Role::Button)
+            ));
+            nodes.pop();
+        }
+        nodes.rollback(checkpoint);
+        nodes.pop();
+
+        let update = nodes.finalize();
+        let root = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .unwrap();
+        let owner = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == owner_id)
+            .map(|(_, node)| node)
+            .unwrap();
+
+        assert_eq!(root.children(), &[owner_id]);
+        assert!(owner.children().is_empty());
+        assert!(update.nodes.iter().all(|(id, _)| *id != portal_child_id));
     }
 
     #[test]

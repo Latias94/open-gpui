@@ -29,6 +29,7 @@ pub(crate) const DISABLE_DIRECT_COMPOSITION: &str = "GPUI_DISABLE_DIRECT_COMPOSI
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
+const CLIP_SHAPES_SHADER_RESOURCE_SLOT: u32 = 2;
 
 pub(crate) struct FontInfo {
     pub gamma_ratios: [f32; 4],
@@ -97,6 +98,9 @@ struct DirectXRenderPipelines {
 struct DirectXGlobalElements {
     global_params_buffer: Option<ID3D11Buffer>,
     sampler: Option<ID3D11SamplerState>,
+    clip_shapes_buffer: ID3D11Buffer,
+    clip_shapes_view: Option<ID3D11ShaderResourceView>,
+    clip_shapes_capacity: usize,
 }
 
 struct DirectComposition {
@@ -183,13 +187,15 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
+    fn pre_draw(&self, clear_color: &[f32; 4], clip_shape_count: usize) -> Result<()> {
         let resources = self.resources.as_ref().expect("resources missing");
         let device_context = &self
             .devices
             .as_ref()
             .expect("devices missing")
             .device_context;
+        let clip_shape_count = u32::try_from(clip_shape_count)
+            .context("scene clip arena exceeds the DirectX shader index range")?;
         update_buffer(
             device_context,
             self.globals.global_params_buffer.as_ref().unwrap(),
@@ -199,7 +205,8 @@ impl DirectXRenderer {
                 grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
                 subpixel_enhanced_contrast: self.font_info.subpixel_enhanced_contrast,
                 is_bgr: self.font_info.is_bgr as u32,
-                _pad: [0; 3],
+                clip_shape_count,
+                _pad: [0; 2],
             }],
         )?;
         unsafe {
@@ -322,10 +329,13 @@ impl DirectXRenderer {
             // and so likely do not have the textures anymore that are required for drawing
             return Ok(());
         }
-        self.pre_draw(&match background_appearance {
-            WindowBackgroundAppearance::Opaque => [1.0f32; 4],
-            _ => [0.0f32; 4],
-        })?;
+        self.pre_draw(
+            &match background_appearance {
+                WindowBackgroundAppearance::Opaque => [1.0f32; 4],
+                _ => [0.0f32; 4],
+            },
+            scene.clip_shapes().len(),
+        )?;
 
         self.upload_scene_buffers(scene)?;
 
@@ -496,6 +506,12 @@ impl DirectXRenderer {
     fn upload_scene_buffers(&mut self, scene: &Scene) -> Result<()> {
         let devices = self.devices.as_ref().context("devices missing")?;
 
+        self.globals.update_clip_shapes(
+            &devices.device,
+            &devices.device_context,
+            scene.clip_shapes(),
+        )?;
+
         if !scene.shadows.is_empty() {
             self.pipelines.shadow_pipeline.update_buffer(
                 &devices.device,
@@ -568,6 +584,7 @@ impl DirectXRenderer {
                     .viewport,
             ),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             4,
             start as u32,
             len as u32,
@@ -590,6 +607,7 @@ impl DirectXRenderer {
                     .viewport,
             ),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             4,
             start as u32,
             len as u32,
@@ -625,7 +643,7 @@ impl DirectXRenderer {
                 st_position: v.st_position,
                 color: path.color,
                 bounds: path.bounds,
-                content_mask: path.content_mask,
+                clip: path.clip,
                 transform: path.renderer_transform(),
             }));
         }
@@ -640,6 +658,7 @@ impl DirectXRenderer {
             &devices.device_context,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
             vertices.len() as u32,
             1,
@@ -709,6 +728,7 @@ impl DirectXRenderer {
             slice::from_ref(&resources.path_intermediate_srv),
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             slice::from_ref(&self.globals.sampler),
             sprites.len() as u32,
         )
@@ -725,6 +745,7 @@ impl DirectXRenderer {
             &devices.device_context,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             4,
             start as u32,
             len as u32,
@@ -749,6 +770,7 @@ impl DirectXRenderer {
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -773,6 +795,7 @@ impl DirectXRenderer {
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -797,6 +820,7 @@ impl DirectXRenderer {
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.clip_shapes_view),
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -807,6 +831,8 @@ impl DirectXRenderer {
         if surfaces.is_empty() {
             return Ok(());
         }
+        // Windows has no native PaintSurface payload. Keeping unsupported surfaces invisible is
+        // fail-closed; drawing their bounds without the exact clip stack would leak pixels.
         Ok(())
     }
 
@@ -1057,10 +1083,51 @@ impl DirectXGlobalElements {
             output
         };
 
+        let clip_shapes_buffer = create_buffer(device, std::mem::size_of::<GpuClipShape>(), 1)
+            .context("creating DirectX clip-shape buffer")?;
+        let clip_shapes_view = create_buffer_view(device, &clip_shapes_buffer)
+            .context("creating DirectX clip-shape buffer view")?;
+
         Ok(Self {
             global_params_buffer,
             sampler,
+            clip_shapes_buffer,
+            clip_shapes_view,
+            clip_shapes_capacity: 1,
         })
+    }
+
+    fn update_clip_shapes(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        clip_shapes: &[GpuClipShape],
+    ) -> Result<()> {
+        if self.clip_shapes_capacity < clip_shapes.len() {
+            let new_capacity = clip_shapes
+                .len()
+                .checked_next_power_of_two()
+                .context("DirectX clip-shape buffer capacity overflow")?;
+            let byte_width = std::mem::size_of::<GpuClipShape>()
+                .checked_mul(new_capacity)
+                .context("DirectX clip-shape buffer byte size overflow")?;
+            anyhow::ensure!(
+                u32::try_from(byte_width).is_ok(),
+                "DirectX clip-shape buffer exceeds the D3D11 byte-width limit"
+            );
+
+            self.clip_shapes_buffer =
+                create_buffer(device, std::mem::size_of::<GpuClipShape>(), new_capacity)
+                    .context("growing DirectX clip-shape buffer")?;
+            self.clip_shapes_view = create_buffer_view(device, &self.clip_shapes_buffer)
+                .context("recreating DirectX clip-shape buffer view")?;
+            self.clip_shapes_capacity = new_capacity;
+        }
+
+        if !clip_shapes.is_empty() {
+            update_buffer(device_context, &self.clip_shapes_buffer, clip_shapes)?;
+        }
+        Ok(())
     }
 }
 
@@ -1072,7 +1139,8 @@ struct GlobalParams {
     grayscale_enhanced_contrast: f32,
     subpixel_enhanced_contrast: f32,
     is_bgr: u32,
-    _pad: [u32; 3],
+    clip_shape_count: u32,
+    _pad: [u32; 2],
 }
 
 struct PipelineState<T> {
@@ -1145,6 +1213,7 @@ impl<T> PipelineState<T> {
         device_context: &ID3D11DeviceContext,
         viewport: &[D3D11_VIEWPORT],
         global_params: &[Option<ID3D11Buffer>],
+        clip_shapes: &[Option<ID3D11ShaderResourceView>],
         topology: D3D_PRIMITIVE_TOPOLOGY,
         vertex_count: u32,
         instance_count: u32,
@@ -1152,6 +1221,7 @@ impl<T> PipelineState<T> {
         set_pipeline_state(
             device_context,
             slice::from_ref(&self.view),
+            clip_shapes,
             topology,
             viewport,
             &self.vertex,
@@ -1171,12 +1241,14 @@ impl<T> PipelineState<T> {
         texture: &[Option<ID3D11ShaderResourceView>],
         viewport: &[D3D11_VIEWPORT],
         global_params: &[Option<ID3D11Buffer>],
+        clip_shapes: &[Option<ID3D11ShaderResourceView>],
         sampler: &[Option<ID3D11SamplerState>],
         instance_count: u32,
     ) -> Result<()> {
         set_pipeline_state(
             device_context,
             slice::from_ref(&self.view),
+            clip_shapes,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             viewport,
             &self.vertex,
@@ -1200,6 +1272,7 @@ impl<T> PipelineState<T> {
         device_context: &ID3D11DeviceContext,
         viewport: &[D3D11_VIEWPORT],
         global_params: &[Option<ID3D11Buffer>],
+        clip_shapes: &[Option<ID3D11ShaderResourceView>],
         vertex_count: u32,
         first_instance: u32,
         instance_count: u32,
@@ -1208,6 +1281,7 @@ impl<T> PipelineState<T> {
         set_pipeline_state(
             device_context,
             slice::from_ref(&view),
+            clip_shapes,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             viewport,
             &self.vertex,
@@ -1228,6 +1302,7 @@ impl<T> PipelineState<T> {
         texture: &[Option<ID3D11ShaderResourceView>],
         viewport: &[D3D11_VIEWPORT],
         global_params: &[Option<ID3D11Buffer>],
+        clip_shapes: &[Option<ID3D11ShaderResourceView>],
         sampler: &[Option<ID3D11SamplerState>],
         first_instance: u32,
         instance_count: u32,
@@ -1236,6 +1311,7 @@ impl<T> PipelineState<T> {
         set_pipeline_state(
             device_context,
             slice::from_ref(&view),
+            clip_shapes,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             viewport,
             &self.vertex,
@@ -1260,7 +1336,7 @@ struct PathRasterizationSprite {
     st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
-    content_mask: ContentMask<ScaledPixels>,
+    clip: ClipEnvelope,
     transform: PrimitiveTransform,
 }
 
@@ -1278,7 +1354,7 @@ struct DirectXPolychromeSprite {
     grayscale: u32,
     opacity: f32,
     bounds: Bounds<ScaledPixels>,
-    content_mask: ContentMask<ScaledPixels>,
+    clip: ClipEnvelope,
     corner_radii: Corners<ScaledPixels>,
     tile: AtlasTile,
     transform: PrimitiveTransform,
@@ -1293,7 +1369,7 @@ impl From<&PolychromeSprite> for DirectXPolychromeSprite {
             grayscale: u32::from(sprite.grayscale),
             opacity: sprite.opacity,
             bounds: sprite.bounds,
-            content_mask: sprite.content_mask,
+            clip: sprite.clip,
             corner_radii: sprite.corner_radii,
             tile: sprite.tile,
             transform: sprite.renderer_transform(),
@@ -1305,68 +1381,58 @@ fn path_visual_bounds(path: &Path<ScaledPixels>) -> Result<Bounds<ScaledPixels>>
     Ok(path
         .renderer_transform()
         .try_project_bounds(path.bounds)?
-        .intersect(&path.content_mask.bounds))
+        .intersect(&path.clip.conservative_bounds))
 }
 
-#[cfg(test)]
-mod primitive_abi_tests {
-    use std::mem::{offset_of, size_of};
+const _: () = {
+    assert!(std::mem::size_of::<PrimitiveTransform>() == 16);
+    const IDENTITY_COMPONENTS: [f32; 4] = PrimitiveTransform::IDENTITY.components();
+    assert!(IDENTITY_COMPONENTS[0].to_bits() == 0x3f80_0000);
+    assert!(IDENTITY_COMPONENTS[1].to_bits() == 0x3f80_0000);
+    assert!(IDENTITY_COMPONENTS[2].to_bits() == 0);
+    assert!(IDENTITY_COMPONENTS[3].to_bits() == 0);
 
-    use super::*;
+    assert!(std::mem::size_of::<Quad>() == 184);
+    assert!(std::mem::size_of::<Shadow>() == 136);
+    assert!(std::mem::size_of::<Underline>() == 88);
+    assert!(std::mem::size_of::<MonochromeSprite>() == 112);
+    assert!(std::mem::size_of::<SubpixelSprite>() == 112);
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, transform) == 104);
+    assert!(std::mem::size_of::<DirectXPolychromeSprite>() == 120);
+    assert!(104 + std::mem::size_of::<PrimitiveTransform>() == 120);
+    assert!(std::mem::offset_of!(PathRasterizationSprite, transform) == 128);
+    assert!(std::mem::size_of::<PathRasterizationSprite>() == 144);
+    assert!(128 + std::mem::size_of::<PrimitiveTransform>() == 144);
+    assert!(std::mem::offset_of!(PathRasterizationSprite, color) == 16);
+    assert!(std::mem::offset_of!(PathRasterizationSprite, bounds) == 88);
+    assert!(std::mem::offset_of!(PathRasterizationSprite, clip) == 104);
+    // The copy pass samples the window-space intermediate and must not transform again.
+    assert!(std::mem::size_of::<PathSprite>() == 16);
 
-    #[test]
-    fn primitive_transform_is_a_four_scalar_tail_in_every_directx_batch() {
-        assert_eq!(size_of::<PrimitiveTransform>(), 16);
-        assert_eq!(
-            PrimitiveTransform::IDENTITY.components(),
-            [1.0, 1.0, 0.0, 0.0]
-        );
+    assert!(std::mem::align_of::<GpuClipShape>() == std::mem::align_of::<f32>());
+    assert!(std::mem::size_of::<GpuClipShape>() == 48);
+    assert!(std::mem::offset_of!(GpuClipShape, bounds) == 0);
+    assert!(std::mem::offset_of!(GpuClipShape, radii_x) == 16);
+    assert!(std::mem::offset_of!(GpuClipShape, radii_y) == 32);
+    assert!(std::mem::align_of::<ClipEnvelope>() == std::mem::align_of::<f32>());
+    assert!(std::mem::size_of::<ClipEnvelope>() == 24);
+    assert!(std::mem::offset_of!(ClipEnvelope, conservative_bounds) == 0);
+    assert!(std::mem::offset_of!(ClipEnvelope, first_clip) == 16);
+    assert!(std::mem::offset_of!(ClipEnvelope, clip_count) == 20);
+    assert!(CLIP_SHAPES_SHADER_RESOURCE_SLOT == 2);
 
-        assert_eq!(size_of::<Quad>(), 176);
-        assert_eq!(size_of::<Shadow>(), 128);
-        assert_eq!(size_of::<Underline>(), 80);
-        assert_eq!(size_of::<MonochromeSprite>(), 104);
-        assert_eq!(size_of::<SubpixelSprite>(), 104);
-        assert_transform_tail::<DirectXPolychromeSprite>(
-            offset_of!(DirectXPolychromeSprite, transform),
-            96,
-            112,
-        );
-        assert_transform_tail::<PathRasterizationSprite>(
-            offset_of!(PathRasterizationSprite, transform),
-            120,
-            136,
-        );
-        assert_eq!(offset_of!(PathRasterizationSprite, color), 16);
-        assert_eq!(offset_of!(PathRasterizationSprite, bounds), 88);
-        assert_eq!(offset_of!(PathRasterizationSprite, content_mask), 104);
-        // The copy pass samples the window-space intermediate and must not transform again.
-        assert_eq!(size_of::<PathSprite>(), 16);
-    }
+    assert!(std::mem::align_of::<GlobalParams>() == std::mem::align_of::<f32>());
+    assert!(std::mem::size_of::<GlobalParams>() == 48);
+    assert!(std::mem::offset_of!(GlobalParams, is_bgr) == 32);
+    assert!(std::mem::offset_of!(GlobalParams, clip_shape_count) == 36);
 
-    #[test]
-    fn polychrome_upload_uses_an_explicit_u32_grayscale_slot() {
-        assert_eq!(offset_of!(DirectXPolychromeSprite, grayscale), 8);
-        assert_eq!(offset_of!(DirectXPolychromeSprite, opacity), 12);
-        assert_eq!(offset_of!(DirectXPolychromeSprite, bounds), 16);
-        assert_eq!(offset_of!(DirectXPolychromeSprite, content_mask), 32);
-        assert_eq!(offset_of!(DirectXPolychromeSprite, corner_radii), 48);
-        assert_eq!(offset_of!(DirectXPolychromeSprite, tile), 64);
-    }
-
-    fn assert_transform_tail<T>(
-        actual_offset: usize,
-        expected_offset: usize,
-        expected_size: usize,
-    ) {
-        assert_eq!(actual_offset, expected_offset);
-        assert_eq!(size_of::<T>(), expected_size);
-        assert_eq!(
-            actual_offset + size_of::<PrimitiveTransform>(),
-            expected_size
-        );
-    }
-}
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, grayscale) == 8);
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, opacity) == 12);
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, bounds) == 16);
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, clip) == 32);
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, corner_radii) == 56);
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, tile) == 72);
+};
 
 impl Drop for DirectXRenderer {
     fn drop(&mut self) {
@@ -1756,6 +1822,7 @@ fn update_buffer<T>(
 fn set_pipeline_state(
     device_context: &ID3D11DeviceContext,
     buffer_view: &[Option<ID3D11ShaderResourceView>],
+    clip_shapes: &[Option<ID3D11ShaderResourceView>],
     topology: D3D_PRIMITIVE_TOPOLOGY,
     viewport: &[D3D11_VIEWPORT],
     vertex_shader: &ID3D11VertexShader,
@@ -1766,6 +1833,8 @@ fn set_pipeline_state(
     unsafe {
         device_context.VSSetShaderResources(1, Some(buffer_view));
         device_context.PSSetShaderResources(1, Some(buffer_view));
+        device_context.VSSetShaderResources(CLIP_SHAPES_SHADER_RESOURCE_SLOT, Some(clip_shapes));
+        device_context.PSSetShaderResources(CLIP_SHAPES_SHADER_RESOURCE_SLOT, Some(clip_shapes));
         device_context.IASetPrimitiveTopology(topology);
         device_context.RSSetViewports(Some(viewport));
         device_context.VSSetShader(vertex_shader, None);

@@ -128,7 +128,7 @@ pub(crate) enum DockViewportCoordinateSpace {
 }
 
 /// Latest coordinate facts published for a registered viewport.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportCoordinateSnapshot {
     /// Display currently containing the window.
     pub(crate) display_id: Option<DisplayId>,
@@ -280,7 +280,7 @@ impl DockViewportWindowFacts {
 }
 
 /// Runtime snapshot for one rendered dock viewport.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportSnapshot {
     /// GPUI window currently rendering the logical dock space.
     pub(crate) window: AnyWindowHandle,
@@ -371,7 +371,7 @@ impl DockViewportSnapshot {
     pub(crate) fn coordinate_snapshot(&self) -> Option<DockViewportCoordinateSnapshot> {
         let window_bounds = self.window_bounds?;
         let current_bounds = self.current_bounds?;
-        let host_geometry = self.host_geometry?;
+        let host_geometry = self.host_geometry.clone()?;
         Some(DockViewportCoordinateSnapshot {
             display_id: self.display_id,
             window_bounds,

@@ -6,7 +6,7 @@ use crate::{
     HitboxId, LineLayoutIndex, Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene,
     SubtreePresentation, SubtreeTransformDiagnostic, TabStopMap, TextStyleRefinement, Window,
     WindowControlArea,
-    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    geometry::{ClipStackSnapshot, ResolvedSubtreeTransform, SubtreeGeometryValidity},
 };
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -19,8 +19,9 @@ use std::{
 };
 
 use super::{
-    AnyMouseListener, AnyPointerCancelListener, ContentMask, CursorStyleRequest, ElementStateBox,
-    FocusId, HitTest, ImagePaintDiagnostic, PrepaintPublicationId, TooltipId,
+    AnyMouseListener, AnyPointerCancelListener, CursorStyleRequest, ElementStateBox, FocusId,
+    HitTest, ImagePaintDiagnostic, PrepaintPublicationId, TooltipId,
+    a11y::AccessibilityDeferredParent,
     bring_into_view::{RevealTargetBinding, RevealTargetKey, ScrollContainerBinding},
     portal_anchor::{PortalAnchorBinding, PortalAnchorId},
 };
@@ -40,7 +41,7 @@ enum RevealTargetBindingLocation {
 #[derive(Clone)]
 pub(crate) struct FrameOutput<T> {
     pub(super) value: T,
-    pub(super) validity: Option<SubtreeTransformValidity>,
+    pub(super) validity: Option<SubtreeGeometryValidity>,
 }
 
 #[derive(Clone)]
@@ -59,14 +60,14 @@ pub(crate) enum PrepaintCommitPhase {
 }
 
 impl<T> FrameOutput<T> {
-    pub(super) fn new(value: T, validity: Option<SubtreeTransformValidity>) -> Self {
+    pub(super) fn new(value: T, validity: Option<SubtreeGeometryValidity>) -> Self {
         Self { value, validity }
     }
 
     pub(super) fn is_valid(&self) -> bool {
         self.validity
             .as_ref()
-            .is_none_or(SubtreeTransformValidity::is_valid)
+            .is_none_or(SubtreeGeometryValidity::is_valid)
     }
 }
 
@@ -74,7 +75,7 @@ impl<T> FrameOutput<T> {
 pub(crate) struct TooltipRequest {
     pub(super) id: TooltipId,
     pub(super) tooltip: AnyTooltip,
-    pub(super) validity: Option<SubtreeTransformValidity>,
+    pub(super) validity: Option<SubtreeGeometryValidity>,
 }
 
 pub(crate) struct DeferredDraw {
@@ -84,13 +85,15 @@ pub(crate) struct DeferredDraw {
     pub(super) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(super) text_style_stack: Vec<TextStyleRefinement>,
     pub(super) accessibility_tree_scope: AccessibilityTreeScope,
-    pub(super) content_mask: ContentMask<Pixels>,
+    pub(super) accessibility_parent: Option<AccessibilityDeferredParent>,
+    pub(super) accessibility_proxy_clip_owner: bool,
+    pub(super) clip_stack: ClipStackSnapshot,
     pub(super) rem_size: Pixels,
     pub(super) element: Option<AnyElement>,
     pub(super) absolute_offset: Point<Pixels>,
     pub(super) subtree_presentation: SubtreePresentation,
     pub(super) subtree_transform: ResolvedSubtreeTransform,
-    pub(super) subtree_transform_validity: Option<SubtreeTransformValidity>,
+    pub(super) subtree_geometry_validity: Option<SubtreeGeometryValidity>,
     pub(super) scroll_ancestry: SmallVec<[ScrollContainerBinding; 8]>,
     pub(super) prepaint_range: Range<PrepaintStateIndex>,
     pub(super) paint_range: Range<PaintIndex>,
@@ -102,7 +105,7 @@ pub(crate) struct Frame {
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     pub(crate) element_state_validities:
-        FxHashMap<(GlobalElementId, TypeId), Option<SubtreeTransformValidity>>,
+        FxHashMap<(GlobalElementId, TypeId), Option<SubtreeGeometryValidity>>,
     pub(super) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<FrameOutput<Option<AnyMouseListener>>>,
     pub(crate) pointer_cancel_listeners: Vec<FrameOutput<Option<AnyPointerCancelListener>>>,
@@ -130,12 +133,11 @@ pub(crate) struct Frame {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds_entries:
-        Vec<(String, Bounds<Pixels>, Option<SubtreeTransformValidity>)>,
+    pub(crate) debug_bounds_entries: Vec<(String, Bounds<Pixels>, Option<SubtreeGeometryValidity>)>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_focus_handles: FxHashMap<String, FocusId>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_focus_entries: Vec<(String, FocusId, Option<SubtreeTransformValidity>)>,
+    pub(crate) debug_focus_entries: Vec<(String, FocusId, Option<SubtreeGeometryValidity>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -288,7 +290,7 @@ impl Frame {
                 request
                     .validity
                     .as_ref()
-                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .is_none_or(SubtreeGeometryValidity::is_valid)
             })
             .fold_while(None, |style, request| match request.hitbox_id {
                 None => Done(Some(request.style)),
@@ -416,10 +418,7 @@ impl Frame {
             if !hitbox.is_active() {
                 continue;
             }
-            let bounds = hitbox
-                .displayed_bounds()
-                .intersect(&hitbox.content_mask.bounds);
-            if bounds.contains(&position) {
+            if hitbox.is_window_point_target(position) {
                 hit_test.ids.push(hitbox.id);
                 if !set_hover_hitbox_count
                     && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
@@ -489,7 +488,7 @@ impl Frame {
             for (selector, bounds, validity) in &self.debug_bounds_entries {
                 if validity
                     .as_ref()
-                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .is_none_or(SubtreeGeometryValidity::is_valid)
                 {
                     self.debug_bounds.insert(selector.clone(), *bounds);
                 }
@@ -498,7 +497,7 @@ impl Frame {
             for (selector, focus_id, validity) in &self.debug_focus_entries {
                 if validity
                     .as_ref()
-                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .is_none_or(SubtreeGeometryValidity::is_valid)
                 {
                     self.debug_focus_handles.insert(selector.clone(), *focus_id);
                 }

@@ -5,11 +5,11 @@ use std::{
 };
 
 use crate::{
-    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
+    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
     FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
-    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
-    point, quad, rems, size,
+    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, SubtreeClip,
+    SubtreeClipError, TextRun, Window, black, phi, point, quad, rems, size,
 };
 use open_gpui_collections::HashSet;
 use open_gpui_refineable::Refineable;
@@ -562,6 +562,13 @@ impl Hash for HighlightStyle {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct OverflowClip {
+    pub(crate) declaration: SubtreeClip,
+    pub(crate) layout_bounds: Bounds<Pixels>,
+    pub(crate) accessibility_axes: Point<bool>,
+}
+
 impl Style {
     /// Returns true if the style is visible and the background is opaque.
     pub fn has_opaque_background(&self) -> bool {
@@ -579,55 +586,64 @@ impl Style {
         }
     }
 
-    /// Get the content mask for this element style, based on the given bounds.
-    /// If the element does not hide its overflow, this will return `None`.
-    pub fn overflow_mask(
+    pub(crate) fn overflow_clip(
         &self,
         bounds: Bounds<Pixels>,
         rem_size: Pixels,
-    ) -> Option<ContentMask<Pixels>> {
-        match self.overflow {
-            Point {
-                x: Overflow::Visible,
-                y: Overflow::Visible,
-            } => None,
-            _ => {
-                let mut min = bounds.origin;
-                let mut max = bounds.bottom_right();
-
-                if self
-                    .border_color
-                    .is_some_and(|color| !color.is_transparent())
-                {
-                    min.x += self.border_widths.left.to_pixels(rem_size);
-                    max.x -= self.border_widths.right.to_pixels(rem_size);
-                    min.y += self.border_widths.top.to_pixels(rem_size);
-                    max.y -= self.border_widths.bottom.to_pixels(rem_size);
-                }
-
-                let bounds = match (
-                    self.overflow.x == Overflow::Visible,
-                    self.overflow.y == Overflow::Visible,
-                ) {
-                    // x and y both visible
-                    (true, true) => return None,
-                    // x visible, y hidden
-                    (true, false) => Bounds::from_corners(
-                        point(min.x, bounds.origin.y),
-                        point(max.x, bounds.bottom_right().y),
-                    ),
-                    // x hidden, y visible
-                    (false, true) => Bounds::from_corners(
-                        point(bounds.origin.x, min.y),
-                        point(bounds.bottom_right().x, max.y),
-                    ),
-                    // both hidden
-                    (false, false) => Bounds::from_corners(min, max),
-                };
-
-                Some(ContentMask { bounds })
-            }
+    ) -> Result<Option<OverflowClip>, SubtreeClipError> {
+        let clip_x = self.overflow.x != Overflow::Visible;
+        let clip_y = self.overflow.y != Overflow::Visible;
+        if !clip_x && !clip_y {
+            return Ok(None);
         }
+
+        let border = self.border_widths.to_pixels(rem_size);
+        let mut min = bounds.origin;
+        let mut max = bounds.bottom_right();
+        if clip_x {
+            min.x += border.left;
+            max.x = (max.x - border.right).max(min.x);
+        }
+        if clip_y {
+            min.y += border.top;
+            max.y = (max.y - border.bottom).max(min.y);
+        }
+        let layout_bounds = Bounds::from_corners(min, max);
+        let local_bounds = Bounds::new(layout_bounds.origin - bounds.origin, layout_bounds.size);
+
+        let declaration = if clip_x && clip_y {
+            let outer = self.corner_radii.clone().to_pixels(rem_size);
+            let zero = Pixels::ZERO;
+            let radii = Corners {
+                top_left: size(
+                    (outer.top_left - border.left).max(zero),
+                    (outer.top_left - border.top).max(zero),
+                ),
+                top_right: size(
+                    (outer.top_right - border.right).max(zero),
+                    (outer.top_right - border.top).max(zero),
+                ),
+                bottom_right: size(
+                    (outer.bottom_right - border.right).max(zero),
+                    (outer.bottom_right - border.bottom).max(zero),
+                ),
+                bottom_left: size(
+                    (outer.bottom_left - border.left).max(zero),
+                    (outer.bottom_left - border.bottom).max(zero),
+                ),
+            };
+            SubtreeClip::try_rounded_rect(local_bounds, radii)?
+        } else {
+            SubtreeClip::try_axis_strip(local_bounds, clip_x, clip_y)?
+        };
+        Ok(Some(OverflowClip {
+            declaration,
+            layout_bounds,
+            accessibility_axes: point(
+                clip_x && self.overflow.x != Overflow::Scroll,
+                clip_y && self.overflow.y != Overflow::Scroll,
+            ),
+        }))
     }
 
     /// Paints the background of an element styled with this style.
@@ -1275,7 +1291,7 @@ impl From<Position> for taffy::style::Position {
 
 #[cfg(test)]
 mod tests {
-    use crate::{blue, green, px, red, yellow};
+    use crate::{blue, geometry::ResolvedSubtreeTransform, green, point, px, red, size, yellow};
 
     use super::*;
 
@@ -1470,5 +1486,99 @@ mod tests {
             Some(FontWeight::SEMIBOLD),
             style.text_style().unwrap().font_weight
         );
+    }
+
+    #[test]
+    fn overflow_clip_derives_asymmetric_padding_box_ellipses() {
+        let mut style = Style::default();
+        style.overflow = point(Overflow::Hidden, Overflow::Hidden);
+        style.border_widths = Edges {
+            top: AbsoluteLength::Pixels(px(10.0)),
+            right: AbsoluteLength::Pixels(px(15.0)),
+            bottom: AbsoluteLength::Pixels(px(20.0)),
+            left: AbsoluteLength::Pixels(px(5.0)),
+        };
+        style.corner_radii = Corners {
+            top_left: AbsoluteLength::Pixels(px(30.0)),
+            top_right: AbsoluteLength::Pixels(px(40.0)),
+            bottom_right: AbsoluteLength::Pixels(px(35.0)),
+            bottom_left: AbsoluteLength::Pixels(px(20.0)),
+        };
+        let bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
+        let overflow = style
+            .overflow_clip(bounds, px(16.0))
+            .unwrap()
+            .expect("hidden overflow should produce a clip");
+        let resolved = overflow
+            .declaration
+            .resolve_with_accessibility_axes(
+                bounds,
+                ResolvedSubtreeTransform::IDENTITY,
+                bounds,
+                overflow.accessibility_axes,
+            )
+            .unwrap();
+
+        assert_eq!(
+            overflow.layout_bounds,
+            Bounds::new(point(px(15.0), px(30.0)), size(px(80.0), px(50.0)))
+        );
+        assert_eq!(resolved.bounds(), overflow.layout_bounds);
+        assert_eq!(
+            resolved.radii_x(),
+            Corners {
+                top_left: px(25.0),
+                top_right: px(25.0),
+                bottom_right: px(20.0),
+                bottom_left: px(15.0),
+            }
+        );
+        assert_eq!(
+            resolved.radii_y(),
+            Corners {
+                top_left: px(20.0),
+                top_right: px(30.0),
+                bottom_right: px(15.0),
+                bottom_left: Pixels::ZERO,
+            }
+        );
+    }
+
+    #[test]
+    fn one_axis_overflow_clip_inherits_the_unclipped_axis() {
+        let mut style = Style::default();
+        style.overflow = point(Overflow::Hidden, Overflow::Visible);
+        style.border_widths = Edges {
+            top: AbsoluteLength::Pixels(px(10.0)),
+            right: AbsoluteLength::Pixels(px(15.0)),
+            bottom: AbsoluteLength::Pixels(px(20.0)),
+            left: AbsoluteLength::Pixels(px(5.0)),
+        };
+        let bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
+        let inherited = Bounds::new(Point::default(), size(px(500.0), px(400.0)));
+        let overflow = style
+            .overflow_clip(bounds, px(16.0))
+            .unwrap()
+            .expect("single-axis overflow should produce a clip");
+        let resolved = overflow
+            .declaration
+            .resolve_with_accessibility_axes(
+                bounds,
+                ResolvedSubtreeTransform::IDENTITY,
+                inherited,
+                overflow.accessibility_axes,
+            )
+            .unwrap();
+
+        assert_eq!(
+            overflow.layout_bounds,
+            Bounds::new(point(px(15.0), px(20.0)), size(px(80.0), px(80.0)))
+        );
+        assert_eq!(
+            resolved.bounds(),
+            Bounds::new(point(px(15.0), Pixels::ZERO), size(px(80.0), px(400.0)))
+        );
+        assert_eq!(resolved.radii_x(), Corners::default());
+        assert_eq!(resolved.radii_y(), Corners::default());
     }
 }

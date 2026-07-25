@@ -80,7 +80,7 @@ fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enh
 struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
-    pad: u32,
+    clip_shape_count: u32,
 }
 
 struct GammaParams {
@@ -110,6 +110,20 @@ struct Corners {
     bottom_right: f32,
     bottom_left: f32,
 }
+
+struct ClipEnvelope {
+    conservative_bounds: Bounds,
+    first_clip: u32,
+    clip_count: u32,
+}
+
+struct GpuClipShape {
+    bounds: Bounds,
+    radii_x: Corners,
+    radii_y: Corners,
+}
+
+@group(0) @binding(2) var<storage, read> b_clip_shapes: array<GpuClipShape>;
 
 struct Edges {
     top: f32,
@@ -191,15 +205,110 @@ fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
   return (vec2<f32>(tile.bounds.origin) + unit_vertex * vec2<f32>(tile.bounds.size)) / atlas_size;
 }
 
-fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {
-    let tl = position - clip_bounds.origin;
-    let br = clip_bounds.origin + clip_bounds.size - position;
-    return vec4<f32>(tl.x, br.x, tl.y, br.y);
+fn closed_bounds_contains(position: vec2<f32>, bounds: Bounds) -> bool {
+    let max_position = bounds.origin + bounds.size;
+    return all(bounds.size > vec2<f32>(0.0)) &&
+        all(position >= bounds.origin) &&
+        all(position <= max_position);
 }
 
-fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {
-    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-    return distance_from_clip_rect_impl(position, clip_bounds);
+fn half_open_bounds_contains(position: vec2<f32>, bounds: Bounds) -> bool {
+    let max_position = bounds.origin + bounds.size;
+    return all(bounds.size > vec2<f32>(0.0)) &&
+        all(position >= bounds.origin) &&
+        all(position < max_position);
+}
+
+fn ellipse_corner_contains(
+    position: vec2<f32>,
+    center: vec2<f32>,
+    radii: vec2<f32>,
+) -> bool {
+    if (radii.x <= 0.0 || radii.y <= 0.0) {
+        return true;
+    }
+    let normalized = (position - center) / radii;
+    return fma(normalized.x, normalized.x, normalized.y * normalized.y) <= 1.0;
+}
+
+fn clip_shape_contains(position: vec2<f32>, shape: GpuClipShape) -> bool {
+    if (!closed_bounds_contains(position, shape.bounds)) {
+        return false;
+    }
+
+    let min_position = shape.bounds.origin;
+    let max_position = shape.bounds.origin + shape.bounds.size;
+    var contained = true;
+
+    let top_left_radii = vec2<f32>(shape.radii_x.top_left, shape.radii_y.top_left);
+    let top_left_center = min_position + top_left_radii;
+    if (position.x < top_left_center.x && position.y < top_left_center.y) {
+        contained = contained &&
+            ellipse_corner_contains(position, top_left_center, top_left_radii);
+    }
+
+    let top_right_radii = vec2<f32>(shape.radii_x.top_right, shape.radii_y.top_right);
+    let top_right_center = vec2<f32>(
+        max_position.x - top_right_radii.x,
+        min_position.y + top_right_radii.y,
+    );
+    if (position.x > top_right_center.x && position.y < top_right_center.y) {
+        contained = contained &&
+            ellipse_corner_contains(position, top_right_center, top_right_radii);
+    }
+
+    let bottom_right_radii = vec2<f32>(
+        shape.radii_x.bottom_right,
+        shape.radii_y.bottom_right,
+    );
+    let bottom_right_center = max_position - bottom_right_radii;
+    if (position.x > bottom_right_center.x && position.y > bottom_right_center.y) {
+        contained = contained &&
+            ellipse_corner_contains(position, bottom_right_center, bottom_right_radii);
+    }
+
+    let bottom_left_radii = vec2<f32>(shape.radii_x.bottom_left, shape.radii_y.bottom_left);
+    let bottom_left_center = vec2<f32>(
+        min_position.x + bottom_left_radii.x,
+        max_position.y - bottom_left_radii.y,
+    );
+    if (position.x < bottom_left_center.x && position.y > bottom_left_center.y) {
+        contained = contained &&
+            ellipse_corner_contains(position, bottom_left_center, bottom_left_radii);
+    }
+
+    return contained;
+}
+
+fn clip_envelope_contains(position: vec2<f32>, clip: ClipEnvelope) -> bool {
+    if (!half_open_bounds_contains(position, clip.conservative_bounds) ||
+        clip.clip_count == 0u) {
+        return false;
+    }
+
+    let arena_length = arrayLength(&b_clip_shapes);
+    if (globals.clip_shape_count > arena_length ||
+        clip.first_clip >= globals.clip_shape_count) {
+        return false;
+    }
+    let available = globals.clip_shape_count - clip.first_clip;
+    if (clip.clip_count > available) {
+        return false;
+    }
+
+    let end = clip.first_clip + clip.clip_count;
+    var index = clip.first_clip;
+    // Stack depth is scene-owned; every referenced shape participates.
+    loop {
+        if (index >= end) {
+            break;
+        }
+        if (!clip_shape_contains(position, b_clip_shapes[index])) {
+            return false;
+        }
+        index += 1u;
+    }
+    return true;
 }
 
 // https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
@@ -516,7 +625,7 @@ struct Quad {
     order: u32,
     border_style: u32,
     bounds: Bounds,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
     background: Background,
     border_color: Hsla,
     corner_radii: Corners,
@@ -529,8 +638,7 @@ struct QuadVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) border_color: vec4<f32>,
     @location(1) @interpolate(flat) quad_id: u32,
-    // TODO: use `clip_distance` once Naga supports it
-    @location(2) clip_distances: vec4<f32>,
+    @location(2) window_position: vec2<f32>,
     @location(3) @interpolate(flat) background_solid: vec4<f32>,
     @location(4) @interpolate(flat) background_color0: vec4<f32>,
     @location(5) @interpolate(flat) background_color1: vec4<f32>,
@@ -558,19 +666,17 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
-    out.clip_distances = distance_from_clip_rect_impl(window_position, quad.content_mask);
+    out.window_position = window_position;
     out.local_position = local_position;
     return out;
 }
 
 @fragment
 fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
-    // Alpha clip first, since we don't have `clip_distance`.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    let quad = b_quads[input.quad_id];
+    if (!clip_envelope_contains(input.window_position, quad.clip)) {
         return vec4<f32>(0.0);
     }
-
-    let quad = b_quads[input.quad_id];
 
     let background_color = gradient_color(quad.background, input.local_position, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
@@ -955,7 +1061,7 @@ struct Shadow {
     // The shadow rect for drop shadows; the "hole" rect for inset shadows.
     bounds: Bounds,
     corner_radii: Corners,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
     color: Hsla,
     // Only consulted when `inset == 1u`: the element's own bounds, used as a rounded-rect
     // clip so the shadow never escapes the element.
@@ -973,8 +1079,7 @@ struct ShadowVarying {
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) shadow_id: u32,
     @location(2) local_position: vec2<f32>,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
+    @location(3) window_position: vec2<f32>,
 }
 
 @vertex
@@ -1000,18 +1105,17 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
     out.local_position = local_position;
-    out.clip_distances = distance_from_clip_rect_impl(window_position, shadow.content_mask);
+    out.window_position = window_position;
     return out;
 }
 
 @fragment
 fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
-    // Alpha clip first, since we don't have `clip_distance`.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    let shadow = b_shadows[input.shadow_id];
+    if (!clip_envelope_contains(input.window_position, shadow.clip)) {
         return vec4<f32>(0.0);
     }
 
-    let shadow = b_shadows[input.shadow_id];
     let half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
     let center_to_point = input.local_position - center;
@@ -1060,7 +1164,7 @@ struct PathRasterizationVertex {
     st_position: vec2<f32>,
     color: Background,
     local_bounds: Bounds,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
     transform: PrimitiveTransform,
 }
 
@@ -1071,8 +1175,7 @@ struct PathRasterizationVarying {
     @location(0) st_position: vec2<f32>,
     @location(1) @interpolate(flat) vertex_id: u32,
     @location(2) local_position: vec2<f32>,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
+    @location(3) window_position: vec2<f32>,
 }
 
 @vertex
@@ -1085,7 +1188,7 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
     out.st_position = v.st_position;
     out.vertex_id = vertex_id;
     out.local_position = v.xy_position;
-    out.clip_distances = distance_from_clip_rect_impl(window_position, v.content_mask);
+    out.window_position = window_position;
     return out;
 }
 
@@ -1093,11 +1196,11 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
 fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
     let dx = dpdx(input.st_position);
     let dy = dpdy(input.st_position);
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    let v = b_path_vertices[input.vertex_id];
+    if (!clip_envelope_contains(input.window_position, v.clip)) {
         return vec4<f32>(0.0);
     }
 
-    let v = b_path_vertices[input.vertex_id];
     let background = v.color;
     let bounds = v.local_bounds;
 
@@ -1138,7 +1241,7 @@ struct PathVarying {
 fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = b_path_sprites[instance_id];
-    // Transform and content mask were already applied while rasterizing the path.
+    // Transform and the exact clip stack were already applied while rasterizing the path.
     let device_position = to_device_position(unit_vertex, sprite.bounds);
     // For screen-space intermediate texture, convert screen position to texture coordinates
     let screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
@@ -1163,7 +1266,7 @@ struct Underline {
     order: u32,
     pad: u32,
     bounds: Bounds,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
     color: Hsla,
     thickness: f32,
     wavy: u32,
@@ -1176,8 +1279,7 @@ struct UnderlineVarying {
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) underline_id: u32,
     @location(2) local_position: vec2<f32>,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
+    @location(3) window_position: vec2<f32>,
 }
 
 @vertex
@@ -1192,7 +1294,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
     out.local_position = local_position;
-    out.clip_distances = distance_from_clip_rect_impl(window_position, underline.content_mask);
+    out.window_position = window_position;
     return out;
 }
 
@@ -1201,12 +1303,11 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     const WAVE_FREQUENCY: f32 = 2.0;
     const WAVE_HEIGHT_RATIO: f32 = 0.8;
 
-    // Alpha clip first, since we don't have `clip_distance`.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    let underline = b_underlines[input.underline_id];
+    if (!clip_envelope_contains(input.window_position, underline.clip)) {
         return vec4<f32>(0.0);
     }
 
-    let underline = b_underlines[input.underline_id];
     if ((underline.wavy & 0xFFu) == 0u)
     {
         return blend_color(input.color, input.color.a);
@@ -1234,7 +1335,7 @@ struct MonochromeSprite {
     order: u32,
     pad: u32,
     bounds: Bounds,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
     color: Hsla,
     tile: AtlasTile,
     transform: PrimitiveTransform,
@@ -1245,7 +1346,8 @@ struct MonoSpriteVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
-    @location(3) clip_distances: vec4<f32>,
+    @location(2) @interpolate(flat) sprite_id: u32,
+    @location(3) window_position: vec2<f32>,
 }
 
 @vertex
@@ -1260,7 +1362,8 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect_impl(window_position, sprite.content_mask);
+    out.sprite_id = instance_id;
+    out.window_position = window_position;
     return out;
 }
 
@@ -1269,8 +1372,8 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, gamma_params.grayscale_enhanced_contrast, gamma_params.gamma_ratios);
 
-    // Alpha clip after using the derivatives.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    let sprite = b_mono_sprites[input.sprite_id];
+    if (!clip_envelope_contains(input.window_position, sprite.clip)) {
         return vec4<f32>(0.0);
     }
 
@@ -1285,7 +1388,7 @@ struct PolychromeSprite {
     grayscale: u32,
     opacity: f32,
     bounds: Bounds,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
     corner_radii: Corners,
     tile: AtlasTile,
     transform: PrimitiveTransform,
@@ -1297,7 +1400,7 @@ struct PolySpriteVarying {
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) sprite_id: u32,
     @location(2) local_position: vec2<f32>,
-    @location(3) clip_distances: vec4<f32>,
+    @location(3) window_position: vec2<f32>,
 }
 
 @vertex
@@ -1312,19 +1415,18 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.sprite_id = instance_id;
     out.local_position = local_position;
-    out.clip_distances = distance_from_clip_rect_impl(window_position, sprite.content_mask);
+    out.window_position = window_position;
     return out;
 }
 
 @fragment
 fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position);
-    // Alpha clip after using the derivatives.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    let sprite = b_poly_sprites[input.sprite_id];
+    if (!clip_envelope_contains(input.window_position, sprite.clip)) {
         return vec4<f32>(0.0);
     }
 
-    let sprite = b_poly_sprites[input.sprite_id];
     let distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
 
     var color = sample;
@@ -1339,7 +1441,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
 
 struct SurfaceParams {
     bounds: Bounds,
-    content_mask: Bounds,
+    clip: ClipEnvelope,
 }
 
 @group(1) @binding(0) var<uniform> surface_locals: SurfaceParams;
@@ -1357,7 +1459,7 @@ const ycbcr_to_RGB = mat4x4<f32>(
 struct SurfaceVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) texture_position: vec2<f32>,
-    @location(3) clip_distances: vec4<f32>,
+    @location(3) window_position: vec2<f32>,
 }
 
 @vertex
@@ -1367,14 +1469,13 @@ fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
     var out = SurfaceVarying();
     out.position = to_device_position(unit_vertex, surface_locals.bounds);
     out.texture_position = unit_vertex;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, surface_locals.bounds, surface_locals.content_mask);
+    out.window_position = unit_vertex * surface_locals.bounds.size + surface_locals.bounds.origin;
     return out;
 }
 
 @fragment
 fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
-    // Alpha clip after using the derivatives.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+    if (!clip_envelope_contains(input.window_position, surface_locals.clip)) {
         return vec4<f32>(0.0);
     }
 

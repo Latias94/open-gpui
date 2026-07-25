@@ -8,9 +8,10 @@ use std::rc::Rc;
 
 use open_gpui::{
     AccessibilityTreeScope, AnyElement, AnyWeakEntity, App, Bounds, Element, ElementId, Entity,
-    EntityId, FocusHandle, GlobalElementId, InspectorElementId, IntoElement, KeyDownEvent,
-    LayoutId, MouseButton, MouseDownEvent, Pixels, Point, PointerCancelReason, PointerCapture,
-    PointerCaptureHandle, Subscription, SubtreePresentation, Window, WindowId, WindowMouseEvent,
+    EntityId, FocusHandle, GlobalElementId, HitTestSnapshot, InspectorElementId, IntoElement,
+    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, Pixels, Point, PointerCancelReason,
+    PointerCapture, PointerCaptureHandle, Subscription, SubtreePresentation, Window, WindowId,
+    WindowMouseEvent,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyResolution, FocusScopeId, FocusScopeMode, FocusScopePolicy,
@@ -1161,7 +1162,7 @@ impl LayerEntry {
 }
 
 struct LiveInsideRegion {
-    window_bounds: Bounds<Pixels>,
+    hit_test: HitTestSnapshot,
     button: Option<MouseButton>,
     valid_through: u64,
 }

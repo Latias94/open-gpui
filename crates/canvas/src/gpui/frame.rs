@@ -16,7 +16,8 @@ use crate::{
     canvas_transform_handles,
 };
 use open_gpui::{
-    Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine, px, size,
+    Bounds, Hsla, Pixels, Point, PreparedSubtreeClip, SharedString, SubtreeClip, TextRun, Window,
+    WrappedLine, px, size,
 };
 
 mod feedback;
@@ -96,6 +97,7 @@ impl CanvasPreparedPaintFrame {
 #[derive(Debug)]
 pub(super) struct CanvasPreparedPaintLabel {
     pub(super) view_bounds: Bounds<Pixels>,
+    pub(super) clip: PreparedSubtreeClip,
     pub(super) lines: Vec<WrappedLine>,
     pub(super) text_height: Pixels,
 }
@@ -221,11 +223,16 @@ pub fn prepaint_canvas_frame(
     window: &mut Window,
 ) -> CanvasPreparedPaintFrame {
     let frame = collect_visible_records(model, canvas_bounds, options);
-    prepare_canvas_frame(frame, theme, window)
+    prepare_canvas_frame(frame, canvas_bounds, theme, window)
 }
 
+/// Shapes visible labels and prepares their frame-bound subtree clips during prepaint.
+///
+/// `canvas_bounds` must be the Canvas element's post-layout border box that will be passed to
+/// [`crate::adapter::paint_canvas_frame`] during paint in the same frame.
 pub fn prepare_canvas_frame(
     frame: CanvasPaintFrame,
+    canvas_bounds: Bounds<Pixels>,
     theme: CanvasPaintTheme,
     window: &mut Window,
 ) -> CanvasPreparedPaintFrame {
@@ -235,7 +242,7 @@ pub fn prepare_canvas_frame(
         .iter()
         .map(|record| {
             record.label.as_ref().and_then(|label| {
-                let prepared = prepare_label(label, theme, window)?;
+                let prepared = prepare_label(label, canvas_bounds, theme, window)?;
                 let index = labels.len();
                 labels.push(prepared);
                 Some(index)

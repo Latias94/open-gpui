@@ -23,5 +23,12 @@ pub(crate) fn node_with_label<'a>(
         .iter()
         .find(|(_, node)| node.label() == Some(label))
         .map(|(id, node)| (*id, node))
-        .unwrap_or_else(|| panic!("missing accessibility node labelled {label:?}"))
+        .unwrap_or_else(|| {
+            let labels = update
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| node.label())
+                .collect::<Vec<_>>();
+            panic!("missing accessibility node labelled {label:?}; published labels: {labels:?}")
+        })
 }

@@ -22,9 +22,9 @@ use crate::{
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
     KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, PointerCancelEvent, PointerCaptureHandle, Render,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, TargetedEvent, Task,
-    TooltipId, Window, WindowControlArea, point, px, size,
+    ParentElement, Pixels, Point, PointerCancelEvent, PointerCaptureHandle, PreparedSubtreeClip,
+    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, TargetedEvent,
+    Task, TooltipId, Window, WindowControlArea, point, px, size,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
@@ -160,6 +160,11 @@ impl<T: 'static> DragMoveEvent<T> {
     /// Returns the unchanged window-space mouse move event.
     pub fn window_event(&self) -> &MouseMoveEvent {
         &self.event
+    }
+
+    /// Returns the current committed target hitbox, including its exact clip proof.
+    pub fn hitbox(&self) -> &Hitbox {
+        &self.hitbox
     }
 
     /// Returns the unchanged pointer position in displayed window coordinates.
@@ -2253,7 +2258,7 @@ impl ParentElement for Div {
 
 impl Element for Div {
     type RequestLayoutState = DivFrameState;
-    type PrepaintState = Option<Hitbox>;
+    type PrepaintState = (Option<Hitbox>, Option<PreparedSubtreeClip>);
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -2324,7 +2329,7 @@ impl Element for Div {
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Hitbox> {
+    ) -> Self::PrepaintState {
         let image_cache = self
             .image_cache
             .as_mut()
@@ -2417,7 +2422,7 @@ impl Element for Div {
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        hitbox: &mut Option<Hitbox>,
+        prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -2431,7 +2436,8 @@ impl Element for Div {
                 global_id,
                 inspector_id,
                 bounds,
-                hitbox.as_ref(),
+                prepaint.0.as_ref(),
+                prepaint.1.as_ref(),
                 window,
                 cx,
                 |style, window, cx| {
@@ -2650,7 +2656,7 @@ impl Interactivity {
     }
 
     /// Commit the bounds of this element according to this interactivity state's configured styles.
-    pub fn prepaint<R>(
+    pub(crate) fn prepaint<R: Default>(
         &mut self,
         global_id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
@@ -2659,7 +2665,7 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
-    ) -> R {
+    ) -> (R, Option<PreparedSubtreeClip>) {
         self.content_size = content_size;
         window
             .next_frame
@@ -2745,10 +2751,13 @@ impl Interactivity {
                 }
 
                 window.with_text_style(style.text_style().cloned(), |window| {
-                    let overflow_mask = style.overflow_mask(bounds, window.rem_size());
-                    let scroll_viewport_bounds =
-                        overflow_mask.as_ref().map_or(bounds, |mask| mask.bounds);
-                    window.with_content_mask(overflow_mask, |window| {
+                    let overflow_clip = style.overflow_clip(bounds, window.rem_size());
+                    let scroll_viewport_bounds = match &overflow_clip {
+                        Ok(Some(clip)) => clip.layout_bounds,
+                        Ok(None) | Err(_) => bounds,
+                    };
+                    let mut callback = Some(f);
+                    let mut prepaint = |window: &mut Window| {
                         let hitbox = if interactive && self.should_insert_hitbox(&style, window, cx)
                         {
                             Some(window.insert_hitbox(bounds, self.hitbox_behavior))
@@ -2782,8 +2791,10 @@ impl Interactivity {
 
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, window, cx);
                         self.dispatch_scroll_viewport_changed(content_size, window, cx);
-                        let result = if let Some(scroll_handle) =
-                            self.tracked_scroll_handle.as_ref()
+                        let callback = callback
+                            .take()
+                            .expect("interactivity prepaint callback must run at most once");
+                        if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref()
                             && (style.overflow.x == Overflow::Scroll
                                 || style.overflow.y == Overflow::Scroll)
                         {
@@ -2791,13 +2802,40 @@ impl Interactivity {
                                 scroll_handle.clone(),
                                 scroll_viewport_bounds,
                                 style.overflow,
-                                |window| f(&style, scroll_offset, hitbox, window, cx),
+                                |window| callback(&style, scroll_offset, hitbox, window, cx),
                             )
                         } else {
-                            f(&style, scroll_offset, hitbox, window, cx)
-                        };
-                        (result, element_state)
-                    })
+                            callback(&style, scroll_offset, hitbox, window, cx)
+                        }
+                    };
+                    let (result, prepared_clip) = match overflow_clip {
+                        Ok(Some(clip)) => {
+                            let prepared = window.prepare_subtree_clip_with_accessibility_axes(
+                                &clip.declaration,
+                                bounds,
+                                clip.accessibility_axes,
+                            );
+                            let result = window
+                                .with_prepared_subtree_clip_owned_by_accessibility_node(
+                                    &prepared,
+                                    global_id.map(GlobalElementId::accesskit_node_id),
+                                    prepaint,
+                                )
+                                .unwrap_or_default();
+                            (result, Some(prepared))
+                        }
+                        Ok(None) => (prepaint(window), None),
+                        Err(error) => {
+                            let prepared = window.prepare_failed_subtree_clip(error);
+                            let _ = window.with_prepared_subtree_clip_owned_by_accessibility_node(
+                                &prepared,
+                                global_id.map(GlobalElementId::accesskit_node_id),
+                                |_| (),
+                            );
+                            (R::default(), Some(prepared))
+                        }
+                    };
+                    ((result, prepared_clip), element_state)
                 })
             },
         )
@@ -2925,6 +2963,7 @@ impl Interactivity {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         hitbox: Option<&Hitbox>,
+        prepared_clip: Option<&PreparedSubtreeClip>,
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(&Style, &mut Window, &mut App),
@@ -2958,91 +2997,87 @@ impl Interactivity {
                     window
                         .next_frame
                         .tab_stops
-                        .insert_scoped(focus_handle, window.subtree_transform_validity());
+                        .insert_scoped(focus_handle, window.subtree_geometry_validity());
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                         window.with_text_style(style.text_style().cloned(), |window| {
-                            window.with_content_mask(
-                                style.overflow_mask(bounds, window.rem_size()),
-                                |window| {
-                                    window.with_tab_group(tab_group, |window| {
-                                        if let Some(hitbox) = hitbox {
-                                            #[cfg(debug_assertions)]
-                                            self.paint_debug_info(
-                                                global_id, hitbox, &style, window, cx,
-                                            );
+                            let paint = |window: &mut Window| {
+                                window.with_tab_group(tab_group, |window| {
+                                    if let Some(hitbox) = hitbox {
+                                        #[cfg(debug_assertions)]
+                                        self.paint_debug_info(
+                                            global_id, hitbox, &style, window, cx,
+                                        );
 
-                                            if let Some(drag) = cx.active_drag.as_ref() {
-                                                if let Some(mouse_cursor) = drag.cursor_style {
-                                                    if window.is_mouse_in_window() {
-                                                        window
-                                                            .set_window_cursor_style(mouse_cursor);
-                                                    }
-                                                }
-                                            } else {
-                                                if let Some(mouse_cursor) = style.mouse_cursor {
-                                                    window.set_cursor_style(mouse_cursor, hitbox);
+                                        if let Some(drag) = cx.active_drag.as_ref() {
+                                            if let Some(mouse_cursor) = drag.cursor_style {
+                                                if window.is_mouse_in_window() {
+                                                    window.set_window_cursor_style(mouse_cursor);
                                                 }
                                             }
-
-                                            if let Some(group) = self.group.clone() {
-                                                GroupHitboxes::push(group, hitbox.id, cx);
-                                            }
-
-                                            if let Some(area) = self.window_control {
-                                                window.insert_window_control_hitbox(
-                                                    area,
-                                                    hitbox.clone(),
-                                                );
-                                            }
-
-                                            self.paint_mouse_listeners(
-                                                hitbox,
-                                                element_state.as_mut(),
-                                                window,
-                                                cx,
-                                            );
-                                            self.paint_scroll_listener(hitbox, &style, window, cx);
-                                        }
-
-                                        self.paint_keyboard_listeners(window, cx);
-
-                                        if window.a11y.is_active() {
-                                            if let Some(global_id) = global_id {
-                                                if !self.accessibility.action_listeners.is_empty() {
-                                                    let node_id = global_id.accesskit_node_id();
-                                                    for (action, listener) in self
-                                                        .accessibility
-                                                        .action_listeners
-                                                        .drain(..)
-                                                    {
-                                                        window.on_a11y_action(
-                                                            node_id, action, listener,
-                                                        );
-                                                    }
-                                                }
+                                        } else {
+                                            if let Some(mouse_cursor) = style.mouse_cursor {
+                                                window.set_cursor_style(mouse_cursor, hitbox);
                                             }
                                         }
 
-                                        f(&style, window, cx);
+                                        if let Some(group) = self.group.clone() {
+                                            GroupHitboxes::push(group, hitbox.id, cx);
+                                        }
 
-                                        if let Some(_hitbox) = hitbox {
-                                            #[cfg(any(feature = "inspector", debug_assertions))]
-                                            window.insert_inspector_hitbox(
-                                                _hitbox.id,
-                                                _inspector_id,
-                                                cx,
-                                            );
+                                        if let Some(area) = self.window_control {
+                                            window
+                                                .insert_window_control_hitbox(area, hitbox.clone());
+                                        }
 
-                                            if let Some(group) = self.group.as_ref() {
-                                                GroupHitboxes::pop(group, cx);
+                                        self.paint_mouse_listeners(
+                                            hitbox,
+                                            element_state.as_mut(),
+                                            window,
+                                            cx,
+                                        );
+                                        self.paint_scroll_listener(hitbox, &style, window, cx);
+                                    }
+
+                                    self.paint_keyboard_listeners(window, cx);
+
+                                    if window.a11y.is_active() {
+                                        if let Some(global_id) = global_id {
+                                            if !self.accessibility.action_listeners.is_empty() {
+                                                let node_id = global_id.accesskit_node_id();
+                                                for (action, listener) in
+                                                    self.accessibility.action_listeners.drain(..)
+                                                {
+                                                    window
+                                                        .on_a11y_action(node_id, action, listener);
+                                                }
                                             }
                                         }
-                                    })
-                                },
-                            );
+                                    }
+
+                                    f(&style, window, cx);
+
+                                    if let Some(_hitbox) = hitbox {
+                                        #[cfg(any(feature = "inspector", debug_assertions))]
+                                        window.insert_inspector_hitbox(
+                                            _hitbox.id,
+                                            _inspector_id,
+                                            cx,
+                                        );
+
+                                        if let Some(group) = self.group.as_ref() {
+                                            GroupHitboxes::pop(group, cx);
+                                        }
+                                    }
+                                })
+                            };
+                            if let Some(prepared_clip) = prepared_clip {
+                                let _ = window.with_prepared_subtree_clip(prepared_clip, paint);
+                            } else {
+                                paint(window);
+                            }
                         });
                     });
                 });

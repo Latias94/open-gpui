@@ -281,6 +281,77 @@ GPUI type or identity fallback to `open-gpui-motion`.
 See [ADR 0021](../adr/0021-open-gpui-interactive-subtree-transform-authority.md) for composition,
 cache/deferred, renderer, and failure-ordering details.
 
+## Exact Subtree Clips
+
+`ContentMask`, `Window::with_content_mask`, and element-local descendant clip flags are deleted
+without aliases. They could reduce rounded clips to rectangles or let paint and input use different
+geometry. Use the checked public subtree authority instead:
+
+```rust
+use open_gpui::{
+    Corners, SubtreeClip, SubtreeClipExt as _, div, px, size,
+};
+
+let radius = size(px(12.0), px(12.0));
+let clip = SubtreeClip::try_own_rounded_border_box(Corners {
+    top_left: radius,
+    top_right: radius,
+    bottom_right: radius,
+    bottom_left: radius,
+})?;
+
+let element = div().child(content).with_subtree_clip(clip);
+```
+
+`SubtreeClip::own_border_box()` and `.clip_to_border_box()` are the rectangular equivalents. For
+an explicit child-local region, use `SubtreeClip::try_rect` or
+`SubtreeClip::try_rounded_rect`; bounds are zero-origin logical pixels relative to the child's
+post-layout border box, not window coordinates. Radii must be finite and non-negative. GPUI
+normalizes elliptical radii before any subtree transform, then preserves those ellipses under
+non-uniform scale.
+
+The wrapper changes no layout, measurement, sibling flow, or scroll extent. It applies one exact
+nested clip stack to paint and initial pointer hit testing, including hover/click/wheel/drag/drop,
+deferred/cache replay, focus/IME, and Inspector. Public `SubtreeClip` also excludes fully clipped
+accessibility descendants. Do not model a rounded descendant clip with a background radius or an
+AABB test. Style overflow enters the same visual/pointer stack; one-axis overflow preserves the
+other axis and two-axis overflow uses the padding-box ellipse. `Overflow::Hidden` and
+`Overflow::Clip` also exclude semantics, whereas `Overflow::Scroll` deliberately keeps off-viewport
+nodes available for AccessKit `ScrollIntoView`.
+
+`Hitbox::hit_test_snapshot` is the frame-committed capability for integrations that need to carry
+exact target eligibility outside the rendering callback. Its public queries are intentionally
+read-only. Do not retain a raw clip stack, reconstruct window-space geometry, or use the published
+accessibility AABB as rounded coverage. Public subtree clips and non-scrolling overflow remove fully
+semantic-clipped nodes; root and scroll viewports do not remove off-viewport targets. A published
+non-empty node uses a conservative AABB, while built-in fallback click separately needs an internal
+point proven inside the complete visual/pointer stack. A zero-area semantic node remains only when
+its anchor is inside the semantic stack, and it receives neither a pointer witness nor a fallback
+click.
+
+Adapters that register a logical region without a target hitbox, such as an Overlay inside region,
+must capture `Window::hit_test_snapshot(layout_bounds)` during prepaint. Do not replace that
+snapshot with its displayed AABB.
+
+Canvas custom prepaint code must pass the Canvas element's post-layout border box to
+`prepare_canvas_frame`; the same bounds must be passed to `paint_canvas_frame` later in that frame:
+
+```rust
+// Before
+let prepared = prepare_canvas_frame(frame, theme, window);
+
+// After
+let prepared = prepare_canvas_frame(frame, canvas_bounds, theme, window);
+```
+
+Ordinary deferred and cached descendants inherit clipping. Named window-space portals intentionally
+reset it and start their AccessKit subtree at the window root. An invalid transform, clip, or
+backend conversion suppresses the affected subtree across paint, input, focus/IME, debug,
+deferred/cache, and accessibility; there is no rectangle fallback.
+Arbitrary path clips, fill rules, stencil/tessellation controls, and silent native-surface fallbacks
+remain unsupported. See [ADR 0026](../adr/0026-open-gpui-rounded-subtree-clip-authority.md) for the
+renderer and failure contract.
+
 ## Layout-Preserving Subtree Presentation
 
 `Style::visibility`, the generated Serde/schema `StyleRefinement::visibility` field,
@@ -914,8 +985,8 @@ Overlay inside regions now use the same checked displayed geometry, so transform
 surface bounds are not misclassified as outside presses.
 The low-level `WindowOverlayRuntime::set_inside_region` entry point is replaced by
 `set_element_inside_region` without an alias. Pass element layout bounds during prepaint; the
-runtime now atomically applies `Window::try_element_geometry` and the effective content mask. The
-standard runtime surface wrapper remains preferred.
+runtime captures `Window::hit_test_snapshot` with the exact active clip stack. The standard runtime
+surface wrapper remains preferred.
 
 Standalone Tooltip is the official component whose target and surface may be authored separately.
 Pass the same retained handle to both sides and observe controlled unlink through the new callback:

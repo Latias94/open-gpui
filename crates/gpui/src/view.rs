@@ -1,8 +1,8 @@
 use crate::{
-    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
-    Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
-    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, SubtreePresentation, TextStyle,
-    WeakEntity, geometry::ResolvedSubtreeTransform,
+    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, Context, Element, ElementId, Entity,
+    EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex, Pixels,
+    PrepaintStateIndex, Render, Style, StyleRefinement, SubtreePresentation, TextStyle, WeakEntity,
+    geometry::ResolvedSubtreeTransform,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -22,7 +22,7 @@ struct AnyViewState {
 #[derive(Default)]
 struct ViewCacheKey {
     bounds: Bounds<Pixels>,
-    content_mask: ContentMask<Pixels>,
+    clip_stack: crate::geometry::ClipStackSnapshot,
     text_style: TextStyle,
     subtree_presentation: SubtreePresentation,
     subtree_transform: ResolvedSubtreeTransform,
@@ -152,14 +152,14 @@ impl Element for AnyView {
             window.with_element_state::<AnyViewState, _>(
                 global_id.unwrap(),
                 |element_state, window| {
-                    let content_mask = window.content_mask();
+                    let clip_stack = window.clip_stack();
                     let text_style = window.text_style();
                     let subtree_presentation = window.subtree_presentation();
                     let subtree_transform = window.subtree_transform();
 
                     if let Some(mut element_state) = element_state
                         && element_state.cache_key.bounds == bounds
-                        && element_state.cache_key.content_mask == content_mask
+                        && element_state.cache_key.clip_stack == clip_stack
                         && element_state.cache_key.text_style == text_style
                         && element_state.cache_key.subtree_presentation == subtree_presentation
                         && element_state.cache_key.subtree_transform == subtree_transform
@@ -202,7 +202,7 @@ impl Element for AnyView {
                             paint_range: PaintIndex::default()..PaintIndex::default(),
                             cache_key: ViewCacheKey {
                                 bounds,
-                                content_mask,
+                                clip_stack,
                                 text_style,
                                 subtree_presentation,
                                 subtree_transform,

@@ -1,7 +1,7 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Pixels, Point, PortalAnchorHandle,
-    PortalAnchorSnapshot, Style, SubtreeTransformValidity, Window,
+    PortalAnchorSnapshot, Style, SubtreeGeometryValidity, Window,
 };
 
 type PortalAnchorFollowerBuilder =
@@ -182,7 +182,7 @@ impl Element for PortalAnchorFollower {
             .record_portal_anchor_dependency(&self.handle)
             .unwrap_or_else(|error| panic!("failed to record portal anchor dependency: {error}"));
         let task = task.take().expect("portal anchor follower task missing");
-        window.defer_draw(task, window.element_offset(), self.priority, None);
+        window.defer_draw(task, window.element_offset(), self.priority);
     }
 
     fn paint(
@@ -213,7 +213,7 @@ struct PortalAnchorFollowerTask {
 
 struct PreparedPortalAnchorFollower {
     child: AnyElement,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 impl Element for PortalAnchorFollowerTask {
@@ -257,16 +257,15 @@ impl Element for PortalAnchorFollowerTask {
                     return None;
                 };
                 child.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let validity = window.subtree_transform_validity();
+                let validity = window.subtree_geometry_validity();
                 if validity
                     .as_ref()
-                    .is_none_or(SubtreeTransformValidity::is_valid)
+                    .is_none_or(SubtreeGeometryValidity::is_valid)
                 {
                     let prepaint_validity = validity.clone();
-                    let result = window.transact_subtree_transform(validity.clone(), |window| {
+                    let result = window.transact_subtree_geometry(validity.clone(), |window| {
                         window.with_window_space_portal_prepaint(
                             Point::default(),
-                            None,
                             prepaint_validity,
                             |window| child.prepaint(window, cx),
                         )
@@ -274,7 +273,7 @@ impl Element for PortalAnchorFollowerTask {
                     if result.is_err()
                         && let Some(validity) = validity.as_ref()
                     {
-                        window.record_subtree_transform_scope_diagnostic(validity);
+                        window.record_subtree_geometry_scope_diagnostic(validity);
                     }
                 }
                 Some(PreparedPortalAnchorFollower { child, validity })
@@ -302,11 +301,11 @@ impl Element for PortalAnchorFollowerTask {
         {
             return;
         }
-        window.with_window_space_portal_paint(None, prepared.validity.clone(), |window| {
+        window.with_window_space_portal_paint(prepared.validity.clone(), |window| {
             prepared.child.paint(window, cx)
         });
         if let Some(validity) = prepared.validity.as_ref() {
-            window.record_subtree_transform_scope_diagnostic(validity);
+            window.record_subtree_geometry_scope_diagnostic(validity);
         }
     }
 }

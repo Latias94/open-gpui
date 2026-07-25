@@ -1,6 +1,6 @@
 use crate::{
     Bounds, ElementGeometry, LayoutId, Pixels, SubtreePresentation, Window, WindowId,
-    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    geometry::{ResolvedSubtreeTransform, SubtreeGeometryValidity},
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, rc::Rc};
@@ -109,7 +109,7 @@ pub(super) struct PortalAnchorCapture {
     root_layout_ids: SmallVec<[LayoutId; 2]>,
     layout_bounds: Bounds<Pixels>,
     transform: ResolvedSubtreeTransform,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
     presentation: SubtreePresentation,
     effective_clip_bounds: Bounds<Pixels>,
     failed: bool,
@@ -121,7 +121,7 @@ impl PortalAnchorCapture {
         layout_id: LayoutId,
         layout_bounds: Bounds<Pixels>,
         transform: ResolvedSubtreeTransform,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
         presentation: SubtreePresentation,
         effective_clip_bounds: Bounds<Pixels>,
     ) -> Self {
@@ -180,7 +180,7 @@ impl PortalAnchorBinding {
 
     /// Replays already-resolved window-space facts under an unchanged view cache key.
     ///
-    /// Bounds, presentation, transform, and content-mask changes rebuild the cached view. A valid
+    /// Bounds, presentation, transform, and clip-stack changes rebuild the cached view. A valid
     /// journal replay therefore changes only the owning frame generation.
     pub(super) fn replayed(&self, frame_generation: u64) -> Self {
         let snapshot = self.snapshot.map(|mut snapshot| {
@@ -230,7 +230,7 @@ impl Window {
                     frame_generation: self.next_frame.generation,
                     geometry,
                     presentation,
-                    effective_clip_bounds: self.content_mask().bounds,
+                    effective_clip_bounds: self.clip_bounds(),
                 })
         } else {
             None
@@ -241,7 +241,7 @@ impl Window {
                     handle: *handle,
                     snapshot,
                 },
-                self.subtree_transform_validity(),
+                self.subtree_geometry_validity(),
             ));
         Ok(())
     }
@@ -266,9 +266,9 @@ impl Window {
             layout_id,
             layout_bounds,
             self.subtree_transform(),
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
             self.subtree_presentation(),
-            self.content_mask().bounds,
+            self.clip_bounds(),
         ));
         let _guard = PortalAnchorCaptureGuard {
             stack: stack.clone(),
@@ -304,7 +304,7 @@ impl Window {
             && capture
                 .validity
                 .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .is_none_or(SubtreeGeometryValidity::is_valid)
         {
             match capture.transform.try_project_bounds(capture.layout_bounds) {
                 Ok(displayed_bounds) => Some(PortalAnchorSnapshot {
@@ -357,7 +357,7 @@ impl Window {
     pub(crate) fn update_portal_anchor_transform(
         &mut self,
         transform: ResolvedSubtreeTransform,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
     ) {
         let Some(layout_id) = self.current_prepaint_layout_id() else {
             return;
@@ -455,7 +455,7 @@ impl Window {
         if building_frame && snapshot.is_some() {
             let transform = self.subtree_transform();
             let validity =
-                SubtreeTransformValidity::joined(self.subtree_transform_validity(), dependency);
+                SubtreeGeometryValidity::joined(self.subtree_geometry_validity(), dependency);
             Ok(
                 self.with_resolved_subtree_transform(transform, validity, |window| {
                     resolve(snapshot, window)

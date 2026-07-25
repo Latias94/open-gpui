@@ -128,6 +128,10 @@ impl WindowInvalidator {
         )
     }
 
+    pub fn is_prepaint(&self) -> bool {
+        self.inner.borrow().draw_phase == DrawPhase::Prepaint
+    }
+
     #[track_caller]
     pub fn debug_assert_paint(&self) {
         debug_assert!(

@@ -1604,6 +1604,9 @@ mod presentation_tests;
 mod transform_tests;
 
 #[cfg(test)]
+mod clip_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         AnyDrag, AnyView, AppContext as _, Context, CursorStyle, Empty, Entity, FocusHandle,

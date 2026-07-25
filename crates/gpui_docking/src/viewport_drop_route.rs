@@ -83,6 +83,8 @@ impl DockViewportAdapter {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
     use super::*;
     use crate::{
         DockPolicy, DockPolicyError, DockViewportHostGeometry, DockViewportRouteSelectionSource,
@@ -92,7 +94,10 @@ mod tests {
         viewport_registry::{DockViewportInputMask, DockViewportWindowBoundsFrame},
         viewport_test_support::{bounds, handle, item, register_viewport, space},
     };
-    use open_gpui::{DisplayId, WindowBounds, point, px};
+    use open_gpui::{
+        Corners, DisplayId, HitboxBehavior, Styled, SubtreeClip, SubtreeClipExt, TestAppContext,
+        WindowBounds, canvas, point, px, size,
+    };
     use slotmap::Key;
 
     fn signals_with_receiver(
@@ -109,6 +114,43 @@ mod tests {
         generation: u64,
     ) -> DockViewportHostSceneFrame {
         DockViewportHostSceneFrame::new_for_test(space.clone(), window.window_id(), generation)
+    }
+
+    fn rounded_host_geometry(
+        cx: &mut TestAppContext,
+    ) -> (DockViewportHostGeometry, AnyWindowHandle) {
+        let committed = Rc::new(RefCell::new(None));
+        let visual = cx.add_empty_window();
+        visual.draw(point(px(0.0), px(0.0)), size(px(100.0), px(100.0)), {
+            let committed = committed.clone();
+            move |_, _| {
+                let radius = size(px(50.0), px(50.0));
+                canvas(
+                    move |bounds, window, _| {
+                        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                        *committed.borrow_mut() =
+                            Some(DockViewportHostGeometry::from_hitbox(&hitbox));
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full()
+                .with_subtree_clip(
+                    SubtreeClip::try_own_rounded_border_box(Corners {
+                        top_left: radius,
+                        top_right: radius,
+                        bottom_right: radius,
+                        bottom_left: radius,
+                    })
+                    .expect("circular host clip should be valid"),
+                )
+            }
+        });
+        let window = visual.update(|window, _| window.window_handle());
+        let geometry = committed
+            .borrow_mut()
+            .take()
+            .expect("host prepaint should commit a hit-test snapshot");
+        (geometry, window)
     }
 
     #[test]
@@ -159,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_hovered_window_rejects_host_points_clipped_by_the_committed_content_mask() {
+    fn trusted_hovered_window_rejects_points_outside_the_committed_host_hit_region() {
         let main = space("main");
         let window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -169,7 +211,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             ))),
-            DockViewportHostGeometry::identity_with_content_mask_for_test(
+            DockViewportHostGeometry::identity_with_hit_region_for_test(
                 bounds(0.0, 0.0, 320.0, 240.0),
                 bounds(0.0, 0.0, 100.0, 240.0),
             ),
@@ -207,6 +249,50 @@ mod tests {
             clipped,
             DockViewportDropRoute::Unavailable,
             "a platform-selected window must not route through the clipped part of its dock host"
+        );
+    }
+
+    #[open_gpui::test]
+    fn trusted_hovered_window_respects_the_exact_rounded_committed_host_hit_region(
+        cx: &mut TestAppContext,
+    ) {
+        let main = space("main");
+        let (geometry, window) = rounded_host_geometry(cx);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, main.clone(), window);
+        adapter.update_snapshot(
+            &main,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            geometry,
+        );
+
+        let route = |position| {
+            adapter.resolve_payload_drop_route_with_context(
+                main.clone(),
+                DockNodeId::null(),
+                DockViewportDropPayload::Item(item("a")),
+                position,
+                None,
+                &DockPolicy::default(),
+                DockViewportTargetContext::new().with_trusted_hovered_window(window),
+            )
+        };
+
+        assert_eq!(
+            route(point(px(101.0), px(101.0))),
+            DockViewportDropRoute::Unavailable,
+            "the rounded corner lies inside the host AABB but outside its committed hit region"
+        );
+        assert_eq!(
+            route(point(px(150.0), px(150.0))),
+            DockViewportDropRoute::Local {
+                host_position: point(px(50.0), px(50.0)),
+                window_id: window.window_id(),
+                facts_generation: 1,
+                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            }
         );
     }
 

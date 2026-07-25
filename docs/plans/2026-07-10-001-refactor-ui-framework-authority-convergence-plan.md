@@ -1502,13 +1502,15 @@ One checked frame-local clip authority handles rectangles and rounded rectangles
 - `crates/gpui/src/window/a11y.rs`
 - `crates/gpui/src/scene.rs`
 - `crates/gpui/src/elements/div.rs`, `deferred.rs`, `list.rs`, `uniform_list.rs`, `text.rs`, `img.rs`, and `surface.rs`
+- `crates/canvas/src/gpui/painter.rs` and `painter/primitives.rs`
+- `crates/gpui_docking/src/viewport_host_geometry.rs` and `viewport_drop_route.rs`
 - `crates/gpui_wgpu/`, `crates/gpui_windows/`, and `crates/gpui_macos/` renderer and shader contracts
 - clip tests under `crates/gpui/src/app/test_context/`, renderer crates, and `examples/ui-foundation-gallery/`
 - clip API, renderer ABI, ADR, migration, accessibility-limit, and verification documentation
 
 **Behavioral work**
 
-- Start with a renderer/ABI design checkpoint that fixes the child-local coordinate space, border-box reference, own-bounds shorthand, radius normalization timing, nesting limits or storage strategy, primitive payload layout, native-surface policy, and fail-closed conversion behavior across WGPU, DirectX, and Metal. Do not publish the public wrapper until this checkpoint is reviewable on all supported backends.
+- Start with the accepted renderer/ABI checkpoint in ADR 0026. Public declarations are child-local and border-box relative; checked constructors normalize finite non-negative elliptical radii before U12 projection; `SubtreeGeometryValidity` suppresses all affected channels on transform, clip, or device-conversion failure; target capability excludes unsupported native-surface APIs before Scene submission; `ClipStackSnapshot` is the immutable frame/journal/hit snapshot; the Scene owns a dynamically sized deduplicated flattened clip arena; each primitive carries `conservative_bounds + first_clip + clip_count`; and WGPU, DirectX, and Metal consume one shared exact clip-shape ABI. Cache replay and `Scene::finish` import/remap ranges. Do not publish the public wrapper until this checkpoint is reviewable on all supported backends.
 - Define public clip bounds in zero-origin child-local logical coordinates relative to the child's post-layout border box. Provide an own-border-box shorthand; explicit bounds remain in that same local space. Normalize non-negative finite elliptical radii against the declared local clip box before U12 projection, preserve the resulting ellipses under non-uniform scale, and reject unrepresentable projection instead of clamping into a different shape after composition.
 - Replace the rectangle-only `ContentMask` stack with one resolved clip stack. Existing overflow/content-mask call sites become inputs to the same authority and remain fast rectangular paths where possible.
 - Carry the exact nested stack through every scene primitive and renderer batch. Culling may use conservative AABBs, but final fragment coverage and hit containment cannot collapse rounded intersections to a single rectangle.
@@ -1516,6 +1518,8 @@ One checked frame-local clip authority handles rectangles and rounded rectangles
 - Make ordinary deferred and cached descendants inherit and replay the clip under current transforms. The named window-space portal resets clip ancestry deliberately. Numeric or backend conversion failure suppresses the complete affected subtree transaction across paint, hit/input, focus/IME, debug, deferred/cache, and accessibility.
 - Update U15 portal-anchor snapshots from the new resolved stack. Their effective clip remains a conservative committed window-space AABB, with rounded/nested containment retained privately for paint and hit testing; transform, cache replay, and portal reset must not publish a stale rectangle.
 - Project accessibility conservatively: fully clipped nodes are absent, partially clipped nodes retain an AABB intersection, and the clip owner exposes `clips_children` where supported. Document that AccessKit cannot express rounded hit regions.
+- Gate accessibility publication through the shared CPU exact-visibility query. It must return a conservative AABB and a point proven inside the candidate and every clip; uncertain or boundary-only intersections fail closed, and built-in fallback `Click` uses that witness rather than the AABB center.
+- Resolve Canvas clips during prepaint into an opaque window/frame/validity-bound token and permit paint to re-enter only that token. For style overflow, model one-axis clipping as an inherited-stack rectangular strip and derive two-axis padding-box ellipses from asymmetric borders before shared normalization. Dock route snapshots retain validity and presentation eligibility as well as exact geometry.
 - Define native paint-surface behavior explicitly. A backend unable to apply the resolved clip rejects or isolates the combination; it never paints outside the shape while reporting success.
 - Add a Gallery matrix for rectangular, symmetric/asymmetric rounded, nested, transformed, scrolling, deferred, image/text/surface, and interactive clips.
 

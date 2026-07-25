@@ -3801,6 +3801,770 @@ impl SubtreeTransformOrigin {
     }
 }
 
+/// Why a subtree clip declaration cannot be represented by GPUI's finite geometry contract.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum SubtreeClipError {
+    /// The declared clip box must contain only finite logical-pixel values.
+    #[error("subtree clip bounds must be finite")]
+    NonFiniteBounds,
+    /// The declared clip box cannot have a negative width or height.
+    #[error("subtree clip size must be non-negative")]
+    NegativeSize,
+    /// Every elliptical radius component must be finite.
+    #[error("subtree clip radii must be finite")]
+    NonFiniteRadius,
+    /// Every elliptical radius component must be non-negative.
+    #[error("subtree clip radii must be non-negative")]
+    NegativeRadius,
+    /// A resolved or scaled clip exceeded the finite scene representation.
+    #[error("subtree clip result is not representable")]
+    UnrepresentableResult,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SubtreeGeometryError {
+    Transform(SubtreeTransformError),
+    Clip(SubtreeClipError),
+    DeviceConversion,
+}
+
+impl From<SubtreeTransformError> for SubtreeGeometryError {
+    fn from(error: SubtreeTransformError) -> Self {
+        Self::Transform(error)
+    }
+}
+
+impl From<SubtreeClipError> for SubtreeGeometryError {
+    fn from(error: SubtreeClipError) -> Self {
+        Self::Clip(error)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum SubtreeClipBounds {
+    OwnBorderBox,
+    Explicit(Bounds<Pixels>),
+}
+
+/// A checked layout-neutral rectangle or rounded rectangle that clips one element subtree.
+///
+/// Explicit bounds use zero-origin child-local logical coordinates relative to the child's
+/// post-layout border box. Use [`Self::own_border_box`] when the clip should exactly follow that
+/// border box.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SubtreeClip {
+    bounds: SubtreeClipBounds,
+    radii: Corners<Size<Pixels>>,
+    axes: Point<bool>,
+}
+
+impl SubtreeClip {
+    /// Creates a rectangular clip that follows the child's own post-layout border box.
+    pub fn own_border_box() -> Self {
+        Self {
+            bounds: SubtreeClipBounds::OwnBorderBox,
+            radii: Corners::default(),
+            axes: point(true, true),
+        }
+    }
+
+    /// Creates a checked rounded clip that follows the child's own post-layout border box.
+    pub fn try_own_rounded_border_box(
+        radii: Corners<Size<Pixels>>,
+    ) -> Result<Self, SubtreeClipError> {
+        validate_clip_radii(&radii)?;
+        Ok(Self {
+            bounds: SubtreeClipBounds::OwnBorderBox,
+            radii,
+            axes: point(true, true),
+        })
+    }
+
+    /// Creates a checked rectangular clip in child-local post-layout coordinates.
+    pub fn try_rect(bounds: Bounds<Pixels>) -> Result<Self, SubtreeClipError> {
+        validate_clip_bounds(bounds)?;
+        Ok(Self {
+            bounds: SubtreeClipBounds::Explicit(bounds),
+            radii: Corners::default(),
+            axes: point(true, true),
+        })
+    }
+
+    /// Creates a checked rounded clip in child-local post-layout coordinates.
+    pub fn try_rounded_rect(
+        bounds: Bounds<Pixels>,
+        radii: Corners<Size<Pixels>>,
+    ) -> Result<Self, SubtreeClipError> {
+        validate_clip_bounds(bounds)?;
+        validate_clip_radii(&radii)?;
+        Ok(Self {
+            bounds: SubtreeClipBounds::Explicit(bounds),
+            radii: normalize_clip_radii(bounds.size, radii),
+            axes: point(true, true),
+        })
+    }
+
+    pub(crate) fn try_axis_strip(
+        bounds: Bounds<Pixels>,
+        clip_x: bool,
+        clip_y: bool,
+    ) -> Result<Self, SubtreeClipError> {
+        validate_clip_bounds(bounds)?;
+        debug_assert!(clip_x || clip_y);
+        Ok(Self {
+            bounds: SubtreeClipBounds::Explicit(bounds),
+            radii: Corners::default(),
+            axes: point(clip_x, clip_y),
+        })
+    }
+
+    pub(crate) fn resolve_with_accessibility_axes(
+        &self,
+        child_bounds: Bounds<Pixels>,
+        transform: ResolvedSubtreeTransform,
+        inherited_bounds: Bounds<Pixels>,
+        accessibility_axes: Point<bool>,
+    ) -> Result<ResolvedClip, SubtreeClipError> {
+        validate_clip_bounds(child_bounds)?;
+        let local_bounds = match self.bounds {
+            SubtreeClipBounds::OwnBorderBox => Bounds::new(Point::default(), child_bounds.size),
+            SubtreeClipBounds::Explicit(bounds) => bounds,
+        };
+        let radii = normalize_clip_radii(local_bounds.size, self.radii.clone());
+        let layout_bounds = Bounds::new(
+            checked_clip_point_sum(child_bounds.origin, local_bounds.origin)?,
+            local_bounds.size,
+        );
+        let mut bounds = transform
+            .try_project_bounds(layout_bounds)
+            .map_err(|_| SubtreeClipError::UnrepresentableResult)?;
+        if !self.axes.x {
+            bounds.origin.x = inherited_bounds.origin.x;
+            bounds.size.width = inherited_bounds.size.width;
+        }
+        if !self.axes.y {
+            bounds.origin.y = inherited_bounds.origin.y;
+            bounds.size.height = inherited_bounds.size.height;
+        }
+        let scale = transform.scale();
+        let radii_x = Corners {
+            top_left: checked_clip_scale(scale.width, radii.top_left.width)?,
+            top_right: checked_clip_scale(scale.width, radii.top_right.width)?,
+            bottom_right: checked_clip_scale(scale.width, radii.bottom_right.width)?,
+            bottom_left: checked_clip_scale(scale.width, radii.bottom_left.width)?,
+        };
+        let radii_y = Corners {
+            top_left: checked_clip_scale(scale.height, radii.top_left.height)?,
+            top_right: checked_clip_scale(scale.height, radii.top_right.height)?,
+            bottom_right: checked_clip_scale(scale.height, radii.bottom_right.height)?,
+            bottom_left: checked_clip_scale(scale.height, radii.bottom_left.height)?,
+        };
+        let accessibility_axes = point(
+            self.axes.x && accessibility_axes.x,
+            self.axes.y && accessibility_axes.y,
+        );
+        let scroll_reveal_axes = point(
+            self.axes.x && !accessibility_axes.x,
+            self.axes.y && !accessibility_axes.y,
+        );
+        ResolvedClip::try_new(
+            bounds,
+            radii_x,
+            radii_y,
+            accessibility_axes,
+            scroll_reveal_axes,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ResolvedClip {
+    bounds: Bounds<Pixels>,
+    radii_x: Corners<Pixels>,
+    radii_y: Corners<Pixels>,
+    accessibility_axes: Point<bool>,
+    scroll_reveal_axes: Point<bool>,
+}
+
+impl ResolvedClip {
+    pub(crate) fn rectangle(bounds: Bounds<Pixels>) -> Self {
+        Self {
+            bounds,
+            radii_x: Corners::default(),
+            radii_y: Corners::default(),
+            accessibility_axes: point(false, false),
+            scroll_reveal_axes: point(false, false),
+        }
+    }
+
+    fn try_new(
+        bounds: Bounds<Pixels>,
+        radii_x: Corners<Pixels>,
+        radii_y: Corners<Pixels>,
+        accessibility_axes: Point<bool>,
+        scroll_reveal_axes: Point<bool>,
+    ) -> Result<Self, SubtreeClipError> {
+        validate_clip_bounds(bounds)?;
+        let radii = Corners {
+            top_left: size(radii_x.top_left, radii_y.top_left),
+            top_right: size(radii_x.top_right, radii_y.top_right),
+            bottom_right: size(radii_x.bottom_right, radii_y.bottom_right),
+            bottom_left: size(radii_x.bottom_left, radii_y.bottom_left),
+        };
+        validate_clip_radii(&radii)?;
+        Ok(Self {
+            bounds,
+            radii_x,
+            radii_y,
+            accessibility_axes,
+            scroll_reveal_axes,
+        })
+    }
+
+    pub(crate) fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds
+    }
+
+    pub(crate) fn radii_x(&self) -> Corners<Pixels> {
+        self.radii_x
+    }
+
+    pub(crate) fn radii_y(&self) -> Corners<Pixels> {
+        self.radii_y
+    }
+
+    pub(crate) fn contains(&self, point: Point<Pixels>) -> bool {
+        if self.bounds.is_empty()
+            || point.x < self.bounds.left()
+            || point.x > self.bounds.right()
+            || point.y < self.bounds.top()
+            || point.y > self.bounds.bottom()
+        {
+            return false;
+        }
+
+        let left = self.bounds.left().0;
+        let right = self.bounds.right().0;
+        let top = self.bounds.top().0;
+        let bottom = self.bounds.bottom().0;
+        let x = point.x.0;
+        let y = point.y.0;
+
+        corner_contains(
+            x,
+            y,
+            left + self.radii_x.top_left.0,
+            top + self.radii_y.top_left.0,
+            self.radii_x.top_left.0,
+            self.radii_y.top_left.0,
+            x < left + self.radii_x.top_left.0 && y < top + self.radii_y.top_left.0,
+        ) && corner_contains(
+            x,
+            y,
+            right - self.radii_x.top_right.0,
+            top + self.radii_y.top_right.0,
+            self.radii_x.top_right.0,
+            self.radii_y.top_right.0,
+            x > right - self.radii_x.top_right.0 && y < top + self.radii_y.top_right.0,
+        ) && corner_contains(
+            x,
+            y,
+            right - self.radii_x.bottom_right.0,
+            bottom - self.radii_y.bottom_right.0,
+            self.radii_x.bottom_right.0,
+            self.radii_y.bottom_right.0,
+            x > right - self.radii_x.bottom_right.0 && y > bottom - self.radii_y.bottom_right.0,
+        ) && corner_contains(
+            x,
+            y,
+            left + self.radii_x.bottom_left.0,
+            bottom - self.radii_y.bottom_left.0,
+            self.radii_x.bottom_left.0,
+            self.radii_y.bottom_left.0,
+            x < left + self.radii_x.bottom_left.0 && y > bottom - self.radii_y.bottom_left.0,
+        )
+    }
+
+    fn constrain_accessibility_bounds_with_axes(
+        &self,
+        candidate_bounds: Bounds<Pixels>,
+        accessibility_axes: Point<bool>,
+    ) -> Bounds<Pixels> {
+        let origin = point(
+            if accessibility_axes.x {
+                candidate_bounds.left().max(self.bounds.left())
+            } else {
+                candidate_bounds.left()
+            },
+            if accessibility_axes.y {
+                candidate_bounds.top().max(self.bounds.top())
+            } else {
+                candidate_bounds.top()
+            },
+        );
+        let bottom_right = point(
+            if accessibility_axes.x {
+                candidate_bounds
+                    .right()
+                    .min(self.bounds.right())
+                    .max(origin.x)
+            } else {
+                candidate_bounds.right()
+            },
+            if accessibility_axes.y {
+                candidate_bounds
+                    .bottom()
+                    .min(self.bounds.bottom())
+                    .max(origin.y)
+            } else {
+                candidate_bounds.bottom()
+            },
+        );
+        Bounds::from_corners(origin, bottom_right)
+    }
+
+    fn contains_for_accessibility_with_axes(
+        &self,
+        point: Point<Pixels>,
+        accessibility_axes: Point<bool>,
+    ) -> bool {
+        match (accessibility_axes.x, accessibility_axes.y) {
+            (false, false) => true,
+            (true, true) => self.contains(point),
+            (true, false) => {
+                self.bounds.size.width > Pixels::ZERO
+                    && point.x >= self.bounds.left()
+                    && point.x <= self.bounds.right()
+            }
+            (false, true) => {
+                self.bounds.size.height > Pixels::ZERO
+                    && point.y >= self.bounds.top()
+                    && point.y <= self.bounds.bottom()
+            }
+        }
+    }
+
+    fn contains_interior(&self, point: Point<Pixels>) -> bool {
+        if self.bounds.is_empty()
+            || point.x <= self.bounds.left()
+            || point.x >= self.bounds.right()
+            || point.y <= self.bounds.top()
+            || point.y >= self.bounds.bottom()
+        {
+            return false;
+        }
+
+        let left = self.bounds.left().0;
+        let right = self.bounds.right().0;
+        let top = self.bounds.top().0;
+        let bottom = self.bounds.bottom().0;
+        let x = point.x.0;
+        let y = point.y.0;
+
+        corner_contains_interior(
+            x,
+            y,
+            left + self.radii_x.top_left.0,
+            top + self.radii_y.top_left.0,
+            self.radii_x.top_left.0,
+            self.radii_y.top_left.0,
+            x < left + self.radii_x.top_left.0 && y < top + self.radii_y.top_left.0,
+        ) && corner_contains_interior(
+            x,
+            y,
+            right - self.radii_x.top_right.0,
+            top + self.radii_y.top_right.0,
+            self.radii_x.top_right.0,
+            self.radii_y.top_right.0,
+            x > right - self.radii_x.top_right.0 && y < top + self.radii_y.top_right.0,
+        ) && corner_contains_interior(
+            x,
+            y,
+            right - self.radii_x.bottom_right.0,
+            bottom - self.radii_y.bottom_right.0,
+            self.radii_x.bottom_right.0,
+            self.radii_y.bottom_right.0,
+            x > right - self.radii_x.bottom_right.0 && y > bottom - self.radii_y.bottom_right.0,
+        ) && corner_contains_interior(
+            x,
+            y,
+            left + self.radii_x.bottom_left.0,
+            bottom - self.radii_y.bottom_left.0,
+            self.radii_x.bottom_left.0,
+            self.radii_y.bottom_left.0,
+            x < left + self.radii_x.bottom_left.0 && y > bottom - self.radii_y.bottom_left.0,
+        )
+    }
+
+    fn contains_accessibility_interior_with_axes(
+        &self,
+        point: Point<Pixels>,
+        accessibility_axes: Point<bool>,
+    ) -> bool {
+        match (accessibility_axes.x, accessibility_axes.y) {
+            (false, false) => true,
+            (true, true) => self.contains_interior(point),
+            (true, false) => {
+                self.bounds.size.width > Pixels::ZERO
+                    && point.x > self.bounds.left()
+                    && point.x < self.bounds.right()
+            }
+            (false, true) => {
+                self.bounds.size.height > Pixels::ZERO
+                    && point.y > self.bounds.top()
+                    && point.y < self.bounds.bottom()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AccessibilityClip<'a> {
+    clip: &'a ResolvedClip,
+    axes: Point<bool>,
+}
+
+impl AccessibilityClip<'_> {
+    fn constrain_bounds(&self, candidate_bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        self.clip
+            .constrain_accessibility_bounds_with_axes(candidate_bounds, self.axes)
+    }
+
+    fn contains(&self, point: Point<Pixels>) -> bool {
+        self.clip
+            .contains_for_accessibility_with_axes(point, self.axes)
+    }
+
+    fn contains_interior(&self, point: Point<Pixels>) -> bool {
+        self.clip
+            .contains_accessibility_interior_with_axes(point, self.axes)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ClipStackSnapshot {
+    clips: Rc<[ResolvedClip]>,
+    conservative_bounds: Bounds<Pixels>,
+}
+
+impl ClipStackSnapshot {
+    pub(crate) fn root(viewport_bounds: Bounds<Pixels>) -> Self {
+        let clip = ResolvedClip::rectangle(viewport_bounds);
+        Self {
+            clips: Rc::from([clip]),
+            conservative_bounds: viewport_bounds,
+        }
+    }
+
+    pub(crate) fn push(&self, clip: ResolvedClip) -> Self {
+        let conservative_bounds = self.conservative_bounds.intersect(&clip.bounds());
+        let mut clips = Vec::with_capacity(self.clips.len() + 1);
+        clips.extend(self.clips.iter().cloned());
+        clips.push(clip);
+        Self {
+            clips: clips.into(),
+            conservative_bounds,
+        }
+    }
+
+    pub(crate) fn conservative_bounds(&self) -> Bounds<Pixels> {
+        self.conservative_bounds
+    }
+
+    pub(crate) fn contains(&self, point: Point<Pixels>) -> bool {
+        !self.clips.is_empty()
+            && self.conservative_bounds.contains(&point)
+            && self.clips.iter().all(|clip| clip.contains(point))
+    }
+
+    pub(crate) fn clips(&self) -> &[ResolvedClip] {
+        &self.clips
+    }
+
+    /// Returns the semantic bounds and an optional pointer-safe click witness for an AccessKit
+    /// node. Window and scroll viewport clips remain in the visual stack, but do not by
+    /// themselves remove scrollable off-screen semantics.
+    pub(crate) fn accessibility_region(
+        &self,
+        candidate_bounds: Bounds<Pixels>,
+    ) -> Option<(Bounds<Pixels>, Option<Point<Pixels>>)> {
+        if self.clips.is_empty()
+            || !candidate_bounds.origin.x.0.is_finite()
+            || !candidate_bounds.origin.y.0.is_finite()
+            || !candidate_bounds.size.width.0.is_finite()
+            || !candidate_bounds.size.height.0.is_finite()
+        {
+            return None;
+        }
+
+        let accessibility_clips = self.accessibility_clips();
+        let semantic_bounds = accessibility_clips
+            .iter()
+            .fold(candidate_bounds, |bounds, clip| {
+                clip.constrain_bounds(bounds)
+            });
+        if !semantic_bounds.origin.x.0.is_finite()
+            || !semantic_bounds.origin.y.0.is_finite()
+            || !semantic_bounds.size.width.0.is_finite()
+            || !semantic_bounds.size.height.0.is_finite()
+        {
+            return None;
+        }
+
+        // AccessKit structural nodes and nodes with explicit action listeners may legitimately
+        // have zero-area layout bounds. Preserve them when their anchor remains inside every
+        // semantic clip, but do not manufacture a pointer witness for built-in Click fallback.
+        if semantic_bounds.is_empty() {
+            return accessibility_clips
+                .iter()
+                .all(|clip| clip.contains(candidate_bounds.origin))
+                .then_some((semantic_bounds, None));
+        }
+
+        // A semantic node needs an exact interior point inside every semantic clip. The bounded
+        // search may reject a numerically tiny curved sliver, which is the intentional
+        // fail-closed behavior when AccessKit cannot represent the intersection.
+        Self::semantic_interior_witness(&accessibility_clips, semantic_bounds, candidate_bounds)?;
+
+        // Built-in Click fallback is stricter than semantic publication: it must have a point
+        // that the full visual and pointer clip stack will still accept. A scrollable off-screen
+        // node is therefore exposed for ScrollIntoView without synthesizing an invalid click.
+        let pointer_bounds = candidate_bounds.intersect(&self.conservative_bounds);
+        let pointer_witness = (!pointer_bounds.is_empty())
+            .then(|| self.interior_witness(pointer_bounds, candidate_bounds, false))
+            .flatten();
+        Some((semantic_bounds, pointer_witness))
+    }
+
+    fn accessibility_clips(&self) -> Vec<AccessibilityClip<'_>> {
+        let mut accessibility_clips = Vec::with_capacity(self.clips.len());
+        for clip in self.clips.iter() {
+            let scroll_reveal_axes = clip.scroll_reveal_axes;
+            // A scroll viewport may release only earlier constraints after the viewport itself
+            // has a semantic interior. An offscreen nested viewport therefore cannot make an
+            // unrelated hidden ancestor reachable.
+            if (scroll_reveal_axes.x || scroll_reveal_axes.y)
+                && Self::semantic_region(&accessibility_clips, clip.bounds).is_some()
+            {
+                for prior_clip in &mut accessibility_clips {
+                    if scroll_reveal_axes.x {
+                        prior_clip.axes.x = false;
+                    }
+                    if scroll_reveal_axes.y {
+                        prior_clip.axes.y = false;
+                    }
+                }
+            }
+
+            if clip.accessibility_axes.x || clip.accessibility_axes.y {
+                accessibility_clips.push(AccessibilityClip {
+                    clip,
+                    axes: clip.accessibility_axes,
+                });
+            }
+        }
+        accessibility_clips
+    }
+
+    fn semantic_region(
+        clips: &[AccessibilityClip<'_>],
+        candidate_bounds: Bounds<Pixels>,
+    ) -> Option<Bounds<Pixels>> {
+        let semantic_bounds = clips.iter().fold(candidate_bounds, |bounds, clip| {
+            clip.constrain_bounds(bounds)
+        });
+        (!semantic_bounds.is_empty())
+            .then(|| Self::semantic_interior_witness(clips, semantic_bounds, candidate_bounds))
+            .flatten()
+            .map(|_| semantic_bounds)
+    }
+
+    fn semantic_interior_witness(
+        clips: &[AccessibilityClip<'_>],
+        visible_bounds: Bounds<Pixels>,
+        candidate_bounds: Bounds<Pixels>,
+    ) -> Option<Point<Pixels>> {
+        const GRID_SIZE: usize = 9;
+        for row in 0..GRID_SIZE {
+            let y_fraction = (row as f32 + 0.5) / GRID_SIZE as f32;
+            for column in 0..GRID_SIZE {
+                let x_fraction = (column as f32 + 0.5) / GRID_SIZE as f32;
+                let witness = point(
+                    px(visible_bounds.left().0 + visible_bounds.size.width.0 * x_fraction),
+                    px(visible_bounds.top().0 + visible_bounds.size.height.0 * y_fraction),
+                );
+                if witness.x > candidate_bounds.left()
+                    && witness.x < candidate_bounds.right()
+                    && witness.y > candidate_bounds.top()
+                    && witness.y < candidate_bounds.bottom()
+                    && clips.iter().all(|clip| clip.contains_interior(witness))
+                {
+                    return Some(witness);
+                }
+            }
+        }
+        None
+    }
+
+    fn interior_witness(
+        &self,
+        visible_bounds: Bounds<Pixels>,
+        candidate_bounds: Bounds<Pixels>,
+        semantic: bool,
+    ) -> Option<Point<Pixels>> {
+        const GRID_SIZE: usize = 9;
+        for row in 0..GRID_SIZE {
+            let y_fraction = (row as f32 + 0.5) / GRID_SIZE as f32;
+            for column in 0..GRID_SIZE {
+                let x_fraction = (column as f32 + 0.5) / GRID_SIZE as f32;
+                let witness = point(
+                    px(visible_bounds.left().0 + visible_bounds.size.width.0 * x_fraction),
+                    px(visible_bounds.top().0 + visible_bounds.size.height.0 * y_fraction),
+                );
+                if witness.x > candidate_bounds.left()
+                    && witness.x < candidate_bounds.right()
+                    && witness.y > candidate_bounds.top()
+                    && witness.y < candidate_bounds.bottom()
+                    && self.clips.iter().all(|clip| {
+                        if semantic {
+                            clip.contains_accessibility_interior_with_axes(
+                                witness,
+                                clip.accessibility_axes,
+                            )
+                        } else {
+                            clip.contains_interior(witness)
+                        }
+                    })
+                {
+                    return Some(witness);
+                }
+            }
+        }
+        None
+    }
+}
+
+fn validate_clip_bounds(bounds: Bounds<Pixels>) -> Result<(), SubtreeClipError> {
+    if !bounds.origin.x.0.is_finite()
+        || !bounds.origin.y.0.is_finite()
+        || !bounds.size.width.0.is_finite()
+        || !bounds.size.height.0.is_finite()
+    {
+        return Err(SubtreeClipError::NonFiniteBounds);
+    }
+    if bounds.size.width < Pixels::ZERO || bounds.size.height < Pixels::ZERO {
+        return Err(SubtreeClipError::NegativeSize);
+    }
+    Ok(())
+}
+
+fn validate_clip_radii(radii: &Corners<Size<Pixels>>) -> Result<(), SubtreeClipError> {
+    for radius in [
+        radii.top_left,
+        radii.top_right,
+        radii.bottom_right,
+        radii.bottom_left,
+    ] {
+        if !radius.width.0.is_finite() || !radius.height.0.is_finite() {
+            return Err(SubtreeClipError::NonFiniteRadius);
+        }
+        if radius.width < Pixels::ZERO || radius.height < Pixels::ZERO {
+            return Err(SubtreeClipError::NegativeRadius);
+        }
+    }
+    Ok(())
+}
+
+fn normalize_clip_radii(
+    bounds: Size<Pixels>,
+    mut radii: Corners<Size<Pixels>>,
+) -> Corners<Size<Pixels>> {
+    let mut factor = 1.0_f32;
+    for (available, sum) in [
+        (
+            bounds.width.0,
+            radii.top_left.width.0 + radii.top_right.width.0,
+        ),
+        (
+            bounds.width.0,
+            radii.bottom_left.width.0 + radii.bottom_right.width.0,
+        ),
+        (
+            bounds.height.0,
+            radii.top_left.height.0 + radii.bottom_left.height.0,
+        ),
+        (
+            bounds.height.0,
+            radii.top_right.height.0 + radii.bottom_right.height.0,
+        ),
+    ] {
+        if sum > 0.0 {
+            factor = factor.min(available / sum);
+        }
+    }
+    if factor < 1.0 {
+        radii = radii.map(|radius| size(radius.width * factor, radius.height * factor));
+    }
+    radii
+}
+
+fn checked_clip_point_sum(
+    left: Point<Pixels>,
+    right: Point<Pixels>,
+) -> Result<Point<Pixels>, SubtreeClipError> {
+    let x = left.x.0 + right.x.0;
+    let y = left.y.0 + right.y.0;
+    if x.is_finite() && y.is_finite() {
+        Ok(point(px(x), px(y)))
+    } else {
+        Err(SubtreeClipError::UnrepresentableResult)
+    }
+}
+
+fn checked_clip_scale(scale: f32, value: Pixels) -> Result<Pixels, SubtreeClipError> {
+    let result = scale * value.0;
+    if result.is_finite() && (value == Pixels::ZERO || result != 0.0) {
+        Ok(px(result))
+    } else {
+        Err(SubtreeClipError::UnrepresentableResult)
+    }
+}
+
+fn corner_contains(
+    x: f32,
+    y: f32,
+    center_x: f32,
+    center_y: f32,
+    radius_x: f32,
+    radius_y: f32,
+    in_corner: bool,
+) -> bool {
+    if !in_corner || radius_x == 0.0 || radius_y == 0.0 {
+        return true;
+    }
+    let dx = (x - center_x) / radius_x;
+    let dy = (y - center_y) / radius_y;
+    dx.mul_add(dx, dy * dy) <= 1.0
+}
+
+fn corner_contains_interior(
+    x: f32,
+    y: f32,
+    center_x: f32,
+    center_y: f32,
+    radius_x: f32,
+    radius_y: f32,
+    in_corner: bool,
+) -> bool {
+    if !in_corner || radius_x == 0.0 || radius_y == 0.0 {
+        return true;
+    }
+    let dx = (x - center_x) / radius_x;
+    let dy = (y - center_y) / radius_y;
+    dx.mul_add(dx, dy * dy) < 1.0
+}
+
 /// Why a subtree transform cannot be represented by GPUI's finite `f32` scene contract.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -4056,18 +4820,18 @@ impl ElementGeometry {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct SubtreeTransformValidity(Rc<SubtreeTransformValidityState>);
+pub(crate) struct SubtreeGeometryValidity(Rc<SubtreeGeometryValidityState>);
 
 #[derive(Debug)]
-struct SubtreeTransformValidityState {
-    parents: SmallVec<[SubtreeTransformValidity; 2]>,
-    failure: Cell<Option<SubtreeTransformError>>,
+struct SubtreeGeometryValidityState {
+    parents: SmallVec<[SubtreeGeometryValidity; 2]>,
+    failure: Cell<Option<SubtreeGeometryError>>,
     diagnostic_emitted: Cell<bool>,
 }
 
-impl SubtreeTransformValidity {
+impl SubtreeGeometryValidity {
     pub(crate) fn new(parent: Option<Self>) -> Self {
-        Self(Rc::new(SubtreeTransformValidityState {
+        Self(Rc::new(SubtreeGeometryValidityState {
             parents: parent.into_iter().collect(),
             failure: Cell::new(None),
             diagnostic_emitted: Cell::new(false),
@@ -4081,7 +4845,7 @@ impl SubtreeTransformValidity {
             (Some(first), Some(second)) if Rc::ptr_eq(&first.0, &second.0) => {
                 Some(Self::new(Some(first)))
             }
-            (Some(first), Some(second)) => Some(Self(Rc::new(SubtreeTransformValidityState {
+            (Some(first), Some(second)) => Some(Self(Rc::new(SubtreeGeometryValidityState {
                 parents: smallvec![first, second],
                 failure: Cell::new(None),
                 diagnostic_emitted: Cell::new(false),
@@ -4091,34 +4855,30 @@ impl SubtreeTransformValidity {
 
     pub(crate) fn is_valid(&self) -> bool {
         self.0.failure.get().is_none()
-            && self
-                .0
-                .parents
-                .iter()
-                .all(SubtreeTransformValidity::is_valid)
+            && self.0.parents.iter().all(SubtreeGeometryValidity::is_valid)
     }
 
-    pub(crate) fn invalidate(&self, error: SubtreeTransformError) {
+    pub(crate) fn invalidate(&self, error: impl Into<SubtreeGeometryError>) {
         if self.0.failure.get().is_none() {
-            self.0.failure.set(Some(error));
+            self.0.failure.set(Some(error.into()));
         }
     }
 
-    pub(crate) fn failure(&self) -> Option<SubtreeTransformError> {
+    pub(crate) fn failure(&self) -> Option<SubtreeGeometryError> {
         self.0.failure.get()
     }
 
-    fn effective_failure(&self) -> Option<SubtreeTransformError> {
+    fn effective_failure(&self) -> Option<SubtreeGeometryError> {
         self.failure().or_else(|| {
             self.0
                 .parents
                 .iter()
-                .find_map(SubtreeTransformValidity::effective_failure)
+                .find_map(SubtreeGeometryValidity::effective_failure)
         })
     }
 
     /// Rebinds a completed journal entry beneath the current replay scope without reviving an
-    /// entry that was suppressed by a nested transform in the recorded frame.
+    /// entry that was suppressed by a nested geometry scope in the recorded frame.
     pub(crate) fn replayed_under(recorded: Option<&Self>, parent: Option<Self>) -> Option<Self> {
         let Some(recorded) = recorded else {
             return parent;
@@ -4130,7 +4890,7 @@ impl SubtreeTransformValidity {
         Some(replayed)
     }
 
-    pub(crate) fn take_unreported_failure(&self) -> Option<SubtreeTransformError> {
+    pub(crate) fn take_unreported_failure(&self) -> Option<SubtreeGeometryError> {
         let failure = self.failure()?;
         if self.0.diagnostic_emitted.replace(true) {
             None
@@ -4582,6 +5342,20 @@ where
 mod tests {
     use super::*;
 
+    fn clip_radii(
+        top_left: (f32, f32),
+        top_right: (f32, f32),
+        bottom_right: (f32, f32),
+        bottom_left: (f32, f32),
+    ) -> Corners<Size<Pixels>> {
+        Corners {
+            top_left: size(px(top_left.0), px(top_left.1)),
+            top_right: size(px(top_right.0), px(top_right.1)),
+            bottom_right: size(px(bottom_right.0), px(bottom_right.1)),
+            bottom_left: size(px(bottom_left.0), px(bottom_left.1)),
+        }
+    }
+
     #[test]
     fn test_bounds_intersects() {
         let bounds1 = Bounds {
@@ -4970,5 +5744,250 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn subtree_clip_rejects_invalid_bounds_and_radii() {
+        assert_eq!(
+            SubtreeClip::try_rect(Bounds::new(
+                point(px(f32::NAN), Pixels::ZERO),
+                size(px(10.0), px(10.0)),
+            )),
+            Err(SubtreeClipError::NonFiniteBounds)
+        );
+        assert_eq!(
+            SubtreeClip::try_rect(Bounds::new(Point::default(), size(px(-1.0), px(10.0)),)),
+            Err(SubtreeClipError::NegativeSize)
+        );
+        assert_eq!(
+            SubtreeClip::try_rounded_rect(
+                Bounds::new(Point::default(), size(px(10.0), px(10.0))),
+                clip_radii((-1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)),
+            ),
+            Err(SubtreeClipError::NegativeRadius)
+        );
+        assert_eq!(
+            SubtreeClip::try_rounded_rect(
+                Bounds::new(Point::default(), size(px(10.0), px(10.0))),
+                clip_radii((f32::INFINITY, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0),),
+            ),
+            Err(SubtreeClipError::NonFiniteRadius)
+        );
+    }
+
+    #[test]
+    fn subtree_clip_normalizes_css_radii_before_nonuniform_projection() {
+        let child_bounds = Bounds::new(point(px(100.0), px(50.0)), size(px(100.0), px(50.0)));
+        let clip = SubtreeClip::try_rounded_rect(
+            Bounds::new(point(px(10.0), px(5.0)), size(px(100.0), px(50.0))),
+            clip_radii((80.0, 40.0), (80.0, 10.0), (10.0, 10.0), (10.0, 40.0)),
+        )
+        .unwrap();
+        let transform = ResolvedSubtreeTransform::try_from_local(
+            ResolvedSubtreeTransform::IDENTITY,
+            SubtreeTransform::try_new(
+                size(2.0, 3.0),
+                point(px(7.0), px(-11.0)),
+                SubtreeTransformOrigin::TOP_LEFT,
+            )
+            .unwrap(),
+            child_bounds,
+        )
+        .unwrap();
+        let resolved = clip
+            .resolve_with_accessibility_axes(
+                child_bounds,
+                transform,
+                Bounds::new(Point::default(), size(px(1000.0), px(1000.0))),
+                point(true, true),
+            )
+            .unwrap();
+
+        assert_eq!(
+            resolved.bounds(),
+            Bounds::new(point(px(127.0), px(54.0)), size(px(200.0), px(150.0)))
+        );
+        assert_eq!(
+            resolved.radii_x(),
+            Corners {
+                top_left: px(100.0),
+                top_right: px(100.0),
+                bottom_right: px(12.5),
+                bottom_left: px(12.5),
+            }
+        );
+        assert_eq!(
+            resolved.radii_y(),
+            Corners {
+                top_left: px(75.0),
+                top_right: px(18.75),
+                bottom_right: px(18.75),
+                bottom_left: px(75.0),
+            }
+        );
+    }
+
+    #[test]
+    fn rounded_clip_boundaries_and_nested_stacks_use_exact_containment() {
+        let bounds = Bounds::new(Point::default(), size(px(100.0), px(100.0)));
+        let first = SubtreeClip::try_rounded_rect(
+            bounds,
+            clip_radii((20.0, 20.0), (20.0, 20.0), (20.0, 20.0), (20.0, 20.0)),
+        )
+        .unwrap()
+        .resolve_with_accessibility_axes(
+            bounds,
+            ResolvedSubtreeTransform::IDENTITY,
+            bounds,
+            point(true, true),
+        )
+        .unwrap();
+
+        assert!(!first.contains(Point::default()));
+        assert!(first.contains(point(px(20.0), Pixels::ZERO)));
+        assert!(!first.contains_interior(point(px(20.0), Pixels::ZERO)));
+        assert!(first.contains(point(px(10.0), px(10.0))));
+        assert!(first.contains_interior(point(px(10.0), px(10.0))));
+
+        let second_bounds = Bounds::new(point(px(20.0), Pixels::ZERO), size(px(80.0), px(100.0)));
+        let second = SubtreeClip::try_rounded_rect(
+            second_bounds,
+            clip_radii((20.0, 20.0), (20.0, 20.0), (20.0, 20.0), (20.0, 20.0)),
+        )
+        .unwrap()
+        .resolve_with_accessibility_axes(
+            bounds,
+            ResolvedSubtreeTransform::IDENTITY,
+            bounds,
+            point(true, true),
+        )
+        .unwrap();
+        let stack = ClipStackSnapshot::root(bounds).push(first).push(second);
+
+        assert_eq!(stack.conservative_bounds(), second_bounds);
+        assert!(!stack.contains(point(px(20.0), Pixels::ZERO)));
+        assert!(stack.contains(point(px(40.0), px(20.0))));
+        assert!(
+            stack
+                .accessibility_region(Bounds::new(
+                    point(px(20.0), Pixels::ZERO),
+                    size(px(2.0), px(2.0)),
+                ))
+                .is_none()
+        );
+        let (visible_bounds, witness) = stack
+            .accessibility_region(Bounds::new(
+                point(px(20.0), Pixels::ZERO),
+                size(px(40.0), px(30.0)),
+            ))
+            .expect("the nested rounded intersection should have an interior witness");
+        let witness = witness.expect("non-empty visible bounds should retain an interior witness");
+        assert_eq!(
+            visible_bounds,
+            Bounds::new(point(px(20.0), Pixels::ZERO), size(px(40.0), px(30.0)))
+        );
+        assert!(stack.contains(witness));
+        assert!(
+            stack
+                .clips()
+                .iter()
+                .all(|clip| clip.contains_interior(witness))
+        );
+    }
+
+    #[test]
+    fn reachable_scroll_viewport_releases_only_prior_semantic_axes() {
+        let viewport = Bounds::new(Point::default(), size(px(100.0), px(100.0)));
+        let hidden = SubtreeClip::try_rect(viewport)
+            .unwrap()
+            .resolve_with_accessibility_axes(
+                viewport,
+                ResolvedSubtreeTransform::IDENTITY,
+                viewport,
+                point(true, true),
+            )
+            .unwrap();
+        let reachable_scroll = SubtreeClip::own_border_box()
+            .resolve_with_accessibility_axes(
+                viewport,
+                ResolvedSubtreeTransform::IDENTITY,
+                viewport,
+                point(true, false),
+            )
+            .unwrap();
+        let stack = ClipStackSnapshot::root(viewport)
+            .push(hidden.clone())
+            .push(reachable_scroll);
+        let offscreen_below = Bounds::new(point(px(10.0), px(220.0)), size(px(20.0), px(20.0)));
+
+        assert_eq!(
+            stack.accessibility_region(offscreen_below),
+            Some((offscreen_below, None)),
+            "a reachable vertical scroll viewport must preserve an offscreen descendant for ScrollIntoView"
+        );
+        assert!(
+            stack
+                .accessibility_region(Bounds::new(
+                    point(px(220.0), px(220.0)),
+                    size(px(20.0), px(20.0)),
+                ))
+                .is_none(),
+            "releasing vertical scroll semantics must retain the prior horizontal hidden constraint"
+        );
+
+        let unreachable_scroll_bounds =
+            Bounds::new(point(Pixels::ZERO, px(120.0)), size(px(100.0), px(100.0)));
+        let unreachable_scroll = SubtreeClip::own_border_box()
+            .resolve_with_accessibility_axes(
+                unreachable_scroll_bounds,
+                ResolvedSubtreeTransform::IDENTITY,
+                viewport,
+                point(true, false),
+            )
+            .unwrap();
+        let unreachable_stack = ClipStackSnapshot::root(viewport)
+            .push(hidden)
+            .push(unreachable_scroll);
+
+        assert!(
+            unreachable_stack
+                .accessibility_region(Bounds::new(
+                    point(px(10.0), px(340.0)),
+                    size(px(20.0), px(20.0)),
+                ))
+                .is_none(),
+            "an unreachable scroll viewport must not bypass an ancestor hidden clip"
+        );
+    }
+
+    #[test]
+    fn zero_area_accessibility_nodes_preserve_semantics_without_click_witness() {
+        let viewport = Bounds::new(Point::default(), size(px(100.0), px(100.0)));
+        let zero_area = Bounds::new(point(px(10.0), px(10.0)), Size::default());
+        let offscreen = Bounds::new(point(px(120.0), px(10.0)), Size::default());
+
+        // The window viewport only gates paint and pointer dispatch, so an off-screen structural
+        // node remains publishable for a scroll ancestor to reveal later.
+        assert_eq!(
+            ClipStackSnapshot::root(viewport).accessibility_region(offscreen),
+            Some((offscreen, None))
+        );
+
+        let semantic_clip = SubtreeClip::try_rect(viewport)
+            .unwrap()
+            .resolve_with_accessibility_axes(
+                viewport,
+                ResolvedSubtreeTransform::IDENTITY,
+                viewport,
+                point(true, true),
+            )
+            .unwrap();
+        let stack = ClipStackSnapshot::root(viewport).push(semantic_clip);
+
+        assert_eq!(
+            stack.accessibility_region(zero_area),
+            Some((zero_area, None))
+        );
+        assert_eq!(stack.accessibility_region(offscreen), None);
     }
 }

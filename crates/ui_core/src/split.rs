@@ -147,6 +147,22 @@ impl SplitterMetrics {
     pub const fn handle_placement(self) -> SplitterHandlePlacement {
         self.handle_placement
     }
+
+    /// Returns the axis span shared by panels after reserving between-panel handle hit regions.
+    pub fn panel_axis_extent(self, outer_axis_extent: UiPx, handle_count: usize) -> UiPx {
+        let outer_axis_extent = outer_axis_extent.as_f32();
+        if !outer_axis_extent.is_finite() {
+            return ui_px(0.0);
+        }
+
+        let reserved_handle_extent = match self.handle_placement {
+            SplitterHandlePlacement::BetweenPanels => {
+                self.handle_hit_size.as_f32() * handle_count as f32
+            }
+            SplitterHandlePlacement::OverlayBoundary => 0.0,
+        };
+        ui_px((outer_axis_extent - reserved_handle_extent).max(0.0))
+    }
 }
 
 /// Strategy used when resolving handle hit bounds in a split layout scene.
@@ -782,12 +798,9 @@ impl SplitterLayoutScene {
             metrics.handle_placement(),
             SplitterHandlePlacement::BetweenPanels
         );
-        let reserved_axis = if reserves_handle_space {
-            handle_hit * handle_count as f32
-        } else {
-            0.0
-        };
-        let panel_axis = (axis_length - reserved_axis).max(0.0);
+        let panel_axis = metrics
+            .panel_axis_extent(ui_px(axis_length), handle_count)
+            .as_f32();
         let mut cursor = if is_vertical {
             bounds.origin.y.as_f32()
         } else {
@@ -2188,6 +2201,20 @@ mod tests {
         assert_eq!(clamped.outcome(), SplitterResizeOutcome::Clamped);
         assert_close(clamped.state().panels()[0].fraction(), 0.12);
         assert_close(clamped.state().panels()[1].fraction(), 0.88);
+    }
+
+    #[test]
+    fn splitter_metrics_panel_axis_extent_respects_handle_placement() {
+        let metrics = SplitterMetrics::from_size(Size::Medium);
+
+        assert_eq!(metrics.panel_axis_extent(ui_px(400.0), 2), ui_px(376.0));
+        assert_eq!(
+            metrics
+                .with_handle_placement(SplitterHandlePlacement::OverlayBoundary)
+                .panel_axis_extent(ui_px(400.0), 2),
+            ui_px(400.0)
+        );
+        assert_eq!(metrics.panel_axis_extent(ui_px(12.0), 2), ui_px(0.0));
     }
 
     #[test]

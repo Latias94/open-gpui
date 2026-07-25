@@ -9,9 +9,9 @@ use block2::RcBlock;
 use image::RgbaImage;
 use objc2_foundation::NSUInteger;
 use open_gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad, ScaledPixels, Scene,
-    Shadow, Size, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, MonochromeSprite,
+    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline, point, size,
 };
 
 use objc2_core_video::{
@@ -135,7 +135,7 @@ pub struct PathRasterizationVertex {
     pub st_position: Point<f32>,
     pub color: Background,
     pub local_bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub transform: PrimitiveTransform,
 }
 
@@ -143,7 +143,7 @@ fn path_visual_bounds(path: &Path<ScaledPixels>) -> Option<Bounds<ScaledPixels>>
     path.renderer_transform()
         .try_project_bounds(path.bounds)
         .ok()
-        .map(|bounds| bounds.intersect(&path.content_mask.bounds))
+        .map(|bounds| bounds.intersect(&path.clip.conservative_bounds))
 }
 
 impl MetalRenderer {
@@ -425,6 +425,10 @@ impl MetalRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        if let Err(error) = validate_scene_clip_envelopes(scene) {
+            log::error!("refusing to draw a scene with invalid clip geometry: {error}");
+            return;
+        }
         let layer = match &self.layer {
             Some(l) => l.clone(),
             None => {
@@ -508,6 +512,7 @@ impl MetalRenderer {
     /// use `render_scene_to_image()` instead.
     #[cfg(any(test, feature = "test-support"))]
     pub fn render_to_image(&mut self, scene: &Scene) -> Result<RgbaImage> {
+        validate_scene_clip_envelopes(scene)?;
         let layer = self
             .layer
             .clone()
@@ -612,6 +617,7 @@ impl MetalRenderer {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             anyhow::bail!("Invalid size for render_scene_to_image: {:?}", size);
         }
+        validate_scene_clip_envelopes(scene)?;
 
         // Update path intermediate textures for this size
         self.update_path_intermediate_textures(size);
@@ -735,11 +741,21 @@ impl MetalRenderer {
         let command_buffer = command_queue.new_command_buffer();
         let alpha = if self.opaque { 1. } else { 0. };
         let mut instance_offset = 0;
+        let Some(clip_shapes_offset) =
+            upload_clip_shapes(scene.clip_shapes(), instance_buffer, &mut instance_offset)
+        else {
+            anyhow::bail!(
+                "scene clip arena exceeds the Metal instance buffer: {} shapes",
+                scene.clip_shapes().len()
+            );
+        };
 
         let mut command_encoder = new_command_encoder_for_texture(
             &command_buffer,
             texture,
             viewport_size,
+            instance_buffer,
+            clip_shapes_offset,
             |color_attachment| {
                 color_attachment.set_load_action(metal::MTLLoadAction::Clear);
                 color_attachment.set_clear_color(metal::clear_color(0., 0., 0., alpha));
@@ -772,12 +788,15 @@ impl MetalRenderer {
                         &mut instance_offset,
                         viewport_size,
                         &command_buffer,
+                        clip_shapes_offset,
                     );
 
                     command_encoder = new_command_encoder_for_texture(
                         &command_buffer,
                         texture,
                         viewport_size,
+                        instance_buffer,
+                        clip_shapes_offset,
                         |color_attachment| {
                             color_attachment.set_load_action(metal::MTLLoadAction::Load);
                         },
@@ -866,6 +885,7 @@ impl MetalRenderer {
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_buffer: &metal::CommandBufferRef,
+        clip_shapes_offset: u64,
     ) -> bool {
         if paths.is_empty() {
             return true;
@@ -892,6 +912,7 @@ impl MetalRenderer {
         }
 
         let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+        bind_clip_shapes(&command_encoder, instance_buffer, clip_shapes_offset);
         command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
 
         align_offset(instance_offset);
@@ -906,7 +927,7 @@ impl MetalRenderer {
                 st_position: v.st_position,
                 color: path.color,
                 local_bounds: path.bounds,
-                content_mask: path.content_mask,
+                clip: path.clip,
                 transform: path.renderer_transform(),
             }));
         }
@@ -1453,6 +1474,11 @@ impl MetalRenderer {
                 Some(&instance_buffer.metal_buffer),
                 *instance_offset as u64,
             );
+            command_encoder.set_fragment_buffer(
+                SurfaceInputIndex::Surfaces as u64,
+                Some(&instance_buffer.metal_buffer),
+                *instance_offset as u64,
+            );
             command_encoder.set_vertex_bytes(
                 SurfaceInputIndex::TextureSize as u64,
                 mem::size_of_val(&texture_size) as u64,
@@ -1471,7 +1497,7 @@ impl MetalRenderer {
                     buffer_contents,
                     SurfaceBounds {
                         bounds: surface.bounds,
-                        content_mask: surface.content_mask,
+                        clip: surface.clip,
                         transform: surface.renderer_transform(),
                     },
                 );
@@ -1488,6 +1514,8 @@ fn new_command_encoder_for_texture(
     command_buffer: &metal::CommandBufferRef,
     texture: &metal::TextureRef,
     viewport_size: Size<DevicePixels>,
+    instance_buffer: &InstanceBuffer,
+    clip_shapes_offset: u64,
     configure_color_attachment: impl Fn(&RenderPassColorAttachmentDescriptor),
 ) -> metal::RenderCommandEncoder {
     let render_pass_descriptor = metal::RenderPassDescriptor::new();
@@ -1508,6 +1536,7 @@ fn new_command_encoder_for_texture(
         znear: 0.0,
         zfar: 1.0,
     });
+    bind_clip_shapes(&command_encoder, instance_buffer, clip_shapes_offset);
     command_encoder
 }
 
@@ -1623,6 +1652,123 @@ fn align_offset(offset: &mut usize) {
     *offset = (*offset).div_ceil(256) * 256;
 }
 
+fn validate_scene_clip_envelopes(scene: &Scene) -> Result<()> {
+    let arena_len = scene.clip_shapes().len();
+    let primitive_clips = scene
+        .shadows
+        .iter()
+        .map(|primitive| ("shadow", primitive.clip))
+        .chain(scene.quads.iter().map(|primitive| ("quad", primitive.clip)))
+        .chain(scene.paths.iter().map(|primitive| ("path", primitive.clip)))
+        .chain(
+            scene
+                .underlines
+                .iter()
+                .map(|primitive| ("underline", primitive.clip)),
+        )
+        .chain(
+            scene
+                .monochrome_sprites
+                .iter()
+                .map(|primitive| ("monochrome sprite", primitive.clip)),
+        )
+        .chain(
+            scene
+                .subpixel_sprites
+                .iter()
+                .map(|primitive| ("subpixel sprite", primitive.clip)),
+        )
+        .chain(
+            scene
+                .polychrome_sprites
+                .iter()
+                .map(|primitive| ("polychrome sprite", primitive.clip)),
+        )
+        .chain(
+            scene
+                .surfaces
+                .iter()
+                .map(|primitive| ("surface", primitive.clip)),
+        );
+
+    for (kind, clip) in primitive_clips {
+        anyhow::ensure!(
+            clip_envelope_range(clip, arena_len).is_some(),
+            "{kind} references an empty or out-of-bounds clip range"
+        );
+        anyhow::ensure!(
+            valid_clip_bounds(clip.conservative_bounds),
+            "{kind} has invalid conservative clip bounds"
+        );
+    }
+    Ok(())
+}
+
+fn clip_envelope_range(clip: ClipEnvelope, arena_len: usize) -> Option<std::ops::Range<usize>> {
+    let start = usize::try_from(clip.first_clip).ok()?;
+    let count = usize::try_from(clip.clip_count).ok()?;
+    if count == 0 {
+        return None;
+    }
+    let end = start.checked_add(count)?;
+    (end <= arena_len).then_some(start..end)
+}
+
+fn valid_clip_bounds(bounds: Bounds<ScaledPixels>) -> bool {
+    bounds.origin.x.0.is_finite()
+        && bounds.origin.y.0.is_finite()
+        && bounds.size.width.0.is_finite()
+        && bounds.size.height.0.is_finite()
+        && bounds.size.width.0 > 0.0
+        && bounds.size.height.0 > 0.0
+}
+
+fn upload_clip_shapes(
+    clip_shapes: &[GpuClipShape],
+    instance_buffer: &mut InstanceBuffer,
+    instance_offset: &mut usize,
+) -> Option<u64> {
+    align_offset(instance_offset);
+    let offset = *instance_offset;
+    let byte_len = mem::size_of_val(clip_shapes);
+    let next_offset = offset.checked_add(byte_len)?;
+    if next_offset > instance_buffer.size {
+        return None;
+    }
+
+    if !clip_shapes.is_empty() {
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(clip_shapes.as_ptr() as *const u8, buffer_contents, byte_len);
+        }
+    }
+    *instance_offset = next_offset;
+    Some(offset as u64)
+}
+
+fn bind_clip_shapes(
+    command_encoder: &metal::RenderCommandEncoderRef,
+    instance_buffer: &InstanceBuffer,
+    clip_shapes_offset: u64,
+) {
+    command_encoder.set_vertex_buffer(
+        GlobalInputIndex::ClipShapes as u64,
+        Some(&instance_buffer.metal_buffer),
+        clip_shapes_offset,
+    );
+    command_encoder.set_fragment_buffer(
+        GlobalInputIndex::ClipShapes as u64,
+        Some(&instance_buffer.metal_buffer),
+        clip_shapes_offset,
+    );
+}
+
+#[repr(C)]
+enum GlobalInputIndex {
+    ClipShapes = 8,
+}
+
 #[repr(C)]
 enum ShadowInputIndex {
     Vertices = 0,
@@ -1679,14 +1825,14 @@ pub struct PathSprite {
 #[repr(C)]
 pub struct SurfaceBounds {
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip: ClipEnvelope,
     pub transform: PrimitiveTransform,
 }
 
 #[cfg(test)]
 mod abi_layout_tests {
     use super::*;
-    use open_gpui::SubpixelSprite;
+    use open_gpui::{Corners, SubpixelSprite};
     use std::mem::{align_of, offset_of, size_of};
 
     #[test]
@@ -1701,12 +1847,83 @@ mod abi_layout_tests {
 
     #[test]
     fn transformed_primitive_fields_are_terminal_in_shader_abi() {
-        assert_eq!(size_of::<Quad>(), 176);
-        assert_eq!(size_of::<Shadow>(), 128);
-        assert_eq!(size_of::<Underline>(), 80);
-        assert_eq!(size_of::<MonochromeSprite>(), 104);
-        assert_eq!(size_of::<SubpixelSprite>(), 104);
-        assert_eq!(size_of::<PolychromeSprite>(), 104);
+        assert_eq!(size_of::<Quad>(), 184);
+        assert_eq!(size_of::<Shadow>(), 136);
+        assert_eq!(size_of::<Underline>(), 88);
+        assert_eq!(size_of::<MonochromeSprite>(), 112);
+        assert_eq!(size_of::<SubpixelSprite>(), 112);
+        assert_eq!(size_of::<PolychromeSprite>(), 112);
+    }
+
+    #[test]
+    fn clip_types_have_canonical_shader_abi_layouts() {
+        assert_eq!(align_of::<Bounds<ScaledPixels>>(), align_of::<f32>());
+        assert_eq!(size_of::<Bounds<ScaledPixels>>(), 16);
+        assert_eq!(offset_of!(Bounds<ScaledPixels>, origin), 0);
+        assert_eq!(offset_of!(Bounds<ScaledPixels>, size), 8);
+        assert_eq!(offset_of!(Point<ScaledPixels>, x), 0);
+        assert_eq!(offset_of!(Point<ScaledPixels>, y), 4);
+        assert_eq!(offset_of!(Size<ScaledPixels>, width), 0);
+        assert_eq!(offset_of!(Size<ScaledPixels>, height), 4);
+
+        assert_eq!(align_of::<Corners<ScaledPixels>>(), align_of::<f32>());
+        assert_eq!(size_of::<Corners<ScaledPixels>>(), 16);
+        assert_eq!(offset_of!(Corners<ScaledPixels>, top_left), 0);
+        assert_eq!(offset_of!(Corners<ScaledPixels>, top_right), 4);
+        assert_eq!(offset_of!(Corners<ScaledPixels>, bottom_right), 8);
+        assert_eq!(offset_of!(Corners<ScaledPixels>, bottom_left), 12);
+
+        assert_eq!(align_of::<GpuClipShape>(), align_of::<f32>());
+        assert_eq!(size_of::<GpuClipShape>(), 48);
+        assert_eq!(offset_of!(GpuClipShape, bounds), 0);
+        assert_eq!(offset_of!(GpuClipShape, radii_x), 16);
+        assert_eq!(offset_of!(GpuClipShape, radii_y), 32);
+
+        assert_eq!(align_of::<ClipEnvelope>(), align_of::<f32>());
+        assert_eq!(size_of::<ClipEnvelope>(), 24);
+        assert_eq!(offset_of!(ClipEnvelope, conservative_bounds), 0);
+        assert_eq!(offset_of!(ClipEnvelope, first_clip), 16);
+        assert_eq!(offset_of!(ClipEnvelope, clip_count), 20);
+        assert_eq!(GlobalInputIndex::ClipShapes as u64, 8);
+    }
+
+    #[test]
+    fn global_clip_buffer_slot_does_not_overlap_pipeline_buffers() {
+        let clip_slot = GlobalInputIndex::ClipShapes as u64;
+        assert!((ShadowInputIndex::ViewportSize as u64) < clip_slot);
+        assert!((QuadInputIndex::ViewportSize as u64) < clip_slot);
+        assert!((UnderlineInputIndex::ViewportSize as u64) < clip_slot);
+        assert!((SpriteInputIndex::AtlasTextureSize as u64) < clip_slot);
+        assert!((SurfaceInputIndex::TextureSize as u64) < clip_slot);
+        assert!((PathRasterizationInputIndex::ViewportSize as u64) < clip_slot);
+    }
+
+    #[test]
+    fn invalid_clip_envelope_ranges_fail_closed_before_encoding() {
+        let clip = ClipEnvelope {
+            conservative_bounds: Bounds::new(
+                point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size(ScaledPixels(10.0), ScaledPixels(10.0)),
+            ),
+            first_clip: 1,
+            clip_count: 1,
+        };
+        assert_eq!(clip_envelope_range(clip, 2), Some(1..2));
+        let assert_invalid = |candidate| assert!(clip_envelope_range(candidate, 2).is_none());
+        assert_invalid(ClipEnvelope {
+            clip_count: 0,
+            ..clip
+        });
+        assert_invalid(ClipEnvelope {
+            first_clip: 2,
+            ..clip
+        });
+        assert_invalid(ClipEnvelope {
+            clip_count: 2,
+            ..clip
+        });
+        assert!(valid_clip_bounds(clip.conservative_bounds));
+        assert!(!valid_clip_bounds(Bounds::default()));
     }
 
     #[test]
@@ -1720,13 +1937,12 @@ mod abi_layout_tests {
             16 + size_of::<Background>()
         );
         assert_eq!(
-            offset_of!(PathRasterizationVertex, content_mask),
+            offset_of!(PathRasterizationVertex, clip),
             offset_of!(PathRasterizationVertex, local_bounds) + size_of::<Bounds<ScaledPixels>>()
         );
         assert_eq!(
             offset_of!(PathRasterizationVertex, transform),
-            offset_of!(PathRasterizationVertex, content_mask)
-                + size_of::<ContentMask<ScaledPixels>>()
+            offset_of!(PathRasterizationVertex, clip) + size_of::<ClipEnvelope>()
         );
         assert_eq!(
             size_of::<PathRasterizationVertex>(),
@@ -1735,9 +1951,9 @@ mod abi_layout_tests {
 
         assert_eq!(align_of::<SurfaceBounds>(), align_of::<f32>());
         assert_eq!(offset_of!(SurfaceBounds, bounds), 0);
-        assert_eq!(offset_of!(SurfaceBounds, content_mask), 16);
-        assert_eq!(offset_of!(SurfaceBounds, transform), 32);
-        assert_eq!(size_of::<SurfaceBounds>(), 48);
+        assert_eq!(offset_of!(SurfaceBounds, clip), 16);
+        assert_eq!(offset_of!(SurfaceBounds, transform), 40);
+        assert_eq!(size_of::<SurfaceBounds>(), 56);
     }
 }
 

@@ -986,3 +986,62 @@ fn presentation_page_three_state_matrix_preserves_layout_and_requires_fresh_inte
         "identity restoration must also require a fresh activation"
     );
 }
+
+#[open_gpui::test]
+fn presentation_clip_matrix_composes_exact_clips_with_runtime_descendants(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Presentation);
+    set_presentation_progress(&shell, cx, 1.0);
+
+    for selector in [
+        "gallery:presentation-clips",
+        "gallery:presentation-clips:rectangle",
+        "gallery:presentation-clips:symmetric",
+        "gallery:presentation-clips:asymmetric",
+        "gallery:presentation-clips:nested",
+        "gallery:presentation-clips:transformed",
+        "gallery:presentation-clips:scrolling",
+        "gallery:presentation-clips:deferred",
+        "gallery:presentation-clips:canvas",
+        "gallery:presentation-clips:interactive",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "expected subtree clip matrix selector `{selector}` to render"
+        );
+    }
+
+    scroll_page_selector_into_view(&shell, cx, "gallery:presentation-clips:interactive-target");
+    let target = bounds(cx, "gallery:presentation-clips:interactive-target");
+    let count = cx.update(|_, app| shell.read(app).presentation_clip_action_count());
+    cx.simulate_click(
+        point(target.origin.x + px(1.0), target.origin.y + px(1.0)),
+        Default::default(),
+    );
+    settle(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_clip_action_count()),
+        count,
+        "the target AABB corner must not activate through the rounded subtree clip"
+    );
+
+    cx.simulate_click(target.center(), Default::default());
+    settle(cx);
+    assert_eq!(
+        cx.update(|_, app| shell.read(app).presentation_clip_action_count()),
+        count + 1,
+        "a point inside the rounded clip should retain ordinary pointer activation"
+    );
+
+    assert!(cx.activate_accessibility());
+    let tree = cx
+        .latest_accessibility_tree_update()
+        .expect("the visible clipped target should publish accessibility");
+    let (_, node) = presentation_a11y_node_with_role_and_label(
+        &tree,
+        accesskit::Role::Button,
+        "Exact clipped activation",
+    );
+    assert!(node.supports_action(accesskit::Action::Click));
+}

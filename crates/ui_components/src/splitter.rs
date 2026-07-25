@@ -734,11 +734,15 @@ impl RenderOnce for Splitter {
                         return;
                     };
 
-                    let axis_length = if is_vertical {
+                    let outer_axis_length = if is_vertical {
                         event.layout_bounds().size.height
                     } else {
                         event.layout_bounds().size.width
                     };
+                    let axis_length = gpui_px_from_ui(metrics.panel_axis_extent(
+                        ui_px(outer_axis_length.as_f32()),
+                        drag_state.handles().len(),
+                    ));
                     if axis_length.as_f32() <= EPSILON {
                         return;
                     }
@@ -812,9 +816,9 @@ fn render_panel_content(
         .overflow_hidden()
         .flex()
         .flex_col()
-        .flex_grow(0.0)
-        .flex_shrink(0.0)
-        .flex_basis(DefiniteLength::from(relative(state.fraction())))
+        .flex_grow(state.fraction())
+        .flex_shrink_1()
+        .flex_basis(relative(0.0))
         .when(state.collapsed(), |this| this.opacity(0.0))
         .when(is_vertical, |this| this.w_full())
         .when(!is_vertical, |this| this.h_full());

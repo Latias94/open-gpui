@@ -5,11 +5,11 @@
 //! elements with uniform height.
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, Entity,
-    GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
-    IsZero, LayoutId, ListSizingBehavior, Overflow, Pixels, Point, ScrollHandle,
+    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, Entity, GlobalElementId, Hitbox,
+    InspectorElementId, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
+    ListSizingBehavior, Overflow, Pixels, Point, PreparedSubtreeClip, ScrollHandle,
     ScrollViewportChangeSource, ScrollViewportProgrammaticSource, Size, StyleRefinement, Styled,
-    Window, point, px, size,
+    SubtreeClip, Window, point, px, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc, usize};
@@ -72,6 +72,7 @@ pub struct UniformList {
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
     decorations: SmallVec<[AnyElement; 2]>,
+    clip: Option<PreparedSubtreeClip>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -257,7 +258,7 @@ impl Styled for UniformList {
 
 impl Element for UniformList {
     type RequestLayoutState = UniformListFrameState;
-    type PrepaintState = Option<Hitbox>;
+    type PrepaintState = (Option<Hitbox>, Option<PreparedSubtreeClip>);
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -319,6 +320,7 @@ impl Element for UniformList {
             UniformListFrameState {
                 items: SmallVec::new(),
                 decorations: SmallVec::new(),
+                clip: None,
             },
         )
     }
@@ -331,7 +333,7 @@ impl Element for UniformList {
         frame_state: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Hitbox> {
+    ) -> Self::PrepaintState {
         let style = self
             .interactivity
             .compute_style(global_id, None, window, cx);
@@ -380,7 +382,7 @@ impl Element for UniformList {
             content_size,
             window,
             cx,
-            |_style, mut scroll_offset, hitbox, window, cx| {
+            |style, mut scroll_offset, hitbox, window, cx| {
                 let y_flipped = if let Some(scroll_handle) = &self.scroll_handle {
                     let scroll_state = scroll_handle.0.borrow();
                     scroll_state.y_flipped
@@ -494,8 +496,16 @@ impl Element for UniformList {
                         (self.render_items)(visible_range.clone(), window, cx)
                     };
 
-                    let content_mask = ContentMask { bounds };
-                    window.with_content_mask(Some(content_mask), |window| {
+                    // Materialized content remains semantic on every axis the list can reveal.
+                    let prepared = window.prepare_subtree_clip_with_accessibility_axes(
+                        &SubtreeClip::own_border_box(),
+                        bounds,
+                        point(
+                            style.overflow.x != Overflow::Scroll,
+                            style.overflow.y != Overflow::Scroll,
+                        ),
+                    );
+                    let _ = window.with_prepared_subtree_clip(&prepared, |window| {
                         for (mut item, ix) in items.into_iter().zip(visible_range.clone()) {
                             let item_origin = padded_bounds.origin
                                 + scroll_offset
@@ -536,6 +546,7 @@ impl Element for UniformList {
                             frame_state.decorations.push(decoration);
                         }
                     });
+                    frame_state.clip = Some(prepared);
                 }
 
                 hitbox
@@ -549,7 +560,7 @@ impl Element for UniformList {
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<crate::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        hitbox: &mut Option<Hitbox>,
+        prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -557,15 +568,23 @@ impl Element for UniformList {
             global_id,
             inspector_id,
             bounds,
-            hitbox.as_ref(),
+            prepaint.0.as_ref(),
+            prepaint.1.as_ref(),
             window,
             cx,
             |_, window, cx| {
-                for item in &mut request_layout.items {
-                    item.paint(window, cx);
-                }
-                for decoration in &mut request_layout.decorations {
-                    decoration.paint(window, cx);
+                let mut paint = |window: &mut Window| {
+                    for item in &mut request_layout.items {
+                        item.paint(window, cx);
+                    }
+                    for decoration in &mut request_layout.decorations {
+                        decoration.paint(window, cx);
+                    }
+                };
+                if let Some(prepared) = request_layout.clip.as_ref() {
+                    let _ = window.with_prepared_subtree_clip(prepared, paint);
+                } else {
+                    paint(window);
                 }
             },
         )

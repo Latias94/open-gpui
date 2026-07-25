@@ -86,7 +86,7 @@ fn focus_tree(cx: &mut VisualTestContext, id: &str) {
         .debug_bounds(&format!("tree:{id}:root"))
         .expect("tree root should render");
     cx.simulate_click(
-        point(root.left() + px(2.0), root.top() + px(2.0)),
+        point(root.left() + px(8.0), root.top() + px(2.0)),
         Modifiers::none(),
     );
     draw(cx);

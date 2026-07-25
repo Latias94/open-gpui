@@ -1,8 +1,9 @@
 use super::*;
 
 use open_gpui::{
-    AccessibleAction, AnyView, AppContext as _, Bounds, Context, Empty, InteractiveElement,
-    ParentElement, Render, Role, StatefulInteractiveElement, Styled, SubtreePresentation,
+    AccessibleAction, AnyView, AppContext as _, Bounds, Context, Corners, Empty,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render, Role,
+    StatefulInteractiveElement, Styled, SubtreeClip, SubtreeClipExt, SubtreePresentation,
     SubtreePresentationExt, accesskit, deferred, div, point, px, size,
 };
 
@@ -175,6 +176,7 @@ struct SurfaceProjectionProbe {
     surface_binding: Option<OverlayLayerBinding>,
     child: Option<Entity<NestedLayerProbe>>,
     projects_parent: bool,
+    rounded_inside_region: bool,
 }
 
 impl SurfaceProjectionProbe {
@@ -186,6 +188,7 @@ impl SurfaceProjectionProbe {
             surface_binding: None,
             child: None,
             projects_parent: true,
+            rounded_inside_region: false,
         }
     }
 
@@ -201,6 +204,7 @@ impl SurfaceProjectionProbe {
             surface_binding: Some(surface_binding),
             child: None,
             projects_parent: true,
+            rounded_inside_region: false,
         }
     }
 
@@ -218,6 +222,16 @@ impl SurfaceProjectionProbe {
         self.projects_parent = false;
     }
 
+    fn mount_local_rounded_inside_region(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let parent = self
+            .surface_runtime
+            .register_layer(layer_registration(PARENT_LAYER), window, cx)
+            .expect("rounded inside-region parent should register in its own window");
+        self.surface_binding = Some(parent);
+        self.projects_parent = false;
+        self.rounded_inside_region = true;
+    }
+
     fn mount_child(&mut self, layer_id: &'static str, cx: &mut Context<Self>) {
         let runtime = self.snapshot_runtime.clone();
         self.child = Some(cx.new(|_| NestedLayerProbe::new(runtime, layer_id)));
@@ -228,8 +242,11 @@ impl SurfaceProjectionProbe {
 impl Render for SurfaceProjectionProbe {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mut root = div().size_full();
-        if let (Some(binding), Some(child)) = (&self.surface_binding, &self.child) {
-            let child = AnyView::from(child.clone());
+        if let Some(binding) = &self.surface_binding {
+            let child = self.child.as_ref().map_or_else(
+                || div().size_full().into_any_element(),
+                |child| AnyView::from(child.clone()).into_any_element(),
+            );
             root = if self.projects_parent {
                 root.child(self.surface_runtime.surface(
                     binding,
@@ -238,12 +255,28 @@ impl Render for SurfaceProjectionProbe {
                     child,
                 ))
             } else {
-                root.child(self.surface_runtime.inside_region(
+                let surface = self.surface_runtime.inside_region(
                     binding,
                     OverlayInsideRegionId::new("inside-only-parent-region"),
                     "inside-only-parent-wrapper",
                     child,
-                ))
+                );
+                if self.rounded_inside_region {
+                    let radius = size(px(50.0), px(50.0));
+                    root.child(
+                        surface.with_subtree_clip(
+                            SubtreeClip::try_own_rounded_border_box(Corners {
+                                top_left: radius,
+                                top_right: radius,
+                                bottom_right: radius,
+                                bottom_left: radius,
+                            })
+                            .expect("rounded inside-region clip should be valid"),
+                        ),
+                    )
+                } else {
+                    root.child(surface)
+                }
             };
         }
         root
@@ -1695,6 +1728,55 @@ fn inside_region_does_not_project_parentage_into_nested_children(
 }
 
 #[open_gpui::test]
+fn rounded_inside_region_uses_exact_clip_for_outside_press(cx: &mut open_gpui::TestAppContext) {
+    let window = cx.add_window(SurfaceProjectionProbe::new);
+    window
+        .update(cx, |probe, window, cx| {
+            probe.mount_local_rounded_inside_region(window, cx);
+        })
+        .expect("rounded inside-region window should remain open");
+    let any_window = window.clone().into();
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear())
+        .expect("rounded inside-region window should draw");
+
+    let (corner_decision, center_decision) = window
+        .update(cx, |probe, window, cx| {
+            let binding = probe
+                .surface_binding
+                .as_ref()
+                .expect("rounded inside-region parent should remain bound");
+            let state = probe.surface_runtime.state.read(cx);
+            let region = state.entries[binding.lease().layer_id()]
+                .inside_regions
+                .get(&OverlayInsideRegionId::new("inside-only-parent-region"))
+                .expect("rounded inside-region should refresh during prepaint");
+            let bounds = region.hit_test.geometry().displayed_bounds();
+            let corner = point(bounds.origin.x + px(1.0), bounds.origin.y + px(1.0));
+            let center = bounds.center();
+
+            assert!(bounds.contains(&corner));
+            assert!(
+                !region.hit_test.is_window_point_target(corner),
+                "the rounded corner must not be treated as inside from its AABB alone"
+            );
+            assert!(
+                region.hit_test.is_window_point_target(center),
+                "the center of the rounded region must remain inside"
+            );
+
+            let revision = window.rendered_frame_revision();
+            (
+                state.resolve_outside(corner, MouseButton::Left, revision),
+                state.resolve_outside(center, MouseButton::Left, revision),
+            )
+        })
+        .expect("rounded inside-region window should remain open");
+
+    assert!(matches!(corner_decision, MouseDecision::Dismiss { .. }));
+    assert!(matches!(center_decision, MouseDecision::None));
+}
+
+#[open_gpui::test]
 fn inside_region_refresh_evicts_expired_dynamic_ids(cx: &mut open_gpui::TestAppContext) {
     let window = cx.add_window(SurfaceProjectionProbe::new);
     window
@@ -1707,13 +1789,14 @@ fn inside_region_refresh_evicts_expired_dynamic_ids(cx: &mut open_gpui::TestAppC
                 origin: point(px(0.0), px(0.0)),
                 size: size(px(10.0), px(10.0)),
             };
+            let hit_test = open_gpui::HitTestSnapshot::identity_for_test(bounds);
             probe.surface_runtime.state.update(cx, |state, _| {
                 for revision in 1..=32 {
                     state
                         .refresh_inside_region(
                             binding.lease(),
                             OverlayInsideRegionId::new(format!("dynamic-{revision}")),
-                            bounds,
+                            hit_test.clone(),
                             None,
                             revision,
                         )
@@ -1726,7 +1809,7 @@ fn inside_region_refresh_evicts_expired_dynamic_ids(cx: &mut open_gpui::TestAppC
                     .refresh_inside_region(
                         binding.lease(),
                         OverlayInsideRegionId::new("same-frame"),
-                        bounds,
+                        hit_test,
                         None,
                         32,
                     )

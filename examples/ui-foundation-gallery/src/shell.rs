@@ -143,6 +143,7 @@ pub struct GalleryShell {
     presentation_projection_progress: f32,
     presentation_state: SubtreePresentation,
     presentation_action_count: usize,
+    presentation_clip_action_count: usize,
     presentation_drag_status: String,
     presentation_geometry: Option<ElementGeometry>,
     bring_into_view_target: RevealTargetHandle,
@@ -210,6 +211,7 @@ impl GalleryShell {
             presentation_projection_progress: 0.0,
             presentation_state: SubtreePresentation::Visible,
             presentation_action_count: 0,
+            presentation_clip_action_count: 0,
             presentation_drag_status: "Ready".to_owned(),
             presentation_geometry: None,
             bring_into_view_target: window.new_reveal_target(),
@@ -283,6 +285,11 @@ impl GalleryShell {
     /// Returns the number of transformed action activations.
     pub const fn presentation_action_count(&self) -> usize {
         self.presentation_action_count
+    }
+
+    /// Returns the number of exact rounded clip activations.
+    pub const fn presentation_clip_action_count(&self) -> usize {
+        self.presentation_clip_action_count
     }
 
     /// Returns the latest transformed drag/drop status.

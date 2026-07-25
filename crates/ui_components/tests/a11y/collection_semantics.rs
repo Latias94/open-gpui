@@ -842,25 +842,60 @@ fn splitter_accesskit_actions_reopen_collapsed_panels_on_both_sides(
 
     dispatch_action(cx, accesskit::Action::Increment, before_id);
     cx.run_until_parked();
-    let reopened_before = cx
+    let reopened_before_update = cx
         .latest_accessibility_tree_update()
         .expect("AccessKit increment should reopen the collapsed before panel");
     let (reopened_before_id, reopened_before) = node_with_label(
-        &reopened_before,
+        &reopened_before_update,
         "Resize accesskit-before-collapsed and accesskit-before-peer",
     );
     assert_eq!(reopened_before_id, before_id);
     assert_splitter_node(reopened_before, 20.0, 20.0, 90.0);
+    let sibling_handle_bounds = cx
+        .debug_bounds("splitter:accesskit-after:handle:0")
+        .expect("resizing the first splitter must retain its sibling rendered handle");
+    let sibling_accessibility_node = reopened_before_update
+        .nodes
+        .iter()
+        .find(|(_, node)| {
+            node.label() == Some("Resize accesskit-after-peer and accesskit-after-collapsed")
+        })
+        .map(|(id, _)| *id)
+        .unwrap_or_else(|| {
+            panic!(
+                "resizing the first splitter dropped the sibling accessibility node at {sibling_handle_bounds:?}"
+            )
+        });
+    assert_eq!(
+        sibling_accessibility_node, after_id,
+        "resizing the first splitter must retain its sibling accessibility node"
+    );
 
     dispatch_action(cx, accesskit::Action::Decrement, after_id);
     cx.run_until_parked();
-    let reopened_after = cx
+    let reopened_after_update = cx
         .latest_accessibility_tree_update()
         .expect("AccessKit decrement should reopen the collapsed after panel");
-    let (reopened_after_id, reopened_after) = node_with_label(
-        &reopened_after,
-        "Resize accesskit-after-peer and accesskit-after-collapsed",
-    );
+    let reopened_handle_bounds = cx
+        .debug_bounds("splitter:accesskit-after:handle:0")
+        .expect("AccessKit decrement must retain the reopened splitter handle");
+    let (reopened_after_id, reopened_after) = reopened_after_update
+        .nodes
+        .iter()
+        .find(|(_, node)| {
+            node.label() == Some("Resize accesskit-after-peer and accesskit-after-collapsed")
+        })
+        .map(|(id, node)| (*id, node))
+        .unwrap_or_else(|| {
+            let labels = reopened_after_update
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| node.label())
+                .collect::<Vec<_>>();
+            panic!(
+                "AccessKit decrement dropped the reopened splitter node at {reopened_handle_bounds:?}; published labels: {labels:?}"
+            )
+        });
     assert_eq!(reopened_after_id, after_id);
     assert_splitter_node(reopened_after, 90.0, 10.0, 90.0);
 }

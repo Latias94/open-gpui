@@ -731,7 +731,7 @@ impl DockViewportRuntime {
         } else {
             false
         };
-        let host_geometry = snapshot.host_geometry;
+        let host_geometry = snapshot.host_geometry.clone();
         let changed = self.update_viewport_snapshot(&space, window_facts, host_geometry);
         let mut registration = self
             .frame_coordinator

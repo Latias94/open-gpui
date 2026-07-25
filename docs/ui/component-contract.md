@@ -181,6 +181,48 @@ the input that originally opened the surface. Tooltip, HoverCard, Popover, Dialo
 Sheet, Menu, and ContextMenu must follow this same runtime path rather than installing family-local
 presentation tails.
 
+## Exact Subtree Clip Authority
+
+`open_gpui::SubtreeClip` and `SubtreeClipExt` are the only public authority for clipping a complete
+element subtree. A clip is declared in zero-origin child-local logical coordinates relative to the
+child's post-layout border box. `SubtreeClip::own_border_box` creates a rectangle; checked rounded
+constructors accept finite, non-negative elliptical corner radii. `clip_to_border_box` and
+`with_subtree_clip` preserve layout, measurement, sibling flow, and scroll extent while constraining
+paint, initial pointer hit testing, drag/drop acquisition, focus/IME eligibility, Inspector picks,
+deferred/cache replay, and accessibility publication.
+
+Nested clips are an exact intersection stack. Conservative window-space AABBs may cull primitives
+or describe portal/accessibility geometry, but they are never final rounded hit coverage. The
+committed `HitTestSnapshot` used by consumers such as Dock retains the exact stack and frame
+eligibility, so an AABB corner outside a rounded clip is not a valid target. Pointer capture follows
+the existing capture policy after a valid acquisition; clipping does not add a second capture rule.
+
+Style overflow feeds the same visual/pointer stack: one-axis overflow is a rectangular strip that
+inherits the unclipped axis, and two-axis overflow derives its padding-box elliptical radii before
+shared normalization. Its semantic-exclusion axes are narrower: `Overflow::Hidden` and
+`Overflow::Clip` exclude fully clipped AccessKit descendants, while `Overflow::Scroll` retains
+off-viewport semantics so `ScrollIntoView` can reveal them. Ordinary deferred and cached descendants
+inherit the current stack; a named window-space portal deliberately resets clip ancestry. Invalid
+transform, clip, or device conversion suppresses the affected subtree transaction across every
+channel rather than substituting an AABB or identity geometry. A native surface that cannot consume
+the resolved clip is rejected or isolated.
+
+Ordinary deferred semantic roots retain their captured AccessKit parent. A window-space portal
+begins its semantic subtree at the window root as well as resetting its clip: an AccessKit
+`clips_children` declaration applies to every child of its owner, so preserving that parentage would
+incorrectly reapply the escaped visual clip.
+Captured deferred semantics also retain a source root sibling anchor. Nested deferred and portal
+replay extends that anchor, so accessibility order remains independent of deferred paint priority.
+
+AccessKit has no rounded-region representation. Public `SubtreeClip` and non-scrolling overflow
+exclude fully clipped nodes, but the root viewport and `Overflow::Scroll` do not: an offscreen
+scroll target remains semantic and can receive `ScrollIntoView`. A semantically published non-empty
+node exposes a conservative AABB; built-in fallback Click dispatch separately requires a CPU-proven
+interior witness in the full visual/pointer stack. A zero-area semantic node may remain only when
+its anchor point is inside the semantic stack; it receives no pointer witness or fallback Click.
+Components must not infer rounded hit coverage from published bounds. Arbitrary path clips, fill
+rules, and renderer-specific clip payloads are intentionally not public API.
+
 ## Overlay Behavior
 
 Overlay component state should use renderer-neutral policy types from `open_gpui_ui_core` before
@@ -228,10 +270,10 @@ dependencies and are rebuilt on the next frame instead of replaying a stale cach
 Ordinary deferred content continues to inherit transform and clip. A window portal consumes the
 already projected target geometry and deliberately escapes the target clip while retaining theme
 and presentation inheritance.
-Every overlay inside region is committed in displayed window coordinates through
-`Window::try_element_geometry` and intersected with the effective content mask. Runtime
-outside-press arbitration never compares a window-space pointer against raw or clipped-away layout
-bounds, and an unrepresentable transform publishes no region.
+Every overlay inside region captures `Window::hit_test_snapshot` during prepaint. Runtime
+outside-press arbitration uses its exact active clip stack rather than raw or clipped-away layout
+bounds; its conservative displayed bounds are only an early empty-region check. An
+unrepresentable transform publishes no region.
 
 GPUI separately owns physical reveal through `RevealTargetHandle`. A completed frame binds one
 target to its final `ElementGeometry` and committed inner-to-outer scroll ancestry. Application
@@ -1185,8 +1227,11 @@ element-backed panels remain one-shot GPUI elements; `SplitterPanel::view` is th
 path for panels that must render real leaving content after the caller removes them.
 
 The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
-wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to
-translate pixels into fraction deltas, then feed those deltas through `SplitterState::resized_by`.
+wires pointer dragging through keyed runtime state. `SplitterMetrics::panel_axis_extent` is the
+single placement-aware conversion from root bounds to the panel axis: `BetweenPanels` reserves its
+handle hit regions before pixels become fraction deltas, while `OverlayBoundary` keeps the full root
+axis. Both `SplitterLayoutScene` and the adapter use that conversion before feeding deltas through
+`SplitterState::resized_by`.
 For programmatic changes that keep the same ordered panel ids, the adapter animates from the current
 runtime fractions to the new resolved fractions with committed layout motion; pointer dragging stays
 immediate and cancels any in-flight programmatic transition. For structural programmatic changes,

@@ -8,10 +8,10 @@
 //! If all of your elements are the same height, see [`crate::UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    AnyElement, App, AvailableSpace, Bounds, DispatchPhase, Edges, Element, EntityId, FocusHandle,
+    GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, Overflow, Pixels,
+    Point, PreparedSubtreeClip, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement,
+    Styled, SubtreeClip, Window, point, px, size,
 };
 use open_gpui_collections::VecDeque;
 use open_gpui_refineable::Refineable as _;
@@ -251,6 +251,7 @@ struct ItemLayout {
 pub struct ListPrepaintState {
     hitbox: Hitbox,
     layout: LayoutItemsResponse,
+    clip: PreparedSubtreeClip,
 }
 
 #[derive(Clone)]
@@ -1269,9 +1270,7 @@ impl StateInner {
             let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
             item_origin.y -= layout_response.scroll_top.offset_in_item;
             for item in &mut layout_response.item_layouts {
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    item.element.prepaint_at(item_origin, window, cx);
-                });
+                item.element.prepaint_at(item_origin, window, cx);
 
                 if let Some(intent) = window.take_autoscroll()
                     && pending_autoscroll.is_none()
@@ -1523,8 +1522,17 @@ impl Element for List {
             let padding = style
                 .padding
                 .to_pixels(bounds.size.into(), window.rem_size());
-            let (layout, pending_autoscroll) =
-                state.prepaint_items(bounds, padding, &mut self.render_item, window, cx);
+            // List items may be offscreen in the vertical viewport but remain revealable.
+            let clip = window.prepare_subtree_clip_with_accessibility_axes(
+                &SubtreeClip::own_border_box(),
+                bounds,
+                point(true, false),
+            );
+            let (layout, pending_autoscroll) = window
+                .with_prepared_subtree_clip(&clip, |window| {
+                    state.prepaint_items(bounds, padding, &mut self.render_item, window, cx)
+                })
+                .expect("a freshly prepared list clip must enter");
 
             if let Some(PendingAutoscroll { scroll_top, intent }) = pending_autoscroll {
                 window.record_autoscroll_commit(intent, move |_, window, _| {
@@ -1539,7 +1547,11 @@ impl Element for List {
 
             state.last_layout_bounds = Some(bounds);
             state.last_padding = Some(padding);
-            ListPrepaintState { hitbox, layout }
+            ListPrepaintState {
+                hitbox,
+                layout,
+                clip,
+            }
         })
     }
 
@@ -1570,7 +1582,7 @@ impl Element for List {
             }
         });
 
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        let _ = window.with_prepared_subtree_clip(&prepaint.clip, |window| {
             for item in &mut prepaint.layout.item_layouts {
                 item.element.paint(window, cx);
             }

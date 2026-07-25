@@ -2,8 +2,9 @@
 
 use super::*;
 use open_gpui::{
-    DropEvent, ElementGeometry, MeasuredElementSnapshot, SubtreeTransform, SubtreeTransformExt,
-    SubtreeTransformOrigin, measured_element, point,
+    AnyElement, Corners, DropEvent, ElementGeometry, MeasuredElementSnapshot, SubtreeClip,
+    SubtreeClipExt, SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin, canvas,
+    measured_element, point,
 };
 use open_gpui_motion::{MotionProjection, motion_point, motion_px, motion_rect, motion_size};
 use open_gpui_ui_components::{TextInput, gpui_adapter::subtree_transform_from_motion_projection};
@@ -63,6 +64,11 @@ impl GalleryShell {
         cx.notify();
     }
 
+    fn increment_presentation_clip_action(&mut self, cx: &mut Context<Self>) {
+        self.presentation_clip_action_count += 1;
+        cx.notify();
+    }
+
     fn set_presentation_drag_status(&mut self, status: impl Into<String>, cx: &mut Context<Self>) {
         let status = status.into();
         if self.presentation_drag_status != status {
@@ -76,6 +82,249 @@ impl GalleryShell {
             self.presentation_geometry = Some(geometry);
             cx.notify();
         }
+    }
+
+    fn render_subtree_clip_matrix(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let tile = |key: &'static str, title: &'static str, child: AnyElement| {
+            let selector = format!("gallery:presentation-clips:{key}");
+            div()
+                .debug_selector(move || selector.clone())
+                .w(px(132.0))
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().text_color(rgb(0x45515f)).child(title))
+                .child(child)
+        };
+        let circular = |radius: f32| {
+            let radius = size(px(radius), px(radius));
+            SubtreeClip::try_own_rounded_border_box(Corners {
+                top_left: radius,
+                top_right: radius,
+                bottom_right: radius,
+                bottom_left: radius,
+            })
+            .expect("Gallery rounded subtree clip must be representable")
+        };
+        let asymmetric = SubtreeClip::try_own_rounded_border_box(Corners {
+            top_left: size(px(28.0), px(12.0)),
+            top_right: size(px(8.0), px(32.0)),
+            bottom_right: size(px(30.0), px(18.0)),
+            bottom_left: size(px(14.0), px(6.0)),
+        })
+        .expect("Gallery asymmetric subtree clip must be representable");
+        let transformed = SubtreeTransform::try_new(
+            size(1.08, 0.92),
+            point(px(0.0), px(0.0)),
+            SubtreeTransformOrigin::CENTER,
+        )
+        .expect("Gallery clip transform must be representable");
+
+        let rectangle = div()
+            .id("presentation-clip-rectangle")
+            .relative()
+            .w(px(104.0))
+            .h(px(78.0))
+            .border_1()
+            .border_color(rgb(0x6f7c8a))
+            .bg(rgb(0xf5f7fa))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(-18.0))
+                    .top(px(12.0))
+                    .w(px(140.0))
+                    .h(px(52.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(0xcfe8ff))
+                    .text_xs()
+                    .text_color(rgb(0x164e63))
+                    .child("Rect overflow"),
+            )
+            .clip_to_border_box()
+            .into_any_element();
+        let symmetric = div()
+            .id("presentation-clip-symmetric")
+            .w(px(104.0))
+            .h(px(78.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(0xd8f3e8))
+            .text_xs()
+            .text_color(rgb(0x14532d))
+            .child("Symmetric")
+            .with_subtree_clip(circular(32.0))
+            .into_any_element();
+        let asymmetric = div()
+            .id("presentation-clip-asymmetric")
+            .w(px(104.0))
+            .h(px(78.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(0xfce6d7))
+            .text_xs()
+            .text_color(rgb(0x7c2d12))
+            .child("Asymmetric")
+            .with_subtree_clip(asymmetric)
+            .into_any_element();
+        let nested = div()
+            .id("presentation-clip-nested")
+            .w(px(104.0))
+            .h(px(78.0))
+            .p_2()
+            .bg(rgb(0xede9fe))
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(0xddd6fe))
+                    .text_xs()
+                    .text_color(rgb(0x4c1d95))
+                    .child("Nested")
+                    .with_subtree_clip(circular(20.0)),
+            )
+            .with_subtree_clip(circular(28.0))
+            .into_any_element();
+        let transformed = div()
+            .id("presentation-clip-transformed")
+            .relative()
+            .w(px(104.0))
+            .h(px(78.0))
+            .bg(rgb(0xe0f2fe))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(-8.0))
+                    .top(px(8.0))
+                    .w(px(120.0))
+                    .h(px(62.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(0xbae6fd))
+                    .text_xs()
+                    .text_color(rgb(0x075985))
+                    .child("Transform")
+                    .with_subtree_transform(transformed),
+            )
+            .with_subtree_clip(circular(30.0))
+            .into_any_element();
+        let scrolling = div()
+            .id("presentation-clip-scrolling")
+            .w(px(104.0))
+            .h(px(78.0))
+            .overflow_hidden()
+            .bg(rgb(0xf1f5f9))
+            .child(
+                ScrollArea::new(
+                    "presentation-clip-scroll",
+                    div().flex().flex_col().children((0..6).map(|index| {
+                        div()
+                            .h(px(22.0))
+                            .flex_none()
+                            .px_2()
+                            .text_xs()
+                            .text_color(rgb(0x334155))
+                            .child(format!("Clip row {}", index + 1))
+                    })),
+                )
+                .vertical(),
+            )
+            .with_subtree_clip(circular(26.0))
+            .into_any_element();
+        let deferred = div()
+            .id("presentation-clip-deferred")
+            .relative()
+            .w(px(104.0))
+            .h(px(78.0))
+            .bg(rgb(0xfff7ed))
+            .child(deferred(
+                div()
+                    .absolute()
+                    .left(px(-10.0))
+                    .top(px(12.0))
+                    .w(px(124.0))
+                    .h(px(50.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(0xfed7aa))
+                    .text_xs()
+                    .text_color(rgb(0x9a3412))
+                    .child("Deferred"),
+            ))
+            .with_subtree_clip(circular(24.0))
+            .into_any_element();
+        let canvas = div()
+            .id("presentation-clip-canvas")
+            .relative()
+            .w(px(104.0))
+            .h(px(78.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(0xf0fdfa))
+            .text_xs()
+            .text_color(rgb(0x115e59))
+            .child(canvas(|_, _, _| (), |_, _, _, _| {}))
+            .child("Text + canvas")
+            .with_subtree_clip(circular(22.0))
+            .into_any_element();
+        let interactive = div()
+            .id("presentation-clip-interactive")
+            .debug_selector(|| "gallery:presentation-clips:interactive-target".into())
+            .w(px(104.0))
+            .h(px(78.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(0xdbeafe))
+            .text_xs()
+            .text_color(rgb(0x1e3a8a))
+            .cursor_pointer()
+            .role(open_gpui::accesskit::Role::Button)
+            .aria_label("Exact clipped activation")
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.increment_presentation_clip_action(cx);
+            }))
+            .child("Interactive")
+            .with_subtree_clip(circular(28.0))
+            .into_any_element();
+
+        div()
+            .id("presentation-clips")
+            .debug_selector(|| "gallery:presentation-clips".into())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(open_gpui::FontWeight::BOLD)
+                    .child("Subtree clip matrix"),
+            )
+            .child(div().flex().flex_wrap().gap_3().children([
+                tile("rectangle", "Rectangle", rectangle),
+                tile("symmetric", "Symmetric", symmetric),
+                tile("asymmetric", "Asymmetric", asymmetric),
+                tile("nested", "Nested", nested),
+                tile("transformed", "Transformed", transformed),
+                tile("scrolling", "Scrolling", scrolling),
+                tile("deferred", "Deferred", deferred),
+                tile("canvas", "Canvas text", canvas),
+                tile("interactive", "Exact hit", interactive),
+            ]))
+            .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                "exact clip activations {}",
+                self.presentation_clip_action_count
+            )))
     }
 
     pub(super) fn render_presentation_page(
@@ -517,6 +766,7 @@ impl GalleryShell {
             .child(presentation_slot)
             .child(presentation_flow_sentinel)
             .child(presentation_matrix)
+            .child(self.render_subtree_clip_matrix(cx))
             .child(
                 div()
                     .id("presentation-readout")

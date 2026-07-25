@@ -20,10 +20,10 @@
 //!
 //! Elements are intended to be the low level, imperative API to GPUI. They are responsible for upholding,
 //! or breaking, GPUI's features as they deem necessary. As an example, most GPUI elements are expected
-//! to stay in the bounds that their parent element gives them. But with [`Window::with_content_mask`],
-//! you can ignore this restriction and paint anywhere inside of the window's bounds. This is useful for overlays
-//! and popups and anything else that shows up 'on top' of other elements.
-//! With great power, comes great responsibility.
+//! to stay in the bounds that their parent element gives them. Window-space overlays and popups
+//! deliberately leave ordinary subtree clip ancestry through GPUI's portal machinery; custom
+//! elements should use [`Window::prepare_subtree_clip`] and
+//! [`Window::with_prepared_subtree_clip`] when they need checked descendant clipping.
 //!
 //! However, most of the time, you won't need to implement your own elements. GPUI provides a number of
 //! elements that should cover most common use cases out of the box and it's recommended that you use those
@@ -462,7 +462,7 @@ impl<E: Element> Drawable<E> {
                 if window.a11y.is_active() && window.subtree_presentation().is_interactive() {
                     if let Some(global_id) = global_id.as_ref() {
                         if let Some(role) = self.element.a11y_role()
-                            && let Ok((displayed_bounds, accessibility_bounds)) =
+                            && let Ok(Some((displayed_bounds, accessibility_bounds, witness))) =
                                 window.try_project_subtree_accessibility_bounds(bounds)
                         {
                             let node_id = global_id.accesskit_node_id();
@@ -473,7 +473,9 @@ impl<E: Element> Drawable<E> {
                             node.set_bounds(accessibility_bounds);
                             pushed_a11y_node = window.a11y.nodes.push(node_id, node);
                             if pushed_a11y_node {
-                                window.a11y.record_node_bounds(node_id, displayed_bounds);
+                                window
+                                    .a11y
+                                    .record_node_bounds(node_id, displayed_bounds, witness);
                                 reveal_a11y_node = Some(node_id);
                             }
                         }
@@ -483,7 +485,7 @@ impl<E: Element> Drawable<E> {
                 let node_id = window
                     .next_frame
                     .dispatch_tree
-                    .push_node_scoped(window.subtree_transform_validity());
+                    .push_node_scoped(window.subtree_geometry_validity());
                 let prepaint = window.with_prepaint_layout_id(layout_id, |window| {
                     if let Some(node_id) = reveal_a11y_node {
                         window.bind_accessibility_reveal_target(node_id, bounds);

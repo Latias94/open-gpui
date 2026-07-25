@@ -18,12 +18,16 @@ use crate::{
     PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SubtreePresentation,
-    SubtreeTransform, SubtreeTransformError, SystemWindowTab, SystemWindowTabController,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, Underline,
-    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    geometry::{ResolvedSubtreeTransform, SubtreeTransformValidity},
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SubtreeClip,
+    SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
+    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
+    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem,
+    geometry::{
+        ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
+        SubtreeGeometryValidity,
+    },
     point,
     prelude::*,
     profiler, px, rems, size, transparent_black,
@@ -586,7 +590,7 @@ struct PendingPointerCancellation {
 pub(crate) struct CursorStyleRequest {
     pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 #[derive(Default, Eq, PartialEq)]
@@ -703,15 +707,86 @@ impl HitboxId {
     }
 }
 
-/// A rectangular region that potentially blocks hitboxes inserted prior.
+/// An immutable committed geometry capability for exact initial hit testing.
+#[derive(Clone, Debug)]
+pub struct HitTestSnapshot {
+    geometry: ElementGeometry,
+    validity: Option<SubtreeGeometryValidity>,
+    clip_stack: ClipStackSnapshot,
+    active: bool,
+}
+
+/// An opaque, frame-bound subtree clip resolved during prepaint.
+///
+/// This token preserves the exact clip stack and geometry validity used by prepaint so paint
+/// cannot reconstruct or inject window-space clip geometry independently.
+#[derive(Clone, Debug)]
+pub struct PreparedSubtreeClip {
+    window_id: WindowId,
+    frame_generation: u64,
+    parent_transform: ResolvedSubtreeTransform,
+    inherited: ClipStackSnapshot,
+    resolved: ClipStackSnapshot,
+    validity: SubtreeGeometryValidity,
+}
+
+impl PreparedSubtreeClip {
+    pub(crate) fn is_valid(&self) -> bool {
+        self.validity.is_valid()
+    }
+}
+
+impl PartialEq for HitTestSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.geometry == other.geometry
+            && self.clip_stack == other.clip_stack
+            && self.active == other.active
+    }
+}
+
+impl HitTestSnapshot {
+    /// Returns the committed layout and displayed geometry.
+    pub fn geometry(&self) -> ElementGeometry {
+        self.geometry
+    }
+
+    /// Returns the conservative window-space AABB of the exact clip stack.
+    pub fn displayed_clip_bounds(&self) -> Bounds<Pixels> {
+        self.clip_stack.conservative_bounds()
+    }
+
+    /// Returns whether this snapshot is currently eligible and exactly contains the window point.
+    pub fn is_window_point_target(&self, point: Point<Pixels>) -> bool {
+        self.active
+            && self
+                .validity
+                .as_ref()
+                .is_none_or(SubtreeGeometryValidity::is_valid)
+            && self.geometry.displayed_bounds().contains(&point)
+            && self.clip_stack.contains(point)
+    }
+
+    /// Creates an identity snapshot for test adapters.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn identity_for_test(bounds: Bounds<Pixels>) -> Self {
+        Self {
+            geometry: ElementGeometry::identity_for_test(bounds),
+            validity: None,
+            clip_stack: ClipStackSnapshot::root(bounds),
+            active: true,
+        }
+    }
+}
+
+/// A region that potentially blocks hitboxes inserted prior.
 /// See [Window::insert_hitbox] for more details.
 #[derive(Clone, Debug)]
 pub struct Hitbox {
     /// A unique identifier for the hitbox.
     pub id: HitboxId,
     geometry: ElementGeometry,
-    validity: Option<SubtreeTransformValidity>,
-    content_mask: ContentMask<Pixels>,
+    validity: Option<SubtreeGeometryValidity>,
+    clip_stack: ClipStackSnapshot,
     behavior: HitboxBehavior,
     active: bool,
 }
@@ -732,9 +807,19 @@ impl Hitbox {
         self.geometry
     }
 
-    /// Returns the window-space content mask captured with this hitbox.
-    pub fn displayed_content_mask(&self) -> ContentMask<Pixels> {
-        self.content_mask
+    /// Captures the immutable geometry and eligibility used for exact initial hit testing.
+    pub fn hit_test_snapshot(&self) -> HitTestSnapshot {
+        HitTestSnapshot {
+            geometry: self.geometry,
+            validity: self.validity.clone(),
+            clip_stack: self.clip_stack.clone(),
+            active: self.active,
+        }
+    }
+
+    /// Returns the conservative window-space bounds of the clip captured with this hitbox.
+    pub fn displayed_clip_bounds(&self) -> Bounds<Pixels> {
+        self.clip_stack.conservative_bounds()
     }
 
     /// Returns how this hitbox participates in occlusion routing.
@@ -749,11 +834,11 @@ impl Hitbox {
             && self
                 .validity
                 .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .is_none_or(SubtreeGeometryValidity::is_valid)
     }
 
-    fn retag_validity(&mut self, validity: Option<SubtreeTransformValidity>) {
-        self.validity = SubtreeTransformValidity::replayed_under(self.validity.as_ref(), validity);
+    fn retag_validity(&mut self, validity: Option<SubtreeGeometryValidity>) {
+        self.validity = SubtreeGeometryValidity::replayed_under(self.validity.as_ref(), validity);
     }
 
     /// Projects a point relative to this hitbox into displayed window coordinates.
@@ -804,12 +889,14 @@ impl Hitbox {
         self.geometry.window_to_local_vector(vector)
     }
 
-    /// Returns whether a displayed window point lies inside this hitbox and its content mask.
+    /// Returns whether a displayed window point lies inside this hitbox and its exact clip stack.
     pub fn contains_window_point(&self, point: Point<Pixels>) -> bool {
-        self.geometry
-            .displayed_bounds()
-            .intersect(&self.content_mask.bounds)
-            .contains(&point)
+        self.geometry.displayed_bounds().contains(&point) && self.clip_stack.contains(point)
+    }
+
+    /// Returns whether this committed hitbox is an eligible target for a displayed window point.
+    pub fn is_window_point_target(&self, point: Point<Pixels>) -> bool {
+        self.hit_test_snapshot().is_window_point_target(point)
     }
 
     /// Checks if the hitbox is physically hovered. Returns `false` during keyboard input modality
@@ -1036,7 +1123,7 @@ impl TooltipId {
                     && tooltip_bounds
                         .validity
                         .as_ref()
-                        .is_none_or(SubtreeTransformValidity::is_valid)
+                        .is_none_or(SubtreeGeometryValidity::is_valid)
                     && tooltip_bounds.bounds.contains(&window.mouse_position())
             })
     }
@@ -1045,18 +1132,18 @@ impl TooltipId {
 pub(crate) struct TooltipBounds {
     id: TooltipId,
     bounds: Bounds<Pixels>,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 struct PreparedTooltip {
     element: AnyElement,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 #[derive(Clone)]
 pub(crate) struct AutoscrollIntent {
     bounds: Bounds<Pixels>,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 impl AutoscrollIntent {
@@ -1129,7 +1216,7 @@ impl WindowFrameCapture {
 #[derive(Clone)]
 struct SubtreeTransformScope {
     transform: ResolvedSubtreeTransform,
-    validity: Option<SubtreeTransformValidity>,
+    validity: Option<SubtreeGeometryValidity>,
 }
 
 #[derive(Clone, Copy)]
@@ -1145,6 +1232,11 @@ struct SubtreeTransformScopeGuard {
 
 struct SubtreePresentationScopeGuard {
     stack: Rc<RefCell<SmallVec<[SubtreePresentation; 8]>>>,
+    entered_depth: usize,
+}
+
+struct ClipStackScopeGuard {
+    stack: Rc<RefCell<SmallVec<[ClipStackSnapshot; 8]>>>,
     entered_depth: usize,
 }
 
@@ -1171,6 +1263,16 @@ impl Drop for SubtreeTransformScopeGuard {
 }
 
 impl Drop for SubtreePresentationScopeGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        if !std::thread::panicking() {
+            debug_assert_eq!(stack.len(), self.entered_depth + 1);
+        }
+        stack.truncate(self.entered_depth);
+    }
+}
+
+impl Drop for ClipStackScopeGuard {
     fn drop(&mut self) {
         let mut stack = self.stack.borrow_mut();
         if !std::thread::panicking() {
@@ -1226,7 +1328,7 @@ pub struct Window {
     subtree_presentation_stack: Rc<RefCell<SmallVec<[SubtreePresentation; 8]>>>,
     subtree_transform_stack: Rc<RefCell<SmallVec<[SubtreeTransformScope; 8]>>>,
     pub(crate) element_opacity: f32,
-    pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
+    clip_stack: Rc<RefCell<SmallVec<[ClipStackSnapshot; 8]>>>,
     pub(crate) requested_autoscroll: Option<AutoscrollIntent>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
@@ -2057,7 +2159,7 @@ impl Window {
             current_prepaint_layout_id: Rc::new(Cell::new(None)),
             subtree_presentation_stack: Rc::new(RefCell::new(SmallVec::new())),
             subtree_transform_stack: Rc::new(RefCell::new(SmallVec::new())),
-            content_mask_stack: Vec::new(),
+            clip_stack: Rc::new(RefCell::new(SmallVec::new())),
             element_opacity: 1.0,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -2164,31 +2266,6 @@ impl Default for DispatchEventResult {
             propagate: true,
             default_prevented: false,
         }
-    }
-}
-
-/// Indicates which region of the window is visible. Content falling outside of this mask will not be
-/// rendered. Currently, only rectangular content masks are supported, but we give the mask its own type
-/// to leave room to support more complex shapes in the future.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-#[repr(C)]
-pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
-    /// The bounds
-    pub bounds: Bounds<P>,
-}
-
-impl ContentMask<Pixels> {
-    /// Scale the content mask's pixel units by the given scaling factor.
-    pub fn scale(&self, factor: f32) -> ContentMask<ScaledPixels> {
-        ContentMask {
-            bounds: self.bounds.scale(factor),
-        }
-    }
-
-    /// Intersect the content mask with the given content mask.
-    pub fn intersect(&self, other: &Self) -> Self {
-        let bounds = self.bounds.intersect(&other.bounds);
-        ContentMask { bounds }
     }
 }
 
@@ -3953,13 +4030,6 @@ impl Window {
         Self::cover_device_bounds(self.device_local_bounds(bounds))
     }
 
-    #[inline]
-    fn snapped_content_mask(&self) -> ContentMask<ScaledPixels> {
-        ContentMask {
-            bounds: self.cover_bounds(self.content_mask().bounds),
-        }
-    }
-
     /// Call to prevent default handling for the event currently being dispatched.
     /// Built-in handlers consult this flag before applying behaviors such as
     /// automatic focus transfer or default scrolling.
@@ -4206,7 +4276,8 @@ impl Window {
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
         self.invalidator.set_phase(DrawPhase::None);
-        if mem::take(&mut self.focus_followup_requested) && self.focus_followup_frame_needed() {
+        let focus_followup_requested = mem::take(&mut self.focus_followup_requested);
+        if focus_followup_requested && self.focus_followup_frame_needed() {
             self.refreshing = true;
             self.invalidator.set_focus_only_dirty();
         }
@@ -4435,7 +4506,7 @@ impl Window {
             && tooltip
                 .validity
                 .as_ref()
-                .is_none_or(SubtreeTransformValidity::is_valid)
+                .is_none_or(SubtreeGeometryValidity::is_valid)
         {
             self.with_resolved_subtree_transform(
                 ResolvedSubtreeTransform::IDENTITY,
@@ -4657,8 +4728,10 @@ impl Window {
                 let accessibility_tree_scope = deferred_draw.accessibility_tree_scope;
                 let subtree_presentation = deferred_draw.subtree_presentation;
                 let subtree_transform = deferred_draw.subtree_transform;
-                let subtree_transform_validity = deferred_draw.subtree_transform_validity.clone();
+                let subtree_geometry_validity = deferred_draw.subtree_geometry_validity.clone();
                 let scroll_ancestry = deferred_draw.scroll_ancestry.clone();
+                let accessibility_parent = deferred_draw.accessibility_parent.clone();
+                let accessibility_proxy_clip_owner = deferred_draw.accessibility_proxy_clip_owner;
                 self.element_id_stack
                     .clone_from(&deferred_draw.element_id_stack);
                 self.text_style_stack
@@ -4668,20 +4741,20 @@ impl Window {
                     .set_active_node(deferred_draw.parent_node);
 
                 let prepaint_start = self.prepaint_index();
-                if subtree_transform_validity
+                if subtree_geometry_validity
                     .as_ref()
                     .is_some_and(|validity| !validity.is_valid())
                 {
                     // The owning transform scope already failed elsewhere in this frame.
                 } else if let Some(element) = deferred_draw.element.as_mut() {
                     let result = self.with_scroll_ancestry(scroll_ancestry, |window| {
-                        window.transact_subtree_transform(
-                            subtree_transform_validity.clone(),
+                        window.transact_subtree_geometry(
+                            subtree_geometry_validity.clone(),
                             |window| {
                                 window.with_subtree_presentation(subtree_presentation, |window| {
                                     window.with_resolved_subtree_transform(
                                         subtree_transform,
-                                        subtree_transform_validity.clone(),
+                                        subtree_geometry_validity.clone(),
                                         |window| {
                                             window.with_rendered_view(
                                                 deferred_draw.current_view,
@@ -4690,19 +4763,31 @@ impl Window {
                                                         Some(deferred_draw.rem_size),
                                                         |window| {
                                                             window.with_absolute_element_offset(
-                                                            deferred_draw.absolute_offset,
-                                                            |window| {
-                                                                window.with_resolved_content_mask(
-                                                    deferred_draw.content_mask,
-                                                    |window| {
-                                                        window.with_accessibility_tree_scope(
-                                                            accessibility_tree_scope,
-                                                            |window| element.prepaint(window, cx),
-                                                        );
-                                                    },
-                                                );
-                                                            },
-                                                        );
+                                                                deferred_draw.absolute_offset,
+                                                                |window| {
+                                                                    window.with_resolved_clip_stack(
+                                                                        deferred_draw
+                                                                            .clip_stack
+                                                                            .clone(),
+                                                                        |window| {
+                                                                            window.with_accessibility_tree_scope(
+                                                                                accessibility_tree_scope,
+                                                                                |window| {
+                                                                                    window.with_accessibility_deferred_parent_scope(
+                                                                                        accessibility_parent,
+                                                                                        |window| {
+                                                                                            window.with_accessibility_clip_owner_scope(
+                                                                                                accessibility_proxy_clip_owner,
+                                                                                                |window| element.prepaint(window, cx),
+                                                                                            )
+                                                                                        },
+                                                                                    )
+                                                                                },
+                                                                            );
+                                                                        },
+                                                                    );
+                                                                },
+                                                            );
                                                         },
                                                     );
                                                 },
@@ -4714,9 +4799,9 @@ impl Window {
                         )
                     });
                     if result.is_err()
-                        && let Some(validity) = subtree_transform_validity.as_ref()
+                        && let Some(validity) = subtree_geometry_validity.as_ref()
                     {
-                        self.record_subtree_transform_scope_diagnostic(validity);
+                        self.record_subtree_geometry_scope_diagnostic(validity);
                     }
                 } else {
                     self.reuse_prepaint(deferred_draw.prepaint_range.clone());
@@ -4756,10 +4841,10 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let paint_start = self.paint_index();
-            let content_mask = deferred_draw.content_mask;
+            let clip_stack = deferred_draw.clip_stack.clone();
             let subtree_presentation = deferred_draw.subtree_presentation;
             if deferred_draw
-                .subtree_transform_validity
+                .subtree_geometry_validity
                 .as_ref()
                 .is_some_and(|validity| !validity.is_valid())
             {
@@ -4768,10 +4853,10 @@ impl Window {
                 self.with_subtree_presentation(subtree_presentation, |window| {
                     window.with_resolved_subtree_transform(
                         deferred_draw.subtree_transform,
-                        deferred_draw.subtree_transform_validity.clone(),
+                        deferred_draw.subtree_geometry_validity.clone(),
                         |window| {
                             window.with_rendered_view(deferred_draw.current_view, |window| {
-                                window.with_resolved_content_mask(content_mask, |window| {
+                                window.with_resolved_clip_stack(clip_stack, |window| {
                                     window.with_rem_size(Some(deferred_draw.rem_size), |window| {
                                         element.paint(window, cx);
                                     });
@@ -4780,8 +4865,8 @@ impl Window {
                         },
                     );
                 });
-                if let Some(validity) = deferred_draw.subtree_transform_validity.as_ref() {
-                    self.record_subtree_transform_scope_diagnostic(validity);
+                if let Some(validity) = deferred_draw.subtree_geometry_validity.as_ref() {
+                    self.record_subtree_geometry_scope_diagnostic(validity);
                 }
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
@@ -4821,7 +4906,7 @@ impl Window {
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
-        let validity = self.subtree_transform_validity();
+        let validity = self.subtree_geometry_validity();
         let presentation = self.subtree_presentation();
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
@@ -4854,7 +4939,7 @@ impl Window {
             .map(|output| {
                 FrameOutput::new(
                     output.value.replayed(frame_generation),
-                    SubtreeTransformValidity::replayed_under(
+                    SubtreeGeometryValidity::replayed_under(
                         output.validity.as_ref(),
                         validity.clone(),
                     ),
@@ -4871,7 +4956,7 @@ impl Window {
             .map(|output| {
                 FrameOutput::new(
                     output.value.replayed(frame_generation),
-                    SubtreeTransformValidity::replayed_under(
+                    SubtreeGeometryValidity::replayed_under(
                         output.validity.as_ref(),
                         validity.clone(),
                     ),
@@ -4896,7 +4981,7 @@ impl Window {
                     commit.presentation = commit.presentation.resolve_under(presentation);
                     FrameOutput::new(
                         commit,
-                        SubtreeTransformValidity::replayed_under(
+                        SubtreeGeometryValidity::replayed_under(
                             output.validity.as_ref(),
                             validity.clone(),
                         ),
@@ -4909,7 +4994,7 @@ impl Window {
                 .iter_mut()
                 .map(|request| {
                     request.take().map(|mut request| {
-                        request.validity = SubtreeTransformValidity::replayed_under(
+                        request.validity = SubtreeGeometryValidity::replayed_under(
                             request.validity.as_ref(),
                             validity.clone(),
                         );
@@ -4929,7 +5014,7 @@ impl Window {
                 .and_then(Option::as_ref);
             self.next_frame.element_state_validities.insert(
                 key,
-                SubtreeTransformValidity::replayed_under(recorded_validity, validity.clone()),
+                SubtreeGeometryValidity::replayed_under(recorded_validity, validity.clone()),
             );
         }
         self.text_system
@@ -4968,15 +5053,17 @@ impl Window {
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
                     accessibility_tree_scope: deferred_draw.accessibility_tree_scope,
-                    content_mask: deferred_draw.content_mask,
+                    accessibility_parent: deferred_draw.accessibility_parent.clone(),
+                    accessibility_proxy_clip_owner: deferred_draw.accessibility_proxy_clip_owner,
+                    clip_stack: deferred_draw.clip_stack.clone(),
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
                     subtree_presentation: deferred_draw.subtree_presentation,
                     subtree_transform: deferred_draw.subtree_transform,
-                    subtree_transform_validity: SubtreeTransformValidity::replayed_under(
-                        deferred_draw.subtree_transform_validity.as_ref(),
+                    subtree_geometry_validity: SubtreeGeometryValidity::replayed_under(
+                        deferred_draw.subtree_geometry_validity.as_ref(),
                         validity.clone(),
                     ),
                     scroll_ancestry: deferred_draw.scroll_ancestry.clone(),
@@ -5011,7 +5098,7 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
-        let validity = self.subtree_transform_validity();
+        let validity = self.subtree_geometry_validity();
         let window_control_start = self.next_frame.window_control_hitboxes.len();
         self.next_frame.window_control_hitboxes.extend(
             self.rendered_frame.window_control_hitboxes[range.start.window_control_hitboxes_index
@@ -5034,7 +5121,7 @@ impl Window {
                 self.next_frame.debug_bounds_entries.push((
                     selector,
                     bounds,
-                    SubtreeTransformValidity::replayed_under(
+                    SubtreeGeometryValidity::replayed_under(
                         recorded_validity.as_ref(),
                         validity.clone(),
                     ),
@@ -5050,7 +5137,7 @@ impl Window {
                 self.next_frame.debug_focus_entries.push((
                     selector,
                     focus_id,
-                    SubtreeTransformValidity::replayed_under(
+                    SubtreeGeometryValidity::replayed_under(
                         recorded_validity.as_ref(),
                         validity.clone(),
                     ),
@@ -5063,7 +5150,7 @@ impl Window {
                 .iter()
                 .cloned()
                 .map(|mut request| {
-                    request.validity = SubtreeTransformValidity::replayed_under(
+                    request.validity = SubtreeGeometryValidity::replayed_under(
                         request.validity.as_ref(),
                         validity.clone(),
                     );
@@ -5076,7 +5163,7 @@ impl Window {
                 .iter_mut()
                 .map(|output| {
                     let mut handler = output.value.take();
-                    let replayed_validity = SubtreeTransformValidity::replayed_under(
+                    let replayed_validity = SubtreeGeometryValidity::replayed_under(
                         output.validity.as_ref(),
                         validity.clone(),
                     );
@@ -5093,7 +5180,7 @@ impl Window {
                 .map(|output| {
                     FrameOutput::new(
                         output.value.take(),
-                        SubtreeTransformValidity::replayed_under(
+                        SubtreeGeometryValidity::replayed_under(
                             output.validity.as_ref(),
                             validity.clone(),
                         ),
@@ -5107,7 +5194,7 @@ impl Window {
                 .map(|output| {
                     FrameOutput::new(
                         output.value.clone(),
-                        SubtreeTransformValidity::replayed_under(
+                        SubtreeGeometryValidity::replayed_under(
                             output.validity.as_ref(),
                             validity.clone(),
                         ),
@@ -5126,7 +5213,7 @@ impl Window {
                 .and_then(Option::as_ref);
             self.next_frame.element_state_validities.insert(
                 key,
-                SubtreeTransformValidity::replayed_under(recorded_validity, validity.clone()),
+                SubtreeGeometryValidity::replayed_under(recorded_validity, validity.clone()),
             );
         }
         self.next_frame.tab_stops.replay_scoped(
@@ -5143,7 +5230,7 @@ impl Window {
                 .map(|entry| {
                     FrameOutput::new(
                         entry.value,
-                        SubtreeTransformValidity::replayed_under(
+                        SubtreeGeometryValidity::replayed_under(
                             entry.validity.as_ref(),
                             validity.clone(),
                         ),
@@ -5161,7 +5248,7 @@ impl Window {
                     diagnostic.frame_generation = self.next_frame.generation;
                     FrameOutput::new(
                         diagnostic,
-                        SubtreeTransformValidity::replayed_under(
+                        SubtreeGeometryValidity::replayed_under(
                             entry.validity.as_ref(),
                             validity.clone(),
                         ),
@@ -5186,10 +5273,10 @@ impl Window {
         let replay_result = self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
         );
         if let Err(error) = replay_result {
-            self.record_subtree_transform_failure(error);
+            self.record_subtree_geometry_failure(error);
         }
     }
 
@@ -5221,7 +5308,7 @@ impl Window {
         self.next_frame.cursor_styles.push(CursorStyleRequest {
             hitbox_id: Some(hitbox.id),
             style,
-            validity: self.subtree_transform_validity(),
+            validity: self.subtree_geometry_validity(),
         });
     }
 
@@ -5237,7 +5324,7 @@ impl Window {
         self.next_frame.cursor_styles.push(CursorStyleRequest {
             hitbox_id: None,
             style,
-            validity: self.subtree_transform_validity(),
+            validity: self.subtree_geometry_validity(),
         })
     }
 
@@ -5252,49 +5339,176 @@ impl Window {
         self.next_frame.tooltip_requests.push(Some(TooltipRequest {
             id,
             tooltip,
-            validity: self.subtree_transform_validity(),
+            validity: self.subtree_geometry_validity(),
         }));
         id
     }
 
-    /// Invoke the given function with the given content mask after intersecting it
-    /// with the current mask. This method should only be called during element drawing.
-    // This function is called in a highly recursive manner in editor
-    // prepainting, make sure its inlined to reduce the stack burden
-    #[inline]
-    pub fn with_content_mask<R>(
+    /// Resolves a checked child-local clip into an opaque token for this candidate frame.
+    ///
+    /// Custom elements should create the token during prepaint, store it in their prepaint state,
+    /// and pass the same token to [`Self::with_prepared_subtree_clip`] during paint.
+    pub fn prepare_subtree_clip(
         &mut self,
-        mask: Option<ContentMask<Pixels>>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
+        clip: &SubtreeClip,
+        child_bounds: Bounds<Pixels>,
+    ) -> PreparedSubtreeClip {
+        self.prepare_subtree_clip_with_accessibility_axes(clip, child_bounds, point(true, true))
+    }
+
+    /// Resolves an internal scroll viewport clip.
+    ///
+    /// Every false accessibility axis must describe a visual scroll axis: descendants may remain
+    /// semantically reachable through `ScrollIntoView` once this viewport is reachable.
+    pub(crate) fn prepare_subtree_clip_with_accessibility_axes(
+        &mut self,
+        clip: &SubtreeClip,
+        child_bounds: Bounds<Pixels>,
+        accessibility_axes: Point<bool>,
+    ) -> PreparedSubtreeClip {
         self.invalidator.debug_assert_paint_or_prepaint();
-        if let Some(mask) = mask {
-            let Ok(displayed_bounds) = self.try_project_subtree_bounds(mask.bounds) else {
-                return f(self);
-            };
-            let mask = ContentMask {
-                bounds: displayed_bounds,
+        let inherited = self.clip_stack();
+        let resolved = clip.resolve_with_accessibility_axes(
+            child_bounds,
+            self.subtree_transform(),
+            inherited.conservative_bounds(),
+            accessibility_axes,
+        );
+        self.prepare_subtree_clip_resolution(inherited, resolved)
+    }
+
+    pub(crate) fn prepare_failed_subtree_clip(
+        &mut self,
+        error: SubtreeClipError,
+    ) -> PreparedSubtreeClip {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        self.prepare_subtree_clip_resolution(self.clip_stack(), Err(error))
+    }
+
+    fn prepare_subtree_clip_resolution(
+        &mut self,
+        inherited: ClipStackSnapshot,
+        resolved: Result<ResolvedClip, SubtreeClipError>,
+    ) -> PreparedSubtreeClip {
+        let validity = self.new_subtree_geometry_validity();
+        let resolved = match resolved {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                validity.invalidate(error);
+                ResolvedClip::rectangle(Bounds::default())
             }
-            .intersect(&self.content_mask());
-            self.content_mask_stack.push(mask);
-            let result = f(self);
-            self.content_mask_stack.pop();
-            result
-        } else {
-            f(self)
+        };
+        PreparedSubtreeClip {
+            window_id: self.handle.window_id(),
+            frame_generation: self.next_frame.generation,
+            parent_transform: self.subtree_transform(),
+            resolved: inherited.push(resolved),
+            inherited,
+            validity,
         }
     }
 
-    fn with_resolved_content_mask<R>(
+    /// Re-enters a subtree clip captured by [`Self::prepare_subtree_clip`].
+    ///
+    /// Returns `None` without executing `f` when the token belongs to another window, frame, or
+    /// parent geometry scope. Geometry failures raised while `f` runs roll back every affected
+    /// candidate-frame output.
+    pub fn with_prepared_subtree_clip<R>(
         &mut self,
-        mask: ContentMask<Pixels>,
+        prepared: &PreparedSubtreeClip,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        self.with_prepared_subtree_clip_owned_by_accessibility_node(prepared, None, f)
+    }
+
+    pub(crate) fn with_prepared_subtree_clip_owned_by_accessibility_node<R>(
+        &mut self,
+        prepared: &PreparedSubtreeClip,
+        owner_id: Option<accesskit::NodeId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        if prepared.window_id != self.handle.window_id()
+            || prepared.frame_generation != self.next_frame.generation
+            || prepared.parent_transform != self.subtree_transform()
+            || prepared.inherited != self.clip_stack()
+        {
+            debug_assert!(
+                false,
+                "prepared subtree clip used outside its captured scope"
+            );
+            return None;
+        }
+
+        let validity = prepared.validity.clone();
+        if !validity.is_valid() {
+            self.record_subtree_geometry_scope_diagnostic(&validity);
+            return None;
+        }
+        if self.invalidator.is_prepaint() {
+            let accessibility_owner = self.a11y.is_active()
+                && self.subtree_presentation().is_interactive()
+                && owner_id.is_some_and(|owner_id| self.a11y.nodes.is_current_node(owner_id));
+            let mut output = None;
+            let transaction = self.transact_subtree_geometry(Some(validity.clone()), |window| {
+                window.with_resolved_subtree_transform(
+                    prepared.parent_transform,
+                    Some(validity.clone()),
+                    |window| {
+                        window.with_resolved_clip_stack(prepared.resolved.clone(), |window| {
+                            output = Some(
+                                window.with_accessibility_clip_owner_scope(!accessibility_owner, f),
+                            );
+                        })
+                    },
+                )
+            });
+            if transaction.is_ok() && validity.is_valid() {
+                if accessibility_owner {
+                    let owner_marked = owner_id.is_some_and(|owner_id| {
+                        self.a11y.nodes.mark_current_node_clips_children(owner_id)
+                    });
+                    debug_assert!(
+                        owner_marked,
+                        "prepared subtree clip owner must remain current after a successful prepaint"
+                    );
+                }
+                output
+            } else {
+                self.record_subtree_geometry_scope_diagnostic(&validity);
+                None
+            }
+        } else {
+            let output = self.with_resolved_subtree_transform(
+                prepared.parent_transform,
+                Some(validity.clone()),
+                |window| {
+                    window.with_resolved_clip_stack(prepared.resolved.clone(), |window| f(window))
+                },
+            );
+            if validity.is_valid() {
+                Some(output)
+            } else {
+                self.record_subtree_geometry_scope_diagnostic(&validity);
+                None
+            }
+        }
+    }
+
+    fn with_resolved_clip_stack<R>(
+        &mut self,
+        snapshot: ClipStackSnapshot,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
-        self.content_mask_stack.push(mask);
-        let result = f(self);
-        self.content_mask_stack.pop();
-        result
+        let stack = self.clip_stack.clone();
+        let entered_depth = stack.borrow().len();
+        stack.borrow_mut().push(snapshot);
+        let _guard = ClipStackScopeGuard {
+            stack,
+            entered_depth,
+        };
+        f(self)
     }
 
     /// Updates the global element offset relative to the current offset. This is used to implement
@@ -5365,6 +5579,50 @@ impl Window {
         f(self)
     }
 
+    fn with_accessibility_clip_owner_scope<R>(
+        &mut self,
+        enabled: bool,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        if !enabled || !self.a11y.is_active() || !self.subtree_presentation().is_interactive() {
+            return f(self);
+        }
+
+        let _scope = self.a11y.nodes.enter_clip_owner_scope();
+        f(self)
+    }
+
+    fn with_accessibility_deferred_parent_scope<R>(
+        &mut self,
+        parent: Option<a11y::AccessibilityDeferredParent>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        let Some(parent) = parent else {
+            return f(self);
+        };
+        if !self.a11y.is_active() || !self.subtree_presentation().is_interactive() {
+            return f(self);
+        }
+
+        let _scope = self.a11y.nodes.enter_deferred_parent_scope(parent);
+        f(self)
+    }
+
+    fn with_accessibility_window_portal_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.invalidator.debug_assert_prepaint();
+        if !self.a11y.is_active() || !self.subtree_presentation().is_interactive() {
+            return f(self);
+        }
+
+        let Some(parent) = self.a11y.nodes.reserve_window_portal_parent() else {
+            return f(self);
+        };
+        let _scope = self.a11y.nodes.enter_window_portal_scope(parent);
+        f(self)
+    }
+
     #[cfg(test)]
     pub(crate) fn set_accessibility_active_for_test(&mut self, active: bool) {
         self.a11y.set_requested_active_for_test(active);
@@ -5379,9 +5637,9 @@ impl Window {
     pub(crate) fn install_tooltip_bounds_with_validity_for_test(
         &mut self,
         bounds: Bounds<Pixels>,
-    ) -> (TooltipId, SubtreeTransformValidity) {
+    ) -> (TooltipId, SubtreeGeometryValidity) {
         let id = self.next_tooltip_id;
-        let validity = self.new_subtree_transform_validity();
+        let validity = self.new_subtree_geometry_validity();
         self.tooltip_bounds = Some(TooltipBounds {
             id,
             bounds,
@@ -5484,19 +5742,16 @@ impl Window {
         result
     }
 
-    pub(crate) fn transact_subtree_transform<T>(
+    pub(crate) fn transact_subtree_geometry<T>(
         &mut self,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
         f: impl FnOnce(&mut Self) -> T,
-    ) -> Result<T, SubtreeTransformError> {
+    ) -> Result<T, SubtreeGeometryError> {
         let accessed_element_states_index = self.next_frame.accessed_element_states.len();
         let mut invalid_element_states = Vec::new();
         let result = self.transact(|window| {
             let result = f(window);
-            if let Some(error) = validity
-                .as_ref()
-                .and_then(SubtreeTransformValidity::failure)
-            {
+            if let Some(error) = validity.as_ref().and_then(SubtreeGeometryValidity::failure) {
                 invalid_element_states.extend_from_slice(
                     &window.next_frame.accessed_element_states[accessed_element_states_index..],
                 );
@@ -5508,7 +5763,7 @@ impl Window {
 
         if result.is_err() {
             // `transact` truncates the journal suffix. Keep invalid element-state accesses visible
-            // to `Frame::finish`, which owns disposal of state bound to a failed transform scope.
+            // to `Frame::finish`, which owns disposal of state bound to a failed geometry scope.
             self.next_frame
                 .accessed_element_states
                 .extend(invalid_element_states);
@@ -5530,7 +5785,7 @@ impl Window {
         if let Ok(bounds) = self.try_project_subtree_bounds(bounds) {
             self.requested_autoscroll = Some(AutoscrollIntent {
                 bounds,
-                validity: self.subtree_transform_validity(),
+                validity: self.subtree_geometry_validity(),
             });
         }
     }
@@ -5676,11 +5931,11 @@ impl Window {
         Ok(resolved)
     }
 
-    pub(crate) fn new_subtree_transform_validity(&self) -> SubtreeTransformValidity {
-        SubtreeTransformValidity::new(self.subtree_transform_validity())
+    pub(crate) fn new_subtree_geometry_validity(&self) -> SubtreeGeometryValidity {
+        SubtreeGeometryValidity::new(self.subtree_geometry_validity())
     }
 
-    pub(crate) fn subtree_transform_validity(&self) -> Option<SubtreeTransformValidity> {
+    pub(crate) fn subtree_geometry_validity(&self) -> Option<SubtreeGeometryValidity> {
         self.subtree_transform_stack
             .borrow()
             .last()
@@ -5690,7 +5945,7 @@ impl Window {
     pub(crate) fn with_resolved_subtree_transform<R>(
         &mut self,
         transform: ResolvedSubtreeTransform,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
@@ -5700,7 +5955,7 @@ impl Window {
         }
         let stack = self.subtree_transform_stack.clone();
         let entered_depth = stack.borrow().len();
-        let _a11y_validity = self.a11y.nodes.enter_transform_validity(validity.clone());
+        let _a11y_validity = self.a11y.nodes.enter_geometry_validity(validity.clone());
         stack.borrow_mut().push(SubtreeTransformScope {
             transform,
             validity,
@@ -5713,6 +5968,10 @@ impl Window {
     }
 
     fn record_subtree_transform_failure(&self, error: SubtreeTransformError) {
+        self.record_subtree_geometry_failure(SubtreeGeometryError::Transform(error));
+    }
+
+    fn record_subtree_geometry_failure(&self, error: SubtreeGeometryError) {
         self.invalidate_portal_anchor_capture();
         self.invalidate_reveal_target_capture();
         if let Some(scope) = self.subtree_transform_stack.borrow().last()
@@ -5722,12 +5981,28 @@ impl Window {
         }
     }
 
-    pub(crate) fn record_subtree_transform_scope_diagnostic(
+    pub(crate) fn record_subtree_geometry_scope_diagnostic(
         &mut self,
-        validity: &SubtreeTransformValidity,
+        validity: &SubtreeGeometryValidity,
     ) {
         if let Some(error) = validity.take_unreported_failure() {
-            self.record_subtree_transform_diagnostic(error);
+            match error {
+                SubtreeGeometryError::Transform(error) => {
+                    self.record_subtree_transform_diagnostic(error)
+                }
+                SubtreeGeometryError::Clip(error) => {
+                    log::error!(
+                        target: "open_gpui::subtree_clip",
+                        "subtree clip suppressed a layout-only subtree: {error}"
+                    );
+                }
+                SubtreeGeometryError::DeviceConversion => {
+                    log::error!(
+                        target: "open_gpui::subtree_geometry",
+                        "device conversion suppressed a layout-only subtree"
+                    );
+                }
+            }
         }
     }
 
@@ -5785,8 +6060,14 @@ impl Window {
     pub(crate) fn try_project_subtree_accessibility_bounds(
         &self,
         bounds: Bounds<Pixels>,
-    ) -> Result<(Bounds<Pixels>, accesskit::Rect), SubtreeTransformError> {
+    ) -> Result<
+        Option<(Bounds<Pixels>, accesskit::Rect, Option<Point<Pixels>>)>,
+        SubtreeTransformError,
+    > {
         let displayed = self.try_project_subtree_bounds(bounds)?;
+        let Some((displayed, witness)) = self.clip_stack().accessibility_region(displayed) else {
+            return Ok(None);
+        };
         let scale = f64::from(self.scale_factor());
         let x0 = f64::from(displayed.origin.x.0) * scale;
         let y0 = f64::from(displayed.origin.y.0) * scale;
@@ -5803,7 +6084,11 @@ impl Window {
             self.record_subtree_transform_failure(error);
             return Err(error);
         }
-        Ok((displayed, accesskit::Rect { x0, y0, x1, y1 }))
+        Ok(Some((
+            displayed,
+            accesskit::Rect { x0, y0, x1, y1 },
+            witness,
+        )))
     }
 
     fn base_primitive_transform(&self) -> Option<PrimitiveTransform> {
@@ -5978,12 +6263,15 @@ impl Window {
     }
 
     fn insert_scene_primitive(&mut self, primitive: impl Into<Primitive>) {
-        if let Err(error) = self
-            .next_frame
-            .scene
-            .insert_primitive_scoped(primitive, self.subtree_transform_validity())
-        {
-            self.record_subtree_transform_failure(error);
+        let clip_stack = self.clip_stack();
+        let scale_factor = self.scale_factor();
+        if let Err(error) = self.next_frame.scene.insert_primitive_scoped(
+            primitive,
+            &clip_stack,
+            scale_factor,
+            self.subtree_geometry_validity(),
+        ) {
+            self.record_subtree_geometry_failure(error);
         }
     }
 
@@ -5995,18 +6283,16 @@ impl Window {
         self.element_opacity
     }
 
-    /// Obtain the current content mask. This method should only be called during element drawing.
-    pub fn content_mask(&self) -> ContentMask<Pixels> {
+    pub(crate) fn clip_stack(&self) -> ClipStackSnapshot {
         self.invalidator.debug_assert_paint_or_prepaint();
-        self.content_mask_stack
-            .last()
-            .cloned()
-            .unwrap_or_else(|| ContentMask {
-                bounds: Bounds {
-                    origin: Point::default(),
-                    size: self.viewport_size,
-                },
-            })
+        self.clip_stack.borrow().last().cloned().unwrap_or_else(|| {
+            ClipStackSnapshot::root(Bounds::new(Point::default(), self.viewport_size))
+        })
+    }
+
+    /// Returns the conservative window-space AABB of the current exact subtree clip stack.
+    pub fn clip_bounds(&self) -> Bounds<Pixels> {
+        self.clip_stack().conservative_bounds()
     }
 
     /// Provide elements in the called function with a new namespace in which their identifiers must be unique.
@@ -6082,7 +6368,7 @@ impl Window {
         self.next_frame.accessed_element_states.push(key.clone());
         self.next_frame
             .element_state_validities
-            .insert(key.clone(), self.subtree_transform_validity());
+            .insert(key.clone(), self.subtree_geometry_validity());
 
         if let Some(any) = self
             .next_frame
@@ -6199,111 +6485,91 @@ impl Window {
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
     ///
-    /// When `content_mask` is provided, it is resolved under the current geometry and intersected
-    /// with the inherited clip. When `None`, the current effective clip is inherited unchanged.
-    ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn defer_draw(
         &mut self,
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
-        content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
         let transform = self.subtree_transform();
-        let validity = self.subtree_transform_validity();
-        let content_mask = content_mask
-            .and_then(|mask| {
-                self.try_project_subtree_bounds(mask.bounds)
-                    .ok()
-                    .map(|bounds| ContentMask { bounds })
-            })
-            .map(|mask| mask.intersect(&self.content_mask()))
-            .unwrap_or_else(|| self.content_mask());
+        let validity = self.subtree_geometry_validity();
         self.defer_draw_with_transform(
             element,
             absolute_offset,
             priority,
-            content_mask,
+            self.clip_stack(),
             transform,
             validity,
             self.current_scroll_ancestry_for_deferred(),
+            true,
         );
     }
 
     /// Defers an element at a deliberate window-space portal boundary.
     ///
-    /// Unlike [`Self::defer_draw`], this resets inherited subtree geometry and clipping. Theme and
-    /// presentation inheritance are unaffected; callers must project portal anchors and optional
-    /// clip bounds into window space first. `None` restores the full viewport clip.
+    /// Unlike [`Self::defer_draw`], this resets inherited subtree geometry, clipping, and
+    /// accessibility parentage. Theme and presentation inheritance are unaffected. The portal
+    /// starts with the full viewport clip.
     pub fn defer_draw_in_window_space(
         &mut self,
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
-        content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
-        let content_mask = self.window_portal_content_mask(content_mask);
         self.defer_draw_with_transform(
             element,
             absolute_offset,
             priority,
-            content_mask,
+            self.window_portal_clip_stack(),
             ResolvedSubtreeTransform::IDENTITY,
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
             SmallVec::new(),
+            false,
         );
     }
 
     pub(crate) fn with_window_space_portal_prepaint<R>(
         &mut self,
         absolute_offset: Point<Pixels>,
-        content_mask: Option<ContentMask<Pixels>>,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_prepaint();
-        let content_mask = self.window_portal_content_mask(content_mask);
-        self.with_scroll_ancestry(SmallVec::new(), |window| {
-            window.with_resolved_subtree_transform(
-                ResolvedSubtreeTransform::IDENTITY,
-                validity,
-                |window| {
-                    window.with_absolute_element_offset(absolute_offset, |window| {
-                        window.with_resolved_content_mask(content_mask, f)
-                    })
-                },
-            )
+        let clip_stack = self.window_portal_clip_stack();
+        self.with_accessibility_window_portal_scope(|window| {
+            window.with_scroll_ancestry(SmallVec::new(), |window| {
+                window.with_resolved_subtree_transform(
+                    ResolvedSubtreeTransform::IDENTITY,
+                    validity,
+                    |window| {
+                        window.with_absolute_element_offset(absolute_offset, |window| {
+                            window.with_resolved_clip_stack(clip_stack, f)
+                        })
+                    },
+                )
+            })
         })
     }
 
     pub(crate) fn with_window_space_portal_paint<R>(
         &mut self,
-        content_mask: Option<ContentMask<Pixels>>,
-        validity: Option<SubtreeTransformValidity>,
+        validity: Option<SubtreeGeometryValidity>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint();
-        let content_mask = self.window_portal_content_mask(content_mask);
+        let clip_stack = self.window_portal_clip_stack();
         self.with_resolved_subtree_transform(
             ResolvedSubtreeTransform::IDENTITY,
             validity,
-            |window| window.with_resolved_content_mask(content_mask, f),
+            |window| window.with_resolved_clip_stack(clip_stack, f),
         )
     }
 
-    fn window_portal_content_mask(
-        &self,
-        content_mask: Option<ContentMask<Pixels>>,
-    ) -> ContentMask<Pixels> {
-        let viewport_mask = ContentMask {
-            bounds: Bounds::new(Point::default(), self.viewport_size),
-        };
-        content_mask
-            .map(|mask| mask.intersect(&viewport_mask))
-            .unwrap_or(viewport_mask)
+    fn window_portal_clip_stack(&self) -> ClipStackSnapshot {
+        ClipStackSnapshot::root(Bounds::new(Point::default(), self.viewport_size))
     }
 
     fn defer_draw_with_transform(
@@ -6311,26 +6577,44 @@ impl Window {
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
-        content_mask: ContentMask<Pixels>,
+        clip_stack: ClipStackSnapshot,
         subtree_transform: ResolvedSubtreeTransform,
-        subtree_transform_validity: Option<SubtreeTransformValidity>,
+        subtree_geometry_validity: Option<SubtreeGeometryValidity>,
         scroll_ancestry: SmallVec<[ScrollContainerBinding; 8]>,
+        preserve_accessibility_parent: bool,
     ) {
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
+        let (accessibility_parent, accessibility_proxy_clip_owner) =
+            if self.a11y.is_active() && self.subtree_presentation().is_interactive() {
+                let parent = if preserve_accessibility_parent {
+                    self.a11y.nodes.reserve_deferred_parent()
+                } else {
+                    self.a11y.nodes.reserve_window_portal_parent()
+                };
+                (
+                    parent,
+                    preserve_accessibility_parent
+                        && self.a11y.nodes.current_depth_has_clip_owner_scope(),
+                )
+            } else {
+                (None, false)
+            };
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
             accessibility_tree_scope: self.a11y.current_tree_scope(),
-            content_mask,
+            accessibility_parent,
+            accessibility_proxy_clip_owner,
+            clip_stack,
             rem_size: self.rem_size(),
             priority,
             element: Some(element),
             absolute_offset,
             subtree_presentation: self.subtree_presentation(),
             subtree_transform,
-            subtree_transform_validity,
+            subtree_geometry_validity,
             scroll_ancestry,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
@@ -6345,15 +6629,15 @@ impl Window {
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
         self.invalidator.debug_assert_paint();
 
-        let content_mask = self.content_mask();
+        let clip_stack = self.clip_stack();
         let clipped_bounds = self
             .try_project_subtree_bounds(bounds)
             .ok()
-            .map(|bounds| bounds.intersect(&content_mask.bounds));
+            .map(|bounds| bounds.intersect(&clip_stack.conservative_bounds()));
         if let Some(clipped_bounds) = clipped_bounds.filter(|bounds| !bounds.is_empty()) {
             self.next_frame.scene.push_layer_scoped(
                 self.cover_bounds(clipped_bounds),
-                self.subtree_transform_validity(),
+                self.subtree_geometry_validity(),
             );
         }
 
@@ -6362,7 +6646,7 @@ impl Window {
         if clipped_bounds.is_some_and(|bounds| !bounds.is_empty()) {
             self.next_frame
                 .scene
-                .pop_layer_scoped(self.subtree_transform_validity());
+                .pop_layer_scoped(self.subtree_geometry_validity());
         }
 
         result
@@ -6382,7 +6666,6 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
         let Some(base_transform) = self.base_primitive_transform() else {
             return;
@@ -6398,7 +6681,7 @@ impl Window {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: self.device_local_bounds(shadow_bounds),
-                content_mask,
+                clip: Default::default(),
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
                 element_bounds,
@@ -6431,7 +6714,6 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
         let Some(base_transform) = self.base_primitive_transform() else {
             return;
@@ -6456,7 +6738,7 @@ impl Window {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: self.device_local_bounds(hole),
-                content_mask,
+                clip: Default::default(),
                 corner_radii: hole_corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
                 element_bounds,
@@ -6509,7 +6791,7 @@ impl Window {
         self.insert_scene_primitive(Quad {
             order: 0,
             bounds,
-            content_mask: self.snapped_content_mask(),
+            clip: Default::default(),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
@@ -6526,12 +6808,10 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         let Some(transform) = self.base_primitive_transform() else {
             return;
         };
-        path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
         let mut path = path.scale(scale_factor);
@@ -6577,7 +6857,7 @@ impl Window {
             order: 0,
             pad: 0,
             bounds,
-            content_mask: self.snapped_content_mask(),
+            clip: Default::default(),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness,
             wavy: if style.wavy { 1 } else { 0 },
@@ -6616,7 +6896,7 @@ impl Window {
             order: 0,
             pad: 0,
             bounds,
-            content_mask: self.snapped_content_mask(),
+            clip: Default::default(),
             thickness,
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: 0,
@@ -6694,14 +6974,12 @@ impl Window {
             ) else {
                 return Ok(());
             };
-            let content_mask = self.snapped_content_mask();
-
             if subpixel_rendering {
                 self.insert_scene_primitive(SubpixelSprite {
                     order: 0,
                     pad: 0,
                     bounds,
-                    content_mask,
+                    clip: Default::default(),
                     color: color.opacity(element_opacity),
                     tile,
                     transform,
@@ -6711,7 +6989,7 @@ impl Window {
                     order: 0,
                     pad: 0,
                     bounds,
-                    content_mask,
+                    clip: Default::default(),
                     color: color.opacity(element_opacity),
                     tile,
                     transform,
@@ -6795,7 +7073,6 @@ impl Window {
             ) else {
                 return Ok(());
             };
-            let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
 
             self.insert_scene_primitive(PolychromeSprite {
@@ -6804,7 +7081,7 @@ impl Window {
                 grayscale: false,
                 bounds,
                 corner_radii: Default::default(),
-                content_mask,
+                clip: Default::default(),
                 tile,
                 opacity,
                 transform,
@@ -6851,7 +7128,6 @@ impl Window {
         else {
             return Ok(());
         };
-        let content_mask = self.snapped_content_mask();
         let svg_bounds = Bounds {
             origin: bounds.center()
                 - Point::new(
@@ -6875,7 +7151,7 @@ impl Window {
             order: 0,
             pad: 0,
             bounds: svg_bounds,
-            content_mask,
+            clip: Default::default(),
             color: color.opacity(element_opacity),
             tile,
             transform,
@@ -6926,7 +7202,6 @@ impl Window {
                     )))
                 })?;
         let tile = atlas_access.tile.expect("Callback above only returns Some");
-        let content_mask = self.snapped_content_mask();
         let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
         let atlas_diagnostic = atlas_access.diagnostic;
@@ -6943,13 +7218,13 @@ impl Window {
             pad: 0,
             grayscale,
             bounds,
-            content_mask,
+            clip: Default::default(),
             corner_radii,
             tile,
             opacity,
             transform,
         });
-        let validity = self.subtree_transform_validity();
+        let validity = self.subtree_geometry_validity();
         self.next_frame
             .atlas_access_diagnostic_entries
             .push(FrameOutput::new(atlas_diagnostic, validity.clone()));
@@ -6978,7 +7253,6 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let bounds = self.device_local_bounds(bounds);
-        let content_mask = self.snapped_content_mask();
         let Some(base_transform) = self.base_primitive_transform() else {
             return;
         };
@@ -6992,7 +7266,7 @@ impl Window {
         self.insert_scene_primitive(PaintSurface {
             order: 0,
             bounds,
-            content_mask,
+            clip: Default::default(),
             image_buffer,
             transform,
         });
@@ -7062,7 +7336,7 @@ impl Window {
                 commit: Rc::new(commit),
                 discard: None,
             },
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
         ));
     }
 
@@ -7095,7 +7369,7 @@ impl Window {
                 commit,
                 discard: Some(discard),
             },
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
         ));
     }
 
@@ -7214,32 +7488,48 @@ impl Window {
         bounds
     }
 
-    /// This method should be called during `prepaint`. You can use
-    /// the returned [Hitbox] during `paint` or in an event handler
-    /// to determine whether the inserted hitbox was the topmost.
+    /// Captures immutable geometry and exact initial-hit eligibility for `bounds`.
+    ///
+    /// This method should be called during `prepaint`. It does not register a pointer target;
+    /// call [`Window::insert_hitbox`] when the element must participate in normal event routing.
+    /// Adapters that only retain an exact region proof may use the returned snapshot during paint
+    /// or later runtime arbitration.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
+    pub fn hit_test_snapshot(&self, bounds: Bounds<Pixels>) -> HitTestSnapshot {
         self.invalidator.debug_assert_prepaint();
 
-        let content_mask = self.content_mask();
+        let clip_stack = self.clip_stack();
         let transform = self.subtree_transform();
-        let validity = self.subtree_transform_validity();
+        let validity = self.subtree_geometry_validity();
         let geometry = self.try_element_geometry(bounds);
         let active = geometry.is_ok() && self.subtree_presentation().is_interactive();
-        let mut id = self.next_hitbox_id;
-        self.next_hitbox_id = self.next_hitbox_id.next();
-        let hitbox = Hitbox {
-            id,
+        HitTestSnapshot {
             geometry: geometry.unwrap_or_else(|_| {
                 ElementGeometry::from_resolved(bounds, Bounds::default(), transform)
             }),
             validity,
-            content_mask,
-            behavior,
+            clip_stack,
             active,
+        }
+    }
+
+    /// Inserts a region that can participate in pointer routing.
+    ///
+    /// This method should only be called as part of the prepaint phase of element drawing.
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
+        let snapshot = self.hit_test_snapshot(bounds);
+        let mut id = self.next_hitbox_id;
+        self.next_hitbox_id = self.next_hitbox_id.next();
+        let hitbox = Hitbox {
+            id,
+            geometry: snapshot.geometry,
+            validity: snapshot.validity,
+            clip_stack: snapshot.clip_stack,
+            behavior,
+            active: snapshot.active,
         };
-        if active {
+        if hitbox.active {
             self.next_frame.hitboxes.push(hitbox.clone());
         }
         hitbox
@@ -7297,7 +7587,7 @@ impl Window {
         self.next_frame.debug_bounds_entries.push((
             selector,
             displayed_bounds,
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
         ));
     }
 
@@ -7313,7 +7603,7 @@ impl Window {
         self.next_frame.debug_focus_entries.push((
             selector,
             focus_id,
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
         ));
     }
 
@@ -7414,7 +7704,7 @@ impl Window {
         if focus_handle.is_focused(self) {
             let cx = self.to_async(cx);
             let transform = self.subtree_transform();
-            let validity = self.subtree_transform_validity();
+            let validity = self.subtree_geometry_validity();
             self.next_frame.input_handlers.push(FrameOutput::new(
                 Some(PlatformInputHandler::new(
                     cx,
@@ -7450,7 +7740,7 @@ impl Window {
                     }
                 },
             )),
-            self.subtree_transform_validity(),
+            self.subtree_geometry_validity(),
         ));
     }
 
@@ -7470,7 +7760,7 @@ impl Window {
             .pointer_cancel_listeners
             .push(FrameOutput::new(
                 Some(Rc::new(RefCell::new(Box::new(listener)))),
-                self.subtree_transform_validity(),
+                self.subtree_geometry_validity(),
             ));
     }
 
@@ -8786,18 +9076,17 @@ impl Window {
         // Fall back to built-in action handling.
         match request.action {
             accesskit::Action::Click => {
-                if let Some(bounds) = self.a11y.published_node_bounds(request.target_node) {
-                    let center = bounds.center();
+                if let Some(position) = self.a11y.published_node_witness(request.target_node) {
                     let mouse_down = PlatformInput::MouseDown(crate::MouseDownEvent {
                         button: MouseButton::Left,
-                        position: center,
+                        position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
                         first_mouse: false,
                     });
                     let mouse_up = PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
-                        position: center,
+                        position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     });

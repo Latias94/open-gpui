@@ -258,7 +258,7 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
         .debug_bounds("tree:runtime-tree:root")
         .expect("tree root should render as a focusable interaction region");
     cx.simulate_click(
-        point(root.left() + px(2.0), root.top() + px(2.0)),
+        point(root.left() + px(8.0), root.top() + px(2.0)),
         Default::default(),
     );
     cx.update(|window, cx| {
@@ -348,7 +348,7 @@ fn tree_runtime_typeahead_focuses_visible_matching_row(cx: &mut open_gpui::TestA
         .debug_bounds("tree:runtime-typeahead-tree:root")
         .expect("tree root should render");
     cx.simulate_click(
-        point(root.left() + px(2.0), root.top() + px(2.0)),
+        point(root.left() + px(8.0), root.top() + px(2.0)),
         Default::default(),
     );
     cx.update(|window, cx| {
@@ -2702,11 +2702,11 @@ fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
             let horizontal = Splitter::new("horizontal-drag-split")
                 .horizontal()
                 .panel(SplitterPanel::new(
-                    SplitterPanelDescriptor::new("left", 0.5).min_fraction(0.2),
+                    SplitterPanelDescriptor::new("left", 0.25).min_fraction(0.2),
                     div(),
                 ))
                 .panel(SplitterPanel::new(
-                    SplitterPanelDescriptor::new("right", 0.5).min_fraction(0.2),
+                    SplitterPanelDescriptor::new("right", 0.75).min_fraction(0.2),
                     div(),
                 ));
             let vertical = Splitter::new("vertical-drag-split")
@@ -2725,7 +2725,7 @@ fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .child(div().w(px(400.0)).h(px(120.0)).child(horizontal))
+                .child(div().w(px(412.0)).h(px(120.0)).child(horizontal))
                 .child(div().w(px(240.0)).h(px(360.0)).child(vertical))
         }
     }
@@ -2764,21 +2764,15 @@ fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
         MouseButton::Left,
         Default::default(),
     );
+    let horizontal_drag_origin = point(horizontal_handle.x + px(24.0), horizontal_handle.y);
+    let horizontal_drag_end = point(horizontal_handle.x + px(64.0), horizontal_handle.y);
     cx.simulate_mouse_move(
-        point(horizontal_handle.x + px(24.0), horizontal_handle.y),
+        horizontal_drag_origin,
         MouseButton::Left,
         Default::default(),
     );
-    cx.simulate_mouse_move(
-        point(horizontal_handle.x + px(80.0), horizontal_handle.y),
-        MouseButton::Left,
-        Default::default(),
-    );
-    cx.simulate_mouse_up(
-        point(horizontal_handle.x + px(80.0), horizontal_handle.y),
-        MouseButton::Left,
-        Default::default(),
-    );
+    cx.simulate_mouse_move(horizontal_drag_end, MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(horizontal_drag_end, MouseButton::Left, Default::default());
     cx.simulate_mouse_down(vertical_handle, MouseButton::Left, Default::default());
     cx.simulate_mouse_move(
         point(vertical_handle.x, vertical_handle.y + px(4.0)),
@@ -2824,9 +2818,17 @@ fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
         "expected horizontal drag to grow the first panel and shrink the second; before=({left_before:?}, {right_before:?}) after=({left_after:?}, {right_after:?})"
     );
     assert!(
+        (left_after.size.width.as_f32() - left_before.size.width.as_f32() - 40.0).abs() <= 0.01,
+        "expected a 40px pointer delta to move the between-panel handle by 40px; before={left_before:?} after={left_after:?}"
+    );
+    assert!(
         top_after.size.height > top_before.size.height
             && bottom_after.size.height < bottom_before.size.height,
         "expected vertical drag to grow the first panel and shrink the second; before=({top_before:?}, {bottom_before:?}) after=({top_after:?}, {bottom_after:?})"
+    );
+    assert!(
+        (top_after.size.height.as_f32() - top_before.size.height.as_f32() - 48.0).abs() <= 0.01,
+        "expected a 48px pointer delta to move the vertical between-panel handle by 48px; before={top_before:?} after={top_after:?}"
     );
 }
 

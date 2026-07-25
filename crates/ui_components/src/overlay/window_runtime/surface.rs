@@ -65,7 +65,7 @@ impl WindowOverlayRuntime {
     ///
     /// Call this during prepaint on every frame where the region is rendered. A region that is
     /// not refreshed becomes stale after that frame and cannot claim an outside press. The runtime
-    /// projects through GPUI's active transform and intersects the effective content mask.
+    /// projects through GPUI's active transform and captures the exact active clip stack.
     pub fn set_element_inside_region(
         &self,
         binding: &OverlayLayerBinding,
@@ -88,12 +88,11 @@ impl WindowOverlayRuntime {
     ) -> Result<(), WindowOverlayRuntimeError> {
         self.ensure_binding(binding, window)?;
         self.state.read(cx).validate_mutable_lease(&binding.lease)?;
-        let Ok(geometry) = window.try_element_geometry(layout_bounds) else {
-            return Ok(());
-        };
-        let displayed_window_bounds = geometry
+        let hit_test = window.hit_test_snapshot(layout_bounds);
+        let displayed_window_bounds = hit_test
+            .geometry()
             .displayed_bounds()
-            .intersect(&window.content_mask().bounds);
+            .intersect(&hit_test.displayed_clip_bounds());
         if displayed_window_bounds.is_empty() {
             return Ok(());
         }
@@ -104,7 +103,7 @@ impl WindowOverlayRuntime {
                 let _ = state.refresh_inside_region(
                     &lease,
                     region.clone(),
-                    displayed_window_bounds,
+                    hit_test.clone(),
                     button,
                     valid_through,
                 );
@@ -531,7 +530,7 @@ impl WindowOverlayRuntimeState {
         &mut self,
         lease: &OverlayLayerLease,
         region: OverlayInsideRegionId,
-        displayed_window_bounds: Bounds<Pixels>,
+        hit_test: open_gpui::HitTestSnapshot,
         button: Option<MouseButton>,
         valid_through: u64,
     ) -> Result<(), WindowOverlayRuntimeError> {
@@ -542,7 +541,7 @@ impl WindowOverlayRuntimeState {
         entry.inside_regions.insert(
             region,
             LiveInsideRegion {
-                window_bounds: displayed_window_bounds,
+                hit_test,
                 button,
                 valid_through,
             },

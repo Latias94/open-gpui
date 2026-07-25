@@ -282,7 +282,17 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         let position = position.into();
-        self.publish_viewport_host_scene_interaction(host_geometry, position.window, window, cx);
+        if !self.publish_viewport_host_scene_interaction(host_geometry, position.window, window, cx)
+        {
+            let outside_poll_started =
+                self.schedule_outside_release_poll_from_host(payload, window, cx);
+            let local_preview_cleared = self.clear_drop_preview_interaction();
+            let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+            return crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
+                outside_poll_started || local_preview_cleared || routed_preview_cleared,
+            )
+            .finish(cx);
+        }
         self.update_payload_drag_hover_state_from_render(payload, position, window, cx)
             .merge(self.ensure_host_drop_scene_interaction(payload, position.layout, cx))
             .finish(cx)

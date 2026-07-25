@@ -2,9 +2,9 @@ use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use log::warn;
 use open_gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size,
-    SubpixelSprite, Underline, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, GpuSpecs,
+    MonochromeSprite, Path, Point, PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad,
+    ScaledPixels, Scene, Shadow, Size, SubpixelSprite, Underline, get_gamma_correction_ratios,
 };
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 struct GlobalParams {
     viewport_size: [f32; 2],
     premultiplied_alpha: u32,
-    pad: u32,
+    clip_shape_count: u32,
 }
 
 #[repr(C)]
@@ -39,9 +39,27 @@ impl From<Bounds<ScaledPixels>> for PodBounds {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct PodClipEnvelope {
+    conservative_bounds: PodBounds,
+    first_clip: u32,
+    clip_count: u32,
+}
+
+impl From<ClipEnvelope> for PodClipEnvelope {
+    fn from(clip: ClipEnvelope) -> Self {
+        Self {
+            conservative_bounds: clip.conservative_bounds.into(),
+            first_clip: clip.first_clip,
+            clip_count: clip.clip_count,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct SurfaceParams {
     bounds: PodBounds,
-    content_mask: PodBounds,
+    clip: PodClipEnvelope,
 }
 
 #[repr(C)]
@@ -84,7 +102,7 @@ struct PathRasterizationVertex {
     st_position: Point<f32>,
     color: Background,
     local_bounds: Bounds<ScaledPixels>,
-    content_mask: Bounds<ScaledPixels>,
+    clip: ClipEnvelope,
     transform: PrimitiveTransform,
 }
 
@@ -92,7 +110,7 @@ fn projected_path_visible_bounds(path: &Path<ScaledPixels>) -> Option<Bounds<Sca
     path.renderer_transform()
         .try_project_bounds(path.bounds)
         .ok()
-        .map(|bounds| bounds.intersect(&path.content_mask.bounds))
+        .map(|bounds| bounds.intersect(&path.clip.conservative_bounds))
 }
 
 pub struct WgpuSurfaceConfig {
@@ -139,6 +157,7 @@ struct WgpuResources {
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
     globals_buffer: wgpu::Buffer,
+    clip_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
@@ -170,7 +189,9 @@ pub struct WgpuRenderer {
     path_globals_offset: u64,
     gamma_offset: u64,
     instance_buffer_capacity: u64,
+    clip_buffer_capacity: u64,
     max_buffer_size: u64,
+    max_clip_buffer_size: u64,
     storage_buffer_alignment: u64,
     rendering_params: RenderingParameters,
     is_bgr: bool,
@@ -409,6 +430,25 @@ impl WgpuRenderer {
         });
 
         let max_buffer_size = device.limits().max_buffer_size;
+        let clip_shape_stride = std::mem::size_of::<GpuClipShape>() as u64;
+        let max_clip_buffer_size = max_buffer_size
+            .min(u64::from(device.limits().max_storage_buffer_binding_size))
+            / clip_shape_stride
+            * clip_shape_stride;
+        anyhow::ensure!(
+            max_clip_buffer_size >= clip_shape_stride,
+            "adapter storage-buffer limit cannot represent one GPU clip shape"
+        );
+        let initial_clip_buffer_capacity = (64 * 1024_u64)
+            .next_multiple_of(clip_shape_stride)
+            .min(max_clip_buffer_size);
+        let clip_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("clip_buffer"),
+            size: initial_clip_buffer_capacity,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let storage_buffer_alignment = device.limits().min_storage_buffer_offset_alignment as u64;
         let initial_instance_buffer_capacity = 2 * 1024 * 1024;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -418,51 +458,27 @@ impl WgpuRenderer {
             mapped_at_creation: false,
         });
 
-        let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals_bind_group"),
-            layout: &bind_group_layouts.globals,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(globals_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: gamma_offset,
-                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
-                    }),
-                },
-            ],
-        });
+        let globals_bind_group = Self::create_globals_bind_group(
+            &device,
+            &bind_group_layouts.globals,
+            &globals_buffer,
+            &clip_buffer,
+            0,
+            gamma_offset,
+            initial_clip_buffer_capacity,
+            "globals_bind_group",
+        );
 
-        let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("path_globals_bind_group"),
-            layout: &bind_group_layouts.globals,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: path_globals_offset,
-                        size: Some(NonZeroU64::new(globals_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &globals_buffer,
-                        offset: gamma_offset,
-                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
-                    }),
-                },
-            ],
-        });
+        let path_globals_bind_group = Self::create_globals_bind_group(
+            &device,
+            &bind_group_layouts.globals,
+            &globals_buffer,
+            &clip_buffer,
+            path_globals_offset,
+            gamma_offset,
+            initial_clip_buffer_capacity,
+            "path_globals_bind_group",
+        );
 
         let adapter_info = adapter_info(context);
 
@@ -481,6 +497,7 @@ impl WgpuRenderer {
             bind_group_layouts,
             atlas_sampler,
             globals_buffer,
+            clip_buffer,
             globals_bind_group,
             path_globals_bind_group,
             instance_buffer,
@@ -501,7 +518,9 @@ impl WgpuRenderer {
             path_globals_offset,
             gamma_offset,
             instance_buffer_capacity: initial_instance_buffer_capacity,
+            clip_buffer_capacity: initial_clip_buffer_capacity,
             max_buffer_size,
+            max_clip_buffer_size,
             storage_buffer_alignment,
             rendering_params,
             is_bgr: false,
@@ -515,6 +534,48 @@ impl WgpuRenderer {
             device_lost: context.device_lost_flag(),
             surface_configured: true,
             needs_redraw: false,
+        })
+    }
+
+    fn create_globals_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        globals_buffer: &wgpu::Buffer,
+        clip_buffer: &wgpu::Buffer,
+        globals_offset: u64,
+        gamma_offset: u64,
+        clip_buffer_size: u64,
+        label: &str,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: globals_buffer,
+                        offset: globals_offset,
+                        size: NonZeroU64::new(std::mem::size_of::<GlobalParams>() as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: globals_buffer,
+                        offset: gamma_offset,
+                        size: NonZeroU64::new(std::mem::size_of::<GammaParams>() as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: clip_buffer,
+                        offset: 0,
+                        size: NonZeroU64::new(clip_buffer_size),
+                    }),
+                },
+            ],
         })
     }
 
@@ -543,6 +604,18 @@ impl WgpuRenderer {
                             has_dynamic_offset: false,
                             min_binding_size: NonZeroU64::new(
                                 std::mem::size_of::<GammaParams>() as u64
+                            ),
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(
+                                std::mem::size_of::<GpuClipShape>() as u64
                             ),
                         },
                         count: None,
@@ -1139,6 +1212,10 @@ impl WgpuRenderer {
             self.failed_frame_count = 0;
         }
 
+        let Some(clip_shape_count) = self.prepare_clip_buffer(scene.clip_shapes()) else {
+            return false;
+        };
+
         self.atlas.before_frame();
 
         let frame = match self.resources().surface.get_current_texture() {
@@ -1198,7 +1275,7 @@ impl WgpuRenderer {
             } else {
                 0
             },
-            pad: 0,
+            clip_shape_count,
         };
 
         let path_globals = GlobalParams {
@@ -1328,8 +1405,8 @@ impl WgpuRenderer {
                                 &mut pass,
                             ),
                         PrimitiveBatch::Surfaces(_surfaces) => {
-                            // Surfaces are macOS-only for video playback
-                            // Not implemented for Linux/wgpu
+                            // WGPU has no native surface payload. Leaving it unpainted is the
+                            // fail-closed outcome for an unsupported exact-clip combination.
                             true
                         }
                     };
@@ -1618,7 +1695,7 @@ impl WgpuRenderer {
                 st_position: v.st_position,
                 color: path.color,
                 local_bounds: path.bounds,
-                content_mask: path.content_mask.bounds,
+                clip: path.clip,
                 transform: path.renderer_transform(),
             }));
         }
@@ -1678,6 +1755,102 @@ impl WgpuRenderer {
             pass.draw(0..vertices.len() as u32, 0..1);
         }
 
+        true
+    }
+
+    fn prepare_clip_buffer(&mut self, clip_shapes: &[GpuClipShape]) -> Option<u32> {
+        let clip_shape_count = match u32::try_from(clip_shapes.len()) {
+            Ok(count) => count,
+            Err(_) => {
+                log::error!(
+                    "clip arena contains too many shapes for the renderer ABI: {}",
+                    clip_shapes.len()
+                );
+                return None;
+            }
+        };
+        let clip_shape_stride = std::mem::size_of::<GpuClipShape>() as u64;
+        let required_size = match u64::from(clip_shape_count).checked_mul(clip_shape_stride) {
+            Some(size) => size,
+            None => {
+                log::error!("clip arena byte size overflowed the renderer ABI");
+                return None;
+            }
+        };
+
+        if required_size > self.max_clip_buffer_size {
+            log::error!(
+                "clip arena requires {} bytes, exceeding the adapter storage-buffer limit {}",
+                required_size,
+                self.max_clip_buffer_size
+            );
+            return None;
+        }
+
+        if required_size > self.clip_buffer_capacity && !self.grow_clip_buffer(required_size) {
+            return None;
+        }
+
+        if !clip_shapes.is_empty() {
+            let bytes = unsafe { Self::instance_bytes(clip_shapes) };
+            let resources = self.resources();
+            resources
+                .queue
+                .write_buffer(&resources.clip_buffer, 0, bytes);
+        }
+
+        Some(clip_shape_count)
+    }
+
+    fn grow_clip_buffer(&mut self, required_size: u64) -> bool {
+        let new_capacity = self
+            .clip_buffer_capacity
+            .saturating_mul(2)
+            .max(required_size)
+            .min(self.max_clip_buffer_size);
+        if new_capacity < required_size {
+            log::error!(
+                "clip buffer cannot grow to the required size: {}",
+                required_size
+            );
+            return false;
+        }
+
+        log::info!("increased clip buffer size to {}", new_capacity);
+        let path_globals_offset = self.path_globals_offset;
+        let gamma_offset = self.gamma_offset;
+        {
+            let resources = self.resources_mut();
+            resources.clip_buffer = resources.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("clip_buffer"),
+                size: new_capacity,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let globals_bind_group = Self::create_globals_bind_group(
+                &resources.device,
+                &resources.bind_group_layouts.globals,
+                &resources.globals_buffer,
+                &resources.clip_buffer,
+                0,
+                gamma_offset,
+                new_capacity,
+                "globals_bind_group",
+            );
+            let path_globals_bind_group = Self::create_globals_bind_group(
+                &resources.device,
+                &resources.bind_group_layouts.globals,
+                &resources.globals_buffer,
+                &resources.clip_buffer,
+                path_globals_offset,
+                gamma_offset,
+                new_capacity,
+                "path_globals_bind_group",
+            );
+            resources.globals_bind_group = globals_bind_group;
+            resources.path_globals_bind_group = path_globals_bind_group;
+        }
+        self.clip_buffer_capacity = new_capacity;
         true
     }
 
@@ -1961,13 +2134,50 @@ mod abi_layout_tests {
     }
 
     #[test]
+    fn exact_clip_types_have_canonical_renderer_abi() {
+        assert_eq!(size_of::<GlobalParams>(), 16);
+        assert_eq!(offset_of!(GlobalParams, clip_shape_count), 12);
+
+        assert_eq!(align_of::<GpuClipShape>(), align_of::<f32>());
+        assert_eq!(size_of::<GpuClipShape>(), 48);
+        assert_eq!(offset_of!(GpuClipShape, bounds), 0);
+        assert_eq!(offset_of!(GpuClipShape, radii_x), 16);
+        assert_eq!(offset_of!(GpuClipShape, radii_y), 32);
+
+        assert_eq!(align_of::<ClipEnvelope>(), align_of::<f32>());
+        assert_eq!(size_of::<ClipEnvelope>(), 24);
+        assert_eq!(offset_of!(ClipEnvelope, conservative_bounds), 0);
+        assert_eq!(offset_of!(ClipEnvelope, first_clip), 16);
+        assert_eq!(offset_of!(ClipEnvelope, clip_count), 20);
+
+        assert_eq!(size_of::<PodClipEnvelope>(), size_of::<ClipEnvelope>());
+        assert_eq!(offset_of!(PodClipEnvelope, conservative_bounds), 0);
+        assert_eq!(offset_of!(PodClipEnvelope, first_clip), 16);
+        assert_eq!(offset_of!(PodClipEnvelope, clip_count), 20);
+        assert_eq!(offset_of!(SurfaceParams, bounds), 0);
+        assert_eq!(offset_of!(SurfaceParams, clip), 16);
+        assert_eq!(size_of::<SurfaceParams>(), 40);
+    }
+
+    #[test]
     fn transformed_primitive_fields_are_terminal_in_wgsl_storage_abi() {
-        assert_eq!(size_of::<Quad>(), 176);
-        assert_eq!(size_of::<Shadow>(), 128);
-        assert_eq!(size_of::<Underline>(), 80);
-        assert_eq!(size_of::<MonochromeSprite>(), 104);
-        assert_eq!(size_of::<SubpixelSprite>(), 104);
-        assert_eq!(size_of::<PolychromeSprite>(), 104);
+        assert_eq!(offset_of!(Quad, clip), 24);
+        assert_eq!(size_of::<Quad>(), 184);
+
+        assert_eq!(offset_of!(Shadow, clip), 40);
+        assert_eq!(size_of::<Shadow>(), 136);
+
+        assert_eq!(offset_of!(Underline, clip), 24);
+        assert_eq!(size_of::<Underline>(), 88);
+
+        assert_eq!(offset_of!(MonochromeSprite, clip), 24);
+        assert_eq!(size_of::<MonochromeSprite>(), 112);
+
+        assert_eq!(offset_of!(SubpixelSprite, clip), 24);
+        assert_eq!(size_of::<SubpixelSprite>(), 112);
+
+        assert_eq!(offset_of!(PolychromeSprite, clip), 32);
+        assert_eq!(size_of::<PolychromeSprite>(), 120);
         for array_stride in [
             size_of::<Quad>(),
             size_of::<Shadow>(),
@@ -1991,12 +2201,12 @@ mod abi_layout_tests {
             16 + size_of::<Background>()
         );
         assert_eq!(
-            offset_of!(PathRasterizationVertex, content_mask),
+            offset_of!(PathRasterizationVertex, clip),
             offset_of!(PathRasterizationVertex, local_bounds) + size_of::<Bounds<ScaledPixels>>()
         );
         assert_eq!(
             offset_of!(PathRasterizationVertex, transform),
-            offset_of!(PathRasterizationVertex, content_mask) + size_of::<Bounds<ScaledPixels>>()
+            offset_of!(PathRasterizationVertex, clip) + size_of::<ClipEnvelope>()
         );
         assert_eq!(
             size_of::<PathRasterizationVertex>(),

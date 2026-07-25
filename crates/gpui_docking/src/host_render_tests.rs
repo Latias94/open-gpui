@@ -2,9 +2,9 @@ use crate::{
     DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockNode,
     DockNodeId, DockPanelDescriptor, DockSpaceId, DockViewportActivationTransaction,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformSignals,
-    DockViewportPlatformSyncAction, DockViewportRuntimeHandle, DockViewportTargetContext,
-    DockWorkspace, SplitAxis,
+    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportHostGeometry,
+    DockViewportPlatformSignals, DockViewportPlatformSyncAction, DockViewportRuntimeHandle,
+    DockViewportTargetContext, DockWorkspace, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_scene_fact,
@@ -18,17 +18,18 @@ use crate::{
     },
 };
 use open_gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement, Render,
-    RequestFrameOptions, StatefulInteractiveElement, Styled, SubtreePresentation,
-    SubtreePresentationExt, SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin,
-    TestAppContext, VisualTestContext, Window, canvas, div, fill, point, px, red, size,
+    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Entity, FocusHandle,
+    Focusable, HitboxBehavior, InteractiveElement, IntoElement, Modifiers, MouseButton,
+    ParentElement, Render, RequestFrameOptions, StatefulInteractiveElement, Styled, SubtreeClip,
+    SubtreeClipExt, SubtreePresentation, SubtreePresentationExt, SubtreeTransform,
+    SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window, canvas,
+    div, fill, point, px, red, size,
 };
 use open_gpui_motion::{
     MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
 };
 use slotmap::Key;
-use std::time::Duration;
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 struct TransformedDockHostFixture {
     host: Entity<DockHost>,
@@ -152,6 +153,38 @@ fn linear_continuity_transition(duration: Duration) -> MotionTransition {
         MotionDuration::Custom(duration),
         MotionEasing::Linear,
     )
+}
+
+fn rounded_host_geometry(cx: &mut TestAppContext) -> DockViewportHostGeometry {
+    let committed = Rc::new(RefCell::new(None));
+    let visual = cx.add_empty_window();
+    visual.draw(point(px(0.0), px(0.0)), size(px(100.0), px(100.0)), {
+        let committed = committed.clone();
+        move |_, _| {
+            let radius = size(px(50.0), px(50.0));
+            canvas(
+                move |bounds, window, _| {
+                    let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                    *committed.borrow_mut() = Some(DockViewportHostGeometry::from_hitbox(&hitbox));
+                },
+                |_, _, _, _| {},
+            )
+            .size_full()
+            .with_subtree_clip(
+                SubtreeClip::try_own_rounded_border_box(Corners {
+                    top_left: radius,
+                    top_right: radius,
+                    bottom_right: radius,
+                    bottom_left: radius,
+                })
+                .expect("circular host clip should be valid"),
+            )
+        }
+    });
+    committed
+        .borrow_mut()
+        .take()
+        .expect("host prepaint should commit an exact hit-test snapshot")
 }
 
 #[open_gpui::test]
@@ -1037,6 +1070,77 @@ fn rendered_scene_hover_preserves_local_rejected_preview_for_same_pointer_pass(
                     .drop_preview()
                     .is_some_and(|preview| !preview.scene.decision.is_allowed()),
                 "host-level fallback must not clear a local preview already produced for this pointer position"
+            );
+        })
+        .expect("host window should be live");
+}
+
+#[open_gpui::test]
+fn rounded_host_corner_retracts_route_proof_and_drop_preview(cx: &mut TestAppContext) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller, size(px(500.0), px(240.0)));
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let preview_position = target_bounds.center();
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+    let rounded_geometry = rounded_host_geometry(cx);
+    let rounded_corner = point(px(1.0), px(1.0));
+
+    assert!(
+        rounded_geometry.layout_bounds().contains(&rounded_corner),
+        "the test corner must remain inside the host AABB"
+    );
+    assert!(
+        rounded_geometry.window_to_host(rounded_corner).is_none(),
+        "the rounded corner must be outside the exact committed hit region"
+    );
+
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_payload_drag_from_render(&payload, window, cx);
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                target_bounds,
+                preview_position,
+                window,
+                cx,
+            );
+            host.update_local_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(root, right_tabs, target_bounds, false),
+                preview_position,
+                window,
+                cx,
+            );
+            assert!(
+                host.interaction().viewport_host_scene_frame().is_some(),
+                "an in-bounds drag move should publish a route proof"
+            );
+            assert!(
+                host.interaction().drop_preview().is_some(),
+                "an in-bounds drag move should establish a local drop preview"
+            );
+
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                rounded_geometry,
+                rounded_corner,
+                window,
+                cx,
+            );
+            assert!(
+                host.interaction().viewport_host_scene_frame().is_none(),
+                "an exact-hit miss must retract the route proof"
+            );
+            assert!(
+                host.interaction().drop_preview().is_none(),
+                "an exact-hit miss must retract the local preview"
             );
         })
         .expect("host window should be live");

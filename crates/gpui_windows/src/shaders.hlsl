@@ -6,7 +6,8 @@ cbuffer GlobalParams: register(b0) {
     float grayscale_enhanced_contrast;
     float subpixel_enhanced_contrast;
     uint is_bgr;
-    uint3 global_pad;
+    uint global_clip_shape_count;
+    uint2 global_pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -28,6 +29,20 @@ struct Corners {
     float bottom_right;
     float bottom_left;
 };
+
+struct GpuClipShape {
+    Bounds bounds;
+    Corners radii_x;
+    Corners radii_y;
+};
+
+struct ClipEnvelope {
+    Bounds conservative_bounds;
+    uint first_clip;
+    uint clip_count;
+};
+
+StructuredBuffer<GpuClipShape> clip_shapes: register(t2);
 
 struct Edges {
     float top;
@@ -118,6 +133,81 @@ float4 distance_from_clip_rect_impl(float2 position, Bounds clip_bounds) {
     float2 tl = position - clip_bounds.origin;
     float2 br = clip_bounds.origin + clip_bounds.size - position;
     return float4(tl.x, br.x, tl.y, br.y);
+}
+
+bool rounded_clip_corner_contains(
+    float2 position,
+    float2 center,
+    float2 radii,
+    bool in_corner
+) {
+    if (!in_corner || radii.x == 0.0 || radii.y == 0.0) {
+        return true;
+    }
+    float2 delta = (position - center) / radii;
+    return dot(delta, delta) <= 1.0;
+}
+
+bool rounded_clip_shape_contains(float2 position, GpuClipShape shape) {
+    float left = shape.bounds.origin.x;
+    float top = shape.bounds.origin.y;
+    float right = left + shape.bounds.size.x;
+    float bottom = top + shape.bounds.size.y;
+    if (shape.bounds.size.x <= 0.0 || shape.bounds.size.y <= 0.0 ||
+        position.x < left || position.x > right ||
+        position.y < top || position.y > bottom) {
+        return false;
+    }
+
+    float2 top_left_radii = float2(shape.radii_x.top_left, shape.radii_y.top_left);
+    float2 top_right_radii = float2(shape.radii_x.top_right, shape.radii_y.top_right);
+    float2 bottom_right_radii = float2(shape.radii_x.bottom_right, shape.radii_y.bottom_right);
+    float2 bottom_left_radii = float2(shape.radii_x.bottom_left, shape.radii_y.bottom_left);
+
+    return rounded_clip_corner_contains(
+        position,
+        float2(left, top) + top_left_radii,
+        top_left_radii,
+        position.x < left + top_left_radii.x && position.y < top + top_left_radii.y
+    ) && rounded_clip_corner_contains(
+        position,
+        float2(right - top_right_radii.x, top + top_right_radii.y),
+        top_right_radii,
+        position.x > right - top_right_radii.x && position.y < top + top_right_radii.y
+    ) && rounded_clip_corner_contains(
+        position,
+        float2(right, bottom) - bottom_right_radii,
+        bottom_right_radii,
+        position.x > right - bottom_right_radii.x && position.y > bottom - bottom_right_radii.y
+    ) && rounded_clip_corner_contains(
+        position,
+        float2(left + bottom_left_radii.x, bottom - bottom_left_radii.y),
+        bottom_left_radii,
+        position.x < left + bottom_left_radii.x && position.y > bottom - bottom_left_radii.y
+    );
+}
+
+bool clip_stack_contains(float2 position, ClipEnvelope envelope) {
+    if (envelope.clip_count == 0u || envelope.first_clip >= global_clip_shape_count) {
+        return false;
+    }
+    if (envelope.clip_count > global_clip_shape_count - envelope.first_clip) {
+        return false;
+    }
+    float2 envelope_min = envelope.conservative_bounds.origin;
+    float2 envelope_max = envelope_min + envelope.conservative_bounds.size;
+    if (any(envelope.conservative_bounds.size <= 0.0) ||
+        any(position < envelope_min) || any(position >= envelope_max)) {
+        return false;
+    }
+
+    [loop]
+    for (uint index = 0u; index < envelope.clip_count; index++) {
+        if (!rounded_clip_shape_contains(position, clip_shapes[envelope.first_clip + index])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Convert linear RGB to sRGB
@@ -489,7 +579,7 @@ struct Quad {
     uint order;
     uint border_style;
     Bounds bounds;
-    Bounds content_mask;
+    ClipEnvelope clip;
     Background background;
     Hsla border_color;
     Corners corner_radii;
@@ -533,7 +623,10 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_Insta
         quad.background.solid,
         quad.background.colors
     );
-    float4 clip_distance = distance_from_clip_rect_impl(window_position, quad.content_mask);
+    float4 clip_distance = distance_from_clip_rect_impl(
+        window_position,
+        quad.clip.conservative_bounds
+    );
     float4 border_color = hsla_to_rgba(quad.border_color);
 
     QuadVertexOutput output;
@@ -550,6 +643,9 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_Insta
 
 float4 quad_fragment(QuadFragmentInput input): SV_Target {
     Quad quad = quads[input.quad_id];
+    if (!clip_stack_contains(input.position.xy, quad.clip)) {
+        discard;
+    }
     float4 background_color = gradient_color(quad.background, input.local_position, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
 
@@ -850,7 +946,7 @@ struct Shadow {
     float blur_radius;
     Bounds bounds;
     Corners corner_radii;
-    Bounds content_mask;
+    ClipEnvelope clip;
     Hsla color;
     Bounds element_bounds;
     Corners element_corner_radii;
@@ -894,7 +990,10 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint shadow_id: SV
     float2 local_position = position_in_bounds(unit_vertex, bounds);
     float2 window_position = apply_primitive_transform(local_position, shadow.transform);
     float4 device_position = to_device_position_impl(window_position);
-    float4 clip_distance = distance_from_clip_rect_impl(window_position, shadow.content_mask);
+    float4 clip_distance = distance_from_clip_rect_impl(
+        window_position,
+        shadow.clip.conservative_bounds
+    );
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
@@ -909,6 +1008,9 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint shadow_id: SV
 
 float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
     Shadow shadow = shadows[input.shadow_id];
+    if (!clip_stack_contains(input.position.xy, shadow.clip)) {
+        discard;
+    }
 
     float2 half_size = shadow.bounds.size / 2.;
     float2 center = shadow.bounds.origin + half_size;
@@ -961,7 +1063,7 @@ struct PathRasterizationSprite {
     float2 st_position;
     Background color;
     Bounds bounds;
-    Bounds content_mask;
+    ClipEnvelope clip;
     PrimitiveTransform transform;
 };
 
@@ -991,7 +1093,10 @@ PathVertexOutput path_rasterization_vertex(uint vertex_id: SV_VertexID) {
     output.st_position = sprite.st_position;
     output.vertex_id = vertex_id;
     output.local_position = sprite.xy_position;
-    output.clip_distance = distance_from_clip_rect_impl(window_position, sprite.content_mask);
+    output.clip_distance = distance_from_clip_rect_impl(
+        window_position,
+        sprite.clip.conservative_bounds
+    );
 
     return output;
 }
@@ -1000,6 +1105,9 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
     float2 dx = ddx(input.st_position);
     float2 dy = ddy(input.st_position);
     PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
+    if (!clip_stack_contains(input.position.xy, sprite.clip)) {
+        discard;
+    }
 
     Background background = sprite.color;
     Bounds bounds = sprite.bounds;
@@ -1069,7 +1177,7 @@ struct Underline {
     uint order;
     uint pad;
     Bounds bounds;
-    Bounds content_mask;
+    ClipEnvelope clip;
     Hsla color;
     float thickness;
     uint wavy;
@@ -1099,7 +1207,10 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
     float2 local_position = position_in_bounds(unit_vertex, underline.bounds);
     float2 window_position = apply_primitive_transform(local_position, underline.transform);
     float4 device_position = to_device_position_impl(window_position);
-    float4 clip_distance = distance_from_clip_rect_impl(window_position, underline.content_mask);
+    float4 clip_distance = distance_from_clip_rect_impl(
+        window_position,
+        underline.clip.conservative_bounds
+    );
     float4 color = hsla_to_rgba(underline.color);
 
     UnderlineVertexOutput output;
@@ -1116,6 +1227,9 @@ float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
     const float WAVE_HEIGHT_RATIO = 0.8;
 
     Underline underline = underlines[input.underline_id];
+    if (!clip_stack_contains(input.position.xy, underline.clip)) {
+        discard;
+    }
     if (underline.wavy) {
         float half_thickness = underline.thickness * 0.5;
         float2 origin = underline.bounds.origin;
@@ -1148,7 +1262,7 @@ struct MonochromeSprite {
     uint order;
     uint pad;
     Bounds bounds;
-    Bounds content_mask;
+    ClipEnvelope clip;
     Hsla color;
     AtlasTile tile;
     PrimitiveTransform transform;
@@ -1158,6 +1272,7 @@ struct MonochromeSpriteVertexOutput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    nointerpolation uint sprite_id: TEXCOORD0;
     float4 clip_distance: SV_ClipDistance;
 };
 
@@ -1165,6 +1280,7 @@ struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    nointerpolation uint sprite_id: TEXCOORD0;
     float4 clip_distance: SV_ClipDistance;
 };
 
@@ -1176,7 +1292,10 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 local_position = position_in_bounds(unit_vertex, sprite.bounds);
     float2 window_position = apply_primitive_transform(local_position, sprite.transform);
     float4 device_position = to_device_position_impl(window_position);
-    float4 clip_distance = distance_from_clip_rect_impl(window_position, sprite.content_mask);
+    float4 clip_distance = distance_from_clip_rect_impl(
+        window_position,
+        sprite.clip.conservative_bounds
+    );
     float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
     float4 color = hsla_to_rgba(sprite.color);
 
@@ -1184,11 +1303,16 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     output.position = device_position;
     output.tile_position = tile_position;
     output.color = color;
+    output.sprite_id = sprite_id;
     output.clip_distance = clip_distance;
     return output;
 }
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
+    MonochromeSprite sprite = mono_sprites[input.sprite_id];
+    if (!clip_stack_contains(input.position.xy, sprite.clip)) {
+        discard;
+    }
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
     return float4(input.color.rgb, input.color.a * alpha_corrected);
@@ -1199,6 +1323,10 @@ MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID,
 }
 
 SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentInput input) {
+    MonochromeSprite sprite = mono_sprites[input.sprite_id];
+    if (!clip_stack_contains(input.position.xy, sprite.clip)) {
+        discard;
+    }
     float3 sample = t_sprite.Sample(s_sprite, input.tile_position).rgb;
     if (is_bgr) {
         sample = sample.bgr;
@@ -1223,7 +1351,7 @@ struct PolychromeSprite {
     uint grayscale;
     float opacity;
     Bounds bounds;
-    Bounds content_mask;
+    ClipEnvelope clip;
     Corners corner_radii;
     AtlasTile tile;
     PrimitiveTransform transform;
@@ -1252,7 +1380,10 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 local_position = position_in_bounds(unit_vertex, sprite.bounds);
     float2 window_position = apply_primitive_transform(local_position, sprite.transform);
     float4 device_position = to_device_position_impl(window_position);
-    float4 clip_distance = distance_from_clip_rect_impl(window_position, sprite.content_mask);
+    float4 clip_distance = distance_from_clip_rect_impl(
+        window_position,
+        sprite.clip.conservative_bounds
+    );
     float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
 
     PolychromeSpriteVertexOutput output;
@@ -1266,6 +1397,9 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
 
 float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
     PolychromeSprite sprite = poly_sprites[input.sprite_id];
+    if (!clip_stack_contains(input.position.xy, sprite.clip)) {
+        discard;
+    }
     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
     float distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
 
