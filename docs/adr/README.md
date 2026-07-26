@@ -36,3 +36,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0026: Open GPUI Rounded Subtree Clip Authority](0026-open-gpui-rounded-subtree-clip-authority.md)
 - [ADR 0027: Open GPUI Dock Visual Style Authority](0027-open-gpui-dock-visual-style-authority.md)
 - [ADR 0028: Open GPUI Dock Surface Change And Activation Authority](0028-open-gpui-dock-surface-change-and-activation-authority.md)
+- [ADR 0029: Open GPUI Platform Window Mutation Capabilities](0029-open-gpui-platform-window-mutation-capabilities.md)

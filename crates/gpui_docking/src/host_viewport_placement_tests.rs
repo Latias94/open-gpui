@@ -11,10 +11,9 @@ mod runtime_suite {
         DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportFocusCommand,
         DockViewportFocusRequest, DockViewportInputStatus, DockViewportOpenStatus,
         DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
-        DockViewportPlatformSyncSkippedReason, DockViewportResolvedDropRoute,
-        DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntime,
-        DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
-        DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
+        DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
+        DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+        DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
         DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
         DockViewportWindowActivation, DockViewportWindowFacts, DockWorkspace, SplitAxis,
         drag::{DockDragPayload, DockDragTearOffGeometry},
@@ -2016,9 +2015,9 @@ mod handle_suite {
             .expect("target host should publish a live scene");
         assert!(runtime.viewport_route_ready(&target_space));
 
+        cx.simulate_window_minimize(opened.window());
         target_window
             .update(cx, |host, window, cx| {
-                window.minimize_window();
                 assert!(window.is_minimized());
                 host.publish_viewport_host_scene_interaction(
                     host_bounds,
@@ -2105,11 +2104,9 @@ mod handle_suite {
         ));
         assert!(runtime.viewport_route_ready(&target_space));
 
+        cx.simulate_window_minimize(opened.window());
         target_window
-            .update(cx, |_, window, _| {
-                window.minimize_window();
-                assert!(window.is_minimized());
-            })
+            .update(cx, |_, window, _| assert!(window.is_minimized()))
             .expect("target window should still be live after minimize");
 
         let target_point =

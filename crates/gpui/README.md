@@ -25,6 +25,39 @@ Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates
 
 For higher-level controls, use `open-gpui-ui-components`. For deterministic UI motion primitives, use `open-gpui-motion`. For retained dock spaces, use `open-gpui-docking`.
 
+## Platform Window Mutation
+
+Already-open window placement and independent flag changes use one observed-fact contract. Query
+`Window::window_mutation_capabilities()` before issuing a request: position, size, each placement
+state, restore bounds, pointer input, focus-on-appearing/click, alpha, topmost, and taskbar
+visibility are each `Unsupported`, `CreationOnly`, or `Live`. `CreationOnly` belongs in
+`WindowOptions`; only `Live` properties can be requested on an existing window.
+For app-level diagnostics that only retain an `AnyWindowHandle`, use
+`App::window_mutation_profile(handle)`: the immutable profile records the opened window's actual
+`WindowKind` and target-display-resolved property matrix and is removed when the window closes.
+Before opening a window, `App::window_mutation_capabilities_for(kind, display_id)` projects that
+same support; `None` selects the backend's primary or default display. An unavailable display id
+is normalized to `None`, so capability projection and window creation use that same fallback.
+
+Use `WindowPlacementRequest` with `request_window_placement_request`, a named flag helper, or
+`request_window_mutation` with a `WindowMutationRequest` when the result matters. A
+`Queued(WindowMutationTicket)` reports that GPUI dispatched intent, not that the operating system
+committed it. Retain the ticket to observe its one terminal `Exact`, `Adjusted`, `Superseded`,
+`Rejected`, `Unsupported`, or `WindowClosed` outcome. Every backend terminal carries its domain
+and generation; a stale terminal is rejected before it can replace committed facts.
+`Window::platform_facts`, bounds/state/flag getters, and Dock integrations update only from the
+backend's committed facts snapshot.
+
+Position, size, window state, and restore bounds share one placement conflict domain. Pointer
+input, focus-on-appearing, focus-on-click, alpha, topmost, and taskbar visibility each own an
+independent generation. Closing a window invalidates queued backend generations before settling
+their tickets as `WindowClosed`. `WindowBounds` remains a compatibility value for windowed,
+maximized, and fullscreen creation or complete requests; `WindowPlacementRequest` additionally
+supports partial updates and minimized state. `resize`, `zoom_window`, `minimize_window`,
+`toggle_fullscreen`, `set_background_appearance`, and the named flag helpers return the same
+`must_use` typed dispatch rather than bypassing mutation generations. See
+[ADR 0029](../../docs/adr/0029-open-gpui-platform-window-mutation-capabilities.md).
+
 ## Interactive Subtree Geometry
 
 Use `SubtreeTransform` when axis-aligned scale or translation must apply consistently to an
@@ -104,7 +137,7 @@ Retain a same-window `RevealTargetHandle` when an application, focus transition,
 action needs to reveal an element through nested scrollports. Bind the handle in every rendered
 frame and submit explicit physical-axis options:
 
-```rust
+```rust,ignore
 use open_gpui::{
     BringIntoViewAlignment, BringIntoViewOptions, RevealTargetExt as _,
 };

@@ -1,19 +1,16 @@
 use crate::{
-    DockViewportPlatformSyncAction, DockViewportPlatformSyncRecord,
-    DockViewportPlatformSyncRequest, DockViewportPlatformSyncSkipped,
-    DockViewportPlatformSyncSkippedReason, DockViewportPlatformSyncUnsupported,
-    DockViewportPlatformSyncUnsupportedReason, DockViewportPlatformWindowState,
-    DockViewportRuntime, viewport_registry::DockViewportPlatformRequests,
+    DockViewportPlatformSyncAction, DockViewportPlatformSyncDispatch,
+    DockViewportPlatformSyncDomain, DockViewportPlatformSyncRecord,
+    DockViewportPlatformSyncRejected, DockViewportPlatformSyncRejectedReason,
+    DockViewportPlatformSyncRequest, DockViewportPlatformSyncUnsupported,
+    DockViewportPlatformSyncUnsupportedReason, DockViewportRuntime,
+    viewport_registry::DockViewportPlatformRequests,
 };
-use open_gpui::WindowId;
 use open_gpui::{
-    PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowKind,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowId, WindowKind, WindowMutationDispatch,
+    WindowMutationRequest, WindowMutationSupport, WindowMutationTicket, WindowPlacementRequest,
+    WindowPlacementState, WindowPlatformFacts,
 };
-
-fn default_window_kind() -> WindowKind {
-    WindowKind::Normal
-}
 
 fn default_window_background() -> WindowBackgroundAppearance {
     WindowBackgroundAppearance::Opaque
@@ -26,329 +23,367 @@ fn unsupported(request: DockViewportPlatformSyncRequest) -> DockViewportPlatform
     }
 }
 
-pub(crate) fn unavailable_reused_viewport_window_sync(
-    window_id: WindowId,
-) -> DockViewportPlatformSyncRecord {
-    DockViewportPlatformSyncRecord {
-        window_id,
-        applied: Vec::new(),
-        skipped_requests: Vec::new(),
-        unsupported_requests: vec![DockViewportPlatformSyncUnsupported {
-            request: DockViewportPlatformSyncRequest::WindowUnavailable,
-            reason: DockViewportPlatformSyncUnsupportedReason::WindowUnavailable,
-        }],
+fn creation_only(request: DockViewportPlatformSyncRequest) -> DockViewportPlatformSyncUnsupported {
+    DockViewportPlatformSyncUnsupported {
+        request,
+        reason: DockViewportPlatformSyncUnsupportedReason::CreationOnly,
     }
 }
 
-fn unsupported_pointer_input_sync(
-    window_id: open_gpui::WindowId,
-    accepts_pointer_input: bool,
+/// Internal result of one Dock live-window dispatch pass.
+///
+/// The public record deliberately retains only ticket metadata. Tickets stay internal so callers
+/// cannot mistake a queued request for committed window facts.
+#[derive(Debug)]
+pub(crate) struct DockViewportPlatformSyncDispatchResult {
+    record: DockViewportPlatformSyncRecord,
+    tickets: Vec<WindowMutationTicket>,
+}
+
+impl DockViewportPlatformSyncDispatchResult {
+    fn new(window_id: WindowId) -> Self {
+        Self {
+            record: DockViewportPlatformSyncRecord {
+                window_id,
+                dispatches: Vec::new(),
+                observations: Vec::new(),
+            },
+            tickets: Vec::new(),
+        }
+    }
+
+    pub(crate) fn record(&self) -> &DockViewportPlatformSyncRecord {
+        &self.record
+    }
+
+    pub(crate) fn into_parts(self) -> (DockViewportPlatformSyncRecord, Vec<WindowMutationTicket>) {
+        (self.record, self.tickets)
+    }
+
+    fn push_immediate(&mut self, action: DockViewportPlatformSyncAction) {
+        self.record
+            .dispatches
+            .push(DockViewportPlatformSyncDispatch::Immediate { action });
+    }
+
+    fn push_unsupported(&mut self, unsupported: DockViewportPlatformSyncUnsupported) {
+        self.record
+            .dispatches
+            .push(DockViewportPlatformSyncDispatch::Unsupported(unsupported));
+    }
+
+    fn push_rejected(
+        &mut self,
+        request: DockViewportPlatformSyncRequest,
+        reason: DockViewportPlatformSyncRejectedReason,
+    ) {
+        self.record
+            .dispatches
+            .push(DockViewportPlatformSyncDispatch::Rejected(
+                DockViewportPlatformSyncRejected { request, reason },
+            ));
+    }
+
+    fn push_window_dispatch(
+        &mut self,
+        request: DockViewportPlatformSyncRequest,
+        dispatch: WindowMutationDispatch,
+        unsupported_reason: DockViewportPlatformSyncUnsupportedReason,
+    ) {
+        match dispatch {
+            WindowMutationDispatch::Queued(ticket) => {
+                self.record
+                    .dispatches
+                    .push(DockViewportPlatformSyncDispatch::Queued {
+                        request,
+                        domain: DockViewportPlatformSyncDomain::from(ticket.domain()),
+                        generation: ticket.generation(),
+                    });
+                self.tickets.push(ticket);
+            }
+            WindowMutationDispatch::Unchanged => {
+                self.record
+                    .dispatches
+                    .push(DockViewportPlatformSyncDispatch::Unchanged { request });
+            }
+            WindowMutationDispatch::Unsupported => {
+                self.push_unsupported(DockViewportPlatformSyncUnsupported {
+                    request,
+                    reason: unsupported_reason,
+                });
+            }
+            WindowMutationDispatch::Rejected => {
+                self.push_rejected(
+                    request,
+                    DockViewportPlatformSyncRejectedReason::RejectedByWindowApi,
+                );
+            }
+            WindowMutationDispatch::WindowClosed => {
+                self.record
+                    .dispatches
+                    .push(DockViewportPlatformSyncDispatch::WindowClosed { request });
+            }
+        }
+    }
+}
+
+pub(crate) fn unavailable_reused_viewport_window_sync(
+    window_id: WindowId,
 ) -> DockViewportPlatformSyncRecord {
-    let no_inputs_requested = !accepts_pointer_input;
-    DockViewportPlatformSyncRecord {
-        window_id,
-        applied: Vec::new(),
-        skipped_requests: Vec::new(),
-        unsupported_requests: vec![
-            unsupported(DockViewportPlatformSyncRequest::PointerInput {
-                requested: accepts_pointer_input,
-            }),
-            unsupported(DockViewportPlatformSyncRequest::ViewportFlagNoInputs {
-                requested: no_inputs_requested,
-            }),
-        ],
+    let mut result = DockViewportPlatformSyncDispatchResult::new(window_id);
+    result
+        .record
+        .dispatches
+        .push(DockViewportPlatformSyncDispatch::WindowClosed {
+            request: DockViewportPlatformSyncRequest::WindowUnavailable,
+        });
+    result.record
+}
+
+fn dispatch_pointer_input(
+    window: &mut Window,
+    accepts_pointer_input: bool,
+) -> DockViewportPlatformSyncDispatchResult {
+    let window_id = window.window_handle().window_id();
+    let support = window.window_mutation_capabilities().pointer_input;
+    let mut result = DockViewportPlatformSyncDispatchResult::new(window_id);
+    let unsupported_reason = match support {
+        WindowMutationSupport::CreationOnly => {
+            DockViewportPlatformSyncUnsupportedReason::CreationOnly
+        }
+        WindowMutationSupport::Unsupported | WindowMutationSupport::Live => {
+            DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi
+        }
+    };
+    result.push_window_dispatch(
+        DockViewportPlatformSyncRequest::PointerInput {
+            requested: accepts_pointer_input,
+        },
+        window.request_pointer_input(accepts_pointer_input),
+        unsupported_reason,
+    );
+    result
+}
+
+fn dispatch_background_appearance(
+    window: &mut Window,
+    background: WindowBackgroundAppearance,
+) -> DockViewportPlatformSyncDispatchResult {
+    let window_id = window.window_handle().window_id();
+    let support = window.window_mutation_capabilities().alpha;
+    let mut result = DockViewportPlatformSyncDispatchResult::new(window_id);
+    let unsupported_reason = match support {
+        WindowMutationSupport::CreationOnly => {
+            DockViewportPlatformSyncUnsupportedReason::CreationOnly
+        }
+        WindowMutationSupport::Unsupported | WindowMutationSupport::Live => {
+            DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi
+        }
+    };
+    result.push_window_dispatch(
+        DockViewportPlatformSyncRequest::BackgroundAppearance {
+            requested: background,
+        },
+        window.set_background_appearance(background),
+        unsupported_reason,
+    );
+    result
+}
+
+fn placement_unsupported_reason(
+    window: &Window,
+    requested: WindowBounds,
+) -> DockViewportPlatformSyncUnsupportedReason {
+    let request = WindowPlacementRequest::from_window_bounds(requested);
+    let facts = window.platform_facts();
+    let capabilities = window.window_mutation_capabilities();
+    let mut required_support = Vec::with_capacity(4);
+
+    if request
+        .position
+        .is_some_and(|position| position != facts.bounds.origin)
+    {
+        required_support.push(capabilities.position);
+    }
+    if request.size.is_some_and(|size| size != facts.bounds.size) {
+        required_support.push(capabilities.size);
+    }
+    if request
+        .restore_bounds
+        .is_some_and(|restore_bounds| restore_bounds != facts.window_bounds.get_bounds())
+    {
+        required_support.push(capabilities.restore_bounds);
+    }
+
+    let current_state = if facts.is_minimized {
+        WindowPlacementState::Minimized
+    } else if facts.is_fullscreen {
+        WindowPlacementState::Fullscreen
+    } else if facts.is_maximized {
+        WindowPlacementState::Maximized
+    } else {
+        WindowPlacementState::Windowed
+    };
+    if let Some(target_state) = request.state
+        && target_state != current_state
+    {
+        required_support.push(match target_state {
+            WindowPlacementState::Windowed => capabilities.windowed,
+            WindowPlacementState::Maximized => capabilities.maximized,
+            WindowPlacementState::Fullscreen => capabilities.fullscreen,
+            WindowPlacementState::Minimized => capabilities.minimized,
+        });
+    }
+
+    if required_support
+        .iter()
+        .any(|support| matches!(support, WindowMutationSupport::Unsupported))
+    {
+        DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi
+    } else if required_support
+        .iter()
+        .any(|support| matches!(support, WindowMutationSupport::CreationOnly))
+    {
+        DockViewportPlatformSyncUnsupportedReason::CreationOnly
+    } else {
+        DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi
     }
 }
 
 pub(crate) fn sync_pointer_input_window(
     window: &mut Window,
     accepts_pointer_input: bool,
-    capabilities: PlatformViewportCapabilities,
-) -> DockViewportPlatformSyncRecord {
-    let window_id = window.window_handle().window_id();
-    if window.accepts_pointer_input() == accepts_pointer_input {
-        return DockViewportPlatformSyncRecord {
-            window_id,
-            applied: Vec::new(),
-            skipped_requests: Vec::new(),
-            unsupported_requests: Vec::new(),
-        };
-    }
-    if capabilities.no_input_windows && window.set_accepts_pointer_input(accepts_pointer_input) {
-        DockViewportPlatformSyncRecord {
-            window_id,
-            applied: vec![
-                DockViewportPlatformSyncAction::PointerInput {
-                    enabled: accepts_pointer_input,
-                },
-                DockViewportPlatformSyncAction::ViewportFlagNoInputs {
-                    enabled: !accepts_pointer_input,
-                },
-            ],
-            skipped_requests: Vec::new(),
-            unsupported_requests: Vec::new(),
-        }
-    } else {
-        unsupported_pointer_input_sync(window_id, accepts_pointer_input)
-    }
+) -> DockViewportPlatformSyncDispatchResult {
+    dispatch_pointer_input(window, accepts_pointer_input)
 }
 
-pub(crate) fn sync_render_passthrough_pointer_input(
+pub(crate) struct DockViewportRenderPointerInputResolution {
+    pub(crate) target: Option<bool>,
+    pub(crate) request: Option<bool>,
+}
+
+pub(crate) fn resolve_render_passthrough_pointer_input_request(
     runtime: &mut DockViewportRuntime,
-    window: &mut Window,
+    window_id: WindowId,
+    accepts_pointer_input: bool,
+    pending_pointer_input: Option<bool>,
     passthrough: bool,
-    capabilities: PlatformViewportCapabilities,
-) -> bool {
-    let window_id = window.window_handle().window_id();
+) -> DockViewportRenderPointerInputResolution {
     if passthrough {
-        if !window.accepts_pointer_input() {
-            return false;
-        }
         runtime.record_render_passthrough_pointer_input(window_id);
-        return apply_render_pointer_input_sync(runtime, window, false, capabilities);
+        if !accepts_pointer_input && pending_pointer_input != Some(true) {
+            return DockViewportRenderPointerInputResolution {
+                target: Some(false),
+                request: None,
+            };
+        }
+        return DockViewportRenderPointerInputResolution {
+            target: Some(false),
+            request: Some(false),
+        };
     }
 
     if !runtime.take_render_passthrough_pointer_input(window_id) {
-        return false;
+        return DockViewportRenderPointerInputResolution {
+            target: None,
+            request: None,
+        };
     }
-    if window.accepts_pointer_input() {
-        return false;
-    }
-    apply_render_pointer_input_sync(runtime, window, true, capabilities)
-}
-
-fn apply_render_pointer_input_sync(
-    runtime: &mut DockViewportRuntime,
-    window: &mut Window,
-    accepts_pointer_input: bool,
-    capabilities: PlatformViewportCapabilities,
-) -> bool {
-    let window_id = window.window_handle().window_id();
-    if runtime
-        .runtime_status()
-        .last_platform_sync_is_unsupported_pointer_input(window_id, accepts_pointer_input)
-    {
-        return false;
-    }
-    let sync_record = sync_pointer_input_window(window, accepts_pointer_input, capabilities);
-    let applied = !sync_record.applied.is_empty();
-    runtime.record_platform_sync(sync_record);
-    applied
-}
-
-fn skipped_for_platform_request(
-    request: DockViewportPlatformSyncRequest,
-) -> DockViewportPlatformSyncSkipped {
-    DockViewportPlatformSyncSkipped {
-        request,
-        reason: DockViewportPlatformSyncSkippedReason::PlatformRequestInProgress,
+    DockViewportRenderPointerInputResolution {
+        target: Some(true),
+        request: (!accepts_pointer_input || pending_pointer_input == Some(false)).then_some(true),
     }
 }
 
-/// Explicit ImGui-style viewport flag requests owned by docking.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub(crate) struct DockViewportPlatformFlagRequests {
-    no_inputs: Option<bool>,
-    no_focus_on_appearing: bool,
-    no_focus_on_click: bool,
-    alpha: Option<f32>,
-    topmost: bool,
-    no_taskbar: bool,
-}
-
-impl DockViewportPlatformFlagRequests {
-    pub(crate) fn from_reused_window_options(options: &open_gpui::WindowOptions) -> Self {
-        Self::default().with_no_inputs(!options.accepts_pointer_input)
-    }
-
-    pub(crate) fn with_no_inputs(mut self, requested: bool) -> Self {
-        self.no_inputs = Some(requested);
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_no_focus_on_appearing(mut self, requested: bool) -> Self {
-        self.no_focus_on_appearing = requested;
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_no_focus_on_click(mut self, requested: bool) -> Self {
-        self.no_focus_on_click = requested;
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_alpha(mut self, requested: Option<f32>) -> Self {
-        self.alpha = requested;
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_topmost(mut self, requested: bool) -> Self {
-        self.topmost = requested;
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_no_taskbar(mut self, requested: bool) -> Self {
-        self.no_taskbar = requested;
-        self
-    }
-}
-
+/// Dispatches supported `WindowOptions` intent to an existing viewport window.
+///
+/// Placement and pointer input use typed GPUI live mutation APIs. A queued request is never
+/// treated as an observed Dock fact; window facts are updated only by the committed-facts path.
 #[cfg(test)]
-pub(crate) fn unsupported_viewport_platform_flag_requests(
-    requests: DockViewportPlatformFlagRequests,
-    capabilities: PlatformViewportFlagCapabilities,
-) -> Vec<DockViewportPlatformSyncUnsupported> {
-    let mut unsupported_requests = Vec::new();
-    push_unsupported_viewport_flag_requests(&mut unsupported_requests, requests, capabilities);
-    unsupported_requests
-}
-
-fn push_unsupported_viewport_flag_requests(
-    unsupported_requests: &mut Vec<DockViewportPlatformSyncUnsupported>,
-    requests: DockViewportPlatformFlagRequests,
-    capabilities: PlatformViewportFlagCapabilities,
-) {
-    if requests.no_focus_on_appearing && !capabilities.no_focus_on_appearing_windows {
-        unsupported_requests.push(unsupported(
-            DockViewportPlatformSyncRequest::ViewportFlagNoFocusOnAppearing { requested: true },
-        ));
-    }
-    if let Some(alpha) = requests.alpha
-        && !capabilities.alpha_windows
-    {
-        unsupported_requests.push(unsupported(
-            DockViewportPlatformSyncRequest::ViewportFlagAlpha { requested: alpha },
-        ));
-    }
-    if requests.topmost && !capabilities.topmost_windows {
-        unsupported_requests.push(unsupported(
-            DockViewportPlatformSyncRequest::ViewportFlagTopMost { requested: true },
-        ));
-    }
-    if requests.no_taskbar && !capabilities.no_taskbar_windows {
-        unsupported_requests.push(unsupported(
-            DockViewportPlatformSyncRequest::ViewportFlagNoTaskbar { requested: true },
-        ));
-    }
-    if requests.no_focus_on_click && !capabilities.no_focus_on_click_windows {
-        unsupported_requests.push(unsupported(
-            DockViewportPlatformSyncRequest::ViewportFlagNoFocusOnClick { requested: true },
-        ));
-    }
-}
-
-fn sync_viewport_platform_flag_requests(
-    window: &mut Window,
-    requests: DockViewportPlatformFlagRequests,
-    viewport_capabilities: PlatformViewportCapabilities,
-    flag_capabilities: PlatformViewportFlagCapabilities,
-    applied: &mut Vec<DockViewportPlatformSyncAction>,
-    unsupported_requests: &mut Vec<DockViewportPlatformSyncUnsupported>,
-) {
-    if let Some(no_inputs_requested) = requests.no_inputs {
-        let requested_accepts_pointer_input = !no_inputs_requested;
-        if requested_accepts_pointer_input != window.accepts_pointer_input() {
-            if viewport_capabilities.no_input_windows
-                && window.set_accepts_pointer_input(requested_accepts_pointer_input)
-            {
-                applied.push(DockViewportPlatformSyncAction::PointerInput {
-                    enabled: requested_accepts_pointer_input,
-                });
-                applied.push(DockViewportPlatformSyncAction::ViewportFlagNoInputs {
-                    enabled: no_inputs_requested,
-                });
-            } else {
-                unsupported_requests.push(unsupported(
-                    DockViewportPlatformSyncRequest::PointerInput {
-                        requested: requested_accepts_pointer_input,
-                    },
-                ));
-                unsupported_requests.push(unsupported(
-                    DockViewportPlatformSyncRequest::ViewportFlagNoInputs {
-                        requested: no_inputs_requested,
-                    },
-                ));
-            }
-        }
-    }
-    push_unsupported_viewport_flag_requests(unsupported_requests, requests, flag_capabilities);
-}
-
-/// Applies the subset of `WindowOptions` that GPUI exposes as live window mutations.
 pub(crate) fn sync_reused_viewport_window(
     window: &mut Window,
+    existing_kind: &WindowKind,
     options: open_gpui::WindowOptions,
     platform_requests: DockViewportPlatformRequests,
-    viewport_capabilities: PlatformViewportCapabilities,
-    flag_capabilities: PlatformViewportFlagCapabilities,
-) -> DockViewportPlatformSyncRecord {
+) -> DockViewportPlatformSyncDispatchResult {
+    sync_reused_viewport_window_with_request_gate(
+        window,
+        existing_kind,
+        options,
+        platform_requests,
+        |_, _| true,
+    )
+}
+
+pub(crate) fn sync_reused_viewport_window_with_request_gate(
+    window: &mut Window,
+    existing_kind: &WindowKind,
+    options: open_gpui::WindowOptions,
+    platform_requests: DockViewportPlatformRequests,
+    mut should_dispatch: impl FnMut(WindowMutationRequest, &WindowPlatformFacts) -> bool,
+) -> DockViewportPlatformSyncDispatchResult {
     let window_id = window.window_handle().window_id();
-    let mut applied = Vec::new();
-    let mut skipped_requests = Vec::new();
-    let mut unsupported_requests = Vec::new();
-    let viewport_flag_requests =
-        DockViewportPlatformFlagRequests::from_reused_window_options(&options);
+    let mut result = DockViewportPlatformSyncDispatchResult::new(window_id);
 
     if options.focus {
         window.activate_window();
-        applied.push(DockViewportPlatformSyncAction::Activate);
+        result.push_immediate(DockViewportPlatformSyncAction::Activate);
     }
 
     if !options.show {
-        unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Show {
+        result.push_unsupported(creation_only(DockViewportPlatformSyncRequest::Show {
             requested: options.show,
         }));
     }
 
-    if options.kind != default_window_kind() {
-        unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::WindowKind));
+    if &options.kind != existing_kind {
+        result.push_unsupported(creation_only(DockViewportPlatformSyncRequest::WindowKind));
     }
     if !options.is_movable {
-        unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Movable {
+        result.push_unsupported(creation_only(DockViewportPlatformSyncRequest::Movable {
             requested: options.is_movable,
         }));
     }
     if !options.is_resizable {
-        unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Resizable {
+        result.push_unsupported(creation_only(DockViewportPlatformSyncRequest::Resizable {
             requested: options.is_resizable,
         }));
     }
     if !options.is_minimizable {
-        unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Minimizable {
-            requested: options.is_minimizable,
-        }));
+        result.push_unsupported(creation_only(
+            DockViewportPlatformSyncRequest::Minimizable {
+                requested: options.is_minimizable,
+            },
+        ));
     }
-    sync_viewport_platform_flag_requests(
-        window,
-        viewport_flag_requests,
-        viewport_capabilities,
-        flag_capabilities,
-        &mut applied,
-        &mut unsupported_requests,
-    );
+
+    let pointer_request = WindowMutationRequest::PointerInput(options.accepts_pointer_input);
+    if should_dispatch(pointer_request, window.platform_facts()) {
+        let pointer_result = dispatch_pointer_input(window, options.accepts_pointer_input);
+        let (record, tickets) = pointer_result.into_parts();
+        result.record.dispatches.extend(record.dispatches);
+        result.tickets.extend(tickets);
+    }
+
     if let Some(display_id) = options.display_id {
-        unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Display {
+        result.push_unsupported(creation_only(DockViewportPlatformSyncRequest::Display {
             requested: display_id,
         }));
     }
     if let Some(size) = options.window_min_size {
-        unsupported_requests.push(unsupported(
+        result.push_unsupported(creation_only(
             DockViewportPlatformSyncRequest::WindowMinSize { requested: size },
         ));
     }
     if options.icon.is_some() {
-        unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Icon));
+        result.push_unsupported(creation_only(DockViewportPlatformSyncRequest::Icon));
     }
     if let Some(app_id) = options.app_id {
         window.set_app_id(&app_id);
-        applied.push(DockViewportPlatformSyncAction::AppId { app_id });
+        result.push_immediate(DockViewportPlatformSyncAction::AppId { app_id });
     }
     if let Some(tabbing_identifier) = options.tabbing_identifier {
-        unsupported_requests.push(unsupported(
+        result.push_unsupported(creation_only(
             DockViewportPlatformSyncRequest::TabbingIdentifier {
                 requested: tabbing_identifier,
             },
@@ -357,24 +392,17 @@ pub(crate) fn sync_reused_viewport_window(
 
     if let Some(decorations) = options.window_decorations {
         window.request_decorations(decorations);
-        applied.push(DockViewportPlatformSyncAction::WindowDecorations { decorations });
+        result.push_immediate(DockViewportPlatformSyncAction::WindowDecorations { decorations });
     }
 
     if options.window_background != default_window_background() {
-        if !flag_capabilities.alpha_windows
-            && matches!(
-                options.window_background,
-                WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred
-            )
-        {
-            unsupported_requests.push(unsupported(
-                DockViewportPlatformSyncRequest::ViewportFlagAlpha { requested: 1.0 },
-            ));
-        } else {
-            window.set_background_appearance(options.window_background);
-            applied.push(DockViewportPlatformSyncAction::BackgroundAppearance {
-                appearance: options.window_background,
-            });
+        let alpha_request = WindowMutationRequest::Alpha(options.window_background);
+        if should_dispatch(alpha_request, window.platform_facts()) {
+            let background_result =
+                dispatch_background_appearance(window, options.window_background);
+            let (record, tickets) = background_result.into_parts();
+            result.record.dispatches.extend(record.dispatches);
+            result.tickets.extend(tickets);
         }
     }
 
@@ -382,12 +410,12 @@ pub(crate) fn sync_reused_viewport_window(
         Some(titlebar) => {
             if let Some(title) = titlebar.title {
                 window.set_window_title(title.as_ref());
-                applied.push(DockViewportPlatformSyncAction::Title {
+                result.push_immediate(DockViewportPlatformSyncAction::Title {
                     title: title.to_string(),
                 });
             }
             if titlebar.appears_transparent {
-                unsupported_requests.push(unsupported(
+                result.push_unsupported(creation_only(
                     DockViewportPlatformSyncRequest::TitlebarTransparency {
                         requested: titlebar.appears_transparent,
                     },
@@ -397,11 +425,13 @@ pub(crate) fn sync_reused_viewport_window(
                 #[cfg(target_os = "macos")]
                 {
                     window.set_traffic_light_position(position);
-                    applied.push(DockViewportPlatformSyncAction::TrafficLightPosition { position });
+                    result.push_immediate(DockViewportPlatformSyncAction::TrafficLightPosition {
+                        position,
+                    });
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
-                    unsupported_requests.push(unsupported(
+                    result.push_unsupported(unsupported(
                         DockViewportPlatformSyncRequest::TrafficLightPosition {
                             requested: position,
                         },
@@ -410,62 +440,35 @@ pub(crate) fn sync_reused_viewport_window(
             }
         }
         None => {
-            unsupported_requests.push(unsupported(
+            result.push_unsupported(creation_only(
                 DockViewportPlatformSyncRequest::TitlebarPresence { requested: false },
             ));
         }
     }
 
     if let Some(window_bounds) = options.window_bounds {
-        let requested_bounds = window_bounds.get_bounds();
-        let current_bounds = window.bounds();
-        if current_bounds.size != requested_bounds.size {
+        let request = DockViewportPlatformSyncRequest::Placement {
+            requested: window_bounds,
+        };
+        let placement_request = WindowMutationRequest::Placement(
+            WindowPlacementRequest::from_window_bounds(window_bounds),
+        );
+        if should_dispatch(placement_request, window.platform_facts()) {
             if platform_requests.resize_requested {
-                skipped_requests.push(skipped_for_platform_request(
-                    DockViewportPlatformSyncRequest::WindowSize {
-                        requested: requested_bounds.size,
-                    },
-                ));
+                result.push_rejected(
+                    request,
+                    DockViewportPlatformSyncRejectedReason::PlatformRequestInProgress,
+                );
             } else {
-                window.resize(requested_bounds.size);
-                applied.push(DockViewportPlatformSyncAction::Resize {
-                    size: requested_bounds.size,
-                });
-            }
-        }
-        if current_bounds.origin != requested_bounds.origin {
-            unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::WindowOrigin {
-                requested: requested_bounds.origin,
-            }));
-        }
-
-        match window_bounds {
-            WindowBounds::Windowed(_) => {
-                if window.is_fullscreen() {
-                    window.toggle_fullscreen();
-                    applied.push(DockViewportPlatformSyncAction::Fullscreen { enabled: false });
-                }
-            }
-            WindowBounds::Fullscreen(_) => {
-                if !window.is_fullscreen() {
-                    window.toggle_fullscreen();
-                    applied.push(DockViewportPlatformSyncAction::Fullscreen { enabled: true });
-                }
-            }
-            WindowBounds::Maximized(_) => {
-                unsupported_requests.push(unsupported(
-                    DockViewportPlatformSyncRequest::WindowState {
-                        requested: DockViewportPlatformWindowState::Maximized,
-                    },
-                ));
+                let unsupported_reason = placement_unsupported_reason(window, window_bounds);
+                result.push_window_dispatch(
+                    request,
+                    window.request_window_placement(window_bounds),
+                    unsupported_reason,
+                );
             }
         }
     }
 
-    DockViewportPlatformSyncRecord {
-        window_id,
-        applied,
-        skipped_requests,
-        unsupported_requests,
-    }
+    result
 }

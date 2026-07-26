@@ -8,6 +8,7 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> DockViewportCloseOutcome {
         self.with_surface_transaction(cx, |surface_transaction, cx| {
+            self.clear_platform_mutation_observation_subscriptions(window_id);
             let closed = self
                 .runtime
                 .borrow_mut()
@@ -76,10 +77,23 @@ impl DockViewportRuntimeHandle {
         }
 
         let runtime = Rc::downgrade(&self.runtime);
+        let platform_mutation_observation_subscriptions =
+            self.platform_mutation_observation_subscriptions.clone();
+        let pending_platform_mutations = self.pending_platform_mutations.clone();
+        let terminal_platform_mutations = self.terminal_platform_mutations.clone();
         let surface_commit_sink = self.surface_commit_sink.clone();
         let active_surface_transaction = self.active_surface_transaction.clone();
         let surface_owner = self.surface_owner.clone();
         cx.on_window_closed(move |cx, window_id| {
+            platform_mutation_observation_subscriptions
+                .borrow_mut()
+                .retain(|(observed_window_id, _, _), _| *observed_window_id != window_id);
+            pending_platform_mutations
+                .borrow_mut()
+                .retain(|(pending_window_id, _), _| *pending_window_id != window_id);
+            terminal_platform_mutations
+                .borrow_mut()
+                .retain(|(terminal_window_id, _), _| *terminal_window_id != window_id);
             let Some(runtime) = runtime.upgrade() else {
                 return;
             };

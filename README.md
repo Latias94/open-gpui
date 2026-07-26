@@ -69,6 +69,7 @@ During local development, use workspace path dependencies instead of registry ve
 Open GPUI is pre-1.0, so the framework favors explicit product contracts over compatibility shims:
 
 - Scroll surfaces return typed `ScrollWheelIntent` values, publish committed `ScrollViewportSnapshot` facts, and expose test probes such as `TestInputDispatchSnapshot` for final input outcomes.
+- Native window placement and independent flag requests expose property-specific capabilities, seven generation domains, typed dispatch, generation-bound terminal observations, and one committed `WindowPlatformFacts` cache; a queued request is never treated as an applied OS fact.
 - Docking apps declare product intent with `DockPanelPlacement`, descriptor default placement, and last-known reopen placement instead of holding graph node ids in normal product code.
 - Component apps project command/action metadata through `CommandIconDescriptor`, `ActionDescriptor`, and `ResolvedActionState`, then reuse that resolved state across buttons, toolbars, menus, command palettes, and sidebars.
 - `VirtualizedList` keeps stable-key state in `VirtualizedListState`; GPUI shells opt into host-owned `ScrollHandle` and custom row rendering through `gpui_adapter::VirtualizedListGpuiExt`. `bring_key_into_view` materializes the keyed row before GPUI performs final nested physical alignment through its window-owned reveal authority.

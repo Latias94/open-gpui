@@ -175,6 +175,44 @@ fn handle_secondary_open_outcome(outcome: DockSurfaceViewportOpenOutcome) {
     }
 }
 
+fn log_platform_window_contract(surface: &DockSurface, cx: &App) {
+    let status = surface.viewports().runtime_status(cx);
+    for viewport in status.window_mutation_capabilities {
+        let capabilities = viewport.capabilities;
+        log::info!(
+            "window mutation capabilities: space={} window={} kind={} position={:?} size={:?} windowed={:?} maximized={:?} fullscreen={:?} minimized={:?} restore={:?} pointer={:?} focus-appear={:?} focus-click={:?} alpha={:?} topmost={:?} taskbar={:?} coordinates={:?}",
+            viewport.space,
+            viewport.window_id.as_u64(),
+            viewport.window_kind.as_str(),
+            capabilities.position,
+            capabilities.size,
+            capabilities.windowed,
+            capabilities.maximized,
+            capabilities.fullscreen,
+            capabilities.minimized,
+            capabilities.restore_bounds,
+            capabilities.pointer_input,
+            capabilities.focus_on_appearing,
+            capabilities.focus_on_click,
+            capabilities.alpha,
+            capabilities.topmost,
+            capabilities.taskbar_visibility,
+            capabilities.coordinate_space,
+        );
+    }
+    if let Some(dispatch) = status.last_platform_dispatch {
+        log::info!("last platform request: {:?}", dispatch.dispatches);
+    }
+    if let Some(observed) = status.recent_platform_observations.last() {
+        log::info!(
+            "last platform observation: request={:?} outcome={:?} facts={:?}",
+            observed.observation.request,
+            observed.observation.outcome,
+            observed.observation.facts,
+        );
+    }
+}
+
 fn main() {
     application().run(|cx: &mut App| {
         let surface = build_surface(cx);
@@ -204,6 +242,7 @@ fn main() {
                             snapshot.layout().space_count(),
                             snapshot.viewport_placement().viewports.len()
                         );
+                        log_platform_window_contract(&surface, cx);
                         pending.set(false);
                     });
                 })
@@ -247,6 +286,7 @@ fn main() {
             Ok(readiness) => log::info!("viewport placement restore readiness: {readiness:?}"),
             Err(error) => log::warn!("viewport placement restore check failed: {error}"),
         }
+        log_platform_window_contract(&surface, cx);
 
         let surface_for_activation = surface.clone();
         cx.spawn(async move |cx| {

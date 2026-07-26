@@ -1,6 +1,9 @@
 #![cfg(feature = "docking")]
 
-use open_gpui::WindowId;
+use open_gpui::{
+    Bounds, PlatformWindowMutationCapabilities, WindowBounds, WindowCoordinateSpace, WindowId,
+    WindowKind, WindowMutationRequest, WindowMutationSupport, WindowPlatformFacts, point, px, size,
+};
 use open_gpui_devtools::{
     DevtoolsDiffKind, DevtoolsDiffStatus, DevtoolsReport, docking,
     docking::{
@@ -14,10 +17,14 @@ use open_gpui_docking::{
         DockViewportDropOutcomeKind, DockViewportDropOutcomeRecord, DockViewportInputStatus,
         DockViewportLifecycleRecord, DockViewportPayloadRecord,
         DockViewportPlatformCapabilityRecord, DockViewportPlatformRequestStatus,
-        DockViewportRestoreReadinessRecord, DockViewportRouteStatus, DockViewportRuntimeStatus,
-        DockViewportStaleStatusReason, DockViewportTearOffOutcomeKind,
-        DockViewportTearOffPlacementRecord, DockViewportTearOffRecord,
-        DockViewportVisualAffordanceRecord, DockVisualAffordanceDebugLayer,
+        DockViewportPlatformSyncDispatch, DockViewportPlatformSyncDomain,
+        DockViewportPlatformSyncObservation, DockViewportPlatformSyncObservationOutcome,
+        DockViewportPlatformSyncObservedRecord, DockViewportPlatformSyncRecord,
+        DockViewportPlatformSyncRequest, DockViewportRestoreReadinessRecord,
+        DockViewportRouteStatus, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
+        DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord,
+        DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
+        DockViewportWindowMutationCapabilityRecord, DockVisualAffordanceDebugLayer,
         DockVisualAffordanceDebugSummary,
     },
 };
@@ -30,6 +37,7 @@ fn docking_runtime_inspection_projects_public_status_rows() {
     assert_eq!(inspection.summary.platform_capabilities_present, true);
     assert_eq!(inspection.summary.platform_viewport_windows, Some(false));
     assert_eq!(inspection.summary.viewport_lifecycle_count, 1);
+    assert_eq!(inspection.summary.window_mutation_capability_count, 1);
     assert_eq!(inspection.summary.route_ready_count, 1);
     assert_eq!(inspection.summary.runtime_event_count, 2);
     assert_eq!(inspection.summary.visual_affordance_count, 1);
@@ -40,6 +48,30 @@ fn docking_runtime_inspection_projects_public_status_rows() {
             .as_ref()
             .map(|capabilities| capabilities.platform_viewport_windows),
         Some(false)
+    );
+    assert_eq!(
+        inspection.window_mutation_capabilities,
+        vec![docking::DockingViewportWindowMutationCapabilityRow {
+            space: "primary".to_string(),
+            window_id: WindowId::from(7).as_u64(),
+            window_kind: "floating".to_string(),
+            capabilities: docking::DockingWindowMutationCapabilityRow {
+                position: docking::DockingWindowMutationSupport::CreationOnly,
+                size: docking::DockingWindowMutationSupport::Live,
+                windowed: docking::DockingWindowMutationSupport::Live,
+                maximized: docking::DockingWindowMutationSupport::Live,
+                fullscreen: docking::DockingWindowMutationSupport::Live,
+                minimized: docking::DockingWindowMutationSupport::Unsupported,
+                restore_bounds: docking::DockingWindowMutationSupport::CreationOnly,
+                pointer_input: docking::DockingWindowMutationSupport::Live,
+                focus_on_appearing: docking::DockingWindowMutationSupport::CreationOnly,
+                focus_on_click: docking::DockingWindowMutationSupport::Unsupported,
+                alpha: docking::DockingWindowMutationSupport::CreationOnly,
+                topmost: docking::DockingWindowMutationSupport::Unsupported,
+                taskbar_visibility: docking::DockingWindowMutationSupport::Unsupported,
+                coordinate_space: docking::DockingWindowCoordinateSpace::WindowLocal,
+            },
+        }]
     );
     assert_eq!(
         inspection.placement_restore.as_ref().map(|placement| (
@@ -85,6 +117,92 @@ fn docking_runtime_inspection_projects_public_status_rows() {
     let capture_json = serde_json::to_string(&docking::docking_runtime_capture(&status)).unwrap();
     assert!(capture_json.contains("\"has_label\":true"));
     assert!(!capture_json.contains("Sensitive Editor Label"));
+}
+
+#[test]
+fn docking_runtime_observations_preserve_typed_request_and_committed_facts() {
+    let observed_bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(320.0), px(240.0)));
+    let mut status = DockViewportRuntimeStatus::default();
+    status
+        .recent_platform_observations
+        .push(DockViewportPlatformSyncObservedRecord {
+            window_id: WindowId::from(12),
+            observation: DockViewportPlatformSyncObservation {
+                domain: DockViewportPlatformSyncDomain::PointerInput,
+                generation: 7,
+                request: WindowMutationRequest::PointerInput(false),
+                outcome: DockViewportPlatformSyncObservationOutcome::Adjusted,
+                facts: WindowPlatformFacts {
+                    bounds: observed_bounds,
+                    coordinate_space: WindowCoordinateSpace::WindowLocal,
+                    window_bounds: WindowBounds::Windowed(observed_bounds),
+                    inner_window_bounds: WindowBounds::Windowed(observed_bounds),
+                    content_size: observed_bounds.size,
+                    scale_factor: 1.5,
+                    display_id: None,
+                    is_minimized: false,
+                    is_maximized: false,
+                    is_fullscreen: false,
+                    accepts_pointer_input: true,
+                    focus_on_appearing: true,
+                    focus_on_click: true,
+                    background_appearance: open_gpui::WindowBackgroundAppearance::Opaque,
+                    topmost: false,
+                    taskbar_visible: true,
+                    is_active: true,
+                },
+            },
+        });
+
+    let inspection = docking::docking_runtime_inspection(&status);
+    let event = inspection
+        .runtime_events
+        .iter()
+        .find(|event| event.event_id == "docking.platform-observations")
+        .expect("terminal observations should be projected as a runtime event");
+
+    assert_eq!(event.payload[0]["window_id"], WindowId::from(12).as_u64());
+    assert_eq!(event.payload[0]["generation"], 7);
+    assert_eq!(event.payload[0]["request"]["kind"], "pointer-input");
+    assert_eq!(event.payload[0]["request"]["accepts_pointer_input"], false);
+    assert_eq!(event.payload[0]["outcome"], "Adjusted");
+    assert_eq!(
+        event.payload[0]["facts"]["coordinate_space"],
+        "window-local"
+    );
+    assert_eq!(event.payload[0]["facts"]["accepts_pointer_input"], true);
+}
+
+#[test]
+fn docking_runtime_dispatches_preserve_structured_request_payloads() {
+    let mut status = DockViewportRuntimeStatus::default();
+    status.last_platform_dispatch = Some(DockViewportPlatformSyncRecord {
+        window_id: WindowId::from(18),
+        dispatches: vec![DockViewportPlatformSyncDispatch::Queued {
+            request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
+            domain: DockViewportPlatformSyncDomain::PointerInput,
+            generation: 11,
+        }],
+        observations: Vec::new(),
+    });
+
+    let inspection = docking::docking_runtime_inspection(&status);
+    let event = inspection
+        .runtime_events
+        .iter()
+        .find(|event| event.event_id == "docking.last-platform-dispatch")
+        .expect("queued dispatches should be projected as a runtime event");
+    let dispatch = &event.payload["dispatches"][0];
+
+    assert_eq!(dispatch["kind"], "queued");
+    assert_eq!(dispatch["request"]["kind"], "pointer-input");
+    assert_eq!(dispatch["request"]["requested"], false);
+    assert_eq!(dispatch["domain"], "PointerInput");
+    assert_eq!(dispatch["generation"], 11);
+    assert!(
+        dispatch["request"].is_object(),
+        "typed requests must not be degraded to Debug strings"
+    );
 }
 
 #[test]
@@ -198,10 +316,28 @@ fn runtime_status(platform_viewport_windows: bool) -> DockViewportRuntimeStatus 
         window_stack: true,
         display_work_area: true,
         dpi_scale: true,
-        live_window_move: false,
-        no_input_windows: true,
         hovered_window_ignores_no_input: false,
     });
+    status
+        .window_mutation_capabilities
+        .push(DockViewportWindowMutationCapabilityRecord {
+            space: DockSpaceId::from("primary"),
+            window_id: WindowId::from(7),
+            window_kind: WindowKind::Floating,
+            capabilities: PlatformWindowMutationCapabilities {
+                position: WindowMutationSupport::CreationOnly,
+                size: WindowMutationSupport::Live,
+                windowed: WindowMutationSupport::Live,
+                maximized: WindowMutationSupport::Live,
+                fullscreen: WindowMutationSupport::Live,
+                restore_bounds: WindowMutationSupport::CreationOnly,
+                pointer_input: WindowMutationSupport::Live,
+                focus_on_appearing: WindowMutationSupport::CreationOnly,
+                alpha: WindowMutationSupport::CreationOnly,
+                coordinate_space: WindowCoordinateSpace::WindowLocal,
+                ..Default::default()
+            },
+        });
     status.placement_restore = Some(DockViewportRestoreReadinessRecord {
         matched: 2,
         missing: 1,

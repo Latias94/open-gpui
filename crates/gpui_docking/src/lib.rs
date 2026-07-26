@@ -314,8 +314,7 @@ pub use surface::{
     DockSurfaceChangeEvent, DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError,
     DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
     DockSurfacePanelSnapshot, DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome,
-    DockSurfaceViewportCloseStatus, DockSurfaceViewportFlagCapabilities,
-    DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
+    DockSurfaceViewportCloseStatus, DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
     DockSurfaceViewportLifecycleReadiness, DockSurfaceViewportOpenOutcome,
     DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
     DockSurfaceViewportPlatformCapabilities, DockSurfaceViewportPlatformReadiness,
@@ -366,8 +365,7 @@ pub use viewport_placement_validation::DockViewportPlacementValidationError;
 pub(crate) use viewport_platform_signals::*;
 #[cfg(test)]
 pub(crate) use viewport_platform_sync::{
-    DockViewportPlatformFlagRequests, sync_reused_viewport_window,
-    unavailable_reused_viewport_window_sync, unsupported_viewport_platform_flag_requests,
+    sync_reused_viewport_window, unavailable_reused_viewport_window_sync,
 };
 pub(crate) use viewport_registration::*;
 pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts};

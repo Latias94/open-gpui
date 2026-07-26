@@ -659,16 +659,6 @@ impl PlatformWindow for WebWindow {
         self.inner.state.borrow().bounds.size
     }
 
-    fn resize(&mut self, size: Size<Pixels>) {
-        let style = self.inner.canvas.style();
-        style
-            .set_property("width", &format!("{}px", f32::from(size.width)))
-            .ok();
-        style
-            .set_property("height", &format!("{}px", f32::from(size.height)))
-            .ok();
-    }
-
     fn scale_factor(&self) -> f32 {
         self.inner.state.borrow().scale_factor
     }
@@ -744,28 +734,6 @@ impl PlatformWindow for WebWindow {
     }
 
     fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
-
-    fn minimize(&self) {
-        log::warn!("WebWindow::minimize is not supported in the browser");
-    }
-
-    fn zoom(&self) {
-        log::warn!("WebWindow::zoom is not supported in the browser");
-    }
-
-    fn toggle_fullscreen(&self) {
-        let mut state = self.inner.state.borrow_mut();
-        state.is_fullscreen = !state.is_fullscreen;
-
-        if state.is_fullscreen {
-            let canvas: &web_sys::Element = self.inner.canvas.as_ref();
-            canvas.request_fullscreen().ok();
-        } else {
-            if let Some(document) = self.inner.browser_window.document() {
-                document.exit_fullscreen();
-            }
-        }
-    }
 
     fn is_fullscreen(&self) -> bool {
         self.inner.state.borrow().is_fullscreen

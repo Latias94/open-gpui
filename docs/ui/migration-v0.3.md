@@ -300,6 +300,116 @@ inference. Docking intentionally has no persistence timer, built-in debounce dur
 setting, or file writer. See
 [ADR 0028](../adr/0028-open-gpui-dock-surface-change-and-activation-authority.md).
 
+## Platform Window Mutation Authority
+
+Already-open native windows now use a capability-specific request and observation contract.
+`WindowMutationSupport::Live` means the backend can both dispatch the property and later supply
+readable facts for it. `CreationOnly` means the property belongs in `WindowOptions` when opening a
+window; it is not a valid live request. `Unsupported` is explicit.
+
+Use `WindowPlacementRequest` for live placement rather than inferring success from a setter:
+
+```rust
+use open_gpui::{
+    WindowMutationDispatch, WindowPlacementRequest, px, size,
+};
+
+let dispatch = window.request_window_placement_request(WindowPlacementRequest {
+    size: Some(size(px(1280.0), px(800.0))),
+    ..Default::default()
+});
+
+match dispatch {
+    WindowMutationDispatch::Queued(ticket) => {
+        // Retain the ticket and any ticket subscription in application state when the
+        // terminal outcome matters.
+        pending_window_mutation = Some(ticket);
+    }
+    WindowMutationDispatch::Unchanged => {}
+    WindowMutationDispatch::Unsupported
+    | WindowMutationDispatch::Rejected
+    | WindowMutationDispatch::WindowClosed => {}
+}
+```
+
+`Queued` means only that GPUI handed the request to the backend. It does not update
+`Window::platform_facts`, `bounds`, `window_bounds`, fullscreen/minimized state, any independent
+flag, or Dock placement. A retained ticket later settles once as `Exact`, `Adjusted`,
+`Superseded`, `Rejected`, `Unsupported`, or `WindowClosed`; the terminal observation includes the
+committed `WindowPlatformFacts`. Every backend terminal carries its domain and generation. GPUI
+rejects a stale generation before committing its facts, so an older callback cannot settle a newer
+ticket or roll the public cache backward. Dropping a subscription stops callback delivery but
+never cancels the request or its terminal record.
+
+Position, size, windowed/maximized/fullscreen/minimized state, and restore bounds are one
+placement conflict domain. Pointer input, focus-on-appearing, focus-on-click, alpha, topmost, and
+taskbar visibility are six independent domains. A newer legal request supersedes only the older
+request in its own domain, while an invalid placement request does not disturb a pending one.
+Closing a window first invalidates every queued backend generation, then settles retained tickets
+as `WindowClosed`. `WindowBounds` remains the compatibility projection for windowed, maximized,
+and fullscreen creation or requests; use `WindowPlacementRequest` for partial updates and
+minimized state.
+
+`Window::request_window_mutation` accepts the complete `WindowMutationRequest` vocabulary.
+`request_pointer_input`, `request_focus_on_appearing`, `request_focus_on_click`, `request_topmost`,
+`request_taskbar_visibility`, `set_background_appearance`, `resize`, `zoom_window`,
+`minimize_window`, and `toggle_fullscreen` are ergonomic typed wrappers over that same authority
+and now return a `must_use` `WindowMutationDispatch`. The state helpers request only the target
+state; they do not copy restore geometry into the request. Handle the dispatch or explicitly bind
+it to `_` when the terminal result is intentionally ignored.
+
+`PlatformViewportCapabilities::live_window_move`, `PlatformViewportFlagCapabilities`, and
+`App::viewport_flag_capabilities()` have been deleted. Inspect
+`Window::window_mutation_capabilities()` instead. The one matrix covers placement, pointer input,
+focus-on-appearing/click, alpha, topmost, taskbar visibility, and coordinate space. Windows
+currently exposes live size, windowed/maximized/fullscreen, and pointer-input mutation, but reports
+window-local coordinates and keeps position plus restore bounds creation-only until mixed-DPI
+desktop coordinates are comparable. Other native backends conservatively report only their
+creation-time or unsupported properties. Capability lookup is per `WindowKind`: Wayland
+LayerShell windows do not inherit XDG windowed/maximized/fullscreen/restore claims.
+When code has only an opened `AnyWindowHandle`, use `App::window_mutation_profile(handle)` to read
+the immutable profile captured for that window's actual creation kind and target display. Do not call
+`App::window_mutation_capabilities()` and assume its normal-window matrix describes floating,
+popup, or LayerShell windows.
+
+### Custom platform backends
+
+Third-party `Platform` implementations must accept the target display when projecting creation and
+live support:
+
+```rust
+fn window_mutation_capabilities(
+    &self,
+    kind: &WindowKind,
+    display_id: Option<DisplayId>,
+) -> PlatformWindowMutationCapabilities;
+```
+
+`None` means the backend's primary or default display. `App` normalizes an unavailable requested
+display id to `None` before both capability lookup and window creation, so restoring a stale display
+does not leave a profile and native constructor disagreeing. Use the supplied display for
+capabilities that depend on native resources, such as an X11 screen's transparent visual.
+`WindowParams` now contains the mandatory canonical `window_bounds`; use it for creation state and
+restore geometry, while `bounds` remains a compatibility projection.
+
+`PlatformWindow::platform_facts` must return one coherent observed snapshot. A property may be
+reported as `Live` only when the backend implements the typed `prepare_window_mutation`,
+`request_window_mutation`, and `invalidate_window_mutation` paths and can emit a terminal
+generation-bound observation through `on_window_mutation_observation`. Use
+`on_window_state_change` to refresh committed external facts; it does not settle a queued ticket.
+The former parallel resize, pointer-input, minimize, zoom, and fullscreen backend methods were
+deleted rather than retained as bypasses.
+
+Dock status now records requests and dispatches separately from terminal observations, and each
+observation preserves its typed request plus committed facts. Only committed Window facts can
+create an observed viewport-placement revision. Terminal rejected, adjusted, unsupported, or
+closed requests are not retried every frame, including when a viewport reuses an existing GPUI
+window; Dock retries only after the target or relevant committed facts change. Placement retry
+fingerprints deliberately exclude focus, pointer, and unrelated flag facts. DevTools preserves
+per-window kind/capability profiles and queued requests as structured payloads rather than unstable
+debug strings. See
+[ADR 0029](../adr/0029-open-gpui-platform-window-mutation-capabilities.md).
+
 ## Deterministic Collection Typeahead
 
 Collection typeahead now uses one crate-private, instance-owned session with GPUI executor time.

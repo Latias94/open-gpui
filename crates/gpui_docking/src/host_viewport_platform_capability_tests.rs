@@ -1,124 +1,46 @@
 use crate::{
-    DockViewportPlatformFlagRequests, DockViewportPlatformSyncAction,
-    DockViewportPlatformSyncRequest, DockViewportPlatformSyncUnsupportedReason,
+    DockViewportPlatformSyncDispatch, DockViewportPlatformSyncRequest,
+    DockViewportPlatformSyncUnsupportedReason,
     host_test_support::{test_view, viewport_window_options},
-    sync_reused_viewport_window, unsupported_viewport_platform_flag_requests,
+    sync_reused_viewport_window,
     viewport_registry::DockViewportPlatformRequests,
 };
-use open_gpui::{
-    PlatformViewportCapabilities, PlatformViewportFlagCapabilities, TestAppContext,
-    WindowBackgroundAppearance, WindowOptions,
-};
-
-#[test]
-fn viewport_flag_requests_default_to_unsupported_without_backend_capability() {
-    let unsupported = unsupported_viewport_platform_flag_requests(
-        DockViewportPlatformFlagRequests::default()
-            .with_no_focus_on_appearing(true)
-            .with_no_focus_on_click(true)
-            .with_alpha(Some(0.6))
-            .with_topmost(true)
-            .with_no_taskbar(true),
-        PlatformViewportFlagCapabilities::default(),
-    );
-
-    let requests = unsupported
-        .iter()
-        .map(|unsupported| &unsupported.request)
-        .collect::<Vec<_>>();
-    assert!(requests.contains(
-        &&DockViewportPlatformSyncRequest::ViewportFlagNoFocusOnAppearing { requested: true }
-    ));
-    assert!(requests.contains(
-        &&DockViewportPlatformSyncRequest::ViewportFlagNoFocusOnClick { requested: true }
-    ));
-    assert!(
-        requests.contains(&&DockViewportPlatformSyncRequest::ViewportFlagAlpha { requested: 0.6 })
-    );
-    assert!(
-        requests
-            .contains(&&DockViewportPlatformSyncRequest::ViewportFlagTopMost { requested: true })
-    );
-    assert!(
-        requests
-            .contains(&&DockViewportPlatformSyncRequest::ViewportFlagNoTaskbar { requested: true })
-    );
-    assert!(
-        unsupported.iter().all(|unsupported| {
-            unsupported.reason == DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi
-        }),
-        "unsupported viewport flags should be explicit diagnostics, not silently treated as applied"
-    );
-}
-
-#[test]
-fn viewport_flag_requests_respect_advertised_backend_capabilities() {
-    let unsupported = unsupported_viewport_platform_flag_requests(
-        DockViewportPlatformFlagRequests::default()
-            .with_no_focus_on_appearing(true)
-            .with_no_focus_on_click(true)
-            .with_alpha(Some(0.6))
-            .with_topmost(true)
-            .with_no_taskbar(true),
-        PlatformViewportFlagCapabilities {
-            no_focus_on_appearing_windows: true,
-            no_focus_on_click_windows: true,
-            alpha_windows: true,
-            topmost_windows: true,
-            no_taskbar_windows: true,
-        },
-    );
-
-    assert!(
-        unsupported.is_empty(),
-        "backend-supported viewport flags should leave no unsupported diagnostics"
-    );
-}
+use open_gpui::{TestAppContext, WindowBackgroundAppearance, WindowKind, WindowOptions};
 
 #[open_gpui::test]
-fn reused_viewport_no_input_request_records_unsupported_without_backend_capability(
-    cx: &mut TestAppContext,
-) {
+fn reused_viewport_no_input_request_queues_typed_pointer_dispatch(cx: &mut TestAppContext) {
     let root = test_view(cx, "viewport");
     let window = cx
         .update(|app| app.open_window(viewport_window_options(320.0, 240.0), |_, _| root.clone()))
         .expect("test window should open");
 
-    let sync_record = window
+    let sync_result = window
         .update(cx, |_, window, _| {
             sync_reused_viewport_window(
                 window,
+                &WindowKind::Normal,
                 WindowOptions {
                     focus: false,
                     accepts_pointer_input: false,
                     ..viewport_window_options(320.0, 240.0)
                 },
                 DockViewportPlatformRequests::default(),
-                PlatformViewportCapabilities::default(),
-                PlatformViewportFlagCapabilities::default(),
             )
         })
         .expect("test window should stay live");
+    let sync_record = sync_result.record();
 
-    assert_eq!(sync_record.applied, Vec::new());
-    assert!(
-        sync_record
-            .unsupported_requests
-            .iter()
-            .any(|unsupported| unsupported.request
-                == DockViewportPlatformSyncRequest::PointerInput { requested: false })
-    );
-    assert!(
-        sync_record
-            .unsupported_requests
-            .iter()
-            .any(|unsupported| unsupported.request
-                == DockViewportPlatformSyncRequest::ViewportFlagNoInputs { requested: true })
-    );
+    assert!(sync_record.dispatches.iter().any(|dispatch| matches!(
+        dispatch,
+        DockViewportPlatformSyncDispatch::Queued {
+            request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
+            ..
+        }
+    )));
 }
 
 #[open_gpui::test]
-fn reused_transparent_background_records_alpha_unsupported_without_backend_capability(
+fn reused_transparent_background_reports_creation_only_without_mutating_facts(
     cx: &mut TestAppContext,
 ) {
     let root = test_view(cx, "viewport");
@@ -126,33 +48,38 @@ fn reused_transparent_background_records_alpha_unsupported_without_backend_capab
         .update(|app| app.open_window(viewport_window_options(320.0, 240.0), |_, _| root.clone()))
         .expect("test window should open");
 
-    let sync_record = window
+    let sync_result = window
         .update(cx, |_, window, _| {
             sync_reused_viewport_window(
                 window,
+                &WindowKind::Normal,
                 WindowOptions {
                     window_background: WindowBackgroundAppearance::Transparent,
                     ..viewport_window_options(320.0, 240.0)
                 },
                 DockViewportPlatformRequests::default(),
-                PlatformViewportCapabilities::default(),
-                PlatformViewportFlagCapabilities::default(),
             )
         })
         .expect("test window should stay live");
+    let sync_record = sync_result.record();
 
-    assert!(!sync_record.applied.iter().any(|action| matches!(
-        action,
-        DockViewportPlatformSyncAction::BackgroundAppearance { .. }
+    assert!(sync_record.dispatches.iter().any(|dispatch| matches!(
+        dispatch,
+        DockViewportPlatformSyncDispatch::Unsupported(unsupported)
+            if unsupported.request
+                == DockViewportPlatformSyncRequest::BackgroundAppearance {
+                    requested: WindowBackgroundAppearance::Transparent
+                }
+                && unsupported.reason
+                    == DockViewportPlatformSyncUnsupportedReason::CreationOnly
     )));
-    assert!(
-        sync_record
-            .unsupported_requests
-            .iter()
-            .any(|unsupported| matches!(
-                unsupported.request,
-                DockViewportPlatformSyncRequest::ViewportFlagAlpha { .. }
-            ))
+    assert_eq!(
+        window
+            .update(cx, |_, window, _| {
+                window.platform_facts().background_appearance
+            })
+            .expect("test window should stay live"),
+        WindowBackgroundAppearance::Opaque
     );
 }
 
@@ -167,8 +94,9 @@ mod runtime_suite {
         DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
         DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportFocusCommand,
         DockViewportFocusRequest, DockViewportInputStatus, DockViewportOpenStatus,
-        DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
-        DockViewportPlatformSyncSkippedReason, DockViewportPlatformSyncUnsupportedReason,
+        DockViewportPlatformSyncAction, DockViewportPlatformSyncDispatch,
+        DockViewportPlatformSyncObservationOutcome, DockViewportPlatformSyncRejectedReason,
+        DockViewportPlatformSyncRequest, DockViewportPlatformSyncUnsupportedReason,
         DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
         DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
         DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
@@ -193,11 +121,23 @@ mod runtime_suite {
         viewport_test_support::{handle, register_viewport},
     };
     use open_gpui::{
-        AnyWindowHandle, AppContext as _, Focusable, SharedString, TestAppContext, TitlebarOptions,
-        VisualTestContext, WindowBounds, WindowHandle, WindowId, WindowOptions, point, px, size,
+        AnyWindowHandle, AppContext as _, Focusable, PlatformWindowMutationTerminal, SharedString,
+        TestAppContext, TitlebarOptions, VisualTestContext, WindowBackgroundAppearance,
+        WindowBounds, WindowHandle, WindowId, WindowKind, WindowMutationDomain, WindowOptions,
+        point, px, size,
     };
 
     use crate::host_viewport_runtime_test_support::*;
+
+    fn viewport_facts_generation(runtime: &DockViewportRuntimeHandle, space: &DockSpaceId) -> u64 {
+        runtime
+            .runtime_status()
+            .viewport_lifecycle
+            .into_iter()
+            .find(|record| &record.space == space)
+            .expect("viewport lifecycle should contain the requested space")
+            .facts_generation
+    }
 
     #[open_gpui::test]
     fn viewport_window_facts_report_native_no_input_windows(cx: &mut TestAppContext) {
@@ -223,6 +163,135 @@ mod runtime_suite {
                 );
             })
             .expect("no-input test window should remain live");
+    }
+
+    #[open_gpui::test]
+    fn runtime_status_projects_each_viewports_actual_window_kind_profile(cx: &mut TestAppContext) {
+        let space = DockSpaceId::from("floating");
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(space.clone(), tabs);
+        let mut workspace = DockWorkspace::new(space.clone(), graph);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+
+        let opened = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    space.clone(),
+                    WindowOptions {
+                        kind: WindowKind::Floating,
+                        ..viewport_window_options(360.0, 220.0)
+                    },
+                    app,
+                )
+            })
+            .expect("floating viewport should open through runtime");
+        let status = cx.update(|app| runtime.runtime_status_for_app(app));
+
+        assert_eq!(status.window_mutation_capabilities.len(), 1);
+        let profile = &status.window_mutation_capabilities[0];
+        assert_eq!(profile.space, space);
+        assert_eq!(profile.window_id, opened.window().window_id());
+        assert_eq!(profile.window_kind, WindowKind::Floating);
+        assert_eq!(
+            profile.capabilities,
+            opened
+                .window()
+                .update(cx, |_, window, _| window.window_mutation_capabilities())
+                .expect("floating viewport should remain live")
+        );
+    }
+
+    #[open_gpui::test]
+    fn reused_viewport_compares_requested_kind_with_actual_window_kind(cx: &mut TestAppContext) {
+        let space = DockSpaceId::from("floating");
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(space.clone(), tabs);
+        let mut workspace = DockWorkspace::new(space.clone(), graph);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+
+        let opened = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    space.clone(),
+                    WindowOptions {
+                        kind: WindowKind::Floating,
+                        ..viewport_window_options(360.0, 220.0)
+                    },
+                    app,
+                )
+            })
+            .expect("floating viewport should open through runtime");
+
+        let reused = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    space.clone(),
+                    WindowOptions {
+                        kind: WindowKind::Floating,
+                        ..viewport_window_options(360.0, 220.0)
+                    },
+                    app,
+                )
+            })
+            .expect("floating viewport should be reused through runtime");
+        assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+        assert_eq!(reused.window(), opened.window());
+        assert!(
+            !runtime
+                .runtime_status()
+                .last_platform_dispatch
+                .expect("same-kind reuse should record platform dispatch diagnostics")
+                .dispatches
+                .iter()
+                .any(|dispatch| matches!(
+                    dispatch,
+                    DockViewportPlatformSyncDispatch::Unsupported(unsupported)
+                        if unsupported.request == DockViewportPlatformSyncRequest::WindowKind
+                )),
+            "same-kind floating reuse must not be compared with an assumed Normal kind"
+        );
+
+        let reused = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    space,
+                    WindowOptions {
+                        kind: WindowKind::Normal,
+                        ..viewport_window_options(360.0, 220.0)
+                    },
+                    app,
+                )
+            })
+            .expect("different-kind request should still reuse the existing viewport");
+        assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+        assert!(
+            runtime
+                .runtime_status()
+                .last_platform_dispatch
+                .expect("different-kind reuse should record platform dispatch diagnostics")
+                .dispatches
+                .iter()
+                .any(|dispatch| matches!(
+                    dispatch,
+                    DockViewportPlatformSyncDispatch::Unsupported(unsupported)
+                        if unsupported.request == DockViewportPlatformSyncRequest::WindowKind
+                            && unsupported.reason
+                                == DockViewportPlatformSyncUnsupportedReason::CreationOnly
+                )),
+            "changing a reused viewport's immutable kind must be reported as creation-only"
+        );
     }
 
     #[open_gpui::test]
@@ -334,77 +403,558 @@ mod runtime_suite {
             .window()
             .update(cx, |_, window, _| window.bounds())
             .expect("reused viewport should remain live");
-        assert_eq!(bounds.size, size(px(480.0), px(260.0)));
+        assert_eq!(bounds.size, size(px(360.0), px(220.0)));
         assert_eq!(
             bounds.origin,
             point(px(0.0), px(0.0)),
-            "same-origin reuse should preserve the live screen origin"
+            "queued placement must preserve the last committed screen origin"
         );
         assert!(
-            !reused
+            reused
                 .window()
-                .update(cx, |_, window, _| window.accepts_pointer_input())
+                .update(cx, |_, window, _| window
+                    .platform_facts()
+                    .accepts_pointer_input)
                 .expect("reused viewport should remain live"),
-            "reused viewport sync should apply native no-input/click-through state"
+            "queued pointer input must not overwrite the committed fact"
         );
         assert_eq!(
             runtime.viewport_route_unavailable_reason(&secondary_space),
             None,
-            "native no-input should not invalidate route facts"
+            "queued pointer intent does not invalidate observed route facts"
         );
         assert_eq!(
             viewport_input_status(&runtime, &secondary_space),
-            Some(DockViewportInputStatus::NoInputPassThrough),
-            "runtime registry must observe the reused window's live no-input state"
+            Some(DockViewportInputStatus::ReceivesInput),
+            "runtime registry must retain committed pointer-input facts until observation"
         );
 
         let sync = runtime
             .runtime_status()
-            .last_platform_sync
-            .expect("reuse should record platform sync diagnostics");
+            .last_platform_dispatch
+            .expect("reuse should record platform dispatch diagnostics");
         assert_eq!(sync.window_id, reused.window().window_id());
+        assert!(sync.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Immediate {
+                action: DockViewportPlatformSyncAction::Activate
+            }
+        )));
+        assert!(sync.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Immediate {
+                action: DockViewportPlatformSyncAction::Title { title }
+            } if title == "Retitled"
+        )));
         assert!(
-            sync.applied
-                .contains(&DockViewportPlatformSyncAction::Activate)
+            sync.dispatches.iter().any(|dispatch| matches!(
+                dispatch,
+                DockViewportPlatformSyncDispatch::Queued {
+                    request: DockViewportPlatformSyncRequest::Placement { .. },
+                    ..
+                }
+            )),
+            "placement is one queued conflict domain, not separate resize/origin/state facts"
         );
         assert!(
-            sync.applied
-                .contains(&DockViewportPlatformSyncAction::Title {
-                    title: "Retitled".to_string(),
-                })
+            sync.dispatches.iter().any(|dispatch| matches!(
+                dispatch,
+                DockViewportPlatformSyncDispatch::Queued {
+                    request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
+                    ..
+                }
+            )),
+            "pointer input remains independently dispatchable from placement"
+        );
+    }
+
+    #[open_gpui::test]
+    fn viewport_runtime_commits_adjusted_terminal_placement_after_queued_dispatch(
+        cx: &mut TestAppContext,
+    ) {
+        let primary_space = DockSpaceId::from("primary");
+        let secondary_space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let primary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let secondary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(primary_space.clone(), primary_tabs);
+        graph.set_root(secondary_space.clone(), secondary_tabs);
+
+        let mut workspace = DockWorkspace::new(primary_space, graph);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+
+        let opened = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .expect("secondary viewport should open through runtime");
+        cx.run_until_parked();
+        assert!(runtime.begin_viewport_host_scene(
+            secondary_space.clone(),
+            opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+                0.0, 0.0, 360.0, 220.0,
+            ))),
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            point(px(180.0), px(110.0)),
+        ));
+        assert_eq!(
+            runtime.viewport_route_unavailable_reason(&secondary_space),
+            None,
+            "the rendered host must publish initial committed facts before reuse"
+        );
+
+        let requested_bounds = floating_bounds(24.0, 32.0, 480.0, 260.0);
+        let reused = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space.clone(),
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(requested_bounds)),
+                        ..Default::default()
+                    },
+                    app,
+                )
+            })
+            .expect("live viewport should be reused");
+
+        assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+        assert_eq!(reused.window(), opened.window());
+        assert_eq!(
+            reused
+                .window()
+                .update(cx, |_, window, _| window.platform_facts().bounds)
+                .expect("reused viewport should remain live"),
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            "queued placement must not overwrite committed GPUI facts"
+        );
+        assert_eq!(
+            runtime.viewport_route_unavailable_reason(&secondary_space),
+            None,
+            "queued placement must not advance Dock route facts"
+        );
+        let queued = runtime
+            .runtime_status()
+            .last_platform_dispatch
+            .expect("reuse should record a queued dispatch");
+        assert!(
+            queued.observations.is_empty(),
+            "dispatch status must remain separate from a terminal observation"
+        );
+        assert!(queued.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Queued {
+                request: DockViewportPlatformSyncRequest::Placement { .. },
+                ..
+            }
+        )));
+
+        let adjusted_bounds = floating_bounds(30.0, 40.0, 460.0, 250.0);
+        let mut adjusted_facts = reused
+            .window()
+            .update(cx, |_, window, _| window.platform_facts().clone())
+            .expect("reused viewport should remain live");
+        adjusted_facts.bounds = adjusted_bounds;
+        adjusted_facts.content_size = adjusted_bounds.size;
+        adjusted_facts.window_bounds = WindowBounds::Windowed(adjusted_bounds);
+        adjusted_facts.inner_window_bounds = WindowBounds::Windowed(adjusted_bounds);
+        let facts_generation_before_observation =
+            viewport_facts_generation(&runtime, &secondary_space);
+
+        assert!(
+            cx.simulate_window_mutation_observation(
+                reused.window(),
+                WindowMutationDomain::Placement,
+                adjusted_facts,
+            ),
+            "test platform should emit one coherent placement terminal observation"
+        );
+        assert_eq!(
+            reused
+                .window()
+                .update(cx, |_, window, _| window.platform_facts().bounds)
+                .expect("reused viewport should remain live"),
+            adjusted_bounds,
+            "only the terminal observation may replace committed GPUI facts"
+        );
+        assert_eq!(
+            runtime.viewport_route_unavailable_reason(&secondary_space),
+            None,
+            "the invalidated Dock host scene should be republished during the platform event"
         );
         assert!(
-            sync.applied
-                .contains(&DockViewportPlatformSyncAction::Resize {
-                    size: size(px(480.0), px(260.0)),
-                })
+            viewport_facts_generation(&runtime, &secondary_space)
+                > facts_generation_before_observation,
+            "committed adjusted placement must invalidate and republish Dock route facts"
         );
-        assert!(
-            !sync.unsupported_requests.iter().any(|unsupported| matches!(
-                unsupported.request,
-                DockViewportPlatformSyncRequest::WindowOrigin { .. }
-            ))
-        );
-        assert!(
-            sync.applied
-                .contains(&DockViewportPlatformSyncAction::PointerInput { enabled: false })
-        );
-        assert!(
-            sync.applied
-                .contains(&DockViewportPlatformSyncAction::ViewportFlagNoInputs { enabled: true })
-        );
-        assert!(!sync.unsupported_requests.iter().any(|unsupported| {
-            unsupported.request
-                == DockViewportPlatformSyncRequest::PointerInput { requested: false }
+
+        let status = runtime.runtime_status();
+        let dispatch = status
+            .last_platform_dispatch
+            .expect("terminal observation should remain attached to its dispatch record");
+        assert!(dispatch.observations.iter().any(|observation| {
+            observation.outcome == DockViewportPlatformSyncObservationOutcome::Adjusted
         }));
-        assert!(!sync.unsupported_requests.iter().any(|unsupported| {
-            unsupported.request
-                == DockViewportPlatformSyncRequest::ViewportFlagNoInputs { requested: true }
+        assert!(status.recent_platform_observations.iter().any(|record| {
+            record.window_id == reused.window().window_id()
+                && record.observation.domain == crate::DockViewportPlatformSyncDomain::Placement
+                && record.observation.outcome
+                    == DockViewportPlatformSyncObservationOutcome::Adjusted
         }));
     }
 
     #[open_gpui::test]
-    fn viewport_runtime_does_not_reverse_sync_size_during_platform_resize(cx: &mut TestAppContext) {
+    fn reused_viewport_does_not_repeat_pending_or_terminal_window_mutations(
+        cx: &mut TestAppContext,
+    ) {
+        let primary_space = DockSpaceId::from("primary");
+        let secondary_space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let primary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let secondary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(primary_space.clone(), primary_tabs);
+        graph.set_root(secondary_space.clone(), secondary_tabs);
+
+        let mut workspace = DockWorkspace::new(primary_space, graph);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+
+        let opened = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .expect("secondary viewport should open through runtime");
+        cx.run_until_parked();
+        assert!(runtime.begin_viewport_host_scene(
+            secondary_space.clone(),
+            opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+                0.0, 0.0, 360.0, 220.0,
+            ))),
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            point(px(180.0), px(110.0)),
+        ));
+
+        let requested_bounds = floating_bounds(24.0, 32.0, 480.0, 260.0);
+        let requested_options = || WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(requested_bounds)),
+            accepts_pointer_input: false,
+            window_background: WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        };
+        let first = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space.clone(),
+                    requested_options(),
+                    app,
+                )
+            })
+            .expect("first reuse should dispatch changed window mutation domains");
+        assert_eq!(first.status(), DockViewportOpenStatus::Reused);
+
+        let first_dispatch = runtime
+            .runtime_status()
+            .last_platform_dispatch
+            .expect("first reuse should record platform dispatches");
+        assert!(first_dispatch.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Queued {
+                request: DockViewportPlatformSyncRequest::Placement { .. },
+                ..
+            }
+        )));
+        assert!(first_dispatch.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Queued {
+                request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
+                ..
+            }
+        )));
+        assert!(first_dispatch.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Unsupported(unsupported)
+                if matches!(
+                    unsupported.request,
+                    DockViewportPlatformSyncRequest::BackgroundAppearance {
+                        requested: WindowBackgroundAppearance::Transparent
+                    }
+                )
+        )));
+
+        cx.update(|app| {
+            runtime
+                .open_viewport_unchecked_policy(secondary_space.clone(), requested_options(), app)
+                .expect("identical pending reuse should remain a valid no-op");
+        });
+        let pending_repeat = runtime
+            .runtime_status()
+            .last_platform_dispatch
+            .expect("the no-op reuse may still record non-mutation diagnostics");
+        assert!(
+            pending_repeat.dispatches.iter().all(|dispatch| !matches!(
+                dispatch,
+                DockViewportPlatformSyncDispatch::Queued {
+                    request: DockViewportPlatformSyncRequest::Placement { .. }
+                        | DockViewportPlatformSyncRequest::PointerInput { .. }
+                        | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                    ..
+                } | DockViewportPlatformSyncDispatch::Unchanged {
+                    request: DockViewportPlatformSyncRequest::Placement { .. }
+                        | DockViewportPlatformSyncRequest::PointerInput { .. }
+                        | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                } | DockViewportPlatformSyncDispatch::Unsupported(
+                    crate::DockViewportPlatformSyncUnsupported {
+                        request: DockViewportPlatformSyncRequest::Placement { .. }
+                            | DockViewportPlatformSyncRequest::PointerInput { .. }
+                            | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                        ..
+                    }
+                ) | DockViewportPlatformSyncDispatch::Rejected(
+                    crate::DockViewportPlatformSyncRejected {
+                        request: DockViewportPlatformSyncRequest::Placement { .. }
+                            | DockViewportPlatformSyncRequest::PointerInput { .. }
+                            | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                        ..
+                    }
+                )
+            )),
+            "pending placement and pointer requests plus terminal alpha failure must not redispatch"
+        );
+        assert!(
+            runtime
+                .runtime_status()
+                .recent_platform_observations
+                .is_empty(),
+            "an identical pending reuse must not supersede either queued generation"
+        );
+
+        let current_facts = first
+            .window()
+            .update(cx, |_, window, _| window.platform_facts().clone())
+            .expect("reused viewport should remain live");
+        assert!(cx.simulate_window_mutation_terminal(
+            first.window(),
+            WindowMutationDomain::PointerInput,
+            PlatformWindowMutationTerminal::Rejected,
+            current_facts,
+        ));
+        let adjusted_bounds = floating_bounds(30.0, 40.0, 460.0, 250.0);
+        let mut adjusted_facts = first
+            .window()
+            .update(cx, |_, window, _| window.platform_facts().clone())
+            .expect("reused viewport should remain live");
+        adjusted_facts.bounds = adjusted_bounds;
+        adjusted_facts.content_size = adjusted_bounds.size;
+        adjusted_facts.window_bounds = WindowBounds::Windowed(adjusted_bounds);
+        adjusted_facts.inner_window_bounds = WindowBounds::Windowed(adjusted_bounds);
+        assert!(cx.simulate_window_mutation_observation(
+            first.window(),
+            WindowMutationDomain::Placement,
+            adjusted_facts,
+        ));
+        let observation_count = runtime.runtime_status().recent_platform_observations.len();
+        assert_eq!(observation_count, 2);
+
+        cx.update(|app| {
+            runtime
+                .open_viewport_unchecked_policy(secondary_space.clone(), requested_options(), app)
+                .expect("identical terminal reuse should remain a valid no-op");
+        });
+        let terminal_repeat = runtime
+            .runtime_status()
+            .last_platform_dispatch
+            .expect("the no-op reuse may still record non-mutation diagnostics");
+        assert!(
+            terminal_repeat.dispatches.iter().all(|dispatch| !matches!(
+                dispatch,
+                DockViewportPlatformSyncDispatch::Queued {
+                    request: DockViewportPlatformSyncRequest::Placement { .. }
+                        | DockViewportPlatformSyncRequest::PointerInput { .. }
+                        | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                    ..
+                } | DockViewportPlatformSyncDispatch::Unchanged {
+                    request: DockViewportPlatformSyncRequest::Placement { .. }
+                        | DockViewportPlatformSyncRequest::PointerInput { .. }
+                        | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                } | DockViewportPlatformSyncDispatch::Unsupported(
+                    crate::DockViewportPlatformSyncUnsupported {
+                        request: DockViewportPlatformSyncRequest::Placement { .. }
+                            | DockViewportPlatformSyncRequest::PointerInput { .. }
+                            | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                        ..
+                    }
+                ) | DockViewportPlatformSyncDispatch::Rejected(
+                    crate::DockViewportPlatformSyncRejected {
+                        request: DockViewportPlatformSyncRequest::Placement { .. }
+                            | DockViewportPlatformSyncRequest::PointerInput { .. }
+                            | DockViewportPlatformSyncRequest::BackgroundAppearance { .. },
+                        ..
+                    }
+                )
+            )),
+            "unchanged adjusted/rejected/unsupported terminal mutations must not retry"
+        );
+        assert_eq!(
+            runtime.runtime_status().recent_platform_observations.len(),
+            observation_count,
+            "a blocked retry must not create a new generation or observation"
+        );
+
+        let changed_bounds = floating_bounds(60.0, 70.0, 500.0, 280.0);
+        cx.update(|app| {
+            runtime
+                .open_viewport_unchecked_policy(
+                    secondary_space.clone(),
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(changed_bounds)),
+                        accepts_pointer_input: true,
+                        window_background: WindowBackgroundAppearance::Transparent,
+                        ..Default::default()
+                    },
+                    app,
+                )
+                .expect("changed targets should clear the matching terminal retry barrier");
+        });
+        let changed_dispatch = runtime
+            .runtime_status()
+            .last_platform_dispatch
+            .expect("changed targets should produce a fresh dispatch record");
+        assert!(changed_dispatch.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Queued {
+                request: DockViewportPlatformSyncRequest::Placement {
+                    requested: WindowBounds::Windowed(bounds)
+                },
+                ..
+            } if *bounds == changed_bounds
+        )));
+        assert!(changed_dispatch.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Unchanged {
+                request: DockViewportPlatformSyncRequest::PointerInput { requested: true }
+            }
+        )));
+    }
+
+    #[open_gpui::test]
+    fn viewport_runtime_records_external_resize_facts_without_settling_queued_placement(
+        cx: &mut TestAppContext,
+    ) {
+        let primary_space = DockSpaceId::from("primary");
+        let secondary_space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let primary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let secondary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(primary_space.clone(), primary_tabs);
+        graph.set_root(secondary_space.clone(), secondary_tabs);
+
+        let mut workspace = DockWorkspace::new(primary_space, graph);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+
+        let opened = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .expect("secondary viewport should open through runtime");
+        cx.run_until_parked();
+        assert!(runtime.begin_viewport_host_scene(
+            secondary_space.clone(),
+            opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+                0.0, 0.0, 360.0, 220.0,
+            ))),
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            point(px(180.0), px(110.0)),
+        ));
+
+        let reused = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space.clone(),
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(floating_bounds(
+                            24.0, 32.0, 480.0, 260.0,
+                        ))),
+                        ..Default::default()
+                    },
+                    app,
+                )
+            })
+            .expect("live viewport should be reused");
+        assert_eq!(reused.window(), opened.window());
+        let facts_generation_before_resize = viewport_facts_generation(&runtime, &secondary_space);
+
+        cx.simulate_window_resize(reused.window(), size(px(420.0), px(240.0)));
+
+        assert_eq!(
+            reused
+                .window()
+                .update(cx, |_, window, _| window.platform_facts().bounds.size)
+                .expect("reused viewport should remain live"),
+            size(px(420.0), px(240.0)),
+            "external platform facts should still refresh the GPUI cache"
+        );
+        assert_eq!(
+            runtime.viewport_route_unavailable_reason(&secondary_space),
+            None,
+            "the invalidated Dock host scene should be republished during the resize event"
+        );
+        assert!(
+            viewport_facts_generation(&runtime, &secondary_space) > facts_generation_before_resize,
+            "external facts change should invalidate and republish Dock through its bounds observer"
+        );
+        let status = runtime.runtime_status();
+        let dispatch = status
+            .last_platform_dispatch
+            .expect("the original queued placement diagnostic should remain available");
+        assert!(dispatch.observations.is_empty());
+        assert!(
+            status.recent_platform_observations.is_empty(),
+            "a raw external resize is not a terminal observation for the queued ticket"
+        );
+    }
+
+    #[open_gpui::test]
+    fn viewport_runtime_rejects_whole_placement_during_platform_resize(cx: &mut TestAppContext) {
         let primary_space = DockSpaceId::from("primary");
         let secondary_space = DockSpaceId::from("secondary");
         let mut graph = DockGraph::new();
@@ -456,7 +1006,7 @@ mod runtime_suite {
         opened
             .window()
             .update(cx, |_, window, _| {
-                window.resize(size(px(520.0), px(300.0)));
+                let _ = window.resize(size(px(520.0), px(300.0)));
             })
             .expect("test viewport window should remain live");
         let platform_facts_applied = cx.update(|app| {
@@ -497,35 +1047,23 @@ mod runtime_suite {
 
         assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
         assert_eq!(reused.window(), opened.window());
-        let bounds = reused
-            .window()
-            .update(cx, |_, window, _| window.bounds())
-            .expect("reused viewport should remain live");
-        assert_eq!(
-            bounds.size,
-            size(px(520.0), px(300.0)),
-            "runtime sync must not overwrite an in-flight platform resize"
-        );
-
         let sync = runtime
             .runtime_status()
-            .last_platform_sync
-            .expect("reuse should record platform sync diagnostics");
+            .last_platform_dispatch
+            .expect("reuse should record platform dispatch diagnostics");
         assert!(
-            !sync
-                .applied
-                .iter()
-                .any(|action| matches!(action, DockViewportPlatformSyncAction::Resize { .. })),
-            "reverse resize must be skipped while backend resize request is pending"
+            sync.dispatches.iter().any(|dispatch| matches!(
+                dispatch,
+                DockViewportPlatformSyncDispatch::Rejected(rejected)
+                    if rejected.reason
+                        == DockViewportPlatformSyncRejectedReason::PlatformRequestInProgress
+                    && matches!(
+                        rejected.request,
+                        DockViewportPlatformSyncRequest::Placement { .. }
+                    )
+            )),
+            "an authoritative platform resize rejects the whole placement domain"
         );
-        assert!(sync.skipped_requests.iter().any(|skipped| {
-            skipped.reason == DockViewportPlatformSyncSkippedReason::PlatformRequestInProgress
-                && matches!(
-                    &skipped.request,
-                    DockViewportPlatformSyncRequest::WindowSize { requested }
-                        if *requested == size(px(360.0), px(220.0))
-                )
-        }));
 
         assert!(runtime.begin_viewport_host_scene(
             secondary_space.clone(),
@@ -555,29 +1093,23 @@ mod runtime_suite {
             resized_after_fresh_scene.status(),
             DockViewportOpenStatus::Reused
         );
-        assert_eq!(
-            resized_after_fresh_scene
-                .window()
-                .update(cx, |_, window, _| window.bounds().size)
-                .expect("reused viewport should remain live"),
-            size(px(360.0), px(220.0)),
-            "after a fresh host scene, programmatic viewport resize can apply again"
-        );
         let sync = runtime
             .runtime_status()
-            .last_platform_sync
-            .expect("second reuse should record platform sync diagnostics");
-        assert!(sync.skipped_requests.is_empty());
+            .last_platform_dispatch
+            .expect("second reuse should record platform dispatch diagnostics");
         assert!(
-            sync.applied
-                .contains(&DockViewportPlatformSyncAction::Resize {
-                    size: size(px(360.0), px(220.0)),
-                })
+            sync.dispatches.iter().any(|dispatch| matches!(
+                dispatch,
+                DockViewportPlatformSyncDispatch::Unchanged {
+                    request: DockViewportPlatformSyncRequest::Placement { .. }
+                }
+            )),
+            "after a fresh observed scene, the current placement is compared through typed facts"
         );
     }
 
     #[open_gpui::test]
-    fn viewport_runtime_reuses_window_and_records_origin_sync_diagnostics(cx: &mut TestAppContext) {
+    fn viewport_runtime_reuses_window_and_queues_coherent_placement(cx: &mut TestAppContext) {
         let primary_space = DockSpaceId::from("primary");
         let secondary_space = DockSpaceId::from("secondary");
         let mut graph = DockGraph::new();
@@ -646,14 +1178,17 @@ mod runtime_suite {
         );
         let sync = runtime
             .runtime_status()
-            .last_platform_sync
-            .expect("reuse should record platform sync diagnostics");
+            .last_platform_dispatch
+            .expect("reuse should record platform dispatch diagnostics");
         assert!(
-            sync.unsupported_requests.iter().any(|unsupported| matches!(
-                unsupported.request,
-                DockViewportPlatformSyncRequest::WindowOrigin { .. }
+            sync.dispatches.iter().any(|dispatch| matches!(
+                dispatch,
+                DockViewportPlatformSyncDispatch::Queued {
+                    request: DockViewportPlatformSyncRequest::Placement { .. },
+                    ..
+                }
             )),
-            "origin mismatch should be recorded as unsupported sync, not a replacement trigger"
+            "origin, size, state, and restore bounds must share one placement ticket"
         );
     }
 
@@ -663,17 +1198,13 @@ mod runtime_suite {
         let sync = unavailable_reused_viewport_window_sync(window.window_id());
 
         assert_eq!(sync.window_id, window.window_id());
-        assert!(sync.applied.is_empty());
-        assert!(sync.skipped_requests.is_empty());
-        assert_eq!(sync.unsupported_requests.len(), 1);
         assert_eq!(
-            sync.unsupported_requests[0].request,
-            DockViewportPlatformSyncRequest::WindowUnavailable
+            sync.dispatches,
+            vec![DockViewportPlatformSyncDispatch::WindowClosed {
+                request: DockViewportPlatformSyncRequest::WindowUnavailable,
+            }]
         );
-        assert_eq!(
-            sync.unsupported_requests[0].reason,
-            DockViewportPlatformSyncUnsupportedReason::WindowUnavailable
-        );
+        assert!(sync.observations.is_empty());
     }
 
     #[open_gpui::test]
@@ -749,19 +1280,21 @@ mod runtime_suite {
         );
         let sync = runtime
             .runtime_status()
-            .last_platform_sync
-            .expect("reuse should record platform sync diagnostics");
-        assert!(
-            !sync
-                .applied
-                .contains(&DockViewportPlatformSyncAction::Activate)
-        );
-        assert!(
-            sync.applied
-                .contains(&DockViewportPlatformSyncAction::Resize {
-                    size: size(px(420.0), px(240.0)),
-                })
-        );
+            .last_platform_dispatch
+            .expect("reuse should record platform dispatch diagnostics");
+        assert!(!sync.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Immediate {
+                action: DockViewportPlatformSyncAction::Activate
+            }
+        )));
+        assert!(sync.dispatches.iter().any(|dispatch| matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Queued {
+                request: DockViewportPlatformSyncRequest::Placement { .. },
+                ..
+            }
+        )));
     }
 }
 

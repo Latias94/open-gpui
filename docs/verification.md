@@ -1775,11 +1775,14 @@ CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, 
 dispatches:
 
 - Windows runs the same local gate, `cargo nextest run -p xtask`,
-  `cargo nextest run -p open-gpui-docking-native --no-fail-fast`, and
-  `cargo check -p open-gpui-windows --all-features --locked`.
+  `cargo nextest run -p open-gpui-docking-native --no-fail-fast`,
+  `cargo check -p open-gpui-windows --all-features --locked`, and
+  `cargo nextest run -p open-gpui-windows --all-features --locked --no-fail-fast`.
 - Linux runs `cargo check -p open-gpui-linux --all-features --locked` after installing the system
-  headers needed for Wayland, X11, fontconfig, freetype, and pkg-config.
-- macOS runs `cargo check -p open-gpui-macos --features font-kit --locked`.
+  headers needed for Wayland, X11, fontconfig, freetype, and pkg-config, then runs
+  `cargo nextest run -p open-gpui-linux --all-features --locked --no-fail-fast`.
+- macOS runs `cargo check -p open-gpui-macos --features font-kit --locked` and
+  `cargo nextest run -p open-gpui-macos --features font-kit --locked --no-fail-fast`.
 - All three platforms run `cargo check -p open-gpui-wgpu --features font-kit --locked`.
 
 Run the native renderer smoke explicitly with:
@@ -1948,12 +1951,31 @@ Current docking multi-viewport capability states:
   bounds remain in window/display coordinates. The viewport snapshot retains GPUI's opaque
   committed `ElementGeometry` to convert between them; a transform-only frame advances route facts
   so a proof captured under old displayed geometry cannot authorize a later release.
-- Viewport flags are capability-gated platform sync requests. No-input can be applied when a
-  backend advertises native pointer-input routing; no-focus-on-appearing, no-focus-on-click, alpha,
-  topmost, and no-taskbar use `PlatformViewportFlagCapabilities` and are recorded as unsupported
-  requests until a backend exposes real live mutation support. The native runtime panel reports
-  both capability snapshots and the latest applied/skipped/unsupported sync counts. Automated owners:
+- Viewport flags and reused-window placement are capability-gated platform sync requests.
+  `Window::window_mutation_capabilities()` is the sole tri-state matrix for placement, pointer
+  input, focus-on-appearing/click, alpha, topmost, taskbar visibility, and coordinate space; there
+  is no Dock-local flag capability mirror. Runtime diagnostics resolve
+  `App::window_mutation_profile` for every registered viewport, preserving its actual
+  `WindowKind` and target-display-resolved matrix instead of projecting the backend's normal-window
+  or primary-display answer. Readiness uses the requested viewport display before opening, so X11
+  alpha support reflects that screen's transparent visual; an unavailable saved display id falls
+  back to the current default before readiness, projection, and window creation. A queued request
+  is not an applied native fact.
+  Terminal observations retain the typed request and committed facts, and terminal failures are
+  not retried each frame until the target or relevant committed facts change, including reused
+  windows that remain pending or retain an adjusted/rejected/unsupported terminal barrier. The
+  native runtime panel reports per-window capability profiles, last request/dispatch, and terminal
+  observations separately.
+  Owning-platform CI also proves the native boundary: Windows compares creation facts with
+  independent Win32 readback, exercises each advertised live domain, and injects a partial
+  pointer-style failure to verify native rollback and terminal rejection. macOS, X11, and Wayland
+  test kind-specific creation projections that are shared with their production constructors,
+  including Wayland's XDG-versus-LayerShell split. A backend may only promote a property to `Live`
+  when its owning runner covers dispatch, native failure, and terminal observation.
+  Automated owners:
   `host_viewport_platform_capability_tests`,
+  `reused_viewport_does_not_repeat_pending_or_terminal_window_mutations`,
+  `runtime_status_projects_each_viewports_actual_window_kind_profile`,
   `viewport_runtime_syncs_supported_options_when_reusing_window`, and
   `empty_central_passthrough_syncs_window_pointer_input`.
 - Preview proof is semantic rather than pixel-perfect. `DockPreviewVisualDescriptor` records the

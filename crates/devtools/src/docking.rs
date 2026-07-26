@@ -1,12 +1,18 @@
 //! DevTools adapters for `open-gpui-docking` public diagnostics.
 
+use open_gpui::{
+    PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowMutationRequest,
+    WindowMutationSupport, WindowPlacementState, WindowPlatformFacts,
+};
 use open_gpui_docking::advanced::{
     DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPayloadRecord,
-    DockViewportPlatformCapabilityRecord, DockViewportPlatformSyncRecord,
-    DockViewportReleaseUnavailableRecord, DockViewportRestoreReadinessRecord,
-    DockViewportRouteRecord, DockViewportRouteSelectionRecord, DockViewportRouteStatus,
-    DockViewportRouteTarget, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
-    DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
+    DockViewportPlatformCapabilityRecord, DockViewportPlatformSyncDispatch,
+    DockViewportPlatformSyncObservedRecord, DockViewportPlatformSyncRecord,
+    DockViewportPlatformSyncRequest, DockViewportReleaseUnavailableRecord,
+    DockViewportRestoreReadinessRecord, DockViewportRouteRecord, DockViewportRouteSelectionRecord,
+    DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntimeStatus,
+    DockViewportStaleStatusReason, DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
+    DockViewportWindowMutationCapabilityRecord,
 };
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +46,8 @@ pub struct DockingRuntimeInspection {
     pub summary: DockingRuntimeSummary,
     /// Platform capability facts, present only when the application supplied them.
     pub platform_capabilities: Option<DockingPlatformCapabilityRow>,
+    /// Property-specific support captured for each viewport's actual platform window kind.
+    pub window_mutation_capabilities: Vec<DockingViewportWindowMutationCapabilityRow>,
     /// Saved-placement restore facts, present only after a restore check ran.
     pub placement_restore: Option<DockingPlacementRestoreRow>,
     /// Per-viewport lifecycle rows in deterministic runtime order.
@@ -63,6 +71,8 @@ pub struct DockingRuntimeSummary {
     pub placement_restore_present: bool,
     /// Number of registered viewport lifecycle rows.
     pub viewport_lifecycle_count: usize,
+    /// Number of viewport windows with an actual-kind mutation capability profile.
+    pub window_mutation_capability_count: usize,
     /// Number of lifecycle rows that are route-ready.
     pub route_ready_count: usize,
     /// Number of lifecycle rows with stale route facts.
@@ -90,12 +100,76 @@ pub struct DockingPlatformCapabilityRow {
     pub display_work_area: bool,
     /// Whether per-window DPI scale facts are reliable.
     pub dpi_scale: bool,
-    /// Whether already-open windows can be moved or resized programmatically.
-    pub live_window_move: bool,
-    /// Whether native no-input windows are supported.
-    pub no_input_windows: bool,
     /// Whether hovered-window queries ignore no-input application windows.
     pub hovered_window_ignores_no_input: bool,
+}
+
+/// Property-specific platform window support relevant to viewport mutation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingWindowMutationCapabilityRow {
+    /// Support for changing desktop position.
+    pub position: DockingWindowMutationSupport,
+    /// Support for changing content size.
+    pub size: DockingWindowMutationSupport,
+    /// Support for restoring windowed state.
+    pub windowed: DockingWindowMutationSupport,
+    /// Support for maximized state.
+    pub maximized: DockingWindowMutationSupport,
+    /// Support for fullscreen state.
+    pub fullscreen: DockingWindowMutationSupport,
+    /// Support for minimized state.
+    pub minimized: DockingWindowMutationSupport,
+    /// Support for windowed restore bounds.
+    pub restore_bounds: DockingWindowMutationSupport,
+    /// Support for native pointer-input acceptance.
+    pub pointer_input: DockingWindowMutationSupport,
+    /// Support for controlling focus when a window appears.
+    pub focus_on_appearing: DockingWindowMutationSupport,
+    /// Support for controlling focus on click.
+    pub focus_on_click: DockingWindowMutationSupport,
+    /// Support for alpha or transparent backgrounds.
+    pub alpha: DockingWindowMutationSupport,
+    /// Support for topmost windows.
+    pub topmost: DockingWindowMutationSupport,
+    /// Support for taskbar visibility.
+    pub taskbar_visibility: DockingWindowMutationSupport,
+    /// Coordinate space backing committed window geometry.
+    pub coordinate_space: DockingWindowCoordinateSpace,
+}
+
+/// Property-specific support captured for one docking viewport window.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingViewportWindowMutationCapabilityRow {
+    /// Logical dock space rendered by the viewport.
+    pub space: String,
+    /// GPUI window id bound to the logical space.
+    pub window_id: u64,
+    /// Stable label for the actual platform window kind used at creation.
+    pub window_kind: String,
+    /// Property-specific mutation support for that kind.
+    pub capabilities: DockingWindowMutationCapabilityRow,
+}
+
+/// Support level for one platform window property.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DockingWindowMutationSupport {
+    /// The backend cannot apply this property.
+    Unsupported,
+    /// The property can be selected only while opening a window.
+    CreationOnly,
+    /// The property can be requested and observed on an open window.
+    Live,
+}
+
+/// Coordinate space backing platform window facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DockingWindowCoordinateSpace {
+    /// Geometry belongs to one backend-local window frame.
+    WindowLocal,
+    /// Geometry belongs to one shared desktop frame.
+    GlobalScreen,
 }
 
 /// Saved-placement restore readiness facts.
@@ -306,12 +380,21 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
         &mut events,
         &runtime_target_id,
         &runtime_domain_id,
-        "docking.last-platform-sync",
-        "Last platform sync",
+        "docking.last-platform-dispatch",
+        "Last platform dispatch",
         status
-            .last_platform_sync
+            .last_platform_dispatch
             .as_ref()
             .map(platform_sync_payload),
+    );
+    push_optional_event(
+        &mut events,
+        &runtime_target_id,
+        &runtime_domain_id,
+        "docking.platform-observations",
+        "Recent platform observations",
+        (!status.recent_platform_observations.is_empty())
+            .then(|| platform_observations_payload(&status.recent_platform_observations)),
     );
     events.extend(
         status
@@ -387,6 +470,11 @@ pub fn docking_runtime_inspection(status: &DockViewportRuntimeStatus) -> Docking
         platform_capabilities: status
             .platform_capabilities
             .map(DockingPlatformCapabilityRow::from),
+        window_mutation_capabilities: status
+            .window_mutation_capabilities
+            .iter()
+            .map(DockingViewportWindowMutationCapabilityRow::from)
+            .collect(),
         placement_restore: status
             .placement_restore
             .map(DockingPlacementRestoreRow::from),
@@ -420,6 +508,7 @@ impl DockingRuntimeSummary {
                 .map(|capabilities| capabilities.platform_viewport_windows),
             placement_restore_present: status.placement_restore.is_some(),
             viewport_lifecycle_count: status.viewport_lifecycle.len(),
+            window_mutation_capability_count: status.window_mutation_capabilities.len(),
             route_ready_count: status
                 .viewport_lifecycle
                 .iter()
@@ -462,9 +551,60 @@ impl From<DockViewportPlatformCapabilityRecord> for DockingPlatformCapabilityRow
             window_stack: capabilities.window_stack,
             display_work_area: capabilities.display_work_area,
             dpi_scale: capabilities.dpi_scale,
-            live_window_move: capabilities.live_window_move,
-            no_input_windows: capabilities.no_input_windows,
             hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
+        }
+    }
+}
+
+impl From<PlatformWindowMutationCapabilities> for DockingWindowMutationCapabilityRow {
+    fn from(capabilities: PlatformWindowMutationCapabilities) -> Self {
+        Self {
+            position: capabilities.position.into(),
+            size: capabilities.size.into(),
+            windowed: capabilities.windowed.into(),
+            maximized: capabilities.maximized.into(),
+            fullscreen: capabilities.fullscreen.into(),
+            minimized: capabilities.minimized.into(),
+            restore_bounds: capabilities.restore_bounds.into(),
+            pointer_input: capabilities.pointer_input.into(),
+            focus_on_appearing: capabilities.focus_on_appearing.into(),
+            focus_on_click: capabilities.focus_on_click.into(),
+            alpha: capabilities.alpha.into(),
+            topmost: capabilities.topmost.into(),
+            taskbar_visibility: capabilities.taskbar_visibility.into(),
+            coordinate_space: capabilities.coordinate_space.into(),
+        }
+    }
+}
+
+impl From<&DockViewportWindowMutationCapabilityRecord>
+    for DockingViewportWindowMutationCapabilityRow
+{
+    fn from(record: &DockViewportWindowMutationCapabilityRecord) -> Self {
+        Self {
+            space: sanitize_sensitive_text(record.space.as_str()),
+            window_id: record.window_id.as_u64(),
+            window_kind: record.window_kind.as_str().to_string(),
+            capabilities: DockingWindowMutationCapabilityRow::from(record.capabilities),
+        }
+    }
+}
+
+impl From<WindowMutationSupport> for DockingWindowMutationSupport {
+    fn from(support: WindowMutationSupport) -> Self {
+        match support {
+            WindowMutationSupport::Unsupported => Self::Unsupported,
+            WindowMutationSupport::CreationOnly => Self::CreationOnly,
+            WindowMutationSupport::Live => Self::Live,
+        }
+    }
+}
+
+impl From<WindowCoordinateSpace> for DockingWindowCoordinateSpace {
+    fn from(space: WindowCoordinateSpace) -> Self {
+        match space {
+            WindowCoordinateSpace::WindowLocal => Self::WindowLocal,
+            WindowCoordinateSpace::GlobalScreen => Self::GlobalScreen,
         }
     }
 }
@@ -672,12 +812,21 @@ fn docking_runtime_event_rows(
         &mut rows,
         target_id,
         domain_id,
-        "docking.last-platform-sync",
-        "Last platform sync",
+        "docking.last-platform-dispatch",
+        "Last platform dispatch",
         status
-            .last_platform_sync
+            .last_platform_dispatch
             .as_ref()
             .map(platform_sync_payload),
+    );
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.platform-observations",
+        "Recent platform observations",
+        (!status.recent_platform_observations.is_empty())
+            .then(|| platform_observations_payload(&status.recent_platform_observations)),
     );
     rows
 }
@@ -726,6 +875,19 @@ fn docking_runtime_tree(status: &DockViewportRuntimeStatus) -> SnapshotTree {
             ["docking", "viewport-runtime", "platform"],
             "Platform capabilities",
             platform_capability_payload(capabilities),
+        ));
+    }
+    for (index, capabilities) in status.window_mutation_capabilities.iter().enumerate() {
+        let index_label = index.to_string();
+        root = root.with_child(snapshot_node_with_payload(
+            [
+                "docking",
+                "viewport-runtime",
+                "window-mutation-capabilities",
+                index_label.as_str(),
+            ],
+            format!("Window mutation capabilities {index}"),
+            window_mutation_capability_payload(capabilities),
         ));
     }
 
@@ -806,10 +968,17 @@ fn docking_runtime_tree(status: &DockViewportRuntimeStatus) -> SnapshotTree {
     );
     append_optional_node(
         &mut root,
-        "last-platform-sync",
-        &status.last_platform_sync,
+        "last-platform-dispatch",
+        &status.last_platform_dispatch,
         platform_sync_payload,
     );
+    if !status.recent_platform_observations.is_empty() {
+        root.children.push(snapshot_node_with_payload(
+            ["docking", "viewport-runtime", "platform-observations"],
+            "Recent platform observations",
+            platform_observations_payload(&status.recent_platform_observations),
+        ));
+    }
 
     for (index, affordance) in status.visual_affordances.iter().enumerate() {
         let index_label = index.to_string();
@@ -927,6 +1096,7 @@ fn append_optional_node<T>(
 fn runtime_summary_payload(status: &DockViewportRuntimeStatus) -> serde_json::Value {
     serde_json::json!({
         "has_platform_capabilities": status.platform_capabilities.is_some(),
+        "window_mutation_capability_count": status.window_mutation_capabilities.len(),
         "has_placement_restore": status.placement_restore.is_some(),
         "viewport_lifecycle_count": status.viewport_lifecycle.len(),
         "has_last_route": status.last_route.is_some(),
@@ -935,7 +1105,8 @@ fn runtime_summary_payload(status: &DockViewportRuntimeStatus) -> serde_json::Va
         "has_last_close": status.last_close.is_some(),
         "has_last_should_close": status.last_should_close.is_some(),
         "has_last_tear_off": status.last_tear_off.is_some(),
-        "has_last_platform_sync": status.last_platform_sync.is_some(),
+        "has_last_platform_dispatch": status.last_platform_dispatch.is_some(),
+        "recent_platform_observation_count": status.recent_platform_observations.len(),
         "visual_affordance_count": status.visual_affordances.len(),
     })
 }
@@ -949,10 +1120,16 @@ fn platform_capability_payload(
         "window_stack": capabilities.window_stack,
         "display_work_area": capabilities.display_work_area,
         "dpi_scale": capabilities.dpi_scale,
-        "live_window_move": capabilities.live_window_move,
-        "no_input_windows": capabilities.no_input_windows,
         "hovered_window_ignores_no_input": capabilities.hovered_window_ignores_no_input,
     })
+}
+
+fn window_mutation_capability_payload(
+    capabilities: &DockViewportWindowMutationCapabilityRecord,
+) -> serde_json::Value {
+    serde_json::json!(DockingViewportWindowMutationCapabilityRow::from(
+        capabilities
+    ))
 }
 
 fn placement_restore_payload(restore: DockViewportRestoreReadinessRecord) -> serde_json::Value {
@@ -1054,23 +1231,229 @@ fn tear_off_payload(record: &DockViewportTearOffRecord) -> serde_json::Value {
 fn platform_sync_payload(record: &DockViewportPlatformSyncRecord) -> serde_json::Value {
     serde_json::json!({
         "window_id": record.window_id.as_u64(),
-        "applied_count": record.applied.len(),
-        "skipped_count": record.skipped_requests.len(),
-        "unsupported_count": record.unsupported_requests.len(),
-        "applied": record.applied.iter().map(|action| format!("{action:?}")).collect::<Vec<_>>(),
-        "skipped_requests": record.skipped_requests.iter().map(|skipped| {
+        "dispatch_count": record.dispatches.len(),
+        "observation_count": record.observations.len(),
+        "dispatches": record
+            .dispatches
+            .iter()
+            .map(platform_sync_dispatch_payload)
+            .collect::<Vec<_>>(),
+        "observations": record.observations.iter().map(|observation| {
             serde_json::json!({
-                "request": format!("{:?}", skipped.request),
-                "reason": format!("{:?}", skipped.reason),
-            })
-        }).collect::<Vec<_>>(),
-        "unsupported_requests": record.unsupported_requests.iter().map(|unsupported| {
-            serde_json::json!({
-                "request": format!("{:?}", unsupported.request),
-                "reason": format!("{:?}", unsupported.reason),
+                "domain": format!("{:?}", observation.domain),
+                "generation": observation.generation,
+                "request": window_mutation_request_payload(&observation.request),
+                "outcome": format!("{:?}", observation.outcome),
+                "facts": window_platform_facts_payload(&observation.facts),
             })
         }).collect::<Vec<_>>(),
     })
+}
+
+fn platform_sync_dispatch_payload(
+    dispatch: &DockViewportPlatformSyncDispatch,
+) -> serde_json::Value {
+    match dispatch {
+        DockViewportPlatformSyncDispatch::Immediate { action } => serde_json::json!({
+            "kind": "immediate",
+            "action": format!("{action:?}"),
+        }),
+        DockViewportPlatformSyncDispatch::Queued {
+            request,
+            domain,
+            generation,
+        } => serde_json::json!({
+            "kind": "queued",
+            "request": platform_sync_request_payload(request),
+            "domain": format!("{domain:?}"),
+            "generation": generation,
+        }),
+        DockViewportPlatformSyncDispatch::Unchanged { request } => serde_json::json!({
+            "kind": "unchanged",
+            "request": platform_sync_request_payload(request),
+        }),
+        DockViewportPlatformSyncDispatch::Unsupported(unsupported) => serde_json::json!({
+            "kind": "unsupported",
+            "request": platform_sync_request_payload(&unsupported.request),
+            "reason": format!("{:?}", unsupported.reason),
+        }),
+        DockViewportPlatformSyncDispatch::Rejected(rejected) => serde_json::json!({
+            "kind": "rejected",
+            "request": platform_sync_request_payload(&rejected.request),
+            "reason": format!("{:?}", rejected.reason),
+        }),
+        DockViewportPlatformSyncDispatch::WindowClosed { request } => serde_json::json!({
+            "kind": "window-closed",
+            "request": platform_sync_request_payload(request),
+        }),
+    }
+}
+
+fn platform_sync_request_payload(request: &DockViewportPlatformSyncRequest) -> serde_json::Value {
+    match request {
+        DockViewportPlatformSyncRequest::WindowUnavailable => {
+            serde_json::json!({ "kind": "window-unavailable" })
+        }
+        DockViewportPlatformSyncRequest::Show { requested } => {
+            serde_json::json!({ "kind": "show", "requested": requested })
+        }
+        DockViewportPlatformSyncRequest::WindowKind => {
+            serde_json::json!({ "kind": "window-kind" })
+        }
+        DockViewportPlatformSyncRequest::Movable { requested } => {
+            serde_json::json!({ "kind": "movable", "requested": requested })
+        }
+        DockViewportPlatformSyncRequest::Resizable { requested } => {
+            serde_json::json!({ "kind": "resizable", "requested": requested })
+        }
+        DockViewportPlatformSyncRequest::Minimizable { requested } => {
+            serde_json::json!({ "kind": "minimizable", "requested": requested })
+        }
+        DockViewportPlatformSyncRequest::PointerInput { requested } => {
+            serde_json::json!({ "kind": "pointer-input", "requested": requested })
+        }
+        DockViewportPlatformSyncRequest::BackgroundAppearance { requested } => {
+            serde_json::json!({
+                "kind": "background-appearance",
+                "requested": format!("{requested:?}"),
+            })
+        }
+        DockViewportPlatformSyncRequest::Display { requested } => {
+            serde_json::json!({ "kind": "display", "requested": u64::from(*requested) })
+        }
+        DockViewportPlatformSyncRequest::WindowMinSize { requested } => {
+            serde_json::json!({ "kind": "window-min-size", "requested": requested })
+        }
+        DockViewportPlatformSyncRequest::Placement { requested } => {
+            let state = match requested {
+                open_gpui::WindowBounds::Windowed(_) => "windowed",
+                open_gpui::WindowBounds::Maximized(_) => "maximized",
+                open_gpui::WindowBounds::Fullscreen(_) => "fullscreen",
+            };
+            serde_json::json!({
+                "kind": "placement",
+                "state": state,
+                "bounds": requested.get_bounds(),
+            })
+        }
+        DockViewportPlatformSyncRequest::Icon => serde_json::json!({ "kind": "icon" }),
+        DockViewportPlatformSyncRequest::TabbingIdentifier { requested } => serde_json::json!({
+            "kind": "tabbing-identifier",
+            "requested": requested,
+        }),
+        DockViewportPlatformSyncRequest::TitlebarPresence { requested } => serde_json::json!({
+            "kind": "titlebar-presence",
+            "requested": requested,
+        }),
+        DockViewportPlatformSyncRequest::TitlebarTransparency { requested } => serde_json::json!({
+            "kind": "titlebar-transparency",
+            "requested": requested,
+        }),
+        DockViewportPlatformSyncRequest::TrafficLightPosition { requested } => serde_json::json!({
+            "kind": "traffic-light-position",
+            "requested": requested,
+        }),
+        request => serde_json::json!({
+            "kind": "unknown",
+            "debug": format!("{request:?}"),
+        }),
+    }
+}
+
+fn platform_observations_payload(
+    observations: &[DockViewportPlatformSyncObservedRecord],
+) -> serde_json::Value {
+    serde_json::json!(
+        observations
+            .iter()
+            .map(|record| {
+                serde_json::json!({
+                    "window_id": record.window_id.as_u64(),
+                    "domain": format!("{:?}", record.observation.domain),
+                    "generation": record.observation.generation,
+                    "request": window_mutation_request_payload(&record.observation.request),
+                    "outcome": format!("{:?}", record.observation.outcome),
+                    "facts": window_platform_facts_payload(&record.observation.facts),
+                })
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+fn window_mutation_request_payload(request: &WindowMutationRequest) -> serde_json::Value {
+    match request {
+        WindowMutationRequest::Placement(request) => serde_json::json!({
+            "kind": "placement",
+            "position": request.position,
+            "size": request.size,
+            "state": request.state.map(window_placement_state_label),
+            "restore_bounds": request.restore_bounds,
+        }),
+        WindowMutationRequest::PointerInput(accepts_pointer_input) => serde_json::json!({
+            "kind": "pointer-input",
+            "accepts_pointer_input": accepts_pointer_input,
+        }),
+        WindowMutationRequest::FocusOnAppearing(focus) => serde_json::json!({
+            "kind": "focus-on-appearing",
+            "focus": focus,
+        }),
+        WindowMutationRequest::FocusOnClick(focus) => serde_json::json!({
+            "kind": "focus-on-click",
+            "focus": focus,
+        }),
+        WindowMutationRequest::Alpha(background) => serde_json::json!({
+            "kind": "alpha",
+            "background": format!("{background:?}"),
+        }),
+        WindowMutationRequest::Topmost(topmost) => serde_json::json!({
+            "kind": "topmost",
+            "topmost": topmost,
+        }),
+        WindowMutationRequest::TaskbarVisibility(visible) => serde_json::json!({
+            "kind": "taskbar-visibility",
+            "visible": visible,
+        }),
+    }
+}
+
+fn window_platform_facts_payload(facts: &WindowPlatformFacts) -> serde_json::Value {
+    serde_json::json!({
+        "bounds": facts.bounds,
+        "coordinate_space": match facts.coordinate_space {
+            WindowCoordinateSpace::WindowLocal => "window-local",
+            WindowCoordinateSpace::GlobalScreen => "global-screen",
+        },
+        "window_state": if facts.is_minimized {
+            "minimized"
+        } else if facts.is_fullscreen {
+            "fullscreen"
+        } else if facts.is_maximized {
+            "maximized"
+        } else {
+            "windowed"
+        },
+        "restore_bounds": facts.window_bounds.get_bounds(),
+        "inner_window_bounds": facts.inner_window_bounds.get_bounds(),
+        "content_size": facts.content_size,
+        "scale_factor": facts.scale_factor,
+        "display_id": facts.display_id.map(u64::from),
+        "accepts_pointer_input": facts.accepts_pointer_input,
+        "focus_on_appearing": facts.focus_on_appearing,
+        "focus_on_click": facts.focus_on_click,
+        "background_appearance": format!("{:?}", facts.background_appearance),
+        "topmost": facts.topmost,
+        "taskbar_visible": facts.taskbar_visible,
+        "is_active": facts.is_active,
+    })
+}
+
+fn window_placement_state_label(state: WindowPlacementState) -> &'static str {
+    match state {
+        WindowPlacementState::Windowed => "windowed",
+        WindowPlacementState::Maximized => "maximized",
+        WindowPlacementState::Fullscreen => "fullscreen",
+        WindowPlacementState::Minimized => "minimized",
+    }
 }
 
 fn visual_affordance_payload(record: &DockViewportVisualAffordanceRecord) -> serde_json::Value {

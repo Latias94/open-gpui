@@ -7,7 +7,8 @@ use calloop::{
 use core::str;
 use log::Level;
 use open_gpui::{
-    Capslock, PlatformFocusedWindow, PlatformHoveredWindow, PlatformViewportCapabilities, profiler,
+    Capslock, PlatformFocusedWindow, PlatformHoveredWindow, PlatformViewportCapabilities,
+    PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowMutationSupport, profiler,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_http_client::Url;
@@ -47,7 +48,8 @@ use super::{
     XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
     get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
-    point_from_x11_window_coords, pressed_button_from_mask, xcb_flush,
+    point_from_x11_window_coords, pressed_button_from_mask, resolve_x11_screen_index,
+    x11_supports_alpha_creation, x11_supports_toplevel_creation_state, xcb_flush,
 };
 
 use crate::linux::{
@@ -64,7 +66,7 @@ use open_gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowButtonLayout, WindowParams, point, px,
+    TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -837,18 +839,32 @@ impl X11Client {
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
             Event::UnmapNotify(event) => {
-                let mut state = self.0.borrow_mut();
-                if let Some(window_ref) = state.windows.get_mut(&event.window) {
-                    window_ref.is_mapped = false;
+                let window = {
+                    let mut state = self.0.borrow_mut();
+                    let window = state.windows.get_mut(&event.window).map(|window_ref| {
+                        window_ref.is_mapped = false;
+                        window_ref.window.clone()
+                    });
+                    state.update_refresh_loop(event.window);
+                    window
+                };
+                if let Some(window) = window {
+                    window.set_mapped(false);
                 }
-                state.update_refresh_loop(event.window);
             }
             Event::MapNotify(event) => {
-                let mut state = self.0.borrow_mut();
-                if let Some(window_ref) = state.windows.get_mut(&event.window) {
-                    window_ref.is_mapped = true;
+                let window = {
+                    let mut state = self.0.borrow_mut();
+                    let window = state.windows.get_mut(&event.window).map(|window_ref| {
+                        window_ref.is_mapped = true;
+                        window_ref.window.clone()
+                    });
+                    state.update_refresh_loop(event.window);
+                    window
+                };
+                if let Some(window) = window {
+                    window.set_mapped(true);
                 }
-                state.update_refresh_loop(event.window);
             }
             Event::VisibilityNotify(event) => {
                 let mut state = self.0.borrow_mut();
@@ -1572,6 +1588,41 @@ impl X11Client {
     }
 }
 
+fn x11_window_mutation_capabilities(
+    kind: &WindowKind,
+    alpha_creation_supported: bool,
+) -> PlatformWindowMutationCapabilities {
+    let supports_toplevel_state = x11_supports_toplevel_creation_state(kind);
+    PlatformWindowMutationCapabilities {
+        position: WindowMutationSupport::CreationOnly,
+        size: WindowMutationSupport::CreationOnly,
+        windowed: WindowMutationSupport::CreationOnly,
+        maximized: if supports_toplevel_state {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        fullscreen: if supports_toplevel_state {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        minimized: WindowMutationSupport::Unsupported,
+        restore_bounds: if supports_toplevel_state {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        alpha: if alpha_creation_supported {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        coordinate_space: WindowCoordinateSpace::GlobalScreen,
+        ..Default::default()
+    }
+}
+
 impl LinuxClient for X11Client {
     fn compositor_name(&self) -> &'static str {
         "X11"
@@ -1880,9 +1931,27 @@ impl LinuxClient for X11Client {
             // XInput enter/leave tracks cached pointer focus, not a current global hit-test.
             window_stack: true,
             dpi_scale: true,
-            live_window_move: true,
             ..Default::default()
         }
+    }
+
+    fn window_mutation_capabilities(
+        &self,
+        kind: &WindowKind,
+        display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        let state = self.0.borrow();
+        let Some(screen_index) = resolve_x11_screen_index(
+            display_id,
+            state.x_root_index,
+            state.xcb_connection.setup().roots.len(),
+        ) else {
+            return PlatformWindowMutationCapabilities::default();
+        };
+        x11_window_mutation_capabilities(
+            kind,
+            x11_supports_alpha_creation(&state.xcb_connection, screen_index),
+        )
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -2935,6 +3004,40 @@ fn xkb_state_for_key_event(xkb: &xkbc::State, event_state: xproto::KeyButMask) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_mutation_capabilities_match_x11_creation_paths() {
+        assert_eq!(
+            x11_window_mutation_capabilities(&WindowKind::Normal, true),
+            PlatformWindowMutationCapabilities {
+                position: WindowMutationSupport::CreationOnly,
+                size: WindowMutationSupport::CreationOnly,
+                windowed: WindowMutationSupport::CreationOnly,
+                maximized: WindowMutationSupport::CreationOnly,
+                fullscreen: WindowMutationSupport::CreationOnly,
+                minimized: WindowMutationSupport::Unsupported,
+                restore_bounds: WindowMutationSupport::CreationOnly,
+                alpha: WindowMutationSupport::CreationOnly,
+                coordinate_space: WindowCoordinateSpace::GlobalScreen,
+                ..Default::default()
+            }
+        );
+
+        let popup = x11_window_mutation_capabilities(&WindowKind::PopUp, true);
+        assert_eq!(popup.maximized, WindowMutationSupport::Unsupported);
+        assert_eq!(popup.fullscreen, WindowMutationSupport::Unsupported);
+        assert_eq!(popup.restore_bounds, WindowMutationSupport::Unsupported);
+
+        let dialog = x11_window_mutation_capabilities(&WindowKind::Dialog, true);
+        assert_eq!(dialog.maximized, WindowMutationSupport::Unsupported);
+        assert_eq!(dialog.fullscreen, WindowMutationSupport::Unsupported);
+        assert_eq!(dialog.restore_bounds, WindowMutationSupport::Unsupported);
+
+        assert_eq!(
+            x11_window_mutation_capabilities(&WindowKind::Normal, false).alpha,
+            WindowMutationSupport::Unsupported
+        );
+    }
 
     fn test_keymap(layouts: &str) -> xkbc::Keymap {
         test_keymap_with_variant(layouts, "")

@@ -96,9 +96,10 @@ use open_gpui::{
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow, PlatformInput,
-    PlatformKeyboardLayout, PlatformViewportCapabilities, PlatformWindow, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowParams, point,
-    profiler, px, size,
+    PlatformKeyboardLayout, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowMutationCapabilities, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size,
+    TouchPhase, WindowButtonLayout, WindowCoordinateSpace, WindowKind, WindowMutationSupport,
+    WindowParams, point, profiler, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -788,6 +789,27 @@ impl WaylandClient {
     }
 }
 
+fn wayland_window_mutation_capabilities(kind: &WindowKind) -> PlatformWindowMutationCapabilities {
+    let mut capabilities = PlatformWindowMutationCapabilities {
+        size: WindowMutationSupport::CreationOnly,
+        windowed: WindowMutationSupport::CreationOnly,
+        maximized: WindowMutationSupport::CreationOnly,
+        fullscreen: WindowMutationSupport::CreationOnly,
+        minimized: WindowMutationSupport::Unsupported,
+        restore_bounds: WindowMutationSupport::CreationOnly,
+        alpha: WindowMutationSupport::CreationOnly,
+        coordinate_space: WindowCoordinateSpace::WindowLocal,
+        ..Default::default()
+    };
+    if matches!(kind, WindowKind::LayerShell(_)) {
+        capabilities.windowed = WindowMutationSupport::Unsupported;
+        capabilities.maximized = WindowMutationSupport::Unsupported;
+        capabilities.fullscreen = WindowMutationSupport::Unsupported;
+        capabilities.restore_bounds = WindowMutationSupport::Unsupported;
+    }
+    capabilities
+}
+
 impl LinuxClient for WaylandClient {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(self.0.borrow().keyboard_layout.clone())
@@ -1021,6 +1043,14 @@ impl LinuxClient for WaylandClient {
             dpi_scale: true,
             ..Default::default()
         }
+    }
+
+    fn window_mutation_capabilities(
+        &self,
+        kind: &WindowKind,
+        _display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        wayland_window_mutation_capabilities(kind)
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -2579,5 +2609,40 @@ impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod window_mutation_capability_tests {
+    use super::*;
+    use open_gpui::layer_shell::LayerShellOptions;
+
+    #[test]
+    fn xdg_and_layer_shell_capabilities_remain_kind_specific() {
+        let xdg = wayland_window_mutation_capabilities(&WindowKind::Normal);
+        assert_eq!(xdg.size, WindowMutationSupport::CreationOnly);
+        assert_eq!(xdg.windowed, WindowMutationSupport::CreationOnly);
+        assert_eq!(xdg.maximized, WindowMutationSupport::CreationOnly);
+        assert_eq!(xdg.fullscreen, WindowMutationSupport::CreationOnly);
+        assert_eq!(xdg.restore_bounds, WindowMutationSupport::CreationOnly);
+        assert_eq!(xdg.alpha, WindowMutationSupport::CreationOnly);
+        assert_eq!(xdg.coordinate_space, WindowCoordinateSpace::WindowLocal);
+
+        let layer_shell = wayland_window_mutation_capabilities(&WindowKind::LayerShell(
+            LayerShellOptions::default(),
+        ));
+        assert_eq!(layer_shell.size, WindowMutationSupport::CreationOnly);
+        assert_eq!(layer_shell.windowed, WindowMutationSupport::Unsupported);
+        assert_eq!(layer_shell.maximized, WindowMutationSupport::Unsupported);
+        assert_eq!(layer_shell.fullscreen, WindowMutationSupport::Unsupported);
+        assert_eq!(
+            layer_shell.restore_bounds,
+            WindowMutationSupport::Unsupported
+        );
+        assert_eq!(layer_shell.alpha, WindowMutationSupport::CreationOnly);
+        assert_eq!(
+            layer_shell.coordinate_space,
+            WindowCoordinateSpace::WindowLocal
+        );
     }
 }

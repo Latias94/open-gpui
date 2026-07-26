@@ -13,7 +13,8 @@ use crate::{
 };
 use open_gpui::{
     App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowOptions, div, px, size,
+    WindowBackgroundAppearance, WindowBounds, WindowMutationDomain, WindowMutationSupport,
+    WindowOptions, div, px, size,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -489,7 +490,7 @@ fn surface_viewport_readiness_reports_backend_unsupported(cx: &mut open_gpui::Te
 fn surface_viewport_readiness_reports_unsupported_flags_without_opening(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    cx.set_platform_no_input_windows(false);
+    cx.set_platform_pointer_input_mutation_supported(false);
 
     cx.update(|cx| {
         let surface = DockSurface::builder("main")
@@ -509,11 +510,16 @@ fn surface_viewport_readiness_reports_unsupported_flags_without_opening(
         assert!(!readiness.ready());
         assert!(readiness.is_flag_unsupported());
         assert_eq!(
+            readiness.window_mutation_capabilities().pointer_input,
+            WindowMutationSupport::Unsupported
+        );
+        assert_eq!(
+            readiness.window_mutation_capabilities().alpha,
+            WindowMutationSupport::CreationOnly
+        );
+        assert_eq!(
             readiness.unsupported_flags(),
-            &[
-                DockSurfaceViewportUnsupportedFlag::NoInputWindow,
-                DockSurfaceViewportUnsupportedFlag::AlphaWindow,
-            ]
+            &[DockSurfaceViewportUnsupportedFlag::NoInputWindow]
         );
 
         let outcome = surface.open_viewport_spec(spec, cx);
@@ -524,10 +530,7 @@ fn surface_viewport_readiness_reports_unsupported_flags_without_opening(
         assert!(unavailable.is_flag_unsupported());
         assert_eq!(
             unavailable.unsupported_flags(),
-            &[
-                DockSurfaceViewportUnsupportedFlag::NoInputWindow,
-                DockSurfaceViewportUnsupportedFlag::AlphaWindow,
-            ]
+            &[DockSurfaceViewportUnsupportedFlag::NoInputWindow]
         );
         assert_eq!(cx.windows().len(), before_windows);
         assert!(surface.registered_viewport_spaces(cx).is_empty());
@@ -599,6 +602,93 @@ fn surface_open_viewport_opens_and_reuses_supported_backend(cx: &mut open_gpui::
         assert_eq!(reused.status(), DockSurfaceViewportOpenStatus::Reused);
         assert_eq!(reused.window(), opened.window());
     });
+}
+
+#[open_gpui::test]
+fn surface_revisions_only_observed_platform_placement_not_queued_dispatch(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let observed = changes.clone();
+    let (surface, opened, _subscription) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let subscription = surface.subscribe_changes(cx, move |event, _| {
+            observed.borrow_mut().push(event.clone());
+        });
+        let opened = match surface.open_viewport("main", viewport_options(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected viewport to open, got {other:?}"),
+        };
+        (surface, opened, subscription)
+    });
+    cx.run_until_parked();
+    changes.borrow_mut().clear();
+
+    let revision_before_dispatch = cx.read(|cx| surface.revision(cx));
+    let requested_bounds = Bounds::new(
+        open_gpui::point(px(24.0), px(32.0)),
+        size(px(480.0), px(260.0)),
+    );
+    let reused = cx.update(|cx| {
+        match surface.open_viewport(
+            "main",
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(requested_bounds)),
+                ..viewport_options()
+            },
+            cx,
+        ) {
+            DockSurfaceViewportOpenOutcome::Opened(reused) => reused,
+            other => panic!("expected viewport to reuse, got {other:?}"),
+        }
+    });
+
+    assert_eq!(reused.status(), DockSurfaceViewportOpenStatus::Reused);
+    assert_eq!(reused.window(), opened.window());
+    assert_eq!(
+        cx.read(|cx| surface.revision(cx)),
+        revision_before_dispatch,
+        "queued mutation intent must not create a persistence revision"
+    );
+    assert!(
+        changes.borrow().is_empty(),
+        "queued mutation intent must not publish a surface change event"
+    );
+
+    let adjusted_bounds = Bounds::new(
+        open_gpui::point(px(30.0), px(40.0)),
+        size(px(460.0), px(250.0)),
+    );
+    let mut adjusted_facts = reused
+        .window()
+        .update(cx, |_, window, _| window.platform_facts().clone())
+        .expect("reused viewport should remain live");
+    adjusted_facts.bounds = adjusted_bounds;
+    adjusted_facts.content_size = adjusted_bounds.size;
+    adjusted_facts.window_bounds = WindowBounds::Windowed(adjusted_bounds);
+    adjusted_facts.inner_window_bounds = WindowBounds::Windowed(adjusted_bounds);
+
+    assert!(cx.simulate_window_mutation_observation(
+        reused.window(),
+        WindowMutationDomain::Placement,
+        adjusted_facts,
+    ));
+    assert_eq!(
+        cx.read(|cx| surface.revision(cx)),
+        revision_before_dispatch + 1,
+        "one observed terminal placement must create one durable surface revision"
+    );
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(
+        changes[0].categories(),
+        &[DockSurfaceChangeCategory::ObservedViewportPlacement]
+    );
 }
 
 #[open_gpui::test]

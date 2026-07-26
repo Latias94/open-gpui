@@ -14,16 +14,19 @@ use crate::{
     KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PointerCancelEvent, PointerCancelReason, PolychromeSprite, Primitive,
-    PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SubtreeClip,
-    SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
+    PlatformWindowDispatch, PlatformWindowMutationCapabilities, PlatformWindowMutationObservation,
+    PlatformWindowMutationProfile, Point, PointerCancelEvent, PointerCancelReason,
+    PolychromeSprite, Primitive, PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad,
+    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
     SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
     TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowKind,
+    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowMutationSupport,
+    WindowOptions, WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
+    WindowTextSystem,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
         SubtreeGeometryValidity,
@@ -112,6 +115,11 @@ use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
 };
+use crate::window_platform_mutation::{
+    WindowMutationRequest, WindowMutationState, WindowMutationTicketDelivery,
+    WindowPlatformMutationAuthority, placement_request_is_valid, placement_state_from_facts,
+    platform_dispatch_outcome,
+};
 pub use prompts::*;
 
 /// Default window size used when no explicit size is provided.
@@ -123,6 +131,17 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
     width: Pixels(900.),
     height: Pixels(750.),
 };
+
+fn creation_focus_on_appearing_fact(
+    observed: bool,
+    requested: bool,
+    support: WindowMutationSupport,
+) -> bool {
+    match support {
+        WindowMutationSupport::CreationOnly => requested,
+        WindowMutationSupport::Unsupported | WindowMutationSupport::Live => observed,
+    }
+}
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -1307,6 +1326,11 @@ pub struct Window {
     pub(crate) removed: bool,
     removal_state: WindowRemovalState,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
+    platform_facts: WindowPlatformFacts,
+    window_kind: WindowKind,
+    window_mutation_capabilities: PlatformWindowMutationCapabilities,
+    window_mutation_authority: Arc<WindowPlatformMutationAuthority>,
+    window_mutations: WindowMutationState,
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
@@ -1756,10 +1780,23 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        let requested_display_id = display_id;
+        let display_id = cx.resolve_display_id(display_id);
+        if let Some(requested_display_id) = requested_display_id
+            && display_id.is_none()
+        {
+            log::warn!(
+                "requested display {} is unavailable; opening the window on the default display",
+                u64::from(requested_display_id)
+            );
+        }
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
+        let window_kind = kind.clone();
+        let window_mutation_capabilities = cx.window_mutation_capabilities_for(&kind, display_id);
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
+                window_bounds,
                 bounds: window_bounds.get_bounds(),
                 titlebar,
                 kind,
@@ -1777,38 +1814,42 @@ impl Window {
             },
         )?;
 
+        platform_window
+            .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
+        platform_window.set_background_appearance(window_background);
+
+        // The backend's synchronous creation facts, not an unobserved live request, seed every
+        // public getter cache before any asynchronous callbacks are installed. Creation-only
+        // configuration remains a committed fact even when the backend has no live observer.
+        let mut platform_facts = platform_window.platform_facts();
+        platform_facts.focus_on_appearing = creation_focus_on_appearing_fact(
+            platform_facts.focus_on_appearing,
+            focus,
+            window_mutation_capabilities.focus_on_appearing,
+        );
+        platform_facts.background_appearance = platform_window.background_appearance();
         let tab_bar_visible = platform_window.tab_bar_visible();
         SystemWindowTabController::init_visible(cx, tab_bar_visible);
         if let Some(tabs) = platform_window.tabbed_windows() {
             SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
         }
 
-        let display_id = platform_window.display().map(|display| display.id());
+        let display_id = platform_facts.display_id;
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
         let capslock = platform_window.capslock();
-        let content_size = platform_window.content_size();
-        let scale_factor = platform_window.scale_factor();
+        let content_size = platform_facts.content_size;
+        let scale_factor = platform_facts.scale_factor;
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new();
-        let active = Rc::new(Cell::new(platform_window.is_active()));
+        let active = Rc::new(Cell::new(platform_facts.is_active));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
         let last_frame_time = Rc::new(Cell::new(None));
-
-        platform_window
-            .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
-        platform_window.set_background_appearance(window_background);
-
-        match window_bounds {
-            WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
-            WindowBounds::Maximized(_) => platform_window.zoom(),
-            WindowBounds::Windowed(_) => {}
-        }
 
         let accessibility_force_disabled = cx.accessibility_force_disabled;
         let a11y_active_state = Arc::new(AtomicU64::new(0));
@@ -1997,6 +2038,24 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.on_window_state_change(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
+                    .log_err();
+            }
+        }));
+        platform_window.on_window_mutation_observation(Box::new({
+            let mut cx = cx.to_async();
+            move |facts| {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window.window_mutation_observed(facts, cx);
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_appearance_changed(Box::new({
             let mut cx = cx.to_async();
             move || {
@@ -2143,6 +2202,11 @@ impl Window {
             removed: false,
             removal_state: WindowRemovalState::Open,
             platform_window,
+            platform_facts,
+            window_kind,
+            window_mutation_capabilities,
+            window_mutation_authority: Arc::default(),
+            window_mutations: WindowMutationState::default(),
             display_id,
             sprite_atlas,
             text_system,
@@ -2473,12 +2537,23 @@ impl Window {
 
     /// Close this window.
     pub fn remove_window(&mut self, cx: &mut App) {
-        if self.removed || self.removal_state == WindowRemovalState::Removing {
+        if self.removed || self.removal_state != WindowRemovalState::Open {
             return;
         }
+        self.removal_state = if self.input_transaction_depth.get() > 0 {
+            WindowRemovalState::PendingAfterInput
+        } else {
+            WindowRemovalState::Removing
+        };
+        self.invalidate_platform_window_mutations();
+        let deliveries = self.window_mutations.settle_all(
+            &self.window_mutation_authority,
+            WindowMutationOutcome::WindowClosed,
+            &self.platform_facts,
+        );
+        Self::deliver_window_mutation_ticket_deliveries(deliveries);
         self.a11y.clear_announcements_for_window_close();
         if self.input_transaction_depth.get() > 0 {
-            self.removal_state = WindowRemovalState::PendingAfterInput;
             return;
         }
 
@@ -2511,12 +2586,25 @@ impl Window {
 
     fn finish_remove_window(&mut self, cx: &mut App) {
         self.removal_state = WindowRemovalState::Removing;
+        self.invalidate_platform_window_mutations();
+        let deliveries = self.window_mutations.settle_all(
+            &self.window_mutation_authority,
+            WindowMutationOutcome::WindowClosed,
+            &self.platform_facts,
+        );
+        Self::deliver_window_mutation_ticket_deliveries(deliveries);
         self.cancel_pointer_session(PointerCancelReason::WindowClosed, cx);
         self.close_bring_into_view_authority(cx);
         self.pending_focus_reveal_fence = None;
         self.pending_focus_completion = None;
         self.focus_claim_resolutions.clear();
         self.removed = true;
+    }
+
+    fn invalidate_platform_window_mutations(&self) {
+        for domain in WindowMutationDomain::ALL {
+            self.platform_window.invalidate_window_mutation(domain);
+        }
     }
 
     /// Obtain the current requested [`FocusHandle`].
@@ -3380,7 +3468,7 @@ impl Window {
     ///
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
     pub fn is_maximized(&self) -> bool {
-        self.platform_window.is_maximized()
+        self.platform_facts.is_maximized
     }
 
     /// request a certain window decoration (Wayland)
@@ -3396,12 +3484,12 @@ impl Window {
     /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {
-        self.platform_window.window_bounds()
+        self.platform_facts.window_bounds
     }
 
     /// Return the `WindowBounds` excluding insets (Wayland and X11)
     pub fn inner_window_bounds(&self) -> WindowBounds {
-        self.platform_window.inner_window_bounds()
+        self.platform_facts.inner_window_bounds
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -3642,20 +3730,179 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
-        self.display_id = self.platform_window.display().map(|display| display.id());
-
+        self.refresh_platform_facts();
         self.refresh();
+        self.notify_bounds_observers(cx);
+    }
 
+    fn refresh_platform_facts(&mut self) {
+        let facts = self.platform_window.platform_facts();
+        self.commit_platform_facts(facts);
+    }
+
+    fn commit_platform_facts(&mut self, mut facts: WindowPlatformFacts) {
+        let capabilities = self.window_mutation_capabilities;
+        if !capabilities.pointer_input.is_live() {
+            facts.accepts_pointer_input = self.platform_facts.accepts_pointer_input;
+        }
+        if !capabilities.focus_on_appearing.is_live() {
+            facts.focus_on_appearing = self.platform_facts.focus_on_appearing;
+        }
+        if !capabilities.focus_on_click.is_live() {
+            facts.focus_on_click = self.platform_facts.focus_on_click;
+        }
+        if !capabilities.alpha.is_live() {
+            facts.background_appearance = self.platform_facts.background_appearance;
+        }
+        if !capabilities.topmost.is_live() {
+            facts.topmost = self.platform_facts.topmost;
+        }
+        if !capabilities.taskbar_visibility.is_live() {
+            facts.taskbar_visible = self.platform_facts.taskbar_visible;
+        }
+        self.viewport_size = facts.content_size;
+        self.scale_factor = facts.scale_factor;
+        self.display_id = facts.display_id;
+        self.active.set(facts.is_active);
+        self.platform_facts = facts;
+    }
+
+    /// Commits a backend-provided coherent terminal observation without re-reading platform
+    /// getters. Intermediate move and resize notifications deliberately use [`Self::bounds_changed`]
+    /// instead, so they cannot settle a queued placement at an arbitrary window-manager step.
+    fn window_mutation_observed(
+        &mut self,
+        observation: PlatformWindowMutationObservation,
+        cx: &mut App,
+    ) {
+        if !self.window_mutations.is_current_generation(
+            &self.window_mutation_authority,
+            observation.domain,
+            observation.generation,
+        ) {
+            return;
+        }
+        self.commit_platform_facts(observation.facts);
+        let deliveries = self.window_mutations.settle_from_terminal_facts(
+            &self.window_mutation_authority,
+            observation.domain,
+            observation.generation,
+            observation.terminal,
+            &self.platform_facts,
+        );
+        self.refresh();
+        self.notify_bounds_observers(cx);
+        Self::deliver_window_mutation_ticket_deliveries(deliveries);
+    }
+
+    fn notify_bounds_observers(&mut self, cx: &mut App) {
         self.bounds_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
     }
 
-    /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
+    fn deliver_window_mutation_ticket_deliveries(deliveries: Vec<WindowMutationTicketDelivery>) {
+        for delivery in deliveries {
+            delivery.deliver();
+        }
+    }
+
+    fn current_placement_state(&self) -> WindowPlacementState {
+        placement_state_from_facts(&self.platform_facts)
+    }
+
+    fn placement_request_is_live(&self, request: WindowPlacementRequest) -> bool {
+        let capabilities = self.window_mutation_capabilities;
+        let facts = &self.platform_facts;
+
+        if request
+            .position
+            .is_some_and(|position| position != facts.bounds.origin)
+            && (!capabilities.position.is_live() || !capabilities.coordinate_space.is_global())
+        {
+            return false;
+        }
+        if request.size.is_some_and(|size| size != facts.bounds.size)
+            && !capabilities.size.is_live()
+        {
+            return false;
+        }
+        if request
+            .restore_bounds
+            .is_some_and(|restore_bounds| restore_bounds != facts.window_bounds.get_bounds())
+            && !capabilities.restore_bounds.is_live()
+        {
+            return false;
+        }
+
+        let current_state = self.current_placement_state();
+        if let Some(target_state) = request.state
+            && target_state != current_state
+        {
+            let support = match target_state {
+                WindowPlacementState::Windowed => capabilities.windowed,
+                WindowPlacementState::Maximized => capabilities.maximized,
+                WindowPlacementState::Fullscreen => capabilities.fullscreen,
+                WindowPlacementState::Minimized => capabilities.minimized,
+            };
+            if !support.is_live() {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn window_mutation_request_is_live(&self, request: WindowMutationRequest) -> bool {
+        match request {
+            WindowMutationRequest::Placement(request) => self.placement_request_is_live(request),
+            WindowMutationRequest::PointerInput(_) => {
+                self.window_mutation_capabilities.pointer_input.is_live()
+            }
+            WindowMutationRequest::FocusOnAppearing(_) => self
+                .window_mutation_capabilities
+                .focus_on_appearing
+                .is_live(),
+            WindowMutationRequest::FocusOnClick(_) => {
+                self.window_mutation_capabilities.focus_on_click.is_live()
+            }
+            WindowMutationRequest::Alpha(_) => self.window_mutation_capabilities.alpha.is_live(),
+            WindowMutationRequest::Topmost(_) => {
+                self.window_mutation_capabilities.topmost.is_live()
+            }
+            WindowMutationRequest::TaskbarVisibility(_) => self
+                .window_mutation_capabilities
+                .taskbar_visibility
+                .is_live(),
+        }
+    }
+
+    /// Returns the bounds of the current window in its committed platform coordinate space.
+    ///
+    /// Inspect [`WindowPlatformFacts::coordinate_space`] before comparing this value with bounds
+    /// from another window.
     pub fn bounds(&self) -> Bounds<Pixels> {
-        self.platform_window.bounds()
+        self.platform_facts.bounds
+    }
+
+    /// Returns the latest committed platform facts for this window.
+    ///
+    /// Queued placement and pointer-input requests never update this value. It changes only when
+    /// the backend supplies an observed facts snapshot.
+    pub fn platform_facts(&self) -> &WindowPlatformFacts {
+        &self.platform_facts
+    }
+
+    /// Returns the capability-specific mutation support advertised by this window's platform.
+    pub fn window_mutation_capabilities(&self) -> PlatformWindowMutationCapabilities {
+        self.window_mutation_capabilities
+    }
+
+    pub(crate) fn window_mutation_profile(&self) -> PlatformWindowMutationProfile {
+        PlatformWindowMutationProfile {
+            kind: self.window_kind.clone(),
+            capabilities: self.window_mutation_capabilities,
+        }
     }
 
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
@@ -3719,30 +3966,193 @@ impl Window {
         &self.atlas_remove_diagnostics
     }
 
-    /// Set the content size of the window.
-    pub fn resize(&mut self, size: Size<Pixels>) {
-        self.platform_window.resize(size);
+    /// Requests a coherent placement change using the legacy [`WindowBounds`] projection.
+    ///
+    /// Prefer [`Self::request_window_placement_request`] when a caller needs to explicitly
+    /// request minimized state or a property-specific placement update.
+    pub fn request_window_placement(
+        &mut self,
+        window_bounds: WindowBounds,
+    ) -> WindowMutationDispatch {
+        self.request_window_placement_request(WindowPlacementRequest::from_window_bounds(
+            window_bounds,
+        ))
+    }
+
+    /// Requests a structured placement change for this already-open window.
+    ///
+    /// The request is accepted only when every changed property is live on this platform. A
+    /// queued result does not change public getter values until the backend later emits a
+    /// coherent terminal observation.
+    pub fn request_window_placement_request(
+        &mut self,
+        request: WindowPlacementRequest,
+    ) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::Placement(request))
+    }
+
+    /// Requests one typed mutation for this already-open window.
+    ///
+    /// Every request advances only its own conflict-domain generation. A queued result does not
+    /// change public facts until the backend returns a terminal observation carrying that exact
+    /// generation.
+    pub fn request_window_mutation(
+        &mut self,
+        request: WindowMutationRequest,
+    ) -> WindowMutationDispatch {
+        if self.removal_state != WindowRemovalState::Open || self.removed {
+            return WindowMutationDispatch::WindowClosed;
+        }
+        if let WindowMutationRequest::Placement(placement) = request
+            && !placement_request_is_valid(placement, &self.platform_facts)
+        {
+            return WindowMutationDispatch::Rejected;
+        }
+
+        let Some(begin) = self.window_mutations.begin(
+            &self.window_mutation_authority,
+            request,
+            &self.platform_facts,
+        ) else {
+            return WindowMutationDispatch::Rejected;
+        };
+        let ticket = begin.ticket;
+        let mut deliveries = begin.deliveries;
+        self.platform_window
+            .prepare_window_mutation(ticket.domain(), ticket.generation());
+
+        let dispatch = if request.matches_facts(&self.platform_facts) {
+            deliveries.extend(self.window_mutations.settle_unqueued(
+                &self.window_mutation_authority,
+                &ticket,
+                WindowMutationOutcome::Exact,
+                &self.platform_facts,
+            ));
+            WindowMutationDispatch::Unchanged
+        } else if !self.window_mutation_request_is_live(request) {
+            deliveries.extend(self.window_mutations.settle_unqueued(
+                &self.window_mutation_authority,
+                &ticket,
+                WindowMutationOutcome::Unsupported,
+                &self.platform_facts,
+            ));
+            WindowMutationDispatch::Unsupported
+        } else {
+            match self
+                .platform_window
+                .request_window_mutation(ticket.generation(), request)
+            {
+                PlatformWindowDispatch::Queued => WindowMutationDispatch::Queued(ticket),
+                PlatformWindowDispatch::Unchanged => {
+                    self.refresh_platform_facts();
+                    let outcome = if request.matches_facts(&self.platform_facts) {
+                        WindowMutationOutcome::Exact
+                    } else {
+                        WindowMutationOutcome::Adjusted
+                    };
+                    deliveries.extend(self.window_mutations.settle_unqueued(
+                        &self.window_mutation_authority,
+                        &ticket,
+                        outcome,
+                        &self.platform_facts,
+                    ));
+                    WindowMutationDispatch::Unchanged
+                }
+                platform_dispatch => {
+                    let outcome = platform_dispatch_outcome(platform_dispatch)
+                        .expect("queued and unchanged dispatches returned above");
+                    deliveries.extend(self.window_mutations.settle_unqueued(
+                        &self.window_mutation_authority,
+                        &ticket,
+                        outcome,
+                        &self.platform_facts,
+                    ));
+                    match platform_dispatch {
+                        PlatformWindowDispatch::Unsupported => WindowMutationDispatch::Unsupported,
+                        PlatformWindowDispatch::Rejected => WindowMutationDispatch::Rejected,
+                        PlatformWindowDispatch::WindowClosed => {
+                            WindowMutationDispatch::WindowClosed
+                        }
+                        PlatformWindowDispatch::Queued | PlatformWindowDispatch::Unchanged => {
+                            unreachable!("handled before terminal dispatch mapping")
+                        }
+                    }
+                }
+            }
+        };
+
+        Self::deliver_window_mutation_ticket_deliveries(deliveries);
+        dispatch
+    }
+
+    /// Requests whether this window accepts pointer input.
+    ///
+    /// A queued result is only an intent accepted by the backend. The committed facts cache
+    /// changes only after a coherent terminal observation.
+    pub fn request_pointer_input(&mut self, accepts_pointer_input: bool) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::PointerInput(accepts_pointer_input))
+    }
+
+    /// Requests whether this window takes focus when it appears.
+    pub fn request_focus_on_appearing(&mut self, focus: bool) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::FocusOnAppearing(focus))
+    }
+
+    /// Requests whether clicking this window takes focus.
+    pub fn request_focus_on_click(&mut self, focus: bool) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::FocusOnClick(focus))
+    }
+
+    /// Requests whether this window stays above ordinary application windows.
+    pub fn request_topmost(&mut self, topmost: bool) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::Topmost(topmost))
+    }
+
+    /// Requests whether this window appears in the taskbar or application switcher.
+    pub fn request_taskbar_visibility(&mut self, visible: bool) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::TaskbarVisibility(visible))
+    }
+
+    /// Requests a content-size change through the placement mutation authority.
+    pub fn resize(&mut self, size: Size<Pixels>) -> WindowMutationDispatch {
+        let current_bounds = self.platform_facts.window_bounds.get_bounds();
+        let requested_bounds = Bounds::new(current_bounds.origin, size);
+        let request = match self.current_placement_state() {
+            WindowPlacementState::Windowed => WindowPlacementRequest {
+                size: Some(size),
+                ..WindowPlacementRequest::new()
+            },
+            WindowPlacementState::Maximized
+            | WindowPlacementState::Fullscreen
+            | WindowPlacementState::Minimized => WindowPlacementRequest {
+                restore_bounds: Some(requested_bounds),
+                ..WindowPlacementRequest::new()
+            },
+        };
+        self.request_window_placement_request(request)
     }
 
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
-        self.platform_window.is_fullscreen()
+        self.platform_facts.is_fullscreen
     }
 
     /// Returns whether or not the window is currently minimized.
     pub fn is_minimized(&self) -> bool {
-        self.platform_window.is_minimized()
+        self.platform_facts.is_minimized
     }
 
     /// Returns whether this platform window currently receives pointer input.
     pub fn accepts_pointer_input(&self) -> bool {
-        self.platform_window.accepts_pointer_input()
+        self.platform_facts.accepts_pointer_input
     }
 
     /// Updates whether this platform window receives pointer input when the backend supports it.
-    pub fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
-        self.platform_window
-            .set_accepts_pointer_input(accepts_pointer_input)
+    pub fn set_accepts_pointer_input(
+        &mut self,
+        accepts_pointer_input: bool,
+    ) -> WindowMutationDispatch {
+        self.request_pointer_input(accepts_pointer_input)
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
@@ -3827,9 +4237,20 @@ impl Window {
         }
     }
 
-    /// Toggle zoom on the window.
-    pub fn zoom_window(&self) {
-        self.platform_window.zoom();
+    /// Toggles between maximized and windowed placement through the placement authority.
+    ///
+    /// A queued result does not update committed window facts until the backend emits a terminal
+    /// observation.
+    pub fn zoom_window(&mut self) -> WindowMutationDispatch {
+        let state = if self.platform_facts.is_maximized {
+            WindowPlacementState::Windowed
+        } else {
+            WindowPlacementState::Maximized
+        };
+        self.request_window_placement_request(WindowPlacementRequest {
+            state: Some(state),
+            ..WindowPlacementRequest::new()
+        })
     }
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
@@ -3882,10 +4303,12 @@ impl Window {
         self.platform_window.set_app_id(app_id);
     }
 
-    /// Sets the window background appearance.
-    pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        self.platform_window
-            .set_background_appearance(background_appearance);
+    /// Requests a native background or alpha-treatment change.
+    pub fn set_background_appearance(
+        &mut self,
+        background_appearance: WindowBackgroundAppearance,
+    ) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::Alpha(background_appearance))
     }
 
     /// Mark the window as dirty at the platform level.
@@ -8683,14 +9106,22 @@ impl Window {
         self.platform_window.activate();
     }
 
-    /// Minimize the current window at the platform level.
-    pub fn minimize_window(&self) {
-        self.platform_window.minimize();
+    /// Requests minimized placement through the placement authority.
+    pub fn minimize_window(&mut self) -> WindowMutationDispatch {
+        self.request_window_placement_request(WindowPlacementRequest::minimized())
     }
 
-    /// Toggle full screen status on the current window at the platform level.
-    pub fn toggle_fullscreen(&self) {
-        self.platform_window.toggle_fullscreen();
+    /// Toggles fullscreen placement through the placement authority.
+    pub fn toggle_fullscreen(&mut self) -> WindowMutationDispatch {
+        let state = if self.platform_facts.is_fullscreen {
+            WindowPlacementState::Windowed
+        } else {
+            WindowPlacementState::Fullscreen
+        };
+        self.request_window_placement_request(WindowPlacementRequest {
+            state: Some(state),
+            ..WindowPlacementRequest::new()
+        })
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
@@ -9927,5 +10358,29 @@ mod raster_projection_tests {
             Window::try_raster_local_stroke(ScaledPixels(1.0), 1.0, f32::MAX),
             Err(SubtreeTransformError::UnrepresentableResult)
         );
+    }
+}
+
+#[cfg(test)]
+mod window_creation_fact_tests {
+    use super::*;
+
+    #[test]
+    fn focus_on_appearing_seed_respects_backend_capability() {
+        assert!(creation_focus_on_appearing_fact(
+            false,
+            true,
+            WindowMutationSupport::CreationOnly
+        ));
+        assert!(!creation_focus_on_appearing_fact(
+            false,
+            true,
+            WindowMutationSupport::Unsupported
+        ));
+        assert!(!creation_focus_on_appearing_fact(
+            false,
+            true,
+            WindowMutationSupport::Live
+        ));
     }
 }

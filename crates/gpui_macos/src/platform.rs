@@ -1,6 +1,10 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
-    events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    events::key_to_native,
+    ns_string,
+    pasteboard::Pasteboard,
+    renderer,
+    window::{macos_supports_focus_on_appearing, macos_supports_toplevel_creation_state},
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -35,12 +39,13 @@ use objc::{
     sel, sel_impl,
 };
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ForegroundExecutor, KeyContext,
-    Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
+    KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
-    WindowAppearance, WindowParams,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowMutationCapabilities, Result,
+    SystemMenuType, Task, ThermalState, WindowAppearance, WindowCoordinateSpace, WindowKind,
+    WindowMutationSupport, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -468,6 +473,42 @@ impl MacPlatform {
     }
 }
 
+fn macos_window_mutation_capabilities(kind: &WindowKind) -> PlatformWindowMutationCapabilities {
+    let supports_toplevel_state = macos_supports_toplevel_creation_state(kind);
+    PlatformWindowMutationCapabilities {
+        position: WindowMutationSupport::CreationOnly,
+        size: WindowMutationSupport::CreationOnly,
+        windowed: WindowMutationSupport::CreationOnly,
+        maximized: if supports_toplevel_state {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        fullscreen: if supports_toplevel_state {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        minimized: WindowMutationSupport::Unsupported,
+        restore_bounds: if supports_toplevel_state {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        pointer_input: WindowMutationSupport::CreationOnly,
+        focus_on_appearing: if macos_supports_focus_on_appearing(kind) {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        },
+        focus_on_click: WindowMutationSupport::Unsupported,
+        alpha: WindowMutationSupport::CreationOnly,
+        topmost: WindowMutationSupport::Unsupported,
+        taskbar_visibility: WindowMutationSupport::Unsupported,
+        coordinate_space: WindowCoordinateSpace::GlobalScreen,
+    }
+}
+
 impl Platform for MacPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.0.lock().background_executor.clone()
@@ -647,10 +688,17 @@ impl Platform for MacPlatform {
             window_stack: true,
             display_work_area: true,
             dpi_scale: true,
-            no_input_windows: true,
             hovered_window_ignores_no_input: true,
             ..Default::default()
         }
+    }
+
+    fn window_mutation_capabilities(
+        &self,
+        kind: &WindowKind,
+        _display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        macos_window_mutation_capabilities(kind)
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -1523,4 +1571,49 @@ mod security {
     pub const errSecSuccess: OSStatus = 0;
     pub const errSecUserCanceled: OSStatus = -128;
     pub const errSecItemNotFound: OSStatus = -25300;
+}
+
+#[cfg(test)]
+mod window_mutation_capability_tests {
+    use open_gpui::{
+        PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowMutationSupport,
+    };
+
+    #[test]
+    fn capabilities_match_creation_and_observation_paths() {
+        assert_eq!(
+            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Normal),
+            PlatformWindowMutationCapabilities {
+                position: WindowMutationSupport::CreationOnly,
+                size: WindowMutationSupport::CreationOnly,
+                windowed: WindowMutationSupport::CreationOnly,
+                maximized: WindowMutationSupport::CreationOnly,
+                fullscreen: WindowMutationSupport::CreationOnly,
+                minimized: WindowMutationSupport::Unsupported,
+                restore_bounds: WindowMutationSupport::CreationOnly,
+                pointer_input: WindowMutationSupport::CreationOnly,
+                focus_on_appearing: WindowMutationSupport::CreationOnly,
+                focus_on_click: WindowMutationSupport::Unsupported,
+                alpha: WindowMutationSupport::CreationOnly,
+                topmost: WindowMutationSupport::Unsupported,
+                taskbar_visibility: WindowMutationSupport::Unsupported,
+                coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            }
+        );
+
+        let popup = super::macos_window_mutation_capabilities(&open_gpui::WindowKind::PopUp);
+        assert_eq!(popup.maximized, WindowMutationSupport::Unsupported);
+        assert_eq!(popup.fullscreen, WindowMutationSupport::Unsupported);
+        assert_eq!(popup.restore_bounds, WindowMutationSupport::Unsupported);
+        assert_eq!(popup.focus_on_appearing, WindowMutationSupport::Unsupported);
+
+        let dialog = super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Dialog);
+        assert_eq!(dialog.maximized, WindowMutationSupport::Unsupported);
+        assert_eq!(dialog.fullscreen, WindowMutationSupport::Unsupported);
+        assert_eq!(dialog.restore_bounds, WindowMutationSupport::Unsupported);
+        assert_eq!(
+            dialog.focus_on_appearing,
+            WindowMutationSupport::Unsupported
+        );
+    }
 }

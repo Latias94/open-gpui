@@ -5,7 +5,7 @@ use crate::{
     DockViewportRestoreReadiness, DockViewportRouteStatus, DockViewportStaleStatusReason,
 };
 use open_gpui::{
-    App, AppContext as _, PlatformViewportCapabilities, PlatformViewportFlagCapabilities,
+    App, AppContext as _, PlatformViewportCapabilities, PlatformWindowMutationCapabilities,
     WindowBackgroundAppearance, WindowId, WindowOptions,
 };
 
@@ -63,7 +63,7 @@ pub enum DockSurfaceViewportUnsupportedFlag {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockSurfaceViewportPlatformReadiness {
     capabilities: DockSurfaceViewportPlatformCapabilities,
-    flag_capabilities: DockSurfaceViewportFlagCapabilities,
+    window_mutation_capabilities: PlatformWindowMutationCapabilities,
     warnings: Vec<DockSurfaceViewportFlagWarning>,
 }
 
@@ -80,27 +80,8 @@ pub struct DockSurfaceViewportPlatformCapabilities {
     pub display_work_area: bool,
     /// Per-window DPI scale facts are reliable for placement decisions.
     pub dpi_scale: bool,
-    /// Already-open windows can be moved or resized programmatically.
-    pub live_window_move: bool,
-    /// Native no-input/click-through windows are supported.
-    pub no_input_windows: bool,
     /// Hovered-window queries pass through native no-input/click-through application windows.
     pub hovered_window_ignores_no_input: bool,
-}
-
-/// Platform support for ImGui-style viewport window flags exposed through the facade.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DockSurfaceViewportFlagCapabilities {
-    /// Native no-focus-on-appearing viewport windows are supported.
-    pub no_focus_on_appearing_windows: bool,
-    /// Native no-focus-on-click viewport windows are supported.
-    pub no_focus_on_click_windows: bool,
-    /// Native alpha/transparent viewport windows are supported.
-    pub alpha_windows: bool,
-    /// Native always-on-top viewport windows are supported.
-    pub topmost_windows: bool,
-    /// Native taskbar-hidden viewport windows are supported.
-    pub no_taskbar_windows: bool,
 }
 
 /// Non-blocking platform flag warning for a viewport request.
@@ -174,15 +155,17 @@ impl DockSurfaceViewportReadiness {
         cx: &mut App,
     ) -> Self {
         let controller = surface.controller(cx);
+        let platform_capabilities = cx.viewport_capabilities();
+        let window_mutation_capabilities = cx.window_mutation_capabilities_for(
+            &spec.window_options().kind,
+            spec.window_options().display_id,
+        );
         let status = match cx.read_entity(&controller, |controller, _| {
             controller.policy().validate_platform_viewports()
         }) {
-            Ok(()) if cx.viewport_capabilities().platform_viewport_windows => {
-                let unsupported_flags = unsupported_viewport_flags(
-                    spec.window_options(),
-                    cx.viewport_capabilities(),
-                    cx.viewport_flag_capabilities(),
-                );
+            Ok(()) if platform_capabilities.platform_viewport_windows => {
+                let unsupported_flags =
+                    unsupported_viewport_flags(spec.window_options(), window_mutation_capabilities);
                 if unsupported_flags.is_empty() {
                     DockSurfaceViewportReadinessStatus::Openable
                 } else {
@@ -200,6 +183,8 @@ impl DockSurfaceViewportReadiness {
             spec.window_options(),
             restore,
             status,
+            platform_capabilities,
+            window_mutation_capabilities,
             cx,
         )
     }
@@ -217,6 +202,8 @@ impl DockSurfaceViewportReadiness {
             options,
             None,
             DockSurfaceViewportReadinessStatus::InvalidPlacement { error },
+            cx.viewport_capabilities(),
+            cx.window_mutation_capabilities_for(&options.kind, options.display_id),
             cx,
         )
     }
@@ -227,12 +214,14 @@ impl DockSurfaceViewportReadiness {
         options: &WindowOptions,
         restore: Option<DockViewportRestoreReadiness>,
         status: DockSurfaceViewportReadinessStatus,
+        platform_capabilities: PlatformViewportCapabilities,
+        window_mutation_capabilities: PlatformWindowMutationCapabilities,
         cx: &mut App,
     ) -> Self {
         let platform = DockSurfaceViewportPlatformReadiness::from_window_options(
             options,
-            cx.viewport_capabilities(),
-            cx.viewport_flag_capabilities(),
+            platform_capabilities,
+            window_mutation_capabilities,
         );
         let lifecycle = surface
             .viewport_runtime(cx)
@@ -313,9 +302,9 @@ impl DockSurfaceViewportReadiness {
         self.platform.capabilities()
     }
 
-    /// ImGui-style viewport flag capabilities sampled from the active GPUI backend.
-    pub fn platform_flag_capabilities(&self) -> DockSurfaceViewportFlagCapabilities {
-        self.platform.flag_capabilities()
+    /// Typed platform support for viewport-window properties, including creation-only support.
+    pub fn window_mutation_capabilities(&self) -> PlatformWindowMutationCapabilities {
+        self.platform.window_mutation_capabilities()
     }
 
     /// Unsupported platform viewport flags requested by the spec.
@@ -548,17 +537,22 @@ impl DockSurfaceViewportReadinessStatus {
 
 fn unsupported_viewport_flags(
     options: &WindowOptions,
-    platform_capabilities: PlatformViewportCapabilities,
-    flag_capabilities: PlatformViewportFlagCapabilities,
+    window_mutation_capabilities: PlatformWindowMutationCapabilities,
 ) -> Vec<DockSurfaceViewportUnsupportedFlag> {
     let mut flags = Vec::new();
-    if !options.accepts_pointer_input && !platform_capabilities.no_input_windows {
+    if !options.accepts_pointer_input
+        && !window_mutation_capabilities
+            .pointer_input
+            .is_available_at_creation()
+    {
         flags.push(DockSurfaceViewportUnsupportedFlag::NoInputWindow);
     }
-    if matches!(
+    if !matches!(
         options.window_background,
-        WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred
-    ) && !flag_capabilities.alpha_windows
+        WindowBackgroundAppearance::Opaque
+    ) && !window_mutation_capabilities
+        .alpha
+        .is_available_at_creation()
     {
         flags.push(DockSurfaceViewportUnsupportedFlag::AlphaWindow);
     }
@@ -569,16 +563,20 @@ impl DockSurfaceViewportPlatformReadiness {
     fn from_window_options(
         options: &WindowOptions,
         capabilities: PlatformViewportCapabilities,
-        flag_capabilities: PlatformViewportFlagCapabilities,
+        window_mutation_capabilities: PlatformWindowMutationCapabilities,
     ) -> Self {
         let capabilities = DockSurfaceViewportPlatformCapabilities::from(capabilities);
         let mut warnings = Vec::new();
-        if !options.accepts_pointer_input && !capabilities.no_input_windows {
+        if !options.accepts_pointer_input
+            && !window_mutation_capabilities
+                .pointer_input
+                .is_available_at_creation()
+        {
             warnings.push(DockSurfaceViewportFlagWarning::PointerInputPassThroughUnsupported);
         }
         Self {
             capabilities,
-            flag_capabilities: DockSurfaceViewportFlagCapabilities::from(flag_capabilities),
+            window_mutation_capabilities,
             warnings,
         }
     }
@@ -588,9 +586,9 @@ impl DockSurfaceViewportPlatformReadiness {
         self.capabilities
     }
 
-    /// ImGui-style viewport flag capabilities sampled from the active GPUI backend.
-    pub fn flag_capabilities(&self) -> DockSurfaceViewportFlagCapabilities {
-        self.flag_capabilities
+    /// Typed platform support for viewport-window properties, including creation-only support.
+    pub fn window_mutation_capabilities(&self) -> PlatformWindowMutationCapabilities {
+        self.window_mutation_capabilities
     }
 
     /// Non-blocking platform flag warnings for the request.
@@ -612,21 +610,7 @@ impl From<PlatformViewportCapabilities> for DockSurfaceViewportPlatformCapabilit
             window_stack: capabilities.window_stack,
             display_work_area: capabilities.display_work_area,
             dpi_scale: capabilities.dpi_scale,
-            live_window_move: capabilities.live_window_move,
-            no_input_windows: capabilities.no_input_windows,
             hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
-        }
-    }
-}
-
-impl From<PlatformViewportFlagCapabilities> for DockSurfaceViewportFlagCapabilities {
-    fn from(capabilities: PlatformViewportFlagCapabilities) -> Self {
-        Self {
-            no_focus_on_appearing_windows: capabilities.no_focus_on_appearing_windows,
-            no_focus_on_click_windows: capabilities.no_focus_on_click_windows,
-            alpha_windows: capabilities.alpha_windows,
-            topmost_windows: capabilities.topmost_windows,
-            no_taskbar_windows: capabilities.no_taskbar_windows,
         }
     }
 }
@@ -674,5 +658,96 @@ impl From<DockViewportInputStatus> for DockSurfaceViewportInputStatus {
             DockViewportInputStatus::Minimized => Self::Minimized,
             DockViewportInputStatus::NoInputPassThrough => Self::NoInputPassThrough,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use open_gpui::WindowMutationSupport;
+
+    #[test]
+    fn creation_only_pointer_input_is_openable_for_new_viewports() {
+        let options = WindowOptions {
+            accepts_pointer_input: false,
+            ..Default::default()
+        };
+
+        for pointer_input in [
+            WindowMutationSupport::CreationOnly,
+            WindowMutationSupport::Live,
+        ] {
+            let capabilities = PlatformWindowMutationCapabilities {
+                pointer_input,
+                ..Default::default()
+            };
+
+            assert!(
+                unsupported_viewport_flags(&options, capabilities).is_empty(),
+                "{pointer_input:?} must permit pointer input at viewport creation"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_pointer_input_blocks_new_no_input_viewports() {
+        let options = WindowOptions {
+            accepts_pointer_input: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            unsupported_viewport_flags(
+                &options,
+                PlatformWindowMutationCapabilities {
+                    pointer_input: WindowMutationSupport::Unsupported,
+                    ..Default::default()
+                },
+            ),
+            vec![DockSurfaceViewportUnsupportedFlag::NoInputWindow]
+        );
+    }
+
+    #[test]
+    fn non_opaque_backgrounds_use_the_unified_alpha_capability() {
+        for window_background in [
+            WindowBackgroundAppearance::Transparent,
+            WindowBackgroundAppearance::Blurred,
+            WindowBackgroundAppearance::MicaBackdrop,
+            WindowBackgroundAppearance::MicaAltBackdrop,
+        ] {
+            let options = WindowOptions {
+                window_background,
+                ..Default::default()
+            };
+
+            assert!(
+                unsupported_viewport_flags(&options, PlatformWindowMutationCapabilities::default())
+                    == vec![DockSurfaceViewportUnsupportedFlag::AlphaWindow],
+                "{window_background:?} must require alpha creation support"
+            );
+            for alpha in [
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::Live,
+            ] {
+                assert!(
+                    unsupported_viewport_flags(
+                        &options,
+                        PlatformWindowMutationCapabilities {
+                            alpha,
+                            ..Default::default()
+                        },
+                    )
+                    .is_empty(),
+                    "{alpha:?} must permit {window_background:?} at viewport creation"
+                );
+            }
+        }
+
+        let opaque = WindowOptions::default();
+        assert!(
+            unsupported_viewport_flags(&opaque, PlatformWindowMutationCapabilities::default())
+                .is_empty()
+        );
     }
 }

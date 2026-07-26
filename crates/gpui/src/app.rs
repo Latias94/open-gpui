@@ -50,11 +50,12 @@ use crate::{
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Point, PointerCaptureHandle,
-    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
+    PlatformViewportCapabilities, PlatformWindowMutationCapabilities,
+    PlatformWindowMutationProfile, Point, PointerCaptureHandle, Priority, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator, WindowKind,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -99,6 +100,13 @@ impl Application {
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
+    }
+
+    /// Runs one complete application update without entering the platform event loop.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn update_for_test<R>(&mut self, update: impl FnOnce(&mut App) -> R) -> R {
+        self.0.borrow_mut().update(update)
     }
 
     /// Builds an app with accessibility (AccessKit) integration forcibly
@@ -594,6 +602,7 @@ pub struct App {
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
+    pub(crate) window_mutation_profiles: FxHashMap<WindowId, PlatformWindowMutationProfile>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
@@ -713,6 +722,7 @@ impl App {
                 windows: SlotMap::with_key(),
                 window_update_stack: Vec::new(),
                 window_handles: FxHashMap::default(),
+                window_mutation_profiles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 keyboard_layout,
@@ -1095,9 +1105,37 @@ impl App {
         self.platform.viewport_capabilities()
     }
 
-    /// Returns platform support for ImGui-style viewport window flags.
-    pub fn viewport_flag_capabilities(&self) -> PlatformViewportFlagCapabilities {
-        self.platform.viewport_flag_capabilities()
+    /// Returns property-specific support for creating or mutating platform windows.
+    ///
+    /// Creation callers may use [`crate::WindowMutationSupport::CreationOnly`] or
+    /// [`crate::WindowMutationSupport::Live`]. Requests against an already-open window require
+    /// [`crate::WindowMutationSupport::Live`].
+    pub fn window_mutation_capabilities(&self) -> PlatformWindowMutationCapabilities {
+        self.window_mutation_capabilities_for(&WindowKind::Normal, None)
+    }
+
+    /// Returns property-specific support for a platform window kind on the target display.
+    ///
+    /// `None` asks the backend about its primary or default display. An unavailable display id is
+    /// resolved to that same default so capability projection matches window creation.
+    pub fn window_mutation_capabilities_for(
+        &self,
+        kind: &WindowKind,
+        display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        self.platform
+            .window_mutation_capabilities(kind, self.resolve_display_id(display_id))
+    }
+
+    /// Returns the mutation profile captured for an opened window's actual kind.
+    ///
+    /// The profile remains readable while GPUI is updating the window and temporarily owns its
+    /// mutable state outside the window registry. Closed or uncommitted handles return `None`.
+    pub fn window_mutation_profile(
+        &self,
+        window: AnyWindowHandle,
+    ) -> Option<&PlatformWindowMutationProfile> {
+        self.window_mutation_profiles.get(&window.window_id())
     }
 
     /// Returns the backend hovered-window signal for the current pointer snapshot.
@@ -1205,6 +1243,10 @@ impl App {
             .iter()
             .find(|display| display.id() == id)
             .cloned()
+    }
+
+    pub(crate) fn resolve_display_id(&self, display_id: Option<DisplayId>) -> Option<DisplayId> {
+        display_id.filter(|display_id| self.find_display(*display_id).is_some())
     }
 
     /// Returns the current thermal state of the system.

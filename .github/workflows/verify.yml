@@ -107,18 +107,36 @@ jobs:
         shell: pwsh
         run: cargo nextest run -p open-gpui-docking-native --no-fail-fast
 
+      - name: Run docking authority tests
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run -p open-gpui-docking --locked --no-fail-fast
+
       - name: Check Linux platform surface
         if: matrix.name == 'linux'
         run: cargo check -p open-gpui-linux --all-features --locked
+
+      - name: Test Linux platform surface
+        if: matrix.name == 'linux'
+        run: cargo nextest run -p open-gpui-linux --all-features --locked --no-fail-fast
 
       - name: Check macOS font surface
         if: matrix.name == 'macos'
         run: cargo check -p open-gpui-macos --features font-kit --locked
 
+      - name: Test macOS font surface
+        if: matrix.name == 'macos'
+        run: cargo nextest run -p open-gpui-macos --features font-kit --locked --no-fail-fast
+
       - name: Check Windows platform surface
         if: matrix.name == 'windows'
         shell: pwsh
         run: cargo check -p open-gpui-windows --all-features --locked
+
+      - name: Test Windows platform surface
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run -p open-gpui-windows --all-features --locked --no-fail-fast
 
       - name: Check native WGPU font-kit path
         run: cargo check -p open-gpui-wgpu --features font-kit --locked

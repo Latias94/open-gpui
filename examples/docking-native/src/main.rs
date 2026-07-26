@@ -2,8 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use open_gpui::{
     App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Pixels, Render, Rgba, Styled, TargetedEvent, Window, WindowBounds, WindowOptions, div, point,
-    prelude::*, px, rgb, size,
+    Pixels, PlatformWindowMutationCapabilities, Render, Rgba, Styled, TargetedEvent, Window,
+    WindowBounds, WindowCoordinateSpace, WindowMutationRequest, WindowMutationSupport,
+    WindowOptions, WindowPlatformFacts, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_devtools::{
     DevtoolsArtifact, DevtoolsArtifactMetadata, DevtoolsArtifactRecord,
@@ -19,12 +20,15 @@ use open_gpui_docking::{
         DockViewportCoordinateSpaceRecord, DockViewportCoordinateStatusRecord,
         DockViewportDropOutcomeKind, DockViewportDropOutcomeRecord, DockViewportInputStatus,
         DockViewportLifecycleRecord, DockViewportPayloadRecord,
-        DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
-        DockViewportPlatformRequestStatus, DockViewportPlatformSyncRecord,
-        DockViewportReleaseUnavailableRecord, DockViewportRestoreReadinessRecord,
-        DockViewportRouteStatus, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
-        DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord,
-        DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
+        DockViewportPlatformCapabilityRecord, DockViewportPlatformRequestStatus,
+        DockViewportPlatformSyncDispatch, DockViewportPlatformSyncDomain,
+        DockViewportPlatformSyncObservation, DockViewportPlatformSyncObservationOutcome,
+        DockViewportPlatformSyncObservedRecord, DockViewportPlatformSyncRecord,
+        DockViewportPlatformSyncRequest, DockViewportReleaseUnavailableRecord,
+        DockViewportRestoreReadinessRecord, DockViewportRouteStatus, DockViewportRuntimeStatus,
+        DockViewportStaleStatusReason, DockViewportTearOffOutcomeKind,
+        DockViewportTearOffPlacementRecord, DockViewportTearOffRecord,
+        DockViewportVisualAffordanceRecord, DockViewportWindowMutationCapabilityRecord,
         DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary,
     },
     model::{
@@ -169,9 +173,7 @@ impl RuntimeStatusPanel {
         central_bounds: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let initial_status = runtime
-            .runtime_status()
-            .with_platform_capabilities(cx.viewport_capabilities());
+        let initial_status = runtime.runtime_status_for_app(cx);
         let devtools_panel = DockingDevtoolsPanel::new(initial_status, cx);
 
         Self {
@@ -247,9 +249,7 @@ impl RuntimeStatusPanel {
     }
 
     fn current_runtime_status(&self, cx: &mut Context<Self>) -> DockViewportRuntimeStatus {
-        self.runtime
-            .runtime_status()
-            .with_platform_capabilities(cx.viewport_capabilities())
+        self.runtime.runtime_status_for_app(cx)
     }
 
     fn refresh_devtools_inspector(&mut self, cx: &mut Context<Self>) {
@@ -351,8 +351,6 @@ impl Render for RuntimeStatusPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lines = {
             let status = self.current_runtime_status(cx);
-            let flag_capabilities =
-                DockViewportPlatformFlagCapabilityRecord::from(cx.viewport_flag_capabilities());
             let spaces = self
                 .runtime
                 .registered_viewport_spaces()
@@ -403,20 +401,16 @@ impl Render for RuntimeStatusPanel {
                     route_capability_summary(status.platform_capabilities.as_ref())
                 ),
                 format!(
-                    "placement facts: {}",
-                    placement_capability_summary(status.platform_capabilities.as_ref())
+                    "window mutation: {}",
+                    window_mutation_capability_summary(&status.window_mutation_capabilities)
                 ),
                 format!(
                     "coordinate facts: {}",
                     coordinate_status_summary(&status.viewport_lifecycle)
                 ),
                 format!(
-                    "viewport flags: {}",
-                    viewport_flag_capability_summary(Some(&flag_capabilities))
-                ),
-                format!(
                     "last platform sync: {}",
-                    platform_sync_summary(status.last_platform_sync.as_ref())
+                    platform_sync_summary(status.last_platform_dispatch.as_ref())
                 ),
                 format!("preview proof: {}", preview_proof_summary()),
                 format!("motion proof: {}", motion_runtime_proof_summary()),
@@ -854,23 +848,43 @@ pub fn docking_native_artifact_metadata(
 
 pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeStatus {
     let mut status = DockViewportRuntimeStatus::default();
+    let window_id = open_gpui::WindowId::from(10 + generation);
     status.platform_capabilities = Some(DockViewportPlatformCapabilityRecord {
         platform_viewport_windows: false,
         global_window_bounds: true,
         window_stack: true,
         display_work_area: true,
         dpi_scale: true,
-        live_window_move: false,
-        no_input_windows: true,
         hovered_window_ignores_no_input: false,
     });
+    status
+        .window_mutation_capabilities
+        .push(DockViewportWindowMutationCapabilityRecord {
+            space: DockSpaceId::from(SPACE),
+            window_id,
+            window_kind: open_gpui::WindowKind::Normal,
+            capabilities: PlatformWindowMutationCapabilities {
+                position: WindowMutationSupport::Live,
+                size: WindowMutationSupport::Live,
+                windowed: WindowMutationSupport::Live,
+                maximized: WindowMutationSupport::Live,
+                fullscreen: WindowMutationSupport::Live,
+                minimized: WindowMutationSupport::Live,
+                restore_bounds: WindowMutationSupport::Live,
+                pointer_input: WindowMutationSupport::Live,
+                focus_on_appearing: WindowMutationSupport::CreationOnly,
+                alpha: WindowMutationSupport::CreationOnly,
+                coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
+                ..Default::default()
+            },
+        });
     status.placement_restore = Some(DockViewportRestoreReadinessRecord {
         matched: 1,
         missing: 1,
     });
     status.viewport_lifecycle.push(DockViewportLifecycleRecord {
         space: DockSpaceId::from(SPACE),
-        window_id: open_gpui::WindowId::from(10 + generation),
+        window_id,
         route_status: if generation == 1 {
             DockViewportRouteStatus::MissingRouteFacts
         } else {
@@ -889,9 +903,26 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
         facts_generation: generation,
     });
     if generation > 1 {
+        let secondary_window_id = open_gpui::WindowId::from(20 + generation);
+        status
+            .window_mutation_capabilities
+            .push(DockViewportWindowMutationCapabilityRecord {
+                space: DockSpaceId::from(SECONDARY_SPACE),
+                window_id: secondary_window_id,
+                window_kind: open_gpui::WindowKind::Floating,
+                capabilities: PlatformWindowMutationCapabilities {
+                    position: WindowMutationSupport::CreationOnly,
+                    size: WindowMutationSupport::Live,
+                    pointer_input: WindowMutationSupport::Unsupported,
+                    focus_on_appearing: WindowMutationSupport::CreationOnly,
+                    alpha: WindowMutationSupport::CreationOnly,
+                    coordinate_space: open_gpui::WindowCoordinateSpace::WindowLocal,
+                    ..Default::default()
+                },
+            });
         status.viewport_lifecycle.push(DockViewportLifecycleRecord {
             space: DockSpaceId::from(SECONDARY_SPACE),
-            window_id: open_gpui::WindowId::from(20 + generation),
+            window_id: secondary_window_id,
             route_status: DockViewportRouteStatus::Stale {
                 reason: DockViewportStaleStatusReason::WindowFactsChanged,
             },
@@ -921,12 +952,48 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
                 item: DockItemId::from("headless-editor"),
             },
         });
-        status.last_platform_sync = Some(DockViewportPlatformSyncRecord {
-            window_id: open_gpui::WindowId::from(20 + generation),
-            applied: Vec::new(),
-            skipped_requests: Vec::new(),
-            unsupported_requests: Vec::new(),
+        let sync_window_id = secondary_window_id;
+        let observed_bounds = Bounds::new(point(px(40.0), px(50.0)), size(px(360.0), px(240.0)));
+        let observation = DockViewportPlatformSyncObservation {
+            domain: DockViewportPlatformSyncDomain::PointerInput,
+            generation,
+            request: WindowMutationRequest::PointerInput(false),
+            outcome: DockViewportPlatformSyncObservationOutcome::Adjusted,
+            facts: WindowPlatformFacts {
+                bounds: observed_bounds,
+                coordinate_space: WindowCoordinateSpace::WindowLocal,
+                window_bounds: WindowBounds::Windowed(observed_bounds),
+                inner_window_bounds: WindowBounds::Windowed(observed_bounds),
+                content_size: observed_bounds.size,
+                scale_factor: 1.25,
+                display_id: None,
+                is_minimized: false,
+                is_maximized: false,
+                is_fullscreen: false,
+                accepts_pointer_input: true,
+                focus_on_appearing: true,
+                focus_on_click: true,
+                background_appearance: open_gpui::WindowBackgroundAppearance::Opaque,
+                topmost: false,
+                taskbar_visible: true,
+                is_active: false,
+            },
+        };
+        status.last_platform_dispatch = Some(DockViewportPlatformSyncRecord {
+            window_id: sync_window_id,
+            dispatches: vec![DockViewportPlatformSyncDispatch::Queued {
+                request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
+                domain: DockViewportPlatformSyncDomain::PointerInput,
+                generation,
+            }],
+            observations: vec![observation.clone()],
         });
+        status
+            .recent_platform_observations
+            .push(DockViewportPlatformSyncObservedRecord {
+                window_id: sync_window_id,
+                observation,
+            });
         status
             .visual_affordances
             .push(DockViewportVisualAffordanceRecord {
@@ -1026,37 +1093,46 @@ fn route_capability_summary(capabilities: Option<&DockViewportPlatformCapability
         .unwrap_or_else(|| "unavailable".to_string())
 }
 
-fn placement_capability_summary(
-    capabilities: Option<&DockViewportPlatformCapabilityRecord>,
+fn window_mutation_capability_summary(
+    viewports: &[DockViewportWindowMutationCapabilityRecord],
 ) -> String {
-    capabilities
-        .map(|capabilities| {
+    if viewports.is_empty() {
+        return "unavailable".to_string();
+    }
+    viewports
+        .iter()
+        .map(|viewport| {
+            let capabilities = viewport.capabilities;
             format!(
-                "work-area={}, dpi={}, live-move={}, no-input={}",
-                capability_flag(capabilities.display_work_area),
-                capability_flag(capabilities.dpi_scale),
-                capability_flag(capabilities.live_window_move),
-                capability_flag(capabilities.no_input_windows),
+                "{}#{}({}): position={}, size={}, windowed={}, maximized={}, fullscreen={}, minimized={}, restore={}, pointer={}, focus-appear={}, focus-click={}, alpha={}, topmost={}, taskbar={}",
+                viewport.space,
+                viewport.window_id.as_u64(),
+                viewport.window_kind.as_str(),
+                mutation_support(capabilities.position),
+                mutation_support(capabilities.size),
+                mutation_support(capabilities.windowed),
+                mutation_support(capabilities.maximized),
+                mutation_support(capabilities.fullscreen),
+                mutation_support(capabilities.minimized),
+                mutation_support(capabilities.restore_bounds),
+                mutation_support(capabilities.pointer_input),
+                mutation_support(capabilities.focus_on_appearing),
+                mutation_support(capabilities.focus_on_click),
+                mutation_support(capabilities.alpha),
+                mutation_support(capabilities.topmost),
+                mutation_support(capabilities.taskbar_visibility),
             )
         })
-        .unwrap_or_else(|| "unavailable".to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
-fn viewport_flag_capability_summary(
-    capabilities: Option<&DockViewportPlatformFlagCapabilityRecord>,
-) -> String {
-    capabilities
-        .map(|capabilities| {
-            format!(
-                "no-focus-appearing={}, no-focus-click={}, alpha={}, topmost={}, no-taskbar={}",
-                capability_flag(capabilities.no_focus_on_appearing_windows),
-                capability_flag(capabilities.no_focus_on_click_windows),
-                capability_flag(capabilities.alpha_windows),
-                capability_flag(capabilities.topmost_windows),
-                capability_flag(capabilities.no_taskbar_windows),
-            )
-        })
-        .unwrap_or_else(|| "unavailable".to_string())
+fn mutation_support(support: WindowMutationSupport) -> &'static str {
+    match support {
+        WindowMutationSupport::Unsupported => "unsupported",
+        WindowMutationSupport::CreationOnly => "creation-only",
+        WindowMutationSupport::Live => "live",
+    }
 }
 
 fn route_unavailable_summary(
@@ -1103,10 +1179,9 @@ fn coordinate_status_summary(lifecycle: &[DockViewportLifecycleRecord]) -> Strin
 fn platform_sync_summary(sync: Option<&DockViewportPlatformSyncRecord>) -> String {
     sync.map(|sync| {
         format!(
-            "applied={}, skipped={}, unsupported={}",
-            sync.applied.len(),
-            sync.skipped_requests.len(),
-            sync.unsupported_requests.len()
+            "dispatches={}, observations={}",
+            sync.dispatches.len(),
+            sync.observations.len()
         )
     })
     .unwrap_or_else(|| "none".to_string())
@@ -3035,6 +3110,12 @@ mod tests {
         );
         assert_eq!(artifacts.session_record.metadata.generation, Some(2));
         assert_eq!(artifacts.report_record.metadata.generation, Some(2));
+        let session_json =
+            serde_json::to_string(&artifacts.session_export).expect("session export serializes");
+        assert!(session_json.contains("\"kind\":\"queued\""));
+        assert!(session_json.contains("\"outcome\":\"Adjusted\""));
+        assert!(session_json.contains("\"kind\":\"pointer-input\""));
+        assert!(session_json.contains("\"accepts_pointer_input\":true"));
         assert!(artifacts.report.findings.iter().any(|finding| {
             finding
                 .id
@@ -3186,33 +3267,35 @@ mod tests {
             window_stack: false,
             display_work_area: true,
             dpi_scale: false,
-            live_window_move: true,
-            no_input_windows: false,
             hovered_window_ignores_no_input: true,
         };
-        let flag_capabilities = DockViewportPlatformFlagCapabilityRecord {
-            no_focus_on_appearing_windows: true,
-            no_focus_on_click_windows: false,
-            alpha_windows: false,
-            topmost_windows: true,
-            no_taskbar_windows: false,
+        let mutation_capabilities = PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::CreationOnly,
+            size: WindowMutationSupport::Live,
+            focus_on_appearing: WindowMutationSupport::CreationOnly,
+            alpha: WindowMutationSupport::CreationOnly,
+            ..Default::default()
         };
+        let mutation_profiles = [DockViewportWindowMutationCapabilityRecord {
+            space: DockSpaceId::from("primary"),
+            window_id: open_gpui::WindowId::from(7),
+            window_kind: open_gpui::WindowKind::Floating,
+            capabilities: mutation_capabilities,
+        }];
 
         assert_eq!(
             route_capability_summary(Some(&capabilities)),
             "platform-windows=yes, bounds=yes, stack=no, hover-through-no-input=yes"
         );
         assert_eq!(
-            placement_capability_summary(Some(&capabilities)),
-            "work-area=yes, dpi=no, live-move=yes, no-input=no"
-        );
-        assert_eq!(
-            viewport_flag_capability_summary(Some(&flag_capabilities)),
-            "no-focus-appearing=yes, no-focus-click=no, alpha=no, topmost=yes, no-taskbar=no"
+            window_mutation_capability_summary(&mutation_profiles),
+            format!(
+                "primary#{}(floating): position=creation-only, size=live, windowed=unsupported, maximized=unsupported, fullscreen=unsupported, minimized=unsupported, restore=unsupported, pointer=unsupported, focus-appear=creation-only, focus-click=unsupported, alpha=creation-only, topmost=unsupported, taskbar=unsupported",
+                open_gpui::WindowId::from(7).as_u64()
+            )
         );
         assert_eq!(route_capability_summary(None), "unavailable");
-        assert_eq!(placement_capability_summary(None), "unavailable");
-        assert_eq!(viewport_flag_capability_summary(None), "unavailable");
+        assert_eq!(window_mutation_capability_summary(&[]), "unavailable");
         assert_eq!(route_unavailable_summary(None), "none");
         assert_eq!(
             route_unavailable_summary(Some(
@@ -3271,11 +3354,10 @@ mod tests {
         assert_eq!(
             platform_sync_summary(Some(&DockViewportPlatformSyncRecord {
                 window_id: open_gpui::WindowId::from(4),
-                applied: Vec::new(),
-                skipped_requests: Vec::new(),
-                unsupported_requests: Vec::new(),
+                dispatches: Vec::new(),
+                observations: Vec::new(),
             })),
-            "applied=0, skipped=0, unsupported=0"
+            "dispatches=0, observations=0"
         );
         assert_eq!(
             preview_proof_summary(),
@@ -3315,8 +3397,6 @@ mod tests {
             window_stack: false,
             display_work_area: true,
             dpi_scale: true,
-            live_window_move: false,
-            no_input_windows: true,
             hovered_window_ignores_no_input: false,
         });
         status.viewport_lifecycle.push(DockViewportLifecycleRecord {

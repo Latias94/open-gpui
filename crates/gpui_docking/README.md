@@ -56,6 +56,16 @@ Platform viewport windows fail closed unless both gates are true:
 
 `DockSurface::viewports` returns a `DockSurfaceViewportSession` for the common multi-window path. The session can check `readiness`, `readiness_many`, or `restore_readiness` before opening windows, then open detached dock spaces, restore saved placement data, export placement snapshots, and handle GPUI close hooks while keeping applications away from raw runtime handles. Readiness and open outcomes distinguish policy-disabled, backend-unsupported, unsupported requested platform flags, invalid placement, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
 
+For an already-open detached viewport, Dock projects GPUI's property-specific window-mutation
+capabilities from that viewport window's actual immutable kind and target-display profile. Its
+diagnostics retain one profile per registered space/window and record immediate `dispatches`
+separately from terminal `observations`: queued dispatch is intent only, while each observation
+retains the typed request and committed facts that settled it. Route geometry, exported placement,
+and `DockSurface` observed-placement revisions consume committed `WindowPlatformFacts`.
+Applications should not infer success from a Dock sync attempt; inspect the terminal observation
+when a live window mutation matters. Dock suppresses per-frame retries after a terminal failure
+until the requested target or relevant committed facts change.
+
 Use `DockSurface::export_snapshot` for the common persistence path. The snapshot stores `DockLayout` for logical dock spaces plus `DockViewportPlacementLayout` for platform-window hints, without storing GPUI views or platform window handles. Applications that need custom storage can still persist `DockLayout` and viewport placement separately; `DockSurfaceViewportSpec::with_saved_placement` applies placement hints to fallback GPUI window options before a viewport opens. Applications can call `DockSurface::export_viewport_placement` to snapshot only facade-opened platform windows and `DockSurface::check_viewport_placement_restore` to validate saved placement before reopening windows, without importing `DockViewportRuntimeHandle`.
 
 Use `DockSurfaceBuilder::close_policy` or `DockSurface::set_viewport_close_policy` to choose how detached platform windows close. `DockViewportClosePolicy::RetainLayout` removes only the runtime window mapping, `Prevent` vetoes the platform close, and `MergeBack` moves a closing viewport's dock content into a fallback space. Applications with custom GPUI window hooks can call `DockSurface::handle_viewport_window_should_close`, `DockSurface::handle_viewport_window_closed`, and `DockSurface::cancel_viewport_window_close` without importing the low-level runtime handle.

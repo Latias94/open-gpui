@@ -10,12 +10,12 @@ mod runtime_suite {
         DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
         DockViewportDropRouteRequest, DockViewportFocusCommand, DockViewportFocusRequest,
         DockViewportInputStatus, DockViewportOpenStatus, DockViewportPlatformSyncAction,
-        DockViewportPlatformSyncRequest, DockViewportPlatformSyncSkippedReason,
-        DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
-        DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-        DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
-        DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
-        DockViewportWindowActivation, DockViewportWindowFacts, DockWorkspace, SplitAxis,
+        DockViewportPlatformSyncRequest, DockViewportResolvedDropRoute, DockViewportRouteStatus,
+        DockViewportRouteTarget, DockViewportRuntime, DockViewportRuntimeHandle,
+        DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+        DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource,
+        DockViewportTearOffRequest, DockViewportWindowActivation, DockViewportWindowFacts,
+        DockWorkspace, SplitAxis,
         drag::{DockDragPayload, DockDragTearOffGeometry},
         drop_runtime::DockHostDropSceneFact,
         drop_target::DockLeafDropTarget,
@@ -2924,11 +2924,9 @@ mod handle_suite {
             "preview setup should cache a routed preview for the target"
         );
 
+        cx.simulate_window_minimize(target_opened.window());
         target_window
-            .update(cx, |_, window, _| {
-                window.minimize_window();
-                assert!(window.is_minimized());
-            })
+            .update(cx, |_, window, _| assert!(window.is_minimized()))
             .expect("target window should still be live after minimize");
 
         let preparation = source_window

@@ -37,7 +37,7 @@ use crate::{
     FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout,
     MouseButton, Pixels, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
-    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
+    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, WindowMutationRequest,
     geometry::ResolvedSubtreeTransform, hash, point, px, size,
 };
 use anyhow::Result;
@@ -97,27 +97,405 @@ pub struct PlatformViewportCapabilities {
     pub display_work_area: bool,
     /// Per-window DPI scale facts are reliable for placement decisions.
     pub dpi_scale: bool,
-    /// Already-open windows can be moved or resized programmatically.
-    pub live_window_move: bool,
-    /// Native no-input/click-through windows are supported.
-    pub no_input_windows: bool,
     /// Hovered-window queries pass through native no-input/click-through application windows.
     pub hovered_window_ignores_no_input: bool,
 }
 
-/// Platform support for ImGui-style viewport window flags.
+/// The level of support a backend provides for one window mutation property.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct PlatformViewportFlagCapabilities {
-    /// Native no-focus-on-appearing viewport windows are supported.
-    pub no_focus_on_appearing_windows: bool,
-    /// Native no-focus-on-click viewport windows are supported.
-    pub no_focus_on_click_windows: bool,
-    /// Native alpha/transparent viewport windows are supported.
-    pub alpha_windows: bool,
-    /// Native always-on-top viewport windows are supported.
-    pub topmost_windows: bool,
-    /// Native taskbar-hidden viewport windows are supported.
-    pub no_taskbar_windows: bool,
+pub enum WindowMutationSupport {
+    /// The backend cannot apply this property.
+    #[default]
+    Unsupported,
+    /// The backend can only apply this property while opening a window.
+    CreationOnly,
+    /// The backend can request and observe this property for an open window.
+    Live,
+}
+
+impl WindowMutationSupport {
+    /// Returns whether this property can be selected while opening a window.
+    pub const fn is_available_at_creation(self) -> bool {
+        !matches!(self, Self::Unsupported)
+    }
+
+    /// Returns whether this property can be requested for an already-open window.
+    pub const fn is_live(self) -> bool {
+        matches!(self, Self::Live)
+    }
+}
+
+/// The coordinate system used by window geometry facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowCoordinateSpace {
+    /// Bounds use a backend-local geometry frame because no shared desktop coordinate system is
+    /// available. Origins in this frame must not be compared across application windows.
+    #[default]
+    WindowLocal,
+    /// Bounds are expressed in a shared desktop coordinate system.
+    GlobalScreen,
+}
+
+impl WindowCoordinateSpace {
+    /// Returns whether bounds can be compared across application windows.
+    pub const fn is_global(self) -> bool {
+        matches!(self, Self::GlobalScreen)
+    }
+}
+
+/// A requested primary window placement state.
+///
+/// A minimized window can retain maximized or fullscreen restore facts. Those restore facts remain
+/// explicit on [`WindowPlacementRequest`] rather than being folded into this state enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPlacementState {
+    /// A normal, restored window.
+    Windowed,
+    /// A maximized window.
+    Maximized,
+    /// A fullscreen window.
+    Fullscreen,
+    /// A minimized window.
+    Minimized,
+}
+
+/// A structured request to mutate one coherent placement domain.
+///
+/// Position, size, primary state, and restore bounds remain one conflict domain even when only a
+/// subset is present. Callers must not submit contradictory geometry for a non-windowed state;
+/// [`crate::Window`] rejects such requests before sending a partial native mutation.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WindowPlacementRequest {
+    /// A requested window origin in [`WindowCoordinateSpace::GlobalScreen`] when position is live.
+    pub position: Option<Point<Pixels>>,
+    /// A requested content size.
+    pub size: Option<Size<Pixels>>,
+    /// A requested primary placement state.
+    pub state: Option<WindowPlacementState>,
+    /// A requested restore bounds value for a minimized, maximized, or fullscreen window.
+    pub restore_bounds: Option<Bounds<Pixels>>,
+}
+
+impl WindowPlacementRequest {
+    /// Creates an empty placement request.
+    pub const fn new() -> Self {
+        Self {
+            position: None,
+            size: None,
+            state: None,
+            restore_bounds: None,
+        }
+    }
+
+    /// Creates a complete request for a windowed placement.
+    pub const fn windowed(bounds: Bounds<Pixels>) -> Self {
+        Self {
+            position: Some(bounds.origin),
+            size: Some(bounds.size),
+            state: Some(WindowPlacementState::Windowed),
+            restore_bounds: None,
+        }
+    }
+
+    /// Creates a complete request for a maximized placement and its restore bounds.
+    pub const fn maximized(restore_bounds: Bounds<Pixels>) -> Self {
+        Self {
+            position: None,
+            size: None,
+            state: Some(WindowPlacementState::Maximized),
+            restore_bounds: Some(restore_bounds),
+        }
+    }
+
+    /// Creates a complete request for a fullscreen placement and its restore bounds.
+    pub const fn fullscreen(restore_bounds: Bounds<Pixels>) -> Self {
+        Self {
+            position: None,
+            size: None,
+            state: Some(WindowPlacementState::Fullscreen),
+            restore_bounds: Some(restore_bounds),
+        }
+    }
+
+    /// Creates a request to minimize the window.
+    pub const fn minimized() -> Self {
+        Self {
+            position: None,
+            size: None,
+            state: Some(WindowPlacementState::Minimized),
+            restore_bounds: None,
+        }
+    }
+
+    /// Converts a legacy [`WindowBounds`] value into a complete structured placement request.
+    pub const fn from_window_bounds(window_bounds: WindowBounds) -> Self {
+        match window_bounds {
+            WindowBounds::Windowed(bounds) => Self::windowed(bounds),
+            WindowBounds::Maximized(bounds) => Self::maximized(bounds),
+            WindowBounds::Fullscreen(bounds) => Self::fullscreen(bounds),
+        }
+    }
+
+    /// Returns whether this request contains at least one placement property.
+    pub const fn is_empty(self) -> bool {
+        self.position.is_none()
+            && self.size.is_none()
+            && self.state.is_none()
+            && self.restore_bounds.is_none()
+    }
+
+    /// Projects a complete representable request to the legacy [`WindowBounds`] API.
+    ///
+    /// Minimized and partial requests deliberately have no legacy projection.
+    pub fn as_window_bounds(self) -> Option<WindowBounds> {
+        match (self.position, self.size, self.state, self.restore_bounds) {
+            (Some(origin), Some(size), Some(WindowPlacementState::Windowed), None) => {
+                Some(WindowBounds::Windowed(Bounds::new(origin, size)))
+            }
+            (None, None, Some(WindowPlacementState::Maximized), Some(restore_bounds)) => {
+                Some(WindowBounds::Maximized(restore_bounds))
+            }
+            (None, None, Some(WindowPlacementState::Fullscreen), Some(restore_bounds)) => {
+                Some(WindowBounds::Fullscreen(restore_bounds))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A conflict domain for mutations of an already-open window.
+///
+/// Placement deliberately groups position, size, state, and restore bounds because native state
+/// transitions can change all of those facts together. Pointer input, focus-on-appearing,
+/// focus-on-click, alpha, topmost, and taskbar visibility each remain independent.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WindowMutationDomain {
+    /// Window position, size, state, and restore bounds.
+    Placement,
+    /// Whether the window accepts pointer input.
+    PointerInput,
+    /// Whether the window takes focus when it first appears.
+    FocusOnAppearing,
+    /// Whether clicking the window takes focus.
+    FocusOnClick,
+    /// The native window background or alpha treatment.
+    Alpha,
+    /// Whether the window stays above ordinary application windows.
+    Topmost,
+    /// Whether the window appears in the taskbar or application switcher.
+    TaskbarVisibility,
+}
+
+impl WindowMutationDomain {
+    /// Every independently generated mutation domain.
+    pub const ALL: [Self; 7] = [
+        Self::Placement,
+        Self::PointerInput,
+        Self::FocusOnAppearing,
+        Self::FocusOnClick,
+        Self::Alpha,
+        Self::Topmost,
+        Self::TaskbarVisibility,
+    ];
+}
+
+/// Capability-specific support for applying platform window properties.
+///
+/// Support may be limited to window creation or extend to an already-open window. Placement is
+/// deliberately split into its observable properties. A caller must not infer that position is
+/// mutable merely because a backend can resize a window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlatformWindowMutationCapabilities {
+    /// Support for changing a window's desktop position.
+    pub position: WindowMutationSupport,
+    /// Support for changing a window's content size.
+    pub size: WindowMutationSupport,
+    /// Support for restoring a window to its windowed state.
+    pub windowed: WindowMutationSupport,
+    /// Support for entering or observing maximized state.
+    pub maximized: WindowMutationSupport,
+    /// Support for entering or observing fullscreen state.
+    pub fullscreen: WindowMutationSupport,
+    /// Support for entering or observing minimized state.
+    pub minimized: WindowMutationSupport,
+    /// Support for changing or observing windowed restore bounds.
+    pub restore_bounds: WindowMutationSupport,
+    /// Support for changing whether a window accepts pointer input.
+    pub pointer_input: WindowMutationSupport,
+    /// Support for controlling whether a newly opened window takes focus when it appears.
+    pub focus_on_appearing: WindowMutationSupport,
+    /// Support for controlling whether a window takes focus when clicked.
+    pub focus_on_click: WindowMutationSupport,
+    /// Support for window alpha or a transparent/blurred background.
+    pub alpha: WindowMutationSupport,
+    /// Support for keeping a window above ordinary application windows.
+    pub topmost: WindowMutationSupport,
+    /// Support for controlling whether a window appears in the taskbar or application switcher.
+    pub taskbar_visibility: WindowMutationSupport,
+    /// The coordinate system used for reported window geometry.
+    pub coordinate_space: WindowCoordinateSpace,
+}
+
+impl Default for PlatformWindowMutationCapabilities {
+    fn default() -> Self {
+        Self {
+            position: WindowMutationSupport::Unsupported,
+            size: WindowMutationSupport::Unsupported,
+            windowed: WindowMutationSupport::Unsupported,
+            maximized: WindowMutationSupport::Unsupported,
+            fullscreen: WindowMutationSupport::Unsupported,
+            minimized: WindowMutationSupport::Unsupported,
+            restore_bounds: WindowMutationSupport::Unsupported,
+            pointer_input: WindowMutationSupport::Unsupported,
+            focus_on_appearing: WindowMutationSupport::Unsupported,
+            focus_on_click: WindowMutationSupport::Unsupported,
+            alpha: WindowMutationSupport::Unsupported,
+            topmost: WindowMutationSupport::Unsupported,
+            taskbar_visibility: WindowMutationSupport::Unsupported,
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
+        }
+    }
+}
+
+/// Mutation capabilities captured for the actual kind of an opened platform window.
+///
+/// The profile is fixed when GPUI creates the window. It therefore remains an honest description
+/// of that window even if a backend supports different properties for another [`WindowKind`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlatformWindowMutationProfile {
+    /// The platform window kind used at creation.
+    pub kind: WindowKind,
+    /// Property-specific creation and live mutation support for [`Self::kind`].
+    pub capabilities: PlatformWindowMutationCapabilities,
+}
+
+/// A coherent snapshot of facts observed from a platform window.
+///
+/// This value describes committed platform state. It never represents an unobserved mutation
+/// request that was merely queued for a backend.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowPlatformFacts {
+    /// The current bounds reported by the platform.
+    pub bounds: Bounds<Pixels>,
+    /// The coordinate system used by [`Self::bounds`].
+    pub coordinate_space: WindowCoordinateSpace,
+    /// The current window state and its restore bounds.
+    pub window_bounds: WindowBounds,
+    /// The current window state and bounds excluding platform insets when available.
+    pub inner_window_bounds: WindowBounds,
+    /// The drawable content size.
+    pub content_size: Size<Pixels>,
+    /// The current platform scale factor.
+    pub scale_factor: f32,
+    /// The display currently associated with the window, when known.
+    pub display_id: Option<DisplayId>,
+    /// Whether the window is minimized.
+    pub is_minimized: bool,
+    /// Whether the window is maximized.
+    pub is_maximized: bool,
+    /// Whether the window is fullscreen.
+    pub is_fullscreen: bool,
+    /// Whether the window currently accepts pointer input.
+    pub accepts_pointer_input: bool,
+    /// Whether the window is configured to take focus when it appears.
+    pub focus_on_appearing: bool,
+    /// Whether the window is configured to take focus when clicked.
+    pub focus_on_click: bool,
+    /// The committed native window background treatment.
+    pub background_appearance: WindowBackgroundAppearance,
+    /// Whether the window is configured to stay above ordinary application windows.
+    pub topmost: bool,
+    /// Whether the window is configured to appear in the taskbar or application switcher.
+    pub taskbar_visible: bool,
+    /// Whether the window is active.
+    pub is_active: bool,
+}
+
+/// A coherent terminal observation emitted by a platform window for one mutation domain.
+///
+/// The facts snapshot is immutable event data captured by the backend at the observation point.
+/// Consumers must commit this value directly rather than re-reading potentially newer getters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlatformWindowMutationObservation {
+    /// The request conflict domain this observation can settle.
+    pub domain: WindowMutationDomain,
+    /// The generation supplied when the backend accepted this request.
+    pub generation: u64,
+    /// The terminal result reported by the backend.
+    ///
+    /// [`PlatformWindowMutationTerminal::Observed`] leaves exact-versus-adjusted classification to
+    /// GPUI, using the request and this facts snapshot. Every other value is an explicit backend
+    /// terminal failure and must not be reclassified as a window-manager adjustment.
+    pub terminal: PlatformWindowMutationTerminal,
+    /// The coherent observed platform facts.
+    pub facts: WindowPlatformFacts,
+}
+
+impl PlatformWindowMutationObservation {
+    /// Creates a successful terminal observation.
+    pub fn observed(
+        domain: WindowMutationDomain,
+        generation: u64,
+        facts: WindowPlatformFacts,
+    ) -> Self {
+        Self {
+            domain,
+            generation,
+            terminal: PlatformWindowMutationTerminal::Observed,
+            facts,
+        }
+    }
+
+    /// Creates an explicit backend terminal observation.
+    pub fn terminal(
+        domain: WindowMutationDomain,
+        generation: u64,
+        terminal: PlatformWindowMutationTerminal,
+        facts: WindowPlatformFacts,
+    ) -> Self {
+        Self {
+            domain,
+            generation,
+            terminal,
+            facts,
+        }
+    }
+}
+
+/// The terminal result reported by a backend after accepting an asynchronous mutation request.
+///
+/// `Observed` means the supplied facts represent a completed platform operation; GPUI then
+/// distinguishes an exact outcome from an OS-adjusted one. The other variants preserve a backend
+/// failure or close result exactly as reported.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum PlatformWindowMutationTerminal {
+    /// The backend observed completed platform facts.
+    #[default]
+    Observed,
+    /// The backend rejected the request after accepting it asynchronously.
+    Rejected,
+    /// The backend determined that the open-window mutation is unsupported.
+    Unsupported,
+    /// The native window closed before the operation could complete.
+    WindowClosed,
+}
+
+/// The synchronous result of handing a platform window mutation to a backend.
+///
+/// `Queued` means only that the backend accepted the request path. It does not mean that the
+/// operating system applied the request; callers must wait for an observed platform fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformWindowDispatch {
+    /// The backend accepted the request for asynchronous observation.
+    Queued,
+    /// The currently observed value already matches the requested value.
+    Unchanged,
+    /// The backend does not support this mutation for an open window.
+    Unsupported,
+    /// The backend rejected the request before it could be observed.
+    Rejected,
+    /// The window was closed before the request could be dispatched.
+    WindowClosed,
 }
 
 /// Backend hovered-window signal for multi-viewport routing.
@@ -245,8 +623,12 @@ pub trait Platform: 'static {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
     }
-    fn viewport_flag_capabilities(&self) -> PlatformViewportFlagCapabilities {
-        PlatformViewportFlagCapabilities::default()
+    fn window_mutation_capabilities(
+        &self,
+        _kind: &WindowKind,
+        _display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        PlatformWindowMutationCapabilities::default()
     }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None
@@ -737,7 +1119,6 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
-    fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -760,15 +1141,63 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn accepts_pointer_input(&self) -> bool {
         true
     }
-    fn set_accepts_pointer_input(&mut self, _accepts_pointer_input: bool) -> bool {
-        false
+    /// Returns one coherent snapshot of the facts currently observed by this backend.
+    ///
+    /// Backends that can report a shared desktop coordinate system should override this method
+    /// and set [`WindowPlatformFacts::coordinate_space`] to
+    /// [`WindowCoordinateSpace::GlobalScreen`].
+    fn platform_facts(&self) -> WindowPlatformFacts {
+        WindowPlatformFacts {
+            bounds: self.bounds(),
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
+            window_bounds: self.window_bounds(),
+            inner_window_bounds: self.inner_window_bounds(),
+            content_size: self.content_size(),
+            scale_factor: self.scale_factor(),
+            display_id: self.display().map(|display| display.id()),
+            is_minimized: self.is_minimized(),
+            is_maximized: self.is_maximized(),
+            is_fullscreen: self.is_fullscreen(),
+            accepts_pointer_input: self.accepts_pointer_input(),
+            focus_on_appearing: true,
+            focus_on_click: true,
+            background_appearance: self.background_appearance(),
+            topmost: false,
+            taskbar_visible: true,
+            is_active: self.is_active(),
+        }
     }
+    /// Prepares a generation to become the only current request in one conflict domain.
+    ///
+    /// GPUI calls this before deciding whether the request is unchanged, unsupported, or handed
+    /// to [`Self::request_window_mutation`]. Backends with queued native work must make every
+    /// older generation in `domain` unable to mutate the window or emit a terminal observation.
+    fn prepare_window_mutation(&self, _domain: WindowMutationDomain, _generation: u64) {}
+    /// Requests one typed mutation for an already-open window.
+    ///
+    /// The default preserves the getter-only contract. It may report an unchanged request from
+    /// committed facts, but never infers live support from a legacy unit or boolean setter.
+    fn request_window_mutation(
+        &mut self,
+        _generation: u64,
+        request: WindowMutationRequest,
+    ) -> PlatformWindowDispatch {
+        if request.matches_facts(&self.platform_facts()) {
+            PlatformWindowDispatch::Unchanged
+        } else {
+            PlatformWindowDispatch::Unsupported
+        }
+    }
+    /// Invalidates any backend work that could later emit a terminal observation for `domain`.
+    ///
+    /// GPUI calls this when a window closes without installing a replacement generation.
+    ///
+    /// Backends must prevent queued work in `domain` from mutating the native window or emitting
+    /// a terminal observation after this call.
+    fn invalidate_window_mutation(&self, _domain: WindowMutationDomain) {}
     fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
-    fn minimize(&self);
-    fn zoom(&self);
-    fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
@@ -776,6 +1205,26 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
+    /// Registers a callback for externally observed window-state changes that need not resize or
+    /// move the window, such as minimization.
+    ///
+    /// This callback refreshes committed platform facts. It does not settle a mutation ticket;
+    /// queued mutations settle only through [`Self::on_window_mutation_observation`].
+    fn on_window_state_change(&self, _callback: Box<dyn FnMut()>) {}
+    /// Registers a callback for a coherent terminal window-mutation observation.
+    ///
+    /// This callback must not be used for intermediate move or resize notifications. Backends
+    /// invoke it only after they can read one coherent [`WindowPlatformFacts`] snapshot for a
+    /// queued placement or independent-flag request. The supplied facts snapshot must be the
+    /// exact observation that settled the native operation; GPUI must not re-read getters later.
+    /// Backends report asynchronous errors with the observation's explicit
+    /// [`PlatformWindowMutationTerminal`] instead of presenting the unchanged facts as an
+    /// OS-adjusted success.
+    fn on_window_mutation_observation(
+        &self,
+        _callback: Box<dyn FnMut(PlatformWindowMutationObservation)>,
+    ) {
+    }
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
@@ -1830,6 +2279,10 @@ pub struct WindowOptions {
 )]
 #[allow(missing_docs)]
 pub struct WindowParams {
+    /// The canonical creation placement, including windowed/maximized/fullscreen state and
+    /// restore bounds.
+    pub window_bounds: WindowBounds,
+    /// The legacy geometry projection of [`Self::window_bounds`].
     pub bounds: Bounds<Pixels>,
 
     /// The titlebar configuration of the window
@@ -1973,6 +2426,20 @@ pub enum WindowKind {
     /// A window that appears on top of its parent window and blocks interaction with it
     /// until the modal window is closed
     Dialog,
+}
+
+impl WindowKind {
+    /// Returns a stable diagnostic label for this window kind.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::PopUp => "pop-up",
+            Self::Floating => "floating",
+            #[cfg(all(target_os = "linux", feature = "wayland"))]
+            Self::LayerShell(_) => "layer-shell",
+            Self::Dialog => "dialog",
+        }
+    }
 }
 
 /// The appearance of the window, as defined by the operating system.

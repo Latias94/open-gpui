@@ -47,6 +47,7 @@ pub(crate) struct Callbacks {
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
+    window_state_change: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
@@ -64,6 +65,135 @@ struct RawWindow {
 // passing to wgpu which needs Send+Sync for surface creation.
 unsafe impl Send for RawWindow {}
 unsafe impl Sync for RawWindow {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WaylandInitialToplevelState {
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum WaylandCreationRole {
+    Xdg {
+        initial_state: WaylandInitialToplevelState,
+        restore_bounds: Bounds<Pixels>,
+    },
+    LayerShell,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WaylandWindowCreationProjection {
+    bounds: Bounds<Pixels>,
+    role: WaylandCreationRole,
+    alpha_surface: bool,
+    focus_on_appearing: bool,
+    focus_on_click: bool,
+    topmost: bool,
+    taskbar_visible: bool,
+}
+
+impl WaylandWindowCreationProjection {
+    fn new(window_bounds: WindowBounds, kind: &WindowKind) -> Self {
+        let requested_bounds = window_bounds.get_bounds();
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: requested_bounds.size,
+        };
+        let (role, focus_on_appearing, focus_on_click, topmost, taskbar_visible) = match kind {
+            WindowKind::LayerShell(options) => {
+                let (focus_on_appearing, focus_on_click) = match options.keyboard_interactivity {
+                    open_gpui::layer_shell::KeyboardInteractivity::None => (false, false),
+                    open_gpui::layer_shell::KeyboardInteractivity::Exclusive => (true, true),
+                    open_gpui::layer_shell::KeyboardInteractivity::OnDemand => (false, true),
+                };
+                let topmost = matches!(
+                    options.layer,
+                    open_gpui::layer_shell::Layer::Top | open_gpui::layer_shell::Layer::Overlay
+                );
+                (
+                    WaylandCreationRole::LayerShell,
+                    focus_on_appearing,
+                    focus_on_click,
+                    topmost,
+                    false,
+                )
+            }
+            _ => {
+                let initial_state = match window_bounds {
+                    WindowBounds::Windowed(_) => WaylandInitialToplevelState::Windowed,
+                    WindowBounds::Maximized(_) => WaylandInitialToplevelState::Maximized,
+                    WindowBounds::Fullscreen(_) => WaylandInitialToplevelState::Fullscreen,
+                };
+                (
+                    WaylandCreationRole::Xdg {
+                        initial_state,
+                        restore_bounds: bounds,
+                    },
+                    true,
+                    true,
+                    false,
+                    matches!(kind, WindowKind::Normal | WindowKind::PopUp),
+                )
+            }
+        };
+
+        Self {
+            bounds,
+            role,
+            alpha_surface: true,
+            focus_on_appearing,
+            focus_on_click,
+            topmost,
+            taskbar_visible,
+        }
+    }
+
+    fn restore_bounds(self) -> Option<Bounds<Pixels>> {
+        match self.role {
+            WaylandCreationRole::Xdg { restore_bounds, .. } => Some(restore_bounds),
+            WaylandCreationRole::LayerShell => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WaylandWindowBackgroundProjection {
+    observed_appearance: WindowBackgroundAppearance,
+    renderer_transparent: bool,
+    compositor_opaque_region: bool,
+    blur_enabled: bool,
+}
+
+impl WaylandWindowBackgroundProjection {
+    fn new(
+        requested: WindowBackgroundAppearance,
+        decorations: WindowDecorations,
+        blur_supported: bool,
+    ) -> Self {
+        let observed_appearance = match requested {
+            WindowBackgroundAppearance::Opaque | WindowBackgroundAppearance::Transparent => {
+                requested
+            }
+            WindowBackgroundAppearance::Blurred if blur_supported => {
+                WindowBackgroundAppearance::Blurred
+            }
+            WindowBackgroundAppearance::Blurred
+            | WindowBackgroundAppearance::MicaBackdrop
+            | WindowBackgroundAppearance::MicaAltBackdrop => {
+                WindowBackgroundAppearance::Transparent
+            }
+        };
+        let compositor_opaque_region = observed_appearance == WindowBackgroundAppearance::Opaque
+            && decorations == WindowDecorations::Server;
+        Self {
+            observed_appearance,
+            renderer_transparent: !compositor_opaque_region,
+            compositor_opaque_region,
+            blur_enabled: observed_appearance == WindowBackgroundAppearance::Blurred,
+        }
+    }
+}
 
 impl rwh::HasWindowHandle for RawWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
@@ -125,6 +255,7 @@ pub struct WaylandWindowState {
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
+    creation: WaylandWindowCreationProjection,
 }
 
 pub enum WaylandSurfaceState {
@@ -137,6 +268,7 @@ impl WaylandSurfaceState {
         surface: &wl_surface::WlSurface,
         globals: &Globals,
         params: &WindowParams,
+        creation: &WaylandWindowCreationProjection,
         parent: Option<WaylandWindowStatePtr>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<Self> {
@@ -155,8 +287,8 @@ impl WaylandSurfaceState {
                 surface.id(),
             );
 
-            let width = f32::from(params.bounds.size.width);
-            let height = f32::from(params.bounds.size.height);
+            let width = f32::from(creation.bounds.size.width);
+            let height = f32::from(creation.bounds.size.height);
             layer_surface.set_size(width as u32, height as u32);
 
             layer_surface.set_anchor(super::layer_shell::wayland_anchor(options.anchor));
@@ -217,6 +349,14 @@ impl WaylandSurfaceState {
 
         if let Some(size) = params.window_min_size {
             toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
+        }
+        let WaylandCreationRole::Xdg { initial_state, .. } = creation.role else {
+            unreachable!("non-layer-shell windows must use the XDG creation role")
+        };
+        match initial_state {
+            WaylandInitialToplevelState::Windowed => {}
+            WaylandInitialToplevelState::Maximized => toplevel.set_maximized(),
+            WaylandInitialToplevelState::Fullscreen => toplevel.set_fullscreen(None),
         }
 
         // Attempt to set up window decorations based on the requested configuration
@@ -330,6 +470,7 @@ impl WaylandWindowState {
         gpu_context: open_gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
+        creation: WaylandWindowCreationProjection,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
         let renderer = {
@@ -344,10 +485,10 @@ impl WaylandWindowState {
             };
             let config = WgpuSurfaceConfig {
                 size: Size {
-                    width: DevicePixels(f32::from(options.bounds.size.width) as i32),
-                    height: DevicePixels(f32::from(options.bounds.size.height) as i32),
+                    width: DevicePixels(f32::from(creation.bounds.size.width) as i32),
+                    height: DevicePixels(f32::from(creation.bounds.size.height) as i32),
                 },
-                transparent: true,
+                transparent: creation.alpha_surface,
                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
             };
@@ -379,7 +520,7 @@ impl WaylandWindowState {
             outputs: HashMap::default(),
             display: None,
             renderer,
-            bounds: options.bounds,
+            bounds: creation.bounds,
             scale: 1.0,
             input_handler: None,
             decorations: WindowDecorations::Client,
@@ -387,7 +528,7 @@ impl WaylandWindowState {
             fullscreen: false,
             maximized: false,
             tiling: Tiling::default(),
-            window_bounds: options.bounds,
+            window_bounds: creation.restore_bounds().unwrap_or(creation.bounds),
             in_progress_configure: None,
             resize_throttle: false,
             client,
@@ -402,12 +543,17 @@ impl WaylandWindowState {
             window_controls: WindowControls::default(),
             client_inset: None,
             accesskit_adapter: None,
+            creation,
         })
     }
 
     pub fn is_transparent(&self) -> bool {
-        self.decorations == WindowDecorations::Client
-            || self.background_appearance != WindowBackgroundAppearance::Opaque
+        WaylandWindowBackgroundProjection::new(
+            self.background_appearance,
+            self.decorations,
+            self.globals.blur_manager.is_some(),
+        )
+        .renderer_transparent
     }
 
     fn update_subpixel_layout(&mut self) {
@@ -522,9 +668,16 @@ impl WaylandWindow {
         parent: Option<WaylandWindowStatePtr>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
+        let creation = WaylandWindowCreationProjection::new(params.window_bounds, &params.kind);
         let surface = globals.compositor.create_surface(&globals.qh, ());
-        let surface_state =
-            WaylandSurfaceState::new(&surface, &globals, &params, parent.clone(), target_output)?;
+        let surface_state = WaylandSurfaceState::new(
+            &surface,
+            &globals,
+            &params,
+            &creation,
+            parent.clone(),
+            target_output,
+        )?;
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -547,6 +700,7 @@ impl WaylandWindow {
                 gpu_context,
                 compositor_gpu,
                 params,
+                creation,
                 parent,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
@@ -632,6 +786,14 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    fn emit_window_state_change(&self) {
+        let callback = self.callbacks.borrow_mut().window_state_change.take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.callbacks.borrow_mut().window_state_change = Some(callback);
+        }
+    }
+
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         if let xdg_surface::Event::Configure { serial } = event {
             {
@@ -650,6 +812,8 @@ impl WaylandWindowStatePtr {
                 let mut state = self.state.borrow_mut();
 
                 if let Some(mut configure) = state.in_progress_configure.take() {
+                    let state_changed = state.fullscreen != configure.fullscreen
+                        || state.maximized != configure.maximized;
                     let got_unmaximized = state.maximized && !configure.maximized;
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
@@ -657,6 +821,10 @@ impl WaylandWindowStatePtr {
                     // Limit interactive resizes to once per vblank
                     if configure.resizing && state.resize_throttle {
                         state.surface_state.ack_configure(serial);
+                        drop(state);
+                        if state_changed {
+                            self.emit_window_state_change();
+                        }
                         return;
                     } else if configure.resizing {
                         state.resize_throttle = true;
@@ -675,6 +843,9 @@ impl WaylandWindowStatePtr {
                         }
                     }
                     drop(state);
+                    if state_changed {
+                        self.emit_window_state_change();
+                    }
                     if let Some(size) = configure.size {
                         self.resize(size);
                     }
@@ -1158,6 +1329,48 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().bounds
     }
 
+    fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
+        let state = self.borrow();
+        let window_bounds = if state.fullscreen {
+            WindowBounds::Fullscreen(state.window_bounds)
+        } else if state.maximized {
+            WindowBounds::Maximized(state.window_bounds)
+        } else {
+            WindowBounds::Windowed(state.bounds)
+        };
+        let inner_window_bounds = if state.fullscreen {
+            WindowBounds::Fullscreen(state.window_bounds)
+        } else if state.maximized {
+            WindowBounds::Maximized(state.window_bounds)
+        } else {
+            WindowBounds::Windowed(state.bounds.inset(state.inset()))
+        };
+        let display_id = state
+            .display
+            .as_ref()
+            .map(|(id, _)| open_gpui::DisplayId::from(id.protocol_id() as u64));
+
+        open_gpui::WindowPlatformFacts {
+            bounds: state.bounds,
+            coordinate_space: open_gpui::WindowCoordinateSpace::WindowLocal,
+            window_bounds,
+            inner_window_bounds,
+            content_size: state.bounds.size,
+            scale_factor: state.scale,
+            display_id,
+            is_minimized: false,
+            is_maximized: state.maximized,
+            is_fullscreen: state.fullscreen,
+            accepts_pointer_input: true,
+            focus_on_appearing: state.creation.focus_on_appearing,
+            focus_on_click: state.creation.focus_on_click,
+            background_appearance: state.background_appearance,
+            topmost: state.creation.topmost,
+            taskbar_visible: state.creation.taskbar_visible,
+            is_active: state.active,
+        }
+    }
+
     fn is_maximized(&self) -> bool {
         self.borrow().maximized
     }
@@ -1189,38 +1402,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn content_size(&self) -> Size<Pixels> {
         self.borrow().bounds.size
-    }
-
-    fn resize(&mut self, size: Size<Pixels>) {
-        let state = self.borrow();
-        let state_ptr = self.0.clone();
-
-        // Keep window geometry consistent with configure handling. On Wayland, window geometry is
-        // surface-local: resizing should not attempt to translate the window; the compositor
-        // controls placement. We also account for client-side decoration insets and tiling.
-        let window_geometry = inset_by_tiling(
-            Bounds {
-                origin: Point::default(),
-                size,
-            },
-            state.inset(),
-            state.tiling,
-        )
-        .map(|v| f32::from(v) as i32)
-        .map_size(|v| if v <= 0 { 1 } else { v });
-
-        state.surface_state.set_geometry(
-            window_geometry.origin.x,
-            window_geometry.origin.y,
-            window_geometry.size.width,
-            window_geometry.size.height,
-        );
-
-        state
-            .globals
-            .executor
-            .spawn(async move { state_ptr.resize(size) })
-            .detach();
     }
 
     fn scale_factor(&self) -> f32 {
@@ -1324,7 +1505,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut state = self.borrow_mut();
-        state.background_appearance = background_appearance;
+        let projection = WaylandWindowBackgroundProjection::new(
+            background_appearance,
+            state.decorations,
+            state.globals.blur_manager.is_some(),
+        );
+        state.background_appearance = projection.observed_appearance;
         update_window(state);
     }
 
@@ -1340,34 +1526,6 @@ impl PlatformWindow for WaylandWindow {
             .borrow()
             .as_ref()
             .is_some_and(|ctx| ctx.supports_dual_source_blending())
-    }
-
-    fn minimize(&self) {
-        if let Some(toplevel) = self.borrow().surface_state.toplevel() {
-            toplevel.set_minimized();
-        }
-    }
-
-    fn zoom(&self) {
-        let state = self.borrow();
-        if let Some(toplevel) = state.surface_state.toplevel() {
-            if !state.maximized {
-                toplevel.set_maximized();
-            } else {
-                toplevel.unset_maximized();
-            }
-        }
-    }
-
-    fn toggle_fullscreen(&self) {
-        let state = self.borrow();
-        if let Some(toplevel) = state.surface_state.toplevel() {
-            if !state.fullscreen {
-                toplevel.set_fullscreen(None);
-            } else {
-                toplevel.unset_fullscreen();
-            }
-        }
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -1396,6 +1554,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
+    }
+
+    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().window_state_change = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
@@ -1617,9 +1779,15 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {
-    let opaque = !state.is_transparent();
+    let projection = WaylandWindowBackgroundProjection::new(
+        state.background_appearance,
+        state.decorations,
+        state.globals.blur_manager.is_some(),
+    );
 
-    state.renderer.update_transparency(!opaque);
+    state
+        .renderer
+        .update_transparency(projection.renderer_transparent);
     let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
     opaque_area.inset(f32::from(state.inset()) as i32);
 
@@ -1636,9 +1804,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
 
     // Note that rounded corners make this rectangle API hard to work with.
     // As this is common when using CSD, let's just disable this API.
-    if state.background_appearance == WindowBackgroundAppearance::Opaque
-        && state.decorations == WindowDecorations::Server
-    {
+    if projection.compositor_opaque_region {
         // Promise the compositor that this region of the window surface
         // contains no transparent pixels. This allows the compositor to skip
         // updating whatever is behind the surface for better performance.
@@ -1648,7 +1814,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     }
 
     if let Some(ref blur_manager) = state.globals.blur_manager {
-        if state.background_appearance == WindowBackgroundAppearance::Blurred {
+        if projection.blur_enabled {
             if state.blur.is_none() {
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
                 state.blur = Some(blur);
@@ -1741,4 +1907,176 @@ fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) ->
     }
 
     bounds
+}
+
+#[cfg(test)]
+mod creation_projection_tests {
+    use super::*;
+    use open_gpui::{layer_shell::LayerShellOptions, point};
+
+    fn restore_bounds() -> Bounds<Pixels> {
+        Bounds::new(point(px(24.0), px(36.0)), size(px(900.0), px(640.0)))
+    }
+
+    #[test]
+    fn xdg_creation_projection_preserves_size_state_restore_and_alpha_surface() {
+        let restore_bounds = restore_bounds();
+        let local_restore_bounds = Bounds::new(Point::default(), restore_bounds.size);
+        let cases = [
+            (
+                WindowBounds::Windowed(restore_bounds),
+                WaylandInitialToplevelState::Windowed,
+            ),
+            (
+                WindowBounds::Maximized(restore_bounds),
+                WaylandInitialToplevelState::Maximized,
+            ),
+            (
+                WindowBounds::Fullscreen(restore_bounds),
+                WaylandInitialToplevelState::Fullscreen,
+            ),
+        ];
+
+        for (window_bounds, expected_state) in cases {
+            let projection =
+                WaylandWindowCreationProjection::new(window_bounds, &WindowKind::Normal);
+            assert_eq!(projection.bounds, local_restore_bounds);
+            assert_eq!(projection.restore_bounds(), Some(local_restore_bounds));
+            assert_eq!(
+                projection.role,
+                WaylandCreationRole::Xdg {
+                    initial_state: expected_state,
+                    restore_bounds: local_restore_bounds,
+                }
+            );
+            assert!(projection.alpha_surface);
+            assert!(projection.focus_on_appearing);
+            assert!(projection.focus_on_click);
+            assert!(!projection.topmost);
+            assert!(projection.taskbar_visible);
+        }
+
+        let dialog = WaylandWindowCreationProjection::new(
+            WindowBounds::Maximized(restore_bounds),
+            &WindowKind::Dialog,
+        );
+        assert!(!dialog.topmost);
+        assert!(!dialog.taskbar_visible);
+    }
+
+    #[test]
+    fn layer_shell_projection_uses_size_and_alpha_without_xdg_state_or_restore() {
+        let restore_bounds = restore_bounds();
+        let projection = WaylandWindowCreationProjection::new(
+            WindowBounds::Fullscreen(restore_bounds),
+            &WindowKind::LayerShell(LayerShellOptions::default()),
+        );
+
+        assert_eq!(
+            projection.bounds,
+            Bounds::new(Point::default(), restore_bounds.size)
+        );
+        assert_eq!(projection.role, WaylandCreationRole::LayerShell);
+        assert_eq!(projection.restore_bounds(), None);
+        assert!(projection.alpha_surface);
+        assert!(!projection.focus_on_appearing);
+        assert!(projection.focus_on_click);
+        assert!(projection.topmost);
+        assert!(!projection.taskbar_visible);
+
+        let mut background_options = LayerShellOptions::default();
+        background_options.layer = open_gpui::layer_shell::Layer::Background;
+        background_options.keyboard_interactivity =
+            open_gpui::layer_shell::KeyboardInteractivity::None;
+        let background = WaylandWindowCreationProjection::new(
+            WindowBounds::Windowed(restore_bounds),
+            &WindowKind::LayerShell(background_options),
+        );
+        assert!(!background.focus_on_appearing);
+        assert!(!background.focus_on_click);
+        assert!(!background.topmost);
+        assert!(!background.taskbar_visible);
+
+        let mut exclusive_options = LayerShellOptions::default();
+        exclusive_options.keyboard_interactivity =
+            open_gpui::layer_shell::KeyboardInteractivity::Exclusive;
+        let exclusive = WaylandWindowCreationProjection::new(
+            WindowBounds::Windowed(restore_bounds),
+            &WindowKind::LayerShell(exclusive_options),
+        );
+        assert!(exclusive.focus_on_appearing);
+        assert!(exclusive.focus_on_click);
+    }
+
+    #[test]
+    fn background_projection_matches_renderer_region_and_blur_creation_inputs() {
+        let opaque = WaylandWindowBackgroundProjection::new(
+            WindowBackgroundAppearance::Opaque,
+            WindowDecorations::Server,
+            true,
+        );
+        assert_eq!(
+            opaque.observed_appearance,
+            WindowBackgroundAppearance::Opaque
+        );
+        assert!(!opaque.renderer_transparent);
+        assert!(opaque.compositor_opaque_region);
+        assert!(!opaque.blur_enabled);
+
+        let client_decorated = WaylandWindowBackgroundProjection::new(
+            WindowBackgroundAppearance::Opaque,
+            WindowDecorations::Client,
+            true,
+        );
+        assert!(client_decorated.renderer_transparent);
+        assert!(!client_decorated.compositor_opaque_region);
+
+        let transparent = WaylandWindowBackgroundProjection::new(
+            WindowBackgroundAppearance::Transparent,
+            WindowDecorations::Server,
+            true,
+        );
+        assert!(transparent.renderer_transparent);
+        assert!(!transparent.compositor_opaque_region);
+        assert!(!transparent.blur_enabled);
+
+        let blurred = WaylandWindowBackgroundProjection::new(
+            WindowBackgroundAppearance::Blurred,
+            WindowDecorations::Server,
+            true,
+        );
+        assert_eq!(
+            blurred.observed_appearance,
+            WindowBackgroundAppearance::Blurred
+        );
+        assert!(blurred.renderer_transparent);
+        assert!(!blurred.compositor_opaque_region);
+        assert!(blurred.blur_enabled);
+
+        let blur_adjusted = WaylandWindowBackgroundProjection::new(
+            WindowBackgroundAppearance::Blurred,
+            WindowDecorations::Server,
+            false,
+        );
+        assert_eq!(
+            blur_adjusted.observed_appearance,
+            WindowBackgroundAppearance::Transparent
+        );
+        assert!(blur_adjusted.renderer_transparent);
+        assert!(!blur_adjusted.blur_enabled);
+
+        for requested in [
+            WindowBackgroundAppearance::MicaBackdrop,
+            WindowBackgroundAppearance::MicaAltBackdrop,
+        ] {
+            let adjusted =
+                WaylandWindowBackgroundProjection::new(requested, WindowDecorations::Server, true);
+            assert_eq!(
+                adjusted.observed_appearance,
+                WindowBackgroundAppearance::Transparent
+            );
+            assert!(adjusted.renderer_transparent);
+            assert!(!adjusted.blur_enabled);
+        }
+    }
 }

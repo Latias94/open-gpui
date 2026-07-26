@@ -52,6 +52,7 @@ mod text_system;
 mod util;
 mod view;
 mod window;
+mod window_platform_mutation;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use proptest;
@@ -150,6 +151,7 @@ pub use text_system::*;
 pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
+pub use window_platform_mutation::*;
 
 pub use pollster::block_on;
 

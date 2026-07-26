@@ -661,6 +661,10 @@ impl WindowsWindowInner {
             self.state
                 .restore_from_minimized
                 .set(self.state.callbacks.request_frame.take());
+            if let Some(mut callback) = self.state.callbacks.window_state_change.take() {
+                callback();
+                self.state.callbacks.window_state_change.set(Some(callback));
+            }
             return Some(0);
         }
 

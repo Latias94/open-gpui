@@ -9,13 +9,14 @@ use crate::{
     DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportPlatformFocusRestoreGate, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropRouteOutcome, DockViewportRestoreReadiness,
-    DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeStatus,
-    DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockVisualAffordanceDebugSummary, apply_viewport_window_effects,
-    close_window_quietly,
+    DockViewportPlatformFocusRestoreGate, DockViewportPlatformSyncDispatch,
+    DockViewportPlatformSyncRejectedReason, DockViewportPlatformSyncRequest,
+    DockViewportResolvedDropRoute, DockViewportResolvedDropRouteOutcome,
+    DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntime,
+    DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
+    DockViewportTearOffRequest, DockViewportWindowFacts, DockVisualAffordanceDebugSummary,
+    apply_viewport_window_effects, close_window_quietly,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -28,8 +29,9 @@ use crate::{
         DockViewportHostSceneSnapshot,
     },
     viewport_platform_sync::{
-        sync_render_passthrough_pointer_input as sync_render_passthrough_pointer_input_for_runtime,
-        sync_reused_viewport_window, unavailable_reused_viewport_window_sync,
+        DockViewportPlatformSyncDispatchResult, resolve_render_passthrough_pointer_input_request,
+        sync_pointer_input_window, sync_reused_viewport_window_with_request_gate,
+        unavailable_reused_viewport_window_sync,
     },
     viewport_runtime::{DockViewportPreparedTearOffBegin, DockViewportPreparedTearOffDrop},
     viewport_window_lifecycle::DockViewportReusableWindow,
@@ -44,12 +46,14 @@ use crate::{
 use open_gpui::WindowBounds;
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels, Point, Result,
-    Subscription, WeakEntity, Window, WindowId, WindowOptions,
+    Subscription, WeakEntity, Window, WindowId, WindowMutationDomain, WindowMutationRequest,
+    WindowOptions, WindowPlacementRequest, WindowPlatformFacts,
 };
 #[cfg(test)]
 use std::cell::{Ref, RefMut};
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     rc::Rc,
 };
 
@@ -66,9 +70,97 @@ mod scene_ops;
 pub struct DockViewportRuntimeHandle {
     runtime: Rc<RefCell<DockViewportRuntime>>,
     window_closed_observer_installed: Rc<Cell<bool>>,
+    platform_mutation_observation_subscriptions:
+        Rc<RefCell<HashMap<DockViewportPlatformMutationSubscriptionKey, Subscription>>>,
+    pending_platform_mutations:
+        Rc<RefCell<HashMap<DockViewportPlatformMutationKey, DockViewportPendingPlatformMutation>>>,
+    terminal_platform_mutations:
+        Rc<RefCell<HashMap<DockViewportPlatformMutationKey, DockViewportTerminalPlatformMutation>>>,
     surface_commit_sink: DockViewportRuntimeCommitSink,
     active_surface_transaction: Rc<Cell<Option<DockSurfaceTransactionId>>>,
     surface_owner: Rc<RefCell<Option<WeakEntity<DockSurfaceOwner>>>>,
+}
+
+type DockViewportPlatformMutationKey = (WindowId, WindowMutationDomain);
+type DockViewportPlatformMutationSubscriptionKey = (WindowId, WindowMutationDomain, u64);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DockViewportPendingPlatformMutation {
+    generation: u64,
+    request: WindowMutationRequest,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct DockViewportTerminalPlatformMutation {
+    request: WindowMutationRequest,
+    facts: WindowPlatformFacts,
+}
+
+fn immediate_terminal_window_mutation(
+    dispatch: &DockViewportPlatformSyncDispatch,
+) -> Option<WindowMutationRequest> {
+    let request = match dispatch {
+        DockViewportPlatformSyncDispatch::Unsupported(unsupported) => &unsupported.request,
+        DockViewportPlatformSyncDispatch::Rejected(rejected)
+            if rejected.reason == DockViewportPlatformSyncRejectedReason::RejectedByWindowApi =>
+        {
+            &rejected.request
+        }
+        DockViewportPlatformSyncDispatch::Rejected(_) => return None,
+        DockViewportPlatformSyncDispatch::WindowClosed { request } => request,
+        DockViewportPlatformSyncDispatch::Immediate { .. }
+        | DockViewportPlatformSyncDispatch::Queued { .. }
+        | DockViewportPlatformSyncDispatch::Unchanged { .. } => return None,
+    };
+    match request {
+        DockViewportPlatformSyncRequest::PointerInput { requested } => {
+            Some(WindowMutationRequest::PointerInput(*requested))
+        }
+        DockViewportPlatformSyncRequest::Placement { requested } => {
+            Some(WindowMutationRequest::Placement(
+                WindowPlacementRequest::from_window_bounds(*requested),
+            ))
+        }
+        DockViewportPlatformSyncRequest::BackgroundAppearance { requested } => {
+            Some(WindowMutationRequest::Alpha(*requested))
+        }
+        _ => None,
+    }
+}
+
+fn relevant_window_mutation_facts_match(
+    request: WindowMutationRequest,
+    previous: &WindowPlatformFacts,
+    current: &WindowPlatformFacts,
+) -> bool {
+    match request {
+        WindowMutationRequest::PointerInput(_) => {
+            previous.accepts_pointer_input == current.accepts_pointer_input
+        }
+        WindowMutationRequest::Placement(_) => {
+            previous.bounds == current.bounds
+                && previous.coordinate_space == current.coordinate_space
+                && previous.window_bounds == current.window_bounds
+                && previous.inner_window_bounds == current.inner_window_bounds
+                && previous.content_size == current.content_size
+                && previous.scale_factor == current.scale_factor
+                && previous.display_id == current.display_id
+                && previous.is_minimized == current.is_minimized
+                && previous.is_maximized == current.is_maximized
+                && previous.is_fullscreen == current.is_fullscreen
+        }
+        WindowMutationRequest::FocusOnAppearing(_) => {
+            previous.focus_on_appearing == current.focus_on_appearing
+        }
+        WindowMutationRequest::FocusOnClick(_) => previous.focus_on_click == current.focus_on_click,
+        WindowMutationRequest::Alpha(_) => {
+            previous.background_appearance == current.background_appearance
+        }
+        WindowMutationRequest::Topmost(_) => previous.topmost == current.topmost,
+        WindowMutationRequest::TaskbarVisibility(_) => {
+            previous.taskbar_visible == current.taskbar_visible
+        }
+    }
 }
 
 type DockViewportRuntimeCommitCallback =
@@ -325,6 +417,9 @@ impl DockViewportRuntimeHandle {
         Self {
             runtime: Rc::new(RefCell::new(runtime)),
             window_closed_observer_installed: Rc::new(Cell::new(false)),
+            platform_mutation_observation_subscriptions: Rc::new(RefCell::new(HashMap::new())),
+            pending_platform_mutations: Rc::new(RefCell::new(HashMap::new())),
+            terminal_platform_mutations: Rc::new(RefCell::new(HashMap::new())),
             surface_commit_sink: DockViewportRuntimeCommitSink::default(),
             active_surface_transaction: Rc::new(Cell::new(None)),
             surface_owner: Rc::new(RefCell::new(None)),
@@ -421,6 +516,174 @@ impl DockViewportRuntimeHandle {
     /// Returns the latest read-only runtime diagnostic snapshot.
     pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.runtime.borrow().runtime_status()
+    }
+
+    /// Returns runtime diagnostics enriched with the active backend and each viewport's actual
+    /// window-kind mutation profile.
+    pub fn runtime_status_for_app(&self, cx: &App) -> DockViewportRuntimeStatus {
+        let status = self
+            .runtime_status()
+            .with_platform_capabilities(cx.viewport_capabilities());
+        let capabilities = {
+            let runtime = self.runtime.borrow();
+            status
+                .viewport_lifecycle
+                .iter()
+                .filter_map(|record| {
+                    let window = runtime.adapter().window_for_space(&record.space)?;
+                    let profile = cx.window_mutation_profile(window)?;
+                    Some(
+                        crate::DockViewportWindowMutationCapabilityRecord::from_profile(
+                            record.space.clone(),
+                            record.window_id,
+                            profile,
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        status.with_window_mutation_capabilities(capabilities)
+    }
+
+    fn record_platform_dispatch_result(
+        &self,
+        result: DockViewportPlatformSyncDispatchResult,
+        facts: &WindowPlatformFacts,
+    ) {
+        let (record, tickets) = result.into_parts();
+        let window_id = record.window_id;
+        let immediate_terminals = record
+            .dispatches
+            .iter()
+            .filter_map(immediate_terminal_window_mutation)
+            .collect::<Vec<_>>();
+        self.runtime.borrow_mut().record_platform_dispatch(record);
+        for request in immediate_terminals {
+            self.terminal_platform_mutations.borrow_mut().insert(
+                (window_id, request.domain()),
+                DockViewportTerminalPlatformMutation {
+                    request,
+                    facts: facts.clone(),
+                },
+            );
+        }
+        for ticket in tickets {
+            self.observe_platform_mutation_ticket(window_id, ticket);
+        }
+    }
+
+    fn observe_platform_mutation_ticket(
+        &self,
+        window_id: WindowId,
+        ticket: open_gpui::WindowMutationTicket,
+    ) {
+        let domain = ticket.domain();
+        let generation = ticket.generation();
+        let request = ticket.request();
+        let mutation_key = (window_id, domain);
+        let subscription_key = (window_id, domain, generation);
+        self.terminal_platform_mutations
+            .borrow_mut()
+            .remove(&mutation_key);
+        self.pending_platform_mutations.borrow_mut().insert(
+            mutation_key,
+            DockViewportPendingPlatformMutation {
+                generation,
+                request,
+            },
+        );
+
+        let runtime = Rc::downgrade(&self.runtime);
+        let pending_platform_mutations = self.pending_platform_mutations.clone();
+        let terminal_platform_mutations = self.terminal_platform_mutations.clone();
+        let platform_mutation_observation_subscriptions =
+            self.platform_mutation_observation_subscriptions.clone();
+        let subscription = ticket.subscribe(move |observation| {
+            let remove_pending = pending_platform_mutations
+                .borrow()
+                .get(&mutation_key)
+                .is_some_and(|pending| pending.generation == generation);
+            if remove_pending {
+                pending_platform_mutations
+                    .borrow_mut()
+                    .remove(&mutation_key);
+                if matches!(
+                    observation.outcome,
+                    open_gpui::WindowMutationOutcome::Exact
+                        | open_gpui::WindowMutationOutcome::Superseded
+                ) {
+                    terminal_platform_mutations
+                        .borrow_mut()
+                        .remove(&mutation_key);
+                } else {
+                    terminal_platform_mutations.borrow_mut().insert(
+                        mutation_key,
+                        DockViewportTerminalPlatformMutation {
+                            request: observation.request,
+                            facts: observation.facts.clone(),
+                        },
+                    );
+                }
+            }
+            platform_mutation_observation_subscriptions
+                .borrow_mut()
+                .remove(&subscription_key);
+            let Some(runtime) = runtime.upgrade() else {
+                return;
+            };
+            runtime
+                .borrow_mut()
+                .record_platform_observation(window_id, observation.into());
+        });
+        if ticket.observation().is_none() {
+            self.platform_mutation_observation_subscriptions
+                .borrow_mut()
+                .insert(subscription_key, subscription);
+        }
+    }
+
+    fn pending_platform_mutation_request(
+        &self,
+        window_id: WindowId,
+        domain: WindowMutationDomain,
+    ) -> Option<WindowMutationRequest> {
+        self.pending_platform_mutations
+            .borrow()
+            .get(&(window_id, domain))
+            .map(|pending| pending.request)
+    }
+
+    fn platform_mutation_retry_is_blocked(
+        &self,
+        window_id: WindowId,
+        request: WindowMutationRequest,
+        facts: &WindowPlatformFacts,
+    ) -> bool {
+        let key = (window_id, request.domain());
+        let blocked = self
+            .terminal_platform_mutations
+            .borrow()
+            .get(&key)
+            .is_some_and(|terminal| {
+                terminal.request == request
+                    && relevant_window_mutation_facts_match(request, &terminal.facts, facts)
+            });
+        if !blocked {
+            self.terminal_platform_mutations.borrow_mut().remove(&key);
+        }
+        blocked
+    }
+
+    fn clear_platform_mutation_observation_subscriptions(&self, window_id: WindowId) {
+        self.platform_mutation_observation_subscriptions
+            .borrow_mut()
+            .retain(|(observed_window_id, _, _), _| *observed_window_id != window_id);
+        self.pending_platform_mutations
+            .borrow_mut()
+            .retain(|(pending_window_id, _), _| *pending_window_id != window_id);
+        self.terminal_platform_mutations
+            .borrow_mut()
+            .retain(|(terminal_window_id, _), _| *terminal_window_id != window_id);
     }
 
     pub(crate) fn record_visual_affordance_status(
@@ -842,31 +1105,51 @@ impl DockViewportRuntimeHandle {
         let (reusable, reusable_effects) = reusable_outcome.into_parts();
         let status = match reusable {
             DockViewportReusableWindow::Reused(window) => {
+                let existing_kind = match cx.window_mutation_profile(window) {
+                    Some(profile) => profile.kind.clone(),
+                    None => {
+                        self.runtime.borrow_mut().record_platform_dispatch(
+                            unavailable_reused_viewport_window_sync(window.window_id()),
+                        );
+                        return Err(std::io::Error::other(
+                            "reused viewport window has no registered mutation profile",
+                        )
+                        .into());
+                    }
+                };
                 if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
-                    self.runtime.borrow_mut().record_platform_sync(
+                    self.runtime.borrow_mut().record_platform_dispatch(
                         unavailable_reused_viewport_window_sync(window.window_id()),
                     );
                     return Err(error);
                 }
                 let platform_requests = self.runtime.borrow().platform_requests_for_space(&space);
-                let sync_record = match window.update(cx, |_, window, cx| {
-                    sync_reused_viewport_window(
+                let runtime = self.clone();
+                let window_id = window.window_id();
+                let (sync_result, platform_facts) = match window.update(cx, |_, window, _| {
+                    let sync_result = sync_reused_viewport_window_with_request_gate(
                         window,
+                        &existing_kind,
                         options,
                         platform_requests,
-                        cx.viewport_capabilities(),
-                        cx.viewport_flag_capabilities(),
-                    )
+                        |request, facts| {
+                            runtime.pending_platform_mutation_request(window_id, request.domain())
+                                != Some(request)
+                                && !runtime
+                                    .platform_mutation_retry_is_blocked(window_id, request, facts)
+                        },
+                    );
+                    (sync_result, window.platform_facts().clone())
                 }) {
-                    Ok(sync_record) => sync_record,
+                    Ok(sync_result) => sync_result,
                     Err(error) => {
-                        self.runtime.borrow_mut().record_platform_sync(
+                        self.runtime.borrow_mut().record_platform_dispatch(
                             unavailable_reused_viewport_window_sync(window.window_id()),
                         );
                         return Err(error);
                     }
                 };
-                self.runtime.borrow_mut().record_platform_sync(sync_record);
+                self.record_platform_dispatch_result(sync_result, &platform_facts);
                 self.reconcile_viewport_frame(cx);
                 refresh_windows(vec![window], cx);
                 return Ok(DockViewportOpenOutcome::new(
@@ -1123,5 +1406,56 @@ impl DockViewportRuntimeHandle {
         placement: &DockViewportPlacementLayout,
     ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
         self.runtime.borrow_mut().check_placement_restore(placement)
+    }
+}
+
+#[cfg(test)]
+mod window_mutation_retry_tests {
+    use super::relevant_window_mutation_facts_match;
+    use open_gpui::{
+        Bounds, WindowBackgroundAppearance, WindowBounds, WindowCoordinateSpace,
+        WindowMutationRequest, WindowPlacementRequest, WindowPlatformFacts, point, px, size,
+    };
+
+    fn facts() -> WindowPlatformFacts {
+        let bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(300.0), px(200.0)));
+        WindowPlatformFacts {
+            bounds,
+            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            window_bounds: WindowBounds::Windowed(bounds),
+            inner_window_bounds: WindowBounds::Windowed(bounds),
+            content_size: bounds.size,
+            scale_factor: 1.0,
+            display_id: None,
+            is_minimized: false,
+            is_maximized: false,
+            is_fullscreen: false,
+            accepts_pointer_input: true,
+            focus_on_appearing: true,
+            focus_on_click: true,
+            background_appearance: WindowBackgroundAppearance::Opaque,
+            topmost: false,
+            taskbar_visible: true,
+            is_active: true,
+        }
+    }
+
+    #[test]
+    fn placement_retry_fingerprint_ignores_unrelated_active_and_pointer_facts() {
+        let request =
+            WindowMutationRequest::Placement(WindowPlacementRequest::windowed(facts().bounds));
+        let previous = facts();
+        let mut current = previous.clone();
+        current.is_active = false;
+        current.accepts_pointer_input = false;
+
+        assert!(relevant_window_mutation_facts_match(
+            request, &previous, &current
+        ));
+
+        current.scale_factor = 1.5;
+        assert!(!relevant_window_mutation_facts_match(
+            request, &previous, &current
+        ));
     }
 }

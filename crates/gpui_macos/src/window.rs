@@ -393,6 +393,22 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(windowDidEnterFullScreen:),
+            window_state_did_change as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidExitFullScreen:),
+            window_state_did_change as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidMiniaturize:),
+            window_state_did_change as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidDeminiaturize:),
+            window_state_did_change as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(windowDidMove:),
             window_did_move as extern "C" fn(&Object, Sel, id),
         );
@@ -470,6 +486,99 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacWindowCreationState {
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacWindowCreationProjection {
+    bounds: Bounds<Pixels>,
+    state: MacWindowCreationState,
+    restore_bounds: Bounds<Pixels>,
+    accepts_pointer_input: bool,
+    focus_on_appearing: bool,
+    focus_on_click: bool,
+    topmost: bool,
+    taskbar_visible: bool,
+}
+
+impl MacWindowCreationProjection {
+    fn new(
+        window_bounds: WindowBounds,
+        kind: &WindowKind,
+        accepts_pointer_input: bool,
+        focus_on_appearing: bool,
+    ) -> Self {
+        let state = if macos_supports_toplevel_creation_state(kind) {
+            match window_bounds {
+                WindowBounds::Windowed(_) => MacWindowCreationState::Windowed,
+                WindowBounds::Maximized(_) => MacWindowCreationState::Maximized,
+                WindowBounds::Fullscreen(_) => MacWindowCreationState::Fullscreen,
+            }
+        } else {
+            MacWindowCreationState::Windowed
+        };
+
+        Self {
+            bounds: window_bounds.get_bounds(),
+            state,
+            restore_bounds: window_bounds.get_bounds(),
+            accepts_pointer_input,
+            focus_on_appearing: match kind {
+                WindowKind::PopUp => false,
+                _ => focus_on_appearing,
+            },
+            focus_on_click: !matches!(kind, WindowKind::PopUp),
+            topmost: matches!(kind, WindowKind::PopUp | WindowKind::Floating),
+            taskbar_visible: matches!(kind, WindowKind::Normal),
+        }
+    }
+
+    fn observed_focus_on_appearing(self, attached_as_sheet: bool) -> bool {
+        attached_as_sheet || self.focus_on_appearing
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacWindowBackgroundProjection {
+    appearance: WindowBackgroundAppearance,
+    native_opaque: bool,
+    renderer_transparent: bool,
+    background_alpha: f64,
+    blur_enabled: bool,
+}
+
+impl MacWindowBackgroundProjection {
+    fn new(requested: WindowBackgroundAppearance) -> Self {
+        let appearance = match requested {
+            WindowBackgroundAppearance::MicaBackdrop
+            | WindowBackgroundAppearance::MicaAltBackdrop => {
+                WindowBackgroundAppearance::Transparent
+            }
+            appearance => appearance,
+        };
+        let native_opaque = appearance == WindowBackgroundAppearance::Opaque;
+        Self {
+            appearance,
+            native_opaque,
+            renderer_transparent: !native_opaque,
+            background_alpha: if native_opaque { 1.0 } else { 0.0001 },
+            blur_enabled: appearance == WindowBackgroundAppearance::Blurred,
+        }
+    }
+}
+
+pub(crate) fn macos_supports_toplevel_creation_state(kind: &WindowKind) -> bool {
+    matches!(kind, WindowKind::Normal | WindowKind::Floating)
+}
+
+pub(crate) fn macos_supports_focus_on_appearing(kind: &WindowKind) -> bool {
+    matches!(kind, WindowKind::Normal | WindowKind::Floating)
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     foreground_executor: ForegroundExecutor,
@@ -487,6 +596,7 @@ struct MacWindowState {
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
+    window_state_change_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
@@ -496,13 +606,19 @@ struct MacWindowState {
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
     accepts_pointer_input: bool,
+    focus_on_appearing: bool,
+    focus_on_click: bool,
+    topmost: bool,
+    taskbar_visible: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
+    windowed_restore_bounds: Bounds<Pixels>,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    pending_fullscreen_restore_bounds: Option<Bounds<Pixels>>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
@@ -529,6 +645,7 @@ impl MacWindowState {
         self.activate_callback = None;
         self.resize_callback = None;
         self.moved_callback = None;
+        self.window_state_change_callback = None;
         self.should_close_callback = None;
         self.appearance_changed_callback = None;
         self.input_handler.take();
@@ -745,8 +862,16 @@ impl MacWindowState {
     fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else if self.is_maximized() {
+            WindowBounds::Maximized(self.windowed_restore_bounds)
         } else {
             WindowBounds::Windowed(self.bounds())
+        }
+    }
+
+    fn record_windowed_restore_bounds(&mut self) {
+        if !self.is_fullscreen() && !self.is_maximized() {
+            self.windowed_restore_bounds = self.bounds();
         }
     }
 }
@@ -759,7 +884,7 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         WindowParams {
-            bounds,
+            window_bounds,
             titlebar,
             kind,
             is_movable,
@@ -779,6 +904,13 @@ impl MacWindow {
         renderer_context: renderer::Context,
     ) -> Self {
         unsafe {
+            let creation = MacWindowCreationProjection::new(
+                window_bounds,
+                &kind,
+                accepts_pointer_input,
+                focus,
+            );
+            let bounds = creation.bounds;
             let pool = NSAutoreleasePool::new(nil);
 
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
@@ -910,6 +1042,7 @@ impl MacWindow {
                 activate_callback: None,
                 resize_callback: None,
                 moved_callback: None,
+                window_state_change_callback: None,
                 should_close_callback: None,
                 close_callback: None,
                 appearance_changed_callback: None,
@@ -927,7 +1060,13 @@ impl MacWindow {
                 do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
-                fullscreen_restore_bounds: Bounds::default(),
+                windowed_restore_bounds: creation.restore_bounds,
+                fullscreen_restore_bounds: creation.restore_bounds,
+                pending_fullscreen_restore_bounds: matches!(
+                    creation.state,
+                    MacWindowCreationState::Fullscreen
+                )
+                .then_some(creation.restore_bounds),
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
                 select_next_tab_callback: None,
@@ -937,7 +1076,11 @@ impl MacWindow {
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
                 sheet_parent: None,
-                accepts_pointer_input,
+                accepts_pointer_input: creation.accepts_pointer_input,
+                focus_on_appearing: creation.focus_on_appearing,
+                focus_on_click: creation.focus_on_click,
+                topmost: creation.topmost,
+                taskbar_visible: creation.taskbar_visible,
             })));
 
             (*native_window).set_ivar(
@@ -958,7 +1101,10 @@ impl MacWindow {
             }
 
             native_window.setMovable_(is_movable as BOOL);
-            let _: () = msg_send![native_window, setIgnoresMouseEvents: !accepts_pointer_input];
+            let _: () = msg_send![
+                native_window,
+                setIgnoresMouseEvents: !creation.accepts_pointer_input
+            ];
 
             if let Some(window_min_size) = window_min_size {
                 native_window.setContentMinSize_(NSSize {
@@ -988,6 +1134,13 @@ impl MacWindow {
 
             content_view.addSubview_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
+
+            // Reapply the requested normal frame before entering a non-windowed state. AppKit
+            // otherwise derives the restore frame from whichever screen happened to be active.
+            NSWindow::setFrameTopLeftPoint_(native_window, frame_top_left);
+            if matches!(creation.state, MacWindowCreationState::Maximized) {
+                native_window.zoom_(nil);
+            }
 
             let app: id = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
@@ -1082,21 +1235,21 @@ impl MacWindow {
                 }
             }
 
-            if focus && show {
+            if creation.focus_on_appearing && show {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if show {
                 native_window.orderFront_(nil);
             }
 
-            // Set the initial position of the window to the specified origin.
-            // Although we already specified the position using `initWithContentRect_styleMask_backing_defer_screen_`,
-            // the window position might be incorrect if the main screen (the screen that contains the window that has focus)
-            //  is different from the primary screen.
-            NSWindow::setFrameTopLeftPoint_(native_window, frame_top_left);
+            if matches!(creation.state, MacWindowCreationState::Fullscreen) {
+                native_window.toggleFullScreen_(nil);
+            }
             {
                 let mut window_state = window.0.lock();
                 window_state.move_traffic_light();
                 window_state.sheet_parent = sheet_parent;
+                window_state.focus_on_appearing =
+                    creation.observed_focus_on_appearing(sheet_parent.is_some());
             }
 
             pool.drain();
@@ -1259,39 +1412,31 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().accepts_pointer_input
     }
 
-    fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
-        let mut this = self.0.as_ref().lock();
-        if this.accepts_pointer_input == accepts_pointer_input {
-            return true;
+    fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
+        let window_bounds = self.window_bounds();
+        open_gpui::WindowPlatformFacts {
+            bounds: self.bounds(),
+            coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
+            window_bounds,
+            inner_window_bounds: window_bounds,
+            content_size: self.content_size(),
+            scale_factor: self.scale_factor(),
+            display_id: self.display().map(|display| display.id()),
+            is_minimized: self.is_minimized(),
+            is_maximized: self.is_maximized(),
+            is_fullscreen: self.is_fullscreen(),
+            accepts_pointer_input: self.accepts_pointer_input(),
+            focus_on_appearing: self.0.as_ref().lock().focus_on_appearing,
+            focus_on_click: self.0.as_ref().lock().focus_on_click,
+            background_appearance: self.background_appearance(),
+            topmost: self.0.as_ref().lock().topmost,
+            taskbar_visible: self.0.as_ref().lock().taskbar_visible,
+            is_active: self.is_active(),
         }
-        this.accepts_pointer_input = accepts_pointer_input;
-        unsafe {
-            let _: () = msg_send![
-                this.native_window,
-                setIgnoresMouseEvents: !accepts_pointer_input
-            ];
-        }
-        true
     }
 
     fn content_size(&self) -> Size<Pixels> {
         self.0.as_ref().lock().content_size()
-    }
-
-    fn resize(&mut self, size: Size<Pixels>) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        let closed = this.closed.clone();
-        this.foreground_executor
-            .spawn(async move {
-                if_window_not_closed(closed, || unsafe {
-                    window.setContentSize_(NSSize {
-                        width: size.width.as_f32() as f64,
-                        height: size.height.as_f32() as f64,
-                    });
-                })
-            })
-            .detach();
     }
 
     fn merge_all_windows(&self) {
@@ -1572,31 +1717,31 @@ impl PlatformWindow for MacWindow {
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+        let projection = MacWindowBackgroundProjection::new(background_appearance);
         let mut this = self.0.as_ref().lock();
-        this.background_appearance = background_appearance;
+        this.background_appearance = projection.appearance;
 
-        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
-        this.renderer.update_transparency(!opaque);
+        this.renderer
+            .update_transparency(projection.renderer_transparent);
 
         unsafe {
-            this.native_window.setOpaque_(opaque as BOOL);
-            let background_color = if opaque {
-                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
-            } else {
-                // Not using `+[NSColor clearColor]` to avoid broken shadow.
-                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 0.0001)
-            };
+            this.native_window
+                .setOpaque_(projection.native_opaque as BOOL);
+            // Not using `+[NSColor clearColor]` to avoid broken shadow.
+            let background_color = NSColor::colorWithSRGBRed_green_blue_alpha_(
+                nil,
+                0f64,
+                0f64,
+                0f64,
+                projection.background_alpha,
+            );
             this.native_window.setBackgroundColor_(background_color);
 
             if NSAppKitVersionNumber < NSAppKitVersionNumber12_0 {
                 // Whether `-[NSVisualEffectView respondsToSelector:@selector(_updateProxyLayer)]`.
                 // On macOS Catalina/Big Sur `NSVisualEffectView` doesn’t own concrete sublayers
                 // but uses a `CAProxyLayer`. Use the legacy WindowServer API.
-                let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
-                    80
-                } else {
-                    0
-                };
+                let blur_radius = if projection.blur_enabled { 80 } else { 0 };
 
                 let window_number = this.native_window.windowNumber();
                 CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
@@ -1604,7 +1749,7 @@ impl PlatformWindow for MacWindow {
                 // On newer macOS `NSVisualEffectView` manages the effect layer directly. Using it
                 // could have a better performance (it downsamples the backdrop) and more control
                 // over the effect layer.
-                if background_appearance != WindowBackgroundAppearance::Blurred {
+                if !projection.blur_enabled {
                     if let Some(blur_view) = this.blurred_view {
                         NSView::removeFromSuperview(blur_view);
                         this.blurred_view = None;
@@ -1672,39 +1817,6 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn minimize(&self) {
-        let window = self.0.lock().native_window;
-        unsafe {
-            window.miniaturize_(nil);
-        }
-    }
-
-    fn zoom(&self) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        let closed = this.closed.clone();
-        this.foreground_executor
-            .spawn(async move {
-                if_window_not_closed(closed, || unsafe {
-                    window.zoom_(nil);
-                })
-            })
-            .detach();
-    }
-
-    fn toggle_fullscreen(&self) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        let closed = this.closed.clone();
-        this.foreground_executor
-            .spawn(async move {
-                if_window_not_closed(closed, || unsafe {
-                    window.toggleFullScreen_(nil);
-                })
-            })
-            .detach();
-    }
-
     fn is_fullscreen(&self) -> bool {
         let this = self.0.lock();
         let window = this.native_window;
@@ -1750,6 +1862,13 @@ impl PlatformWindow for MacWindow {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
             lock.moved_callback = Some(callback);
+        }
+    }
+
+    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.window_state_change_callback = Some(callback);
         }
     }
 
@@ -2523,8 +2642,9 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    let mut lock = window_state.as_ref().lock();
     if !lock.is_closed() {
+        lock.record_windowed_restore_bounds();
         lock.move_traffic_light();
     }
 }
@@ -2532,7 +2652,10 @@ extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    lock.fullscreen_restore_bounds = lock.bounds();
+    lock.fullscreen_restore_bounds = lock
+        .pending_fullscreen_restore_bounds
+        .take()
+        .unwrap_or_else(|| lock.bounds());
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
@@ -2556,6 +2679,22 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     }
 }
 
+extern "C" fn window_state_did_change(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
+    if let Some(mut callback) = lock.window_state_change_callback.take() {
+        drop(lock);
+        callback();
+        let mut lock = window_state.lock();
+        if !lock.is_closed() {
+            lock.window_state_change_callback = Some(callback);
+        }
+    }
+}
+
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
     unsafe { NSProcessInfo::processInfo(nil).isOperatingSystemAtLeastVersion(version) }
 }
@@ -2566,6 +2705,7 @@ extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     if lock.is_closed() {
         return;
     }
+    lock.record_windowed_restore_bounds();
     if let Some(mut callback) = lock.moved_callback.take() {
         drop(lock);
         callback();
@@ -3372,6 +3512,124 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
             if !lock.is_closed() {
                 lock.toggle_tab_bar_callback = Some(callback);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod creation_projection_tests {
+    use super::*;
+
+    fn restore_bounds() -> Bounds<Pixels> {
+        Bounds::new(point(px(120.0), px(80.0)), size(px(1024.0), px(768.0)))
+    }
+
+    #[test]
+    fn creation_projection_preserves_bounds_state_restore_pointer_and_focus() {
+        let restore_bounds = restore_bounds();
+
+        let windowed = MacWindowCreationProjection::new(
+            WindowBounds::Windowed(restore_bounds),
+            &WindowKind::Normal,
+            true,
+            true,
+        );
+        assert_eq!(windowed.bounds, restore_bounds);
+        assert_eq!(windowed.state, MacWindowCreationState::Windowed);
+        assert_eq!(windowed.restore_bounds, restore_bounds);
+        assert!(windowed.accepts_pointer_input);
+        assert!(windowed.focus_on_appearing);
+        assert!(windowed.focus_on_click);
+        assert!(!windowed.topmost);
+        assert!(windowed.taskbar_visible);
+
+        let maximized = MacWindowCreationProjection::new(
+            WindowBounds::Maximized(restore_bounds),
+            &WindowKind::Floating,
+            false,
+            false,
+        );
+        assert_eq!(maximized.bounds, restore_bounds);
+        assert_eq!(maximized.state, MacWindowCreationState::Maximized);
+        assert_eq!(maximized.restore_bounds, restore_bounds);
+        assert!(!maximized.accepts_pointer_input);
+        assert!(!maximized.focus_on_appearing);
+        assert!(maximized.focus_on_click);
+        assert!(maximized.topmost);
+        assert!(!maximized.taskbar_visible);
+
+        let fullscreen = MacWindowCreationProjection::new(
+            WindowBounds::Fullscreen(restore_bounds),
+            &WindowKind::Normal,
+            true,
+            false,
+        );
+        assert_eq!(fullscreen.state, MacWindowCreationState::Fullscreen);
+        assert_eq!(fullscreen.restore_bounds, restore_bounds);
+    }
+
+    #[test]
+    fn non_toplevel_kinds_do_not_project_unsupported_native_states() {
+        let projection = MacWindowCreationProjection::new(
+            WindowBounds::Fullscreen(restore_bounds()),
+            &WindowKind::PopUp,
+            true,
+            true,
+        );
+
+        assert_eq!(projection.state, MacWindowCreationState::Windowed);
+        assert_eq!(projection.bounds, restore_bounds());
+        assert!(!projection.focus_on_appearing);
+        assert!(!projection.focus_on_click);
+        assert!(projection.topmost);
+        assert!(!projection.taskbar_visible);
+
+        let dialog = MacWindowCreationProjection::new(
+            WindowBounds::Maximized(restore_bounds()),
+            &WindowKind::Dialog,
+            true,
+            false,
+        );
+        assert_eq!(dialog.state, MacWindowCreationState::Windowed);
+        assert!(dialog.focus_on_click);
+        assert!(!dialog.topmost);
+        assert!(!dialog.taskbar_visible);
+        assert!(!dialog.observed_focus_on_appearing(false));
+        assert!(dialog.observed_focus_on_appearing(true));
+    }
+
+    #[test]
+    fn background_projection_covers_opaque_alpha_and_blur_creation() {
+        let opaque = MacWindowBackgroundProjection::new(WindowBackgroundAppearance::Opaque);
+        assert!(opaque.native_opaque);
+        assert!(!opaque.renderer_transparent);
+        assert_eq!(opaque.background_alpha, 1.0);
+        assert!(!opaque.blur_enabled);
+
+        let transparent =
+            MacWindowBackgroundProjection::new(WindowBackgroundAppearance::Transparent);
+        assert!(!transparent.native_opaque);
+        assert!(transparent.renderer_transparent);
+        assert_eq!(transparent.background_alpha, 0.0001);
+        assert!(!transparent.blur_enabled);
+
+        let blurred = MacWindowBackgroundProjection::new(WindowBackgroundAppearance::Blurred);
+        assert!(!blurred.native_opaque);
+        assert!(blurred.renderer_transparent);
+        assert!(blurred.blur_enabled);
+
+        for appearance in [
+            WindowBackgroundAppearance::MicaBackdrop,
+            WindowBackgroundAppearance::MicaAltBackdrop,
+        ] {
+            let projection = MacWindowBackgroundProjection::new(appearance);
+            assert_eq!(
+                projection.appearance,
+                WindowBackgroundAppearance::Transparent
+            );
+            assert!(!projection.native_opaque);
+            assert!(projection.renderer_transparent);
+            assert!(!projection.blur_enabled);
         }
     }
 }

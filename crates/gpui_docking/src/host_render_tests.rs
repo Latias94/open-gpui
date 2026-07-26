@@ -3,7 +3,8 @@ use crate::{
     DockNodeId, DockPanelDescriptor, DockSpaceId, DockViewportActivationTransaction,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportHostGeometry,
-    DockViewportPlatformSignals, DockViewportPlatformSyncAction, DockViewportRuntimeHandle,
+    DockViewportPlatformSignals, DockViewportPlatformSyncDispatch,
+    DockViewportPlatformSyncObservationOutcome, DockViewportRuntimeHandle,
     DockViewportTargetContext, DockWorkspace, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
@@ -20,10 +21,11 @@ use crate::{
 use open_gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Entity, FocusHandle,
     Focusable, HitboxBehavior, InteractiveElement, IntoElement, Modifiers, MouseButton,
-    ParentElement, Render, RequestFrameOptions, StatefulInteractiveElement, Styled, SubtreeClip,
-    SubtreeClipExt, SubtreePresentation, SubtreePresentationExt, SubtreeTransform,
-    SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window, canvas,
-    div, fill, point, px, red, size,
+    ParentElement, PlatformWindowDispatch, PlatformWindowMutationTerminal, Render,
+    RequestFrameOptions, StatefulInteractiveElement, Styled, SubtreeClip, SubtreeClipExt,
+    SubtreePresentation, SubtreePresentationExt, SubtreeTransform, SubtreeTransformExt,
+    SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window, WindowMutationDomain,
+    canvas, div, fill, point, px, red, size,
 };
 use open_gpui_motion::{
     MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
@@ -4066,8 +4068,49 @@ fn empty_central_passthrough_renders_full_host_drop_target(cx: &mut TestAppConte
     assert_close(height(bounds), 200.0);
 }
 
+fn set_render_passthrough_graph(
+    controller: &Entity<DockController>,
+    has_content: bool,
+    cx: &mut TestAppContext,
+) {
+    controller.update(cx, |controller, cx| {
+        let mut graph = DockGraph::new();
+        let central = if has_content {
+            let tabs = graph.insert_node(DockNode::Tabs {
+                items: vec![item("a")],
+                selected: Some(item("a")),
+            });
+            graph.set_root(space(), tabs);
+            DockCentralRegion::with_node(tabs).with_passthrough_when_empty(true)
+        } else {
+            DockCentralRegion::empty().with_passthrough_when_empty(true)
+        };
+        graph.set_central_region(space(), central);
+        controller.workspace_mut().set_graph(graph);
+        cx.notify();
+    });
+}
+
+fn last_queued_pointer_input_generation(runtime: &DockViewportRuntimeHandle) -> Option<u64> {
+    runtime
+        .runtime_status()
+        .last_platform_dispatch?
+        .dispatches
+        .into_iter()
+        .find_map(|dispatch| match dispatch {
+            DockViewportPlatformSyncDispatch::Queued {
+                request: crate::DockViewportPlatformSyncRequest::PointerInput { requested: false },
+                generation,
+                ..
+            } => Some(generation),
+            _ => None,
+        })
+}
+
 #[open_gpui::test]
-fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext) {
+fn empty_central_passthrough_queues_pointer_input_without_mutating_committed_facts(
+    cx: &mut TestAppContext,
+) {
     let mut graph = DockGraph::new();
     graph.set_central_region(
         space(),
@@ -4080,25 +4123,31 @@ fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext)
         open_controller_workspace(cx, controller.clone(), size(px(320.0), px(200.0)));
 
     assert!(
-        !window
-            .update(cx, |_, window, _| window.accepts_pointer_input())
+        window
+            .update(cx, |_, window, _| window
+                .platform_facts()
+                .accepts_pointer_input)
             .expect("host window should remain live"),
-        "empty central passthrough should make the host window click-through"
+        "queued pointer intent must not rewrite the committed platform fact"
     );
     let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
-    assert_eq!(
+    assert!(
         runtime
             .runtime_status()
-            .last_platform_sync
+            .last_platform_dispatch
             .as_ref()
-            .map(|sync| sync.applied.as_slice()),
-        Some(
-            [
-                DockViewportPlatformSyncAction::PointerInput { enabled: false },
-                DockViewportPlatformSyncAction::ViewportFlagNoInputs { enabled: true },
-            ]
-            .as_slice()
-        )
+            .is_some_and(|dispatch| dispatch.dispatches.iter().any(|entry| {
+                matches!(
+                    entry,
+                    DockViewportPlatformSyncDispatch::Queued {
+                        request: crate::DockViewportPlatformSyncRequest::PointerInput {
+                            requested: false
+                        },
+                        ..
+                    }
+                )
+            })),
+        "empty central passthrough should queue a typed pointer-input request"
     );
 
     controller.update(cx, |controller, cx| {
@@ -4119,24 +4168,158 @@ fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext)
 
     assert!(
         window
-            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .update(cx, |_, window, _| window
+                .platform_facts()
+                .accepts_pointer_input)
             .expect("host window should remain live"),
-        "repopulating the central region should restore the render-owned pointer input sync"
+        "the superseding unchanged request must preserve the committed platform fact"
     );
+    let status = runtime.runtime_status();
+    assert!(
+        status
+            .last_platform_dispatch
+            .as_ref()
+            .is_some_and(|dispatch| dispatch.dispatches.iter().any(|entry| {
+                matches!(
+                    entry,
+                    DockViewportPlatformSyncDispatch::Unchanged {
+                        request: crate::DockViewportPlatformSyncRequest::PointerInput {
+                            requested: true
+                        },
+                    }
+                )
+            })),
+        "repopulating the central region should supersede the queued pass-through request"
+    );
+    assert!(
+        status.recent_platform_observations.iter().any(|record| {
+            record.observation.outcome == DockViewportPlatformSyncObservationOutcome::Superseded
+        }),
+        "the old queued ticket must settle as superseded rather than retrying indefinitely"
+    );
+}
+
+#[open_gpui::test]
+fn immediate_pointer_input_failure_is_not_retried_until_render_intent_changes(
+    cx: &mut TestAppContext,
+) {
+    let (graph, _) = tabs_graph(&["a"]);
+    let workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, _visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(320.0), px(200.0)));
+    let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
+
+    cx.set_next_window_pointer_input_dispatch(window.into(), PlatformWindowDispatch::Rejected);
+    set_render_passthrough_graph(&controller, false, cx);
+    cx.run_until_parked();
+
+    let rejected = runtime
+        .runtime_status()
+        .last_platform_dispatch
+        .expect("the rejected pointer-input request should remain diagnostic");
+    assert!(rejected.dispatches.iter().any(|dispatch| {
+        matches!(
+            dispatch,
+            DockViewportPlatformSyncDispatch::Rejected(rejected)
+                if matches!(
+                    rejected.request,
+                    crate::DockViewportPlatformSyncRequest::PointerInput { requested: false }
+                )
+        )
+    }));
+
+    window
+        .update(cx, |_, window, _| window.refresh())
+        .expect("host window should remain live");
+    cx.run_until_parked();
+    assert!(
+        last_queued_pointer_input_generation(&runtime).is_none(),
+        "an unchanged terminal failure must not be retried on the next render"
+    );
+
+    set_render_passthrough_graph(&controller, true, cx);
+    cx.run_until_parked();
+    set_render_passthrough_graph(&controller, false, cx);
+    cx.run_until_parked();
+    assert!(
+        last_queued_pointer_input_generation(&runtime).is_some(),
+        "leaving and re-entering passthrough changes intent and must permit a new dispatch"
+    );
+}
+
+fn assert_async_pointer_input_terminal_is_not_retried(
+    cx: &mut TestAppContext,
+    terminal: PlatformWindowMutationTerminal,
+    expected: DockViewportPlatformSyncObservationOutcome,
+) {
+    let (graph, _) = tabs_graph(&["a"]);
+    let workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, _visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(320.0), px(200.0)));
+    let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
+
+    set_render_passthrough_graph(&controller, false, cx);
+    cx.run_until_parked();
+    let generation = last_queued_pointer_input_generation(&runtime)
+        .expect("passthrough should queue a pointer-input request");
+    let facts = window
+        .update(cx, |_, window, _| window.platform_facts().clone())
+        .expect("host window should remain live");
+    assert!(cx.simulate_window_mutation_terminal(
+        window.into(),
+        WindowMutationDomain::PointerInput,
+        terminal,
+        facts,
+    ));
+
+    for _ in 0..2 {
+        window
+            .update(cx, |_, window, _| window.refresh())
+            .expect("host window should remain live");
+        cx.run_until_parked();
+    }
+
     assert_eq!(
+        last_queued_pointer_input_generation(&runtime),
+        Some(generation),
+        "the same request and committed facts must retain the original dispatch generation"
+    );
+    assert!(
         runtime
             .runtime_status()
-            .last_platform_sync
-            .as_ref()
-            .map(|sync| sync.applied.as_slice()),
-        Some(
-            [
-                DockViewportPlatformSyncAction::PointerInput { enabled: true },
-                DockViewportPlatformSyncAction::ViewportFlagNoInputs { enabled: false },
-            ]
-            .as_slice()
-        )
+            .recent_platform_observations
+            .iter()
+            .any(|record| {
+                record.observation.generation == generation
+                    && record.observation.outcome == expected
+            })
     );
+}
+
+#[open_gpui::test]
+fn asynchronous_pointer_input_terminal_failures_do_not_retry_per_frame(cx: &mut TestAppContext) {
+    for (terminal, expected) in [
+        (
+            PlatformWindowMutationTerminal::Observed,
+            DockViewportPlatformSyncObservationOutcome::Adjusted,
+        ),
+        (
+            PlatformWindowMutationTerminal::Rejected,
+            DockViewportPlatformSyncObservationOutcome::Rejected,
+        ),
+        (
+            PlatformWindowMutationTerminal::Unsupported,
+            DockViewportPlatformSyncObservationOutcome::Unsupported,
+        ),
+        (
+            PlatformWindowMutationTerminal::WindowClosed,
+            DockViewportPlatformSyncObservationOutcome::WindowClosed,
+        ),
+    ] {
+        assert_async_pointer_input_terminal_is_not_retried(cx, terminal, expected);
+    }
 }
 
 #[open_gpui::test]
@@ -4180,7 +4363,7 @@ fn empty_central_passthrough_with_floating_content_keeps_window_pointer_input(
     );
     let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
     assert_eq!(
-        runtime.runtime_status().last_platform_sync,
+        runtime.runtime_status().last_platform_dispatch,
         None,
         "empty central with floating content must not request whole-window pointer passthrough"
     );
@@ -4197,14 +4380,22 @@ fn ordinary_render_does_not_restore_externally_owned_pointer_passthrough(cx: &mu
     );
     assert_ne!(root, DockNodeId::null(), "test graph should have a root");
 
+    let external_dispatch = window
+        .update(cx, |_, window, _| window.set_accepts_pointer_input(false))
+        .expect("host window should remain live");
+    assert!(
+        external_dispatch.ticket().is_some(),
+        "external pointer-input ownership should begin as queued intent"
+    );
+    assert!(
+        cx.flush_window_mutation(window.into(), open_gpui::WindowMutationDomain::PointerInput),
+        "test platform should publish the external pointer-input observation"
+    );
     assert!(
         !window
-            .update(cx, |_, window, _| {
-                window.set_accepts_pointer_input(false);
-                window.accepts_pointer_input()
-            })
+            .update(cx, |_, window, _| window.accepts_pointer_input())
             .expect("host window should remain live"),
-        "test setup should make the source viewport click-through outside render passthrough"
+        "the observed external request should make the source viewport click-through"
     );
 
     window

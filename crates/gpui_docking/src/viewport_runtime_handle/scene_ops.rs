@@ -87,12 +87,53 @@ impl DockViewportRuntimeHandle {
         let window_id = window.window_handle().window_id();
         let backend_focus_changed = self.reconcile_backend_window_focus(cx);
         let viewport_frame_changed = self.reconcile_viewport_frame_except_window(window_id, cx);
-        let pointer_sync_changed = sync_render_passthrough_pointer_input_for_runtime(
-            &mut self.runtime.borrow_mut(),
-            window,
-            passthrough_pointer_input,
-            cx.viewport_capabilities(),
-        );
+        let accepts_pointer_input = window.platform_facts().accepts_pointer_input;
+        let pending_pointer_input = self
+            .pending_platform_mutation_request(window_id, WindowMutationDomain::PointerInput)
+            .and_then(|request| match request {
+                WindowMutationRequest::PointerInput(accepts_pointer_input) => {
+                    Some(accepts_pointer_input)
+                }
+                WindowMutationRequest::Placement(_)
+                | WindowMutationRequest::FocusOnAppearing(_)
+                | WindowMutationRequest::FocusOnClick(_)
+                | WindowMutationRequest::Alpha(_)
+                | WindowMutationRequest::Topmost(_)
+                | WindowMutationRequest::TaskbarVisibility(_) => None,
+            });
+        let pointer_input_resolution = {
+            let mut runtime = self.runtime.borrow_mut();
+            resolve_render_passthrough_pointer_input_request(
+                &mut runtime,
+                window_id,
+                accepts_pointer_input,
+                pending_pointer_input,
+                passthrough_pointer_input,
+            )
+        };
+        let retry_blocked = pointer_input_resolution.target.is_some_and(|target| {
+            self.platform_mutation_retry_is_blocked(
+                window_id,
+                WindowMutationRequest::PointerInput(target),
+                window.platform_facts(),
+            )
+        });
+        let pointer_input_request = pointer_input_resolution.request.filter(|_| !retry_blocked);
+        let pointer_sync = pointer_input_request.and_then(|accepts_pointer_input| {
+            (pending_pointer_input != Some(accepts_pointer_input))
+                .then(|| sync_pointer_input_window(window, accepts_pointer_input))
+        });
+        let pointer_sync_changed = pointer_sync.as_ref().is_some_and(|result| {
+            result.record().dispatches.iter().any(|dispatch| {
+                matches!(
+                    dispatch,
+                    crate::DockViewportPlatformSyncDispatch::Queued { .. }
+                )
+            })
+        });
+        if let Some(pointer_sync) = pointer_sync {
+            self.record_platform_dispatch_result(pointer_sync, window.platform_facts());
+        }
         let registration_update = self
             .register_rendered_host_viewport_with_cleanup(space.clone(), window.window_handle());
         let registration_changed =

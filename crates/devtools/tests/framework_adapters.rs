@@ -527,8 +527,6 @@ fn framework_adapters_convert_docking_runtime_status() {
         window_stack: false,
         display_work_area: true,
         dpi_scale: true,
-        live_window_move: false,
-        no_input_windows: true,
         hovered_window_ignores_no_input: false,
     });
     status.placement_restore = Some(DockViewportRestoreReadinessRecord {

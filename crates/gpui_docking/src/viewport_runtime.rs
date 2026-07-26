@@ -1258,8 +1258,17 @@ impl DockViewportRuntime {
         self.status.record_tear_off(outcome);
     }
 
-    pub(crate) fn record_platform_sync(&mut self, record: DockViewportPlatformSyncRecord) {
-        self.status.record_platform_sync(record);
+    pub(crate) fn record_platform_dispatch(&mut self, record: DockViewportPlatformSyncRecord) {
+        self.status.record_platform_dispatch(record);
+    }
+
+    pub(crate) fn record_platform_observation(
+        &mut self,
+        window_id: WindowId,
+        observation: crate::DockViewportPlatformSyncObservation,
+    ) {
+        self.status
+            .record_platform_observation(window_id, observation);
     }
 
     pub(crate) fn record_visual_affordance_status(

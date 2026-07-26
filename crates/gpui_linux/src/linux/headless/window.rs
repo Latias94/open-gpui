@@ -50,10 +50,10 @@ impl PlatformDisplay for HeadlessDisplay {
 
 struct HeadlessWindowState {
     bounds: Bounds<Pixels>,
+    window_bounds: WindowBounds,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     title: Option<String>,
-    is_fullscreen: bool,
     cursor_style: CursorStyle,
     accepts_pointer_input: bool,
     atlas: Arc<HeadlessAtlas>,
@@ -79,14 +79,15 @@ impl raw_window_handle::HasDisplayHandle for HeadlessWindow {
 
 impl HeadlessWindow {
     pub(crate) fn new(params: WindowParams, display: Rc<dyn PlatformDisplay>) -> Self {
+        let window_bounds = params.window_bounds;
         Self(Rc::new(RefCell::new(HeadlessWindowState {
-            bounds: params.bounds,
+            bounds: window_bounds.get_bounds(),
+            window_bounds,
             display,
             input_handler: None,
             title: None,
-            is_fullscreen: false,
             cursor_style: CursorStyle::Arrow,
-            accepts_pointer_input: true,
+            accepts_pointer_input: params.accepts_pointer_input,
             atlas: Arc::new(HeadlessAtlas::default()),
         })))
     }
@@ -98,19 +99,15 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn is_maximized(&self) -> bool {
-        false
+        matches!(self.0.borrow().window_bounds, WindowBounds::Maximized(_))
     }
 
     fn window_bounds(&self) -> WindowBounds {
-        WindowBounds::Windowed(self.bounds())
+        self.0.borrow().window_bounds
     }
 
     fn content_size(&self) -> Size<Pixels> {
         self.bounds().size
-    }
-
-    fn resize(&mut self, size: Size<Pixels>) {
-        self.0.borrow_mut().bounds.size = size;
     }
 
     fn scale_factor(&self) -> f32 {
@@ -173,11 +170,6 @@ impl PlatformWindow for HeadlessWindow {
         self.0.borrow().accepts_pointer_input
     }
 
-    fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
-        self.0.borrow_mut().accepts_pointer_input = accepts_pointer_input;
-        true
-    }
-
     fn background_appearance(&self) -> WindowBackgroundAppearance {
         WindowBackgroundAppearance::Opaque
     }
@@ -192,17 +184,8 @@ impl PlatformWindow for HeadlessWindow {
 
     fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
 
-    fn minimize(&self) {}
-
-    fn zoom(&self) {}
-
-    fn toggle_fullscreen(&self) {
-        let mut state = self.0.borrow_mut();
-        state.is_fullscreen = !state.is_fullscreen;
-    }
-
     fn is_fullscreen(&self) -> bool {
-        self.0.borrow().is_fullscreen
+        matches!(self.0.borrow().window_bounds, WindowBounds::Fullscreen(_))
     }
 
     fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}

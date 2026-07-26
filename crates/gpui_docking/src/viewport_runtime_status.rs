@@ -13,15 +13,21 @@ use crate::{
     },
 };
 use open_gpui::{
-    DisplayId, Pixels, PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Point, Size,
-    WindowBackgroundAppearance, WindowDecorations, WindowId,
+    DisplayId, Pixels, PlatformViewportCapabilities, PlatformWindowMutationCapabilities,
+    PlatformWindowMutationProfile, Point, Size, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowId, WindowKind, WindowMutationDomain, WindowMutationObservation,
+    WindowMutationOutcome, WindowMutationRequest, WindowPlatformFacts,
 };
+
+const PLATFORM_SYNC_OBSERVATION_HISTORY_LIMIT: usize = 16;
 
 /// Read-only diagnostic snapshot for the viewport runtime.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DockViewportRuntimeStatus {
     /// Platform viewport capabilities sampled by the caller, when available.
     pub platform_capabilities: Option<DockViewportPlatformCapabilityRecord>,
+    /// Property-specific support captured for each registered viewport's actual window kind.
+    pub window_mutation_capabilities: Vec<DockViewportWindowMutationCapabilityRecord>,
     /// Latest placement restore readiness check, when the caller requested one.
     pub placement_restore: Option<DockViewportRestoreReadinessRecord>,
     /// Current lifecycle/readiness records for registered platform viewports.
@@ -38,8 +44,16 @@ pub struct DockViewportRuntimeStatus {
     pub last_should_close: Option<DockViewportShouldCloseOutcome>,
     /// Most recent tear-off transaction outcome.
     pub last_tear_off: Option<DockViewportTearOffRecord>,
-    /// Most recent live platform-window sync attempted for a reused viewport.
-    pub last_platform_sync: Option<DockViewportPlatformSyncRecord>,
+    /// Most recent dispatch attempt for a reused platform viewport window.
+    ///
+    /// A dispatch record is intent and immediate transport status only. It does not assert that
+    /// the platform committed the requested window facts.
+    pub last_platform_dispatch: Option<DockViewportPlatformSyncRecord>,
+    /// Recent terminal observations emitted by platform window mutation tickets.
+    ///
+    /// These records are diagnostic history only. Durable viewport facts and placement revisions
+    /// continue to flow through the committed window-facts observation path.
+    pub recent_platform_observations: Vec<DockViewportPlatformSyncObservedRecord>,
     /// Latest visual affordance diagnostics published by rendered viewport hosts.
     pub visual_affordances: Vec<DockViewportVisualAffordanceRecord>,
 }
@@ -57,27 +71,21 @@ pub struct DockViewportPlatformCapabilityRecord {
     pub display_work_area: bool,
     /// Per-window DPI scale facts are reliable for placement decisions.
     pub dpi_scale: bool,
-    /// Already-open windows can be moved or resized programmatically.
-    pub live_window_move: bool,
-    /// Native no-input/click-through windows are supported.
-    pub no_input_windows: bool,
     /// Hovered-window queries pass through native no-input/click-through application windows.
     pub hovered_window_ignores_no_input: bool,
 }
 
-/// Platform viewport flag capability snapshot relevant to multi-viewport docking.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DockViewportPlatformFlagCapabilityRecord {
-    /// Native no-focus-on-appearing viewport windows are supported.
-    pub no_focus_on_appearing_windows: bool,
-    /// Native no-focus-on-click viewport windows are supported.
-    pub no_focus_on_click_windows: bool,
-    /// Native alpha/transparent viewport windows are supported.
-    pub alpha_windows: bool,
-    /// Native always-on-top viewport windows are supported.
-    pub topmost_windows: bool,
-    /// Native taskbar-hidden viewport windows are supported.
-    pub no_taskbar_windows: bool,
+/// Mutation capabilities captured for one registered viewport window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportWindowMutationCapabilityRecord {
+    /// Logical dock space rendered by the viewport window.
+    pub space: DockSpaceId,
+    /// GPUI window bound to [`Self::space`].
+    pub window_id: WindowId,
+    /// Actual platform window kind used when the window was created.
+    pub window_kind: WindowKind,
+    /// Property-specific creation and live support for [`Self::window_kind`].
+    pub capabilities: PlatformWindowMutationCapabilities,
 }
 
 /// Current route-facts and platform-request record for one registered viewport.
@@ -300,21 +308,159 @@ pub struct DockViewportActivationRecord {
     pub focus_request: DockViewportFocusRequest,
 }
 
-/// Live platform-window sync attempted for a reused viewport.
+/// Live platform-window dispatch attempted for a reused viewport.
+///
+/// `dispatches` records only the request transport outcome. A queued dispatch is not a platform
+/// fact. `observations` contains terminal ticket results that arrived while this was the current
+/// dispatch record; older terminal results remain available through
+/// [`DockViewportRuntimeStatus::recent_platform_observations`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockViewportPlatformSyncRecord {
-    /// GPUI window that received the sync attempt.
+    /// GPUI window that received the dispatch attempt.
     pub window_id: WindowId,
-    /// Requests that were applied through the current GPUI window interface.
-    pub applied: Vec<DockViewportPlatformSyncAction>,
-    /// Requests intentionally skipped because the platform backend already reported an
-    /// authoritative live-window request for the same property.
-    pub skipped_requests: Vec<DockViewportPlatformSyncSkipped>,
-    /// Requests that could not be applied because GPUI has no matching live mutation interface yet.
-    pub unsupported_requests: Vec<DockViewportPlatformSyncUnsupported>,
+    /// Immediate dispatch outcomes. `Queued` represents accepted intent, never committed facts.
+    pub dispatches: Vec<DockViewportPlatformSyncDispatch>,
+    /// Terminal observations for tickets issued by this dispatch record.
+    pub observations: Vec<DockViewportPlatformSyncObservation>,
 }
 
-/// Platform-window request successfully applied while reusing an existing viewport.
+/// One immediate outcome while dispatching a reused viewport-window request.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DockViewportPlatformSyncDispatch {
+    /// A direct non-placement command was issued through the existing `Window` API.
+    ///
+    /// This is retained for diagnostics such as title and activation. It is not an observation
+    /// that the operating system committed a placement or pointer-input mutation.
+    Immediate {
+        /// Command issued synchronously through the existing public `Window` API.
+        action: DockViewportPlatformSyncAction,
+    },
+    /// The typed GPUI mutation API accepted a request and returned an observation ticket.
+    Queued {
+        /// Requested live window property.
+        request: DockViewportPlatformSyncRequest,
+        /// Conflict domain owned by the ticket.
+        domain: DockViewportPlatformSyncDomain,
+        /// Monotonic ticket generation within the conflict domain.
+        generation: u64,
+    },
+    /// The committed platform facts already matched the request.
+    Unchanged {
+        /// Requested live window property.
+        request: DockViewportPlatformSyncRequest,
+    },
+    /// GPUI or the backend cannot mutate this property for the current live window.
+    Unsupported(DockViewportPlatformSyncUnsupported),
+    /// The request was intentionally not sent or the backend rejected it before observation.
+    Rejected(DockViewportPlatformSyncRejected),
+    /// The target window closed before the request could be dispatched.
+    WindowClosed {
+        /// Requested live window property.
+        request: DockViewportPlatformSyncRequest,
+    },
+}
+
+/// Conflict domain of a typed live window mutation ticket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportPlatformSyncDomain {
+    /// Position, size, state, and restore bounds are one coherent placement request.
+    Placement,
+    /// Native pointer-input routing is independent from placement.
+    PointerInput,
+    /// Focus-on-appearing configuration.
+    FocusOnAppearing,
+    /// Focus-on-click configuration.
+    FocusOnClick,
+    /// Native background or alpha treatment.
+    Alpha,
+    /// Topmost-window configuration.
+    Topmost,
+    /// Taskbar-visibility configuration.
+    TaskbarVisibility,
+}
+
+/// Terminal outcome observed for one typed live window mutation ticket.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockViewportPlatformSyncObservation {
+    /// Conflict domain that produced the observation.
+    pub domain: DockViewportPlatformSyncDomain,
+    /// Ticket generation within the conflict domain.
+    pub generation: u64,
+    /// Original typed request associated with this ticket.
+    pub request: WindowMutationRequest,
+    /// Observed terminal outcome.
+    pub outcome: DockViewportPlatformSyncObservationOutcome,
+    /// Committed platform facts used to classify the terminal outcome.
+    pub facts: WindowPlatformFacts,
+}
+
+/// Terminal ticket outcome observed after a queued live window mutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportPlatformSyncObservationOutcome {
+    /// The platform committed exactly the requested value.
+    Exact,
+    /// The platform committed an adjusted value, which must be read from committed window facts.
+    Adjusted,
+    /// A newer request for the same conflict domain superseded this ticket.
+    Superseded,
+    /// The platform rejected the queued request.
+    Rejected,
+    /// The platform reported that the request is unsupported.
+    Unsupported,
+    /// The window closed before a terminal committed fact could be observed.
+    WindowClosed,
+}
+
+impl From<WindowMutationDomain> for DockViewportPlatformSyncDomain {
+    fn from(domain: WindowMutationDomain) -> Self {
+        match domain {
+            WindowMutationDomain::Placement => Self::Placement,
+            WindowMutationDomain::PointerInput => Self::PointerInput,
+            WindowMutationDomain::FocusOnAppearing => Self::FocusOnAppearing,
+            WindowMutationDomain::FocusOnClick => Self::FocusOnClick,
+            WindowMutationDomain::Alpha => Self::Alpha,
+            WindowMutationDomain::Topmost => Self::Topmost,
+            WindowMutationDomain::TaskbarVisibility => Self::TaskbarVisibility,
+        }
+    }
+}
+
+impl From<WindowMutationObservation> for DockViewportPlatformSyncObservation {
+    fn from(observation: WindowMutationObservation) -> Self {
+        let outcome = match observation.outcome {
+            WindowMutationOutcome::Exact => DockViewportPlatformSyncObservationOutcome::Exact,
+            WindowMutationOutcome::Adjusted => DockViewportPlatformSyncObservationOutcome::Adjusted,
+            WindowMutationOutcome::Superseded => {
+                DockViewportPlatformSyncObservationOutcome::Superseded
+            }
+            WindowMutationOutcome::Rejected => DockViewportPlatformSyncObservationOutcome::Rejected,
+            WindowMutationOutcome::Unsupported => {
+                DockViewportPlatformSyncObservationOutcome::Unsupported
+            }
+            WindowMutationOutcome::WindowClosed => {
+                DockViewportPlatformSyncObservationOutcome::WindowClosed
+            }
+        };
+        Self {
+            domain: observation.domain.into(),
+            generation: observation.generation,
+            request: observation.request,
+            outcome,
+            facts: observation.facts,
+        }
+    }
+}
+
+/// One terminal observation with its owning GPUI window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockViewportPlatformSyncObservedRecord {
+    /// GPUI window that owned the ticket.
+    pub window_id: WindowId,
+    /// Terminal ticket observation.
+    pub observation: DockViewportPlatformSyncObservation,
+}
+
+/// Direct non-placement commands issued while reusing an existing viewport.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockViewportPlatformSyncAction {
@@ -330,35 +476,10 @@ pub enum DockViewportPlatformSyncAction {
         /// Requested application id.
         app_id: String,
     },
-    /// Updated the window content size.
-    Resize {
-        /// Requested content size.
-        size: Size<Pixels>,
-    },
-    /// Updated the platform window fullscreen state.
-    Fullscreen {
-        /// Whether fullscreen was enabled.
-        enabled: bool,
-    },
-    /// Updated the platform window background appearance.
-    BackgroundAppearance {
-        /// Requested background appearance.
-        appearance: WindowBackgroundAppearance,
-    },
     /// Requested client/server decorations from the platform window.
     WindowDecorations {
         /// Requested decoration mode.
         decorations: WindowDecorations,
-    },
-    /// Updated native pointer-input routing for a viewport window.
-    PointerInput {
-        /// Whether pointer input is enabled.
-        enabled: bool,
-    },
-    /// Applied an ImGui-style no-input viewport flag through native pointer-input routing.
-    ViewportFlagNoInputs {
-        /// Whether the no-input flag is enabled.
-        enabled: bool,
     },
     /// Updated the macOS traffic-light position.
     TrafficLightPosition {
@@ -376,13 +497,13 @@ pub struct DockViewportPlatformSyncUnsupported {
     pub reason: DockViewportPlatformSyncUnsupportedReason,
 }
 
-/// Platform-window request intentionally skipped during reused-window sync.
+/// Platform-window request rejected before it could produce a typed mutation ticket.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportPlatformSyncSkipped {
-    /// Skipped request.
+pub struct DockViewportPlatformSyncRejected {
+    /// Rejected request.
     pub request: DockViewportPlatformSyncRequest,
-    /// Why the request was skipped.
-    pub reason: DockViewportPlatformSyncSkippedReason,
+    /// Why this dispatch did not proceed.
+    pub reason: DockViewportPlatformSyncRejectedReason,
 }
 
 /// Platform-window request shape used by sync diagnostics.
@@ -418,35 +539,10 @@ pub enum DockViewportPlatformSyncRequest {
         /// Requested pointer input state.
         requested: bool,
     },
-    /// Requested ImGui-style no-input viewport flag differs from the already-open window.
-    ViewportFlagNoInputs {
-        /// Whether no-input should be enabled.
-        requested: bool,
-    },
-    /// Requested ImGui-style no-focus-on-appearing viewport flag.
-    ViewportFlagNoFocusOnAppearing {
-        /// Whether no-focus-on-appearing should be enabled.
-        requested: bool,
-    },
-    /// Requested ImGui-style no-focus-on-click viewport flag.
-    ViewportFlagNoFocusOnClick {
-        /// Whether no-focus-on-click should be enabled.
-        requested: bool,
-    },
-    /// Requested ImGui-style alpha/transparent viewport flag.
-    ViewportFlagAlpha {
-        /// Requested viewport alpha.
-        requested: f32,
-    },
-    /// Requested ImGui-style always-on-top viewport flag.
-    ViewportFlagTopMost {
-        /// Whether topmost should be enabled.
-        requested: bool,
-    },
-    /// Requested ImGui-style no-taskbar viewport flag.
-    ViewportFlagNoTaskbar {
-        /// Whether taskbar hiding should be enabled.
-        requested: bool,
+    /// Requested native background treatment differs from the already-open window.
+    BackgroundAppearance {
+        /// Requested background appearance.
+        requested: WindowBackgroundAppearance,
     },
     /// Requested display differs from the already-open window.
     Display {
@@ -458,10 +554,10 @@ pub enum DockViewportPlatformSyncRequest {
         /// Requested minimum size.
         requested: Size<Pixels>,
     },
-    /// Requested live content size differs from the already-open window.
-    WindowSize {
-        /// Requested content size.
-        requested: Size<Pixels>,
+    /// Requested position, size, state, and restore bounds for one coherent live placement.
+    Placement {
+        /// Requested window placement.
+        requested: WindowBounds,
     },
     /// Requested icon differs from the already-open window.
     Icon,
@@ -475,16 +571,6 @@ pub enum DockViewportPlatformSyncRequest {
         /// Requested titlebar presence.
         requested: bool,
     },
-    /// Requested window origin differs from the already-open window.
-    WindowOrigin {
-        /// Requested window origin.
-        requested: Point<Pixels>,
-    },
-    /// Requested platform window state differs from the already-open window.
-    WindowState {
-        /// Requested window state.
-        requested: DockViewportPlatformWindowState,
-    },
     /// Requested titlebar transparency differs from the already-open window.
     TitlebarTransparency {
         /// Requested titlebar transparency.
@@ -497,32 +583,23 @@ pub enum DockViewportPlatformSyncRequest {
     },
 }
 
-/// Platform window state requested through `WindowOptions`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DockViewportPlatformWindowState {
-    /// Normal windowed state.
-    Windowed,
-    /// Maximized state.
-    Maximized,
-    /// Fullscreen state.
-    Fullscreen,
-}
-
 /// Why a platform-window sync request could not be applied.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockViewportPlatformSyncUnsupportedReason {
     /// GPUI's public `Window` interface does not expose a live mutation for this request.
     UnsupportedByWindowApi,
-    /// The reused viewport window was no longer live when platform sync attempted to update it.
-    WindowUnavailable,
+    /// The current backend supports this property only while creating the window.
+    CreationOnly,
 }
 
-/// Why a platform-window sync request was intentionally skipped.
+/// Why a platform-window sync request was rejected before it was dispatched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DockViewportPlatformSyncSkippedReason {
+pub enum DockViewportPlatformSyncRejectedReason {
     /// The platform backend has already reported a live move/resize request for this window.
     PlatformRequestInProgress,
+    /// The typed GPUI window mutation API rejected the request before observation.
+    RejectedByWindowApi,
 }
 
 /// Tear-off transaction outcome recorded by the viewport runtime.
@@ -585,6 +662,15 @@ impl DockViewportRuntimeStatus {
         capabilities: PlatformViewportCapabilities,
     ) -> Self {
         self.platform_capabilities = Some(DockViewportPlatformCapabilityRecord::from(capabilities));
+        self
+    }
+
+    /// Attaches property-specific capability profiles for registered viewport windows.
+    pub fn with_window_mutation_capabilities(
+        mut self,
+        capabilities: impl IntoIterator<Item = DockViewportWindowMutationCapabilityRecord>,
+    ) -> Self {
+        self.window_mutation_capabilities = capabilities.into_iter().collect();
         self
     }
 
@@ -658,8 +744,43 @@ impl DockViewportRuntimeStatus {
         self.last_should_close = Some(outcome.clone());
     }
 
-    pub(crate) fn record_platform_sync(&mut self, record: DockViewportPlatformSyncRecord) {
-        self.last_platform_sync = Some(record);
+    pub(crate) fn record_platform_dispatch(&mut self, record: DockViewportPlatformSyncRecord) {
+        self.last_platform_dispatch = Some(record);
+    }
+
+    pub(crate) fn record_platform_observation(
+        &mut self,
+        window_id: WindowId,
+        observation: DockViewportPlatformSyncObservation,
+    ) {
+        if let Some(record) = self.last_platform_dispatch.as_mut()
+            && record.window_id == window_id
+            && record.dispatches.iter().any(|dispatch| {
+                matches!(
+                    dispatch,
+                    DockViewportPlatformSyncDispatch::Queued {
+                        domain,
+                        generation,
+                        ..
+                    } if *domain == observation.domain && *generation == observation.generation
+                )
+            })
+        {
+            record.observations.push(observation.clone());
+        }
+
+        self.recent_platform_observations
+            .push(DockViewportPlatformSyncObservedRecord {
+                window_id,
+                observation,
+            });
+        let overflow = self
+            .recent_platform_observations
+            .len()
+            .saturating_sub(PLATFORM_SYNC_OBSERVATION_HISTORY_LIMIT);
+        if overflow > 0 {
+            self.recent_platform_observations.drain(..overflow);
+        }
     }
 
     pub(crate) fn record_visual_affordance(
@@ -689,31 +810,6 @@ impl DockViewportRuntimeStatus {
             .retain(|record| record.space != *space || record.window_id != window_id);
     }
 
-    pub(crate) fn last_platform_sync_is_unsupported_pointer_input(
-        &self,
-        window_id: WindowId,
-        accepts_pointer_input: bool,
-    ) -> bool {
-        let Some(sync) = self.last_platform_sync.as_ref() else {
-            return false;
-        };
-        sync.window_id == window_id
-            && sync.applied.is_empty()
-            && sync.skipped_requests.is_empty()
-            && sync.unsupported_requests.iter().any(|unsupported| {
-                unsupported.request
-                    == DockViewportPlatformSyncRequest::PointerInput {
-                        requested: accepts_pointer_input,
-                    }
-            })
-            && sync.unsupported_requests.iter().any(|unsupported| {
-                unsupported.request
-                    == DockViewportPlatformSyncRequest::ViewportFlagNoInputs {
-                        requested: !accepts_pointer_input,
-                    }
-            })
-    }
-
     pub(crate) fn clear_window_references(&mut self, space: &DockSpaceId, window_id: WindowId) {
         if self
             .last_route
@@ -730,13 +826,30 @@ impl DockViewportRuntimeStatus {
             self.last_activation = None;
         }
         if self
-            .last_platform_sync
+            .last_platform_dispatch
             .as_ref()
             .is_some_and(|sync| sync.window_id == window_id)
         {
-            self.last_platform_sync = None;
+            self.last_platform_dispatch = None;
         }
+        self.recent_platform_observations
+            .retain(|record| record.window_id != window_id);
         self.clear_visual_affordance(space, window_id);
+    }
+}
+
+impl DockViewportWindowMutationCapabilityRecord {
+    pub(crate) fn from_profile(
+        space: DockSpaceId,
+        window_id: WindowId,
+        profile: &PlatformWindowMutationProfile,
+    ) -> Self {
+        Self {
+            space,
+            window_id,
+            window_kind: profile.kind.clone(),
+            capabilities: profile.capabilities,
+        }
     }
 }
 
@@ -757,21 +870,7 @@ impl From<PlatformViewportCapabilities> for DockViewportPlatformCapabilityRecord
             window_stack: capabilities.window_stack,
             display_work_area: capabilities.display_work_area,
             dpi_scale: capabilities.dpi_scale,
-            live_window_move: capabilities.live_window_move,
-            no_input_windows: capabilities.no_input_windows,
             hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
-        }
-    }
-}
-
-impl From<PlatformViewportFlagCapabilities> for DockViewportPlatformFlagCapabilityRecord {
-    fn from(capabilities: PlatformViewportFlagCapabilities) -> Self {
-        Self {
-            no_focus_on_appearing_windows: capabilities.no_focus_on_appearing_windows,
-            no_focus_on_click_windows: capabilities.no_focus_on_click_windows,
-            alpha_windows: capabilities.alpha_windows,
-            topmost_windows: capabilities.topmost_windows,
-            no_taskbar_windows: capabilities.no_taskbar_windows,
         }
     }
 }
@@ -1124,7 +1223,9 @@ mod tests {
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{
-        PlatformViewportCapabilities, PlatformViewportFlagCapabilities, WindowBounds, point, px,
+        PlatformViewportCapabilities, PlatformWindowMutationCapabilities, WindowBounds,
+        WindowCoordinateSpace, WindowKind, WindowMutationRequest, WindowMutationSupport,
+        WindowPlatformFacts, point, px,
     };
     use slotmap::Key;
 
@@ -1136,9 +1237,8 @@ mod tests {
             window_stack: true,
             display_work_area: false,
             dpi_scale: true,
-            live_window_move: false,
-            no_input_windows: true,
             hovered_window_ignores_no_input: true,
+            ..Default::default()
         };
 
         let status = DockViewportRuntimeStatus::default().with_platform_capabilities(capabilities);
@@ -1151,32 +1251,31 @@ mod tests {
                 window_stack: true,
                 display_work_area: false,
                 dpi_scale: true,
-                live_window_move: false,
-                no_input_windows: true,
                 hovered_window_ignores_no_input: true,
             })
         );
     }
 
     #[test]
-    fn runtime_status_attaches_platform_flag_capability_snapshot() {
-        let capabilities = PlatformViewportFlagCapabilities {
-            no_focus_on_appearing_windows: true,
-            no_focus_on_click_windows: false,
-            alpha_windows: true,
-            topmost_windows: false,
-            no_taskbar_windows: true,
+    fn runtime_status_attaches_window_mutation_capability_snapshot() {
+        let capabilities = PlatformWindowMutationCapabilities {
+            size: WindowMutationSupport::Live,
+            focus_on_appearing: WindowMutationSupport::CreationOnly,
+            alpha: WindowMutationSupport::CreationOnly,
+            ..Default::default()
+        };
+        let record = DockViewportWindowMutationCapabilityRecord {
+            space: DockSpaceId::from("primary"),
+            window_id: WindowId::from(7),
+            window_kind: WindowKind::Floating,
+            capabilities,
         };
 
         assert_eq!(
-            DockViewportPlatformFlagCapabilityRecord::from(capabilities),
-            DockViewportPlatformFlagCapabilityRecord {
-                no_focus_on_appearing_windows: true,
-                no_focus_on_click_windows: false,
-                alpha_windows: true,
-                topmost_windows: false,
-                no_taskbar_windows: true,
-            }
+            DockViewportRuntimeStatus::default()
+                .with_window_mutation_capabilities([record.clone()])
+                .window_mutation_capabilities,
+            vec![record]
         );
     }
 
@@ -1615,30 +1714,66 @@ mod tests {
     }
 
     #[test]
-    fn platform_sync_status_matches_repeated_unsupported_pointer_input() {
+    fn queued_platform_dispatch_stays_separate_from_terminal_observation() {
         let mut status = DockViewportRuntimeStatus::default();
         let window_id = WindowId::from(12);
-        status.record_platform_sync(DockViewportPlatformSyncRecord {
+        let queued = DockViewportPlatformSyncRecord {
             window_id,
-            applied: Vec::new(),
-            skipped_requests: Vec::new(),
-            unsupported_requests: vec![
-                DockViewportPlatformSyncUnsupported {
-                    request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
-                    reason: DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi,
-                },
-                DockViewportPlatformSyncUnsupported {
-                    request: DockViewportPlatformSyncRequest::ViewportFlagNoInputs {
-                        requested: true,
-                    },
-                    reason: DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi,
-                },
-            ],
-        });
+            dispatches: vec![DockViewportPlatformSyncDispatch::Queued {
+                request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
+                domain: DockViewportPlatformSyncDomain::PointerInput,
+                generation: 7,
+            }],
+            observations: Vec::new(),
+        };
 
-        assert!(status.last_platform_sync_is_unsupported_pointer_input(window_id, false));
-        assert!(!status.last_platform_sync_is_unsupported_pointer_input(window_id, true));
-        assert!(!status.last_platform_sync_is_unsupported_pointer_input(WindowId::from(13), false));
+        status.record_platform_dispatch(queued);
+        assert!(
+            status
+                .last_platform_dispatch
+                .as_ref()
+                .is_some_and(|record| record.observations.is_empty()),
+            "queued dispatch is intent only and cannot be presented as committed facts"
+        );
+
+        let observed_bounds = bounds(10.0, 20.0, 320.0, 240.0);
+        let observation = DockViewportPlatformSyncObservation {
+            domain: DockViewportPlatformSyncDomain::PointerInput,
+            generation: 7,
+            request: WindowMutationRequest::PointerInput(false),
+            outcome: DockViewportPlatformSyncObservationOutcome::Adjusted,
+            facts: WindowPlatformFacts {
+                bounds: observed_bounds,
+                coordinate_space: WindowCoordinateSpace::GlobalScreen,
+                window_bounds: WindowBounds::Windowed(observed_bounds),
+                inner_window_bounds: WindowBounds::Windowed(observed_bounds),
+                content_size: observed_bounds.size,
+                scale_factor: 1.0,
+                display_id: None,
+                is_minimized: false,
+                is_maximized: false,
+                is_fullscreen: false,
+                accepts_pointer_input: true,
+                focus_on_appearing: true,
+                focus_on_click: true,
+                background_appearance: WindowBackgroundAppearance::Opaque,
+                topmost: false,
+                taskbar_visible: true,
+                is_active: true,
+            },
+        };
+        status.record_platform_observation(window_id, observation.clone());
+
+        let dispatch = status
+            .last_platform_dispatch
+            .as_ref()
+            .expect("dispatch record should remain available");
+        assert_eq!(dispatch.observations, vec![observation]);
+        assert_eq!(
+            status.recent_platform_observations.len(),
+            1,
+            "terminal observations stay visible even after a later dispatch replaces this record"
+        );
     }
 
     #[test]
@@ -1786,18 +1921,17 @@ mod tests {
                 )),
             ),
         )));
-        status.record_platform_sync(DockViewportPlatformSyncRecord {
+        status.record_platform_dispatch(DockViewportPlatformSyncRecord {
             window_id: target_window.window_id(),
-            applied: Vec::new(),
-            skipped_requests: Vec::new(),
-            unsupported_requests: Vec::new(),
+            dispatches: Vec::new(),
+            observations: Vec::new(),
         });
 
         status.clear_window_references(&target, target_window.window_id());
 
         assert_eq!(status.last_route, None);
         assert_eq!(status.last_activation, None);
-        assert_eq!(status.last_platform_sync, None);
+        assert_eq!(status.last_platform_dispatch, None);
         assert_eq!(
             status
                 .last_drop_outcome

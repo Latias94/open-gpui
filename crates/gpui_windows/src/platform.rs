@@ -348,6 +348,25 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     (result.0 == 0).then_some(())
 }
 
+fn windows_window_mutation_capabilities() -> PlatformWindowMutationCapabilities {
+    PlatformWindowMutationCapabilities {
+        position: WindowMutationSupport::CreationOnly,
+        size: WindowMutationSupport::Live,
+        windowed: WindowMutationSupport::Live,
+        maximized: WindowMutationSupport::Live,
+        fullscreen: WindowMutationSupport::Live,
+        minimized: WindowMutationSupport::Unsupported,
+        restore_bounds: WindowMutationSupport::CreationOnly,
+        pointer_input: WindowMutationSupport::Live,
+        focus_on_appearing: WindowMutationSupport::CreationOnly,
+        focus_on_click: WindowMutationSupport::Unsupported,
+        alpha: WindowMutationSupport::CreationOnly,
+        topmost: WindowMutationSupport::Unsupported,
+        taskbar_visibility: WindowMutationSupport::Unsupported,
+        coordinate_space: WindowCoordinateSpace::WindowLocal,
+    }
+}
+
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -530,13 +549,20 @@ impl Platform for WindowsPlatform {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
             platform_viewport_windows: true,
-            global_window_bounds: true,
+            global_window_bounds: false,
             display_work_area: true,
             dpi_scale: true,
-            no_input_windows: true,
             hovered_window_ignores_no_input: true,
             ..Default::default()
         }
+    }
+
+    fn window_mutation_capabilities(
+        &self,
+        _kind: &WindowKind,
+        _display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        windows_window_mutation_capabilities()
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -1450,7 +1476,61 @@ unsafe extern "system" fn window_procedure(
 #[cfg(test)]
 mod tests {
     use crate::{read_from_clipboard, write_to_clipboard};
-    use open_gpui::{ClipboardItem, Platform as _};
+    use open_gpui::{
+        AppContext as _, Application, ClipboardItem, Empty, Platform as _,
+        PlatformWindowMutationCapabilities, WindowBounds, WindowCoordinateSpace, WindowHandle,
+        WindowKind, WindowMutationDispatch, WindowMutationObservation, WindowMutationOutcome,
+        WindowMutationRequest, WindowMutationSupport, WindowOptions, WindowPlacementRequest,
+        WindowPlacementState, WindowPlatformFacts, px, size,
+    };
+    use std::rc::Rc;
+    use windows::Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{
+            GetWindowRect, IsWindowVisible, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
+            SetWindowPos, ShowWindow,
+        },
+    };
+
+    fn observe_native_mutation(
+        platform: &super::WindowsPlatform,
+        app: &mut Application,
+        window: WindowHandle<Empty>,
+        request: WindowMutationRequest,
+    ) -> WindowMutationObservation {
+        let dispatch = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| window.request_window_mutation(request))
+                .expect("native test window should remain open")
+        });
+        let ticket = match dispatch {
+            WindowMutationDispatch::Queued(ticket) => ticket,
+            other => panic!("expected queued native mutation, got {other:?}"),
+        };
+
+        for _ in 0..16 {
+            platform.inner.run_foreground_task();
+            if let Some(observation) = ticket.observation() {
+                return observation;
+            }
+        }
+        panic!(
+            "native mutation did not settle: domain={:?}, generation={}",
+            ticket.domain(),
+            ticket.generation()
+        );
+    }
+
+    fn committed_window_facts(
+        app: &mut Application,
+        window: WindowHandle<Empty>,
+    ) -> WindowPlatformFacts {
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| window.platform_facts().clone())
+                .expect("native test window should remain open")
+        })
+    }
 
     #[test]
     fn test_clipboard() {
@@ -1492,5 +1572,481 @@ mod tests {
 
         platform.hide_other_apps();
         platform.unhide_other_apps();
+    }
+
+    #[test]
+    fn window_mutation_capabilities_match_observable_windows_paths() {
+        assert_eq!(
+            super::windows_window_mutation_capabilities(),
+            PlatformWindowMutationCapabilities {
+                position: WindowMutationSupport::CreationOnly,
+                size: WindowMutationSupport::Live,
+                windowed: WindowMutationSupport::Live,
+                maximized: WindowMutationSupport::Live,
+                fullscreen: WindowMutationSupport::Live,
+                minimized: WindowMutationSupport::Unsupported,
+                restore_bounds: WindowMutationSupport::CreationOnly,
+                pointer_input: WindowMutationSupport::Live,
+                focus_on_appearing: WindowMutationSupport::CreationOnly,
+                focus_on_click: WindowMutationSupport::Unsupported,
+                alpha: WindowMutationSupport::CreationOnly,
+                topmost: WindowMutationSupport::Unsupported,
+                taskbar_visibility: WindowMutationSupport::Unsupported,
+                coordinate_space: WindowCoordinateSpace::WindowLocal,
+            }
+        );
+    }
+
+    #[test]
+    fn popup_creation_facts_drive_creation_only_request_classification() {
+        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let mut app = Application::with_platform(platform.clone());
+        let window = app
+            .update_for_test(|cx| {
+                cx.open_window(
+                    WindowOptions {
+                        kind: WindowKind::PopUp,
+                        window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                        focus: false,
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+            })
+            .expect("non-activating popup test window should open");
+        let native_window = platform
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("popup test window handle should be registered")
+            .as_raw();
+        let native_facts = platform
+            .window_from_hwnd(native_window)
+            .expect("popup test window should remain registered")
+            .observed_platform_facts_for_test()
+            .expect("popup creation facts should remain readable from Win32");
+        let committed_facts = committed_window_facts(&mut app, window);
+
+        assert_eq!(committed_facts, native_facts);
+        assert!(!committed_facts.focus_on_appearing);
+        assert!(!committed_facts.focus_on_click);
+        assert!(!committed_facts.taskbar_visible);
+
+        let dispatches = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| {
+                    [
+                        window.request_focus_on_appearing(false),
+                        window.request_focus_on_appearing(true),
+                        window.request_focus_on_click(false),
+                        window.request_focus_on_click(true),
+                        window.request_taskbar_visibility(false),
+                        window.request_taskbar_visibility(true),
+                    ]
+                })
+                .expect("popup test window should remain open")
+        });
+        assert!(matches!(dispatches[0], WindowMutationDispatch::Unchanged));
+        assert!(matches!(dispatches[1], WindowMutationDispatch::Unsupported));
+        assert!(matches!(dispatches[2], WindowMutationDispatch::Unchanged));
+        assert!(matches!(dispatches[3], WindowMutationDispatch::Unsupported));
+        assert!(matches!(dispatches[4], WindowMutationDispatch::Unchanged));
+        assert!(matches!(dispatches[5], WindowMutationDispatch::Unsupported));
+
+        let window = open_gpui::AnyWindowHandle::from(window);
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("popup test window should close");
+        });
+        platform.inner.run_foreground_task();
+    }
+
+    #[test]
+    fn advertised_live_window_mutations_commit_native_observed_facts() {
+        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let mut app = Application::with_platform(platform.clone());
+        let window = app
+            .update_for_test(|cx| {
+                let window_bounds = WindowBounds::centered(size(px(320.0), px(220.0)), cx);
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        focus: false,
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+            })
+            .expect("hidden native test window should open");
+        let native_window = platform
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("native test window handle should be registered")
+            .as_raw();
+        assert!(unsafe { IsWindowVisible(native_window).as_bool() });
+
+        let initial = committed_window_facts(&mut app, window);
+        let native_initial = platform
+            .window_from_hwnd(native_window)
+            .expect("native test window should remain registered")
+            .observed_platform_facts_for_test()
+            .expect("creation facts should remain readable from Win32");
+        assert_eq!(
+            initial, native_initial,
+            "the committed creation seed must equal an independent native readback"
+        );
+        let initial_getters = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| {
+                    (
+                        window.bounds(),
+                        window.window_bounds(),
+                        window.inner_window_bounds(),
+                        window.is_maximized(),
+                        window.is_minimized(),
+                        window.accepts_pointer_input(),
+                    )
+                })
+                .expect("native test window should remain open")
+        });
+        assert_eq!(
+            initial_getters,
+            (
+                initial.bounds,
+                initial.window_bounds,
+                initial.inner_window_bounds,
+                initial.is_maximized,
+                initial.is_minimized,
+                initial.accepts_pointer_input,
+            ),
+            "creation readback must seed every public getter from the committed fact cache"
+        );
+        let target_size = if initial.bounds.size == size(px(360.0), px(240.0)) {
+            size(px(380.0), px(260.0))
+        } else {
+            size(px(360.0), px(240.0))
+        };
+        let resized = observe_native_mutation(
+            &platform,
+            &mut app,
+            window,
+            WindowMutationRequest::Placement(WindowPlacementRequest {
+                size: Some(target_size),
+                ..WindowPlacementRequest::new()
+            }),
+        );
+        assert_eq!(resized.outcome, WindowMutationOutcome::Exact);
+        assert_eq!(resized.facts.bounds.size, target_size);
+        assert_eq!(committed_window_facts(&mut app, window), resized.facts);
+
+        for state in [
+            WindowPlacementState::Maximized,
+            WindowPlacementState::Windowed,
+            WindowPlacementState::Fullscreen,
+            WindowPlacementState::Windowed,
+        ] {
+            let observed = observe_native_mutation(
+                &platform,
+                &mut app,
+                window,
+                WindowMutationRequest::Placement(WindowPlacementRequest {
+                    state: Some(state),
+                    ..WindowPlacementRequest::new()
+                }),
+            );
+            assert_eq!(
+                observed.outcome,
+                WindowMutationOutcome::Exact,
+                "native state transition should settle exactly: {state:?}"
+            );
+            assert_eq!(committed_window_facts(&mut app, window), observed.facts);
+        }
+
+        for accepts_pointer_input in [false, true] {
+            let observed = observe_native_mutation(
+                &platform,
+                &mut app,
+                window,
+                WindowMutationRequest::PointerInput(accepts_pointer_input),
+            );
+            assert_eq!(observed.outcome, WindowMutationOutcome::Exact);
+            assert_eq!(observed.facts.accepts_pointer_input, accepts_pointer_input);
+            assert_eq!(committed_window_facts(&mut app, window), observed.facts);
+        }
+
+        let window = open_gpui::AnyWindowHandle::from(window);
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("native test window should close");
+        });
+        platform.inner.run_foreground_task();
+    }
+
+    #[test]
+    fn native_mutation_failure_settles_rejected_and_rolls_back_facts() {
+        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let mut app = Application::with_platform(platform.clone());
+        let window = app
+            .update_for_test(|cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                        focus: false,
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+            })
+            .expect("native test window should open");
+        let native_window = platform
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("native test window handle should be registered")
+            .as_raw();
+        let native_window_state = platform
+            .window_from_hwnd(native_window)
+            .expect("native test window should remain registered");
+        let initial = committed_window_facts(&mut app, window);
+        native_window_state
+            .state
+            .fail_next_pointer_input_frame_change
+            .set(true);
+
+        let observation = observe_native_mutation(
+            &platform,
+            &mut app,
+            window,
+            WindowMutationRequest::PointerInput(!initial.accepts_pointer_input),
+        );
+        assert_eq!(observation.outcome, WindowMutationOutcome::Rejected);
+        assert_eq!(observation.facts, initial);
+        assert_eq!(committed_window_facts(&mut app, window), initial);
+        assert_eq!(
+            native_window_state
+                .observed_platform_facts_for_test()
+                .expect("rolled-back native facts should remain readable"),
+            initial,
+            "native style rollback and committed facts must remain coherent"
+        );
+
+        let window = open_gpui::AnyWindowHandle::from(window);
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("native test window should close");
+        });
+        platform.inner.run_foreground_task();
+    }
+
+    #[test]
+    fn native_rejection_does_not_fabricate_committed_facts() {
+        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let mut app = Application::with_platform(platform.clone());
+        let window = app
+            .update_for_test(|cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                        focus: false,
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+            })
+            .expect("native test window should open");
+        let native_window = platform
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("native test window handle should be registered")
+            .as_raw();
+        assert!(unsafe { IsWindowVisible(native_window).as_bool() });
+
+        let initial = committed_window_facts(&mut app, window);
+        unsafe {
+            let _ = ShowWindow(native_window, SW_HIDE);
+        }
+        assert!(!unsafe { IsWindowVisible(native_window).as_bool() });
+
+        let target_size = size(
+            initial.bounds.size.width + px(32.0),
+            initial.bounds.size.height + px(24.0),
+        );
+        let dispatch = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| {
+                    window.request_window_mutation(WindowMutationRequest::Placement(
+                        WindowPlacementRequest {
+                            size: Some(target_size),
+                            ..WindowPlacementRequest::new()
+                        },
+                    ))
+                })
+                .expect("native test window should remain open")
+        });
+        assert!(
+            matches!(dispatch, WindowMutationDispatch::Rejected),
+            "hidden native window should reject live placement, got {dispatch:?}"
+        );
+        assert_eq!(
+            committed_window_facts(&mut app, window),
+            initial,
+            "a native dispatch rejection must not commit requested facts"
+        );
+
+        let window = open_gpui::AnyWindowHandle::from(window);
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("native test window should close");
+        });
+        platform.inner.run_foreground_task();
+    }
+
+    #[test]
+    fn external_native_resize_callback_refreshes_committed_facts() {
+        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let mut app = Application::with_platform(platform.clone());
+        let window = app
+            .update_for_test(|cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                        focus: false,
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+            })
+            .expect("native test window should open");
+        let native_window = platform
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("native test window handle should be registered")
+            .as_raw();
+        let initial = committed_window_facts(&mut app, window);
+        let mut outer_bounds = RECT::default();
+        unsafe { GetWindowRect(native_window, &mut outer_bounds) }
+            .expect("native outer bounds should be readable");
+
+        unsafe {
+            SetWindowPos(
+                native_window,
+                None,
+                0,
+                0,
+                outer_bounds.right - outer_bounds.left + 32,
+                outer_bounds.bottom - outer_bounds.top + 24,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        }
+        .expect("external native resize should succeed");
+
+        let mut observed = committed_window_facts(&mut app, window);
+        for _ in 0..16 {
+            if observed.bounds.size != initial.bounds.size {
+                break;
+            }
+            platform.inner.run_foreground_task();
+            observed = committed_window_facts(&mut app, window);
+        }
+        assert_ne!(
+            observed.bounds.size, initial.bounds.size,
+            "WM_SIZE must refresh the committed GPUI fact cache"
+        );
+        let getter_bounds = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| window.bounds())
+                .expect("native test window should remain open")
+        });
+        assert_eq!(getter_bounds, observed.bounds);
+
+        let window = open_gpui::AnyWindowHandle::from(window);
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("native test window should close");
+        });
+        platform.inner.run_foreground_task();
+    }
+
+    #[test]
+    fn hidden_window_defers_live_placement_until_first_activation() {
+        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let mut app = Application::with_platform(platform.clone());
+        let window = app
+            .update_for_test(|cx| {
+                let window_bounds = WindowBounds::centered(size(px(320.0), px(220.0)), cx);
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        focus: false,
+                        show: false,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+            })
+            .expect("hidden native test window should open");
+        let native_window = platform
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("native test window handle should be registered")
+            .as_raw();
+        assert!(!unsafe { IsWindowVisible(native_window).as_bool() });
+
+        let target_size = size(px(360.0), px(240.0));
+        let dispatch = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| {
+                    window.request_window_mutation(WindowMutationRequest::Placement(
+                        WindowPlacementRequest {
+                            size: Some(target_size),
+                            ..WindowPlacementRequest::new()
+                        },
+                    ))
+                })
+                .expect("hidden native test window should remain open")
+        });
+        let ticket = match dispatch {
+            WindowMutationDispatch::Queued(ticket) => ticket,
+            other => panic!("expected deferred queued mutation, got {other:?}"),
+        };
+        platform.inner.run_foreground_task();
+        assert!(ticket.observation().is_none());
+        assert!(!unsafe { IsWindowVisible(native_window).as_bool() });
+
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .expect("hidden native test window should remain open");
+        });
+        platform.inner.run_foreground_task();
+        let observation = ticket
+            .observation()
+            .expect("first activation should settle deferred placement");
+        assert_eq!(observation.outcome, WindowMutationOutcome::Exact);
+        assert_eq!(observation.facts.bounds.size, target_size);
+        assert_eq!(committed_window_facts(&mut app, window), observation.facts);
+        assert!(unsafe { IsWindowVisible(native_window).as_bool() });
+
+        let window = open_gpui::AnyWindowHandle::from(window);
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("native test window should close");
+        });
+        platform.inner.run_foreground_task();
     }
 }

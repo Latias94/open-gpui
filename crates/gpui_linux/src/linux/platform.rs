@@ -24,8 +24,9 @@ use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
     Keymap, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
     PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, Result, RunnableVariant,
-    Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowParams,
+    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowMutationCapabilities, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use open_gpui::{CursorStyle, Pixels, Point, px};
@@ -97,6 +98,13 @@ pub(crate) trait LinuxClient {
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
+    }
+    fn window_mutation_capabilities(
+        &self,
+        _kind: &WindowKind,
+        _display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        PlatformWindowMutationCapabilities::default()
     }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None
@@ -394,6 +402,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         self.inner.viewport_capabilities()
+    }
+
+    fn window_mutation_capabilities(
+        &self,
+        kind: &WindowKind,
+        display_id: Option<DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        self.inner.window_mutation_capabilities(kind, display_id)
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {

@@ -216,7 +216,7 @@ KTD19. **Bring-into-view owns scrolling; focus only requests it.** One generatio
 
 KTD20. **Rounded clipping is one geometry stack, not a renderer effect.** Existing rectangular masks and overflow inputs converge on a checked rect/rounded-rect stack used by scene culling, renderer clips, hit testing, debug geometry, deferred/cache replay, and conservative accessibility projection. Non-uniform scale preserves elliptical radii. Unsupported native-surface or backend combinations fail closed; arbitrary path syntax waits for a separate winding/tessellation/stencil design.
 
-KTD21. **ImGui defines Dock behavior, not Open GPUI architecture.** The repository-local `repo-ref/imgui` docking clone anchors drop rectangles and previews, hovered viewport routing, selected-tab behavior, focus history, and multi-viewport lifecycle edge cases. Open GPUI retains its Rust retained-mode `DockGraph`, `DockHost`, transaction, session, and generation architecture; global immediate-mode context, raw node pointers, callback tables, and `.ini` persistence are rejected.
+KTD21. **ImGui defines Dock behavior, not Open GPUI architecture.** The repository-local `repo-ref/imgui` docking clone anchors drop rectangles and previews, hovered viewport routing, selected-tab behavior, focus history, splitter hit behavior, and tear-off/reuse/close multi-viewport lifecycle edge cases. Open GPUI retains its Rust retained-mode `DockGraph`, `DockHost`, transaction, session, and generation architecture; global immediate-mode context, raw node pointers, callback tables, per-frame `DockSpace` construction, `DockBuilder`, PlatformIO ownership, and `.ini` persistence are rejected.
 
 KTD22. **Dock style is a named immutable render input.** `gpui_docking` owns one complete `DockVisualStyle` value and built-in fallback. A narrow resolver is installed as an immutable per-surface value, or passed explicitly to a low-level host; there is no mutable app-global registration. It synchronously reads only the active GPUI render context, cannot update entities, notify, dispatch, or reenter rendering, and lets application integration map `ThemeResolver::current` without a reverse dependency on UI Components or a generic context/service API. Target-host affordances resolve target style. Source-owned deferred drag visuals freeze an out-of-band style snapshot keyed by drag session/opening generation, never add visual values to `DockDragPayload` or its equality/route identity, and clear that snapshot on cancel/close before reopen captures anew. Existing drop-guide layout values are renamed `DockDropGuideMetrics` so they cannot appear to compete with the visual authority.
 
@@ -1684,18 +1684,19 @@ GPUI exposes one backend-neutral contract for mutating an already-open window's 
 - Define the ticket's terminal observation independently: exact observed facts, adjusted observed facts, superseded by a newer generation in the same conflict domain, rejected/native failure when observable, unsupported, or window closed. Dropping an observation subscription cancels delivery only, not queued intent. Every terminal path is exactly once and bounded even if callbacks reorder or never arrive before close.
 - Treat position, size, state, and restore bounds as one placement request, generation, and conflict domain. The planner canonicalizes a coherent placement before dispatch, defines windowed restore-bounds semantics, and rejects contradictory or unrepresentable state-plus-geometry input without sending a partial native request. Independent flag domains may coexist and partially dispatch; partial success never exists inside placement itself.
 - Add one committed `WindowPlatformFacts` cache inside `Window`, seeded from creation facts. Coherent moved/bounds/state/flag callbacks or an explicit backend observation refresh update that cache and settle matching tickets; queued intent cannot update it. Existing public `window_bounds`, `inner_window_bounds`, `bounds`, fullscreen/minimized, pointer-input, and related getters read this authority rather than querying a second backend fact path.
-- Give placement and each independent flag domain monotonic generations. A newer request supersedes older pending intent in that domain; unrelated flag requests may coexist. State-generated move/resize callbacks belong to the placement generation and commit one coherent snapshot rather than accidentally settling independent size/position tickets. External user or window-manager adjustments publish actual facts without a corrective loop unless a newer explicit request still owns the domain.
+- Give seven domains monotonic generations: one coherent placement domain plus pointer input, focus-on-appearing, focus-on-click, alpha, topmost, and taskbar visibility. A newer request supersedes older pending intent in that domain; unrelated flag requests may coexist. Every backend terminal carries its domain and generation, and GPUI rejects stale generations before committing their facts. State-generated move/resize callbacks belong to the placement generation and commit one coherent snapshot rather than accidentally settling independent size/position tickets. External user or window-manager adjustments publish actual facts without a corrective loop unless a newer explicit request still owns the domain. Window close invalidates queued backend generations before settling retained tickets.
 - Require a readable observation path for any property advertised as live. If a backend can issue a setter but cannot determine the resulting fact, it remains creation-only or unsupported in the public capability contract.
 - Migrate existing resize, pointer-input, fullscreen, and creation-option paths into the common dispatch/ticket vocabulary where they represent the same operation. Preserve ergonomic single-property helpers as thin typed wrappers over placement or a flag domain rather than parallel authorities.
 - Replace Dock's `live_window_move` and flag capability mirrors with projections of the GPUI contract. Dock viewport sync requests only changed domains, records queued dispatch separately from terminal observation, uses committed facts for snapshots/routes/readiness, and reports independent unsupported flags without discarding a supported placement request. U19 may revision only the resulting observed placement transaction, never this dispatch record.
+- Query capabilities for every window's actual `WindowKind` and target display, then capture the resolved matrix in one immutable mutation profile when the window opens. An unavailable saved display id resolves to the current default before both projection and opening, while a backend with no default fails structurally rather than indexing an invalid screen. Keep the profile readable by handle while a window update temporarily owns mutable state, and remove it on close. Dock runtime status projects each registered viewport from that profile rather than applying the backend's normal-window or primary-display matrix to heterogeneous windows. Display-dependent support such as X11 alpha creation must reflect the target screen's actual native resources.
 - Implement every property each backend can prove; unsupported properties remain explicit. Native owning-platform tests and CI, not active-platform assumptions, determine the capability matrix.
 
 **Test scenarios**
 
-- Pure tests cover capability projection, unsupported/creation-only/live distinctions, dispatch and terminal outcomes, unchanged detection, coherent state/geometry planning, restore bounds, contradictory batch rejection, DPI/shared-coordinate conversion, independent-flag partial dispatch, and generation supersession.
-- `TestPlatform` tests deterministically separate queued dispatch from observation, report backend rejection, adjust requested placement, inject external movement, emit state and geometry callbacks in either order, omit callbacks until close, and prove committed facts plus one-shot observers cannot be forged by intent. Request, immediate public getter, callback, terminal delivery, supersession, dropped subscription, and close ordering are all explicit.
+- Pure tests cover capability projection, unsupported/creation-only/live distinctions, all seven request domains, dispatch and terminal outcomes, unchanged detection, coherent state/geometry planning, restore bounds, contradictory batch rejection, DPI/shared-coordinate conversion, independent-flag partial dispatch, generation supersession, and stale-terminal rejection before fact commit.
+- `TestPlatform` tests deterministically separate queued dispatch from observation, report backend rejection, adjust requested placement, inject external movement, emit state and geometry callbacks in either order, omit callbacks until close, normalize unavailable display ids to the default before creation, and prove committed facts plus one-shot observers cannot be forged by intent. Request, immediate public getter, callback, terminal delivery, supersession, dropped subscription, and close ordering are all explicit.
 - Dock tests cover move-only, resize-only, move-plus-resize, windowed/maximized/fullscreen/minimized transitions with restore bounds, mixed supported/unsupported flags, stale/adjusted observations, external user movement, route/preview geometry, placement export, no retry loop, and absence of a revision from dispatch alone.
-- Native Windows, macOS, and Linux tests compile every trait implementation and exercise supported dispatch, failure, getter-cache seeding, and callback conversion. Owning-platform integration tests verify placement and each advertised flag against actual coherent observed facts.
+- Native Windows, macOS, and Linux tests compile every trait implementation and assert exact capability matrices plus kind-specific and display-dependent projections such as Wayland LayerShell and X11 screens with or without a transparent visual. On every backend that advertises a live domain, owning-platform integration tests exercise supported dispatch, native failure, getter-cache seeding, callback conversion, placement, and each live flag against actual coherent observed facts. Creation-only backends prove their creation projection without fabricating live dispatch.
 - Multi-viewport example smokes display the capability matrix and last request/observation separately, then exercise tear-off placement, live move/resize, docking back, and graceful unsupported flags.
 - Public-surface and scanner tests prove the ambiguous `live_window_move` claim and Dock-local semantic duplicates are absent.
 
@@ -1709,6 +1710,32 @@ GPUI exposes one backend-neutral contract for mutating an already-open window's 
 
 - GPUI/TestPlatform, Dock sync/readiness/runtime, examples, public API, migration, and release tests pass locally. Every native backend compiles on its owning runner, and its advertised live properties pass observed-fact integration tests before U20 is complete.
 - Review confirms capability honesty, dispatch/terminal-observation separation, placement conflict and restore-bounds semantics, coherent committed getter authority, independent-domain partial support, coordinate correctness, and no Dock-local platform authority.
+
+### Post-U20 Candidate Roadmap
+
+The following labels are planning handles for separate design/implementation epics. They do not
+add requirements, acceptance credit, or Definition-of-Done work to this convergence plan, and U20
+must not publish placeholder APIs for them.
+
+- **Candidate U21: Locale and logical direction authority.** Design separate immutable
+  `LocaleContext` and inherited `LayoutDirection` facts with app/OS fallback, window override, and
+  subtree override. Add logical start/end edges without reinterpreting physical left/right APIs,
+  then carry the authority through layout, overlays, keyboard navigation, icon mirroring, shaping
+  and bidi, selection/IME, AccessKit, portals, deferred work, and cache replay. The design gate
+  must inventory existing direction-shaped APIs first; an `rtl: bool` shortcut is rejected.
+- **Candidate U22: Input-independent semantic move sessions.** Extract only the stable identity,
+  source snapshot/generation, accepted target, preview/commit agreement, cancellation, and
+  accessibility/programmatic move outcomes shared by Tree, Table, and Dock. Pointer, keyboard,
+  AccessKit, and programmatic entry paths adapt into the same domain session, while each component
+  keeps its own hierarchy, row model, graph transaction, rendering, and focus policy. TanStack
+  Table and Dear ImGui remain semantic references for Table and Dock respectively, not runtime
+  dependencies or a reason to merge their models.
+- **Candidate U23: Unified pointer-contact substrate.** Add stable per-contact identity and device
+  kind, down/move/up/cancel, pressure/buttons/primary facts, coalescing policy, per-pointer capture,
+  deterministic lost-capture delivery, backend parity, and a deterministic multi-contact test
+  injector. Existing mouse listeners and drag/drop receive an explicit compatibility projection.
+  A gesture arena remains a later decision after this substrate proves nested scroll/drag,
+  transformed coordinates, suppression, and window-lifecycle behavior.
 
 ## Verification Contract
 
@@ -1828,12 +1855,15 @@ Test execution rules:
 
 ### Deferred Follow-on Research
 
-These candidates have no requirement IDs, implementation units, acceptance credit, or Definition-of-Done credit in this plan. U12-U20 must not add public placeholders for them.
+These candidates have no requirement IDs, acceptance credit, or Definition-of-Done credit in this
+plan. Candidate U21-U23 are post-plan scheduling handles only; U12-U20 must not add public
+placeholders for them.
 
 - **Group opacity and compositing:** determine isolation boundaries, offscreen target ownership, nested blend semantics, native-surface behavior, cache invalidation, GPU memory cost, and backend parity before exposing subtree opacity as more than a leaf paint property.
-- **Locale and logical direction:** inventory locale fallback, inherited direction, physical versus logical edges, overlay placement, keyboard navigation, icon mirroring, shaping/bidi, selection/IME, AccessKit projection, and portal/cache capture before a dedicated design epic chooses public types. No `rtl: bool` substitute enters this plan.
+- **Locale and logical direction (candidate U21):** inventory locale fallback, inherited direction, physical versus logical edges, overlay placement, keyboard navigation, icon mirroring, shaping/bidi, selection/IME, AccessKit projection, and portal/cache capture before a dedicated design epic chooses public types. No `rtl: bool` substitute enters this plan.
+- **Semantic move sessions (candidate U22):** inventory Tree, Table, and Dock reorder/move identities, source generations, accepted-target resolution, preview/commit consistency, cancellation, keyboard and AccessKit actions, focus, undo, and persistence boundaries before selecting shared renderer-neutral vocabulary. Do not share component models or input runtimes merely because they all support movement.
 - **Arbitrary path subtree clipping:** after U17, determine fill rule/winding, path ownership, tessellation versus stencil, antialiasing, transformed containment, nesting limits, cache keys, native surfaces, and memory/performance policy before exposing any path variant.
-- **Multi-pointer and gesture arena:** define pointer identity, recognizer ownership, arbitration, cancellation, capture transfer, nested scroll/drag interaction, touch/pen parity, and deterministic test input before adding gesture APIs.
+- **Multi-pointer substrate (candidate U23) and gesture arena:** define pointer identity, cancellation, capture transfer, nested scroll/drag interaction, touch/pen parity, and deterministic test input first. Recognizer ownership and arbitration remain a later gesture-arena design after the substrate ships.
 
 ### Explicit Preservation Gates
 

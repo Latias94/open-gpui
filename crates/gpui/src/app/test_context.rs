@@ -4,9 +4,11 @@ use crate::{
     DispatchEventResult, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
     ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
+    PlatformWindowDispatch, PlatformWindowMutationCapabilities, PlatformWindowMutationTerminal,
     Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
+    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle,
+    WindowMutationDomain, WindowOptions, WindowPlatformFacts, app::GpuiMode,
+    platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -451,6 +453,63 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Simulates the platform minimizing a window and publishing coherent window facts.
+    pub fn simulate_window_minimize(&self, window_handle: AnyWindowHandle) {
+        self.test_window(window_handle).simulate_minimize();
+    }
+
+    /// Configures the next structured placement dispatch from a test window.
+    pub fn set_next_window_placement_dispatch(
+        &self,
+        window: AnyWindowHandle,
+        dispatch: PlatformWindowDispatch,
+    ) {
+        self.test_window(window)
+            .set_next_placement_dispatch(dispatch);
+    }
+
+    /// Configures the next pointer-input dispatch from a test window.
+    pub fn set_next_window_pointer_input_dispatch(
+        &self,
+        window: AnyWindowHandle,
+        dispatch: PlatformWindowDispatch,
+    ) {
+        self.test_window(window)
+            .set_next_pointer_input_dispatch(dispatch);
+    }
+
+    /// Applies the latest queued mutation in one domain and emits its observed terminal facts.
+    pub fn flush_window_mutation(
+        &self,
+        window: AnyWindowHandle,
+        domain: WindowMutationDomain,
+    ) -> bool {
+        self.test_window(window).flush_window_mutation(domain)
+    }
+
+    /// Emits supplied backend facts as an observed terminal result for one mutation domain.
+    pub fn simulate_window_mutation_observation(
+        &self,
+        window: AnyWindowHandle,
+        domain: WindowMutationDomain,
+        facts: WindowPlatformFacts,
+    ) -> bool {
+        self.test_window(window)
+            .simulate_window_mutation_observation(domain, facts)
+    }
+
+    /// Emits supplied backend facts with an explicit asynchronous terminal result.
+    pub fn simulate_window_mutation_terminal(
+        &self,
+        window: AnyWindowHandle,
+        domain: WindowMutationDomain,
+        terminal: PlatformWindowMutationTerminal,
+        facts: WindowPlatformFacts,
+    ) -> bool {
+        self.test_window(window)
+            .simulate_window_mutation_terminal(domain, terminal, facts)
+    }
+
     /// Activates accessibility for a test window and drains the resulting frame work.
     ///
     /// Returns `false` when the application was created with accessibility disabled.
@@ -686,9 +745,19 @@ impl TestAppContext {
         self.test_platform.set_hovered_window_available(available);
     }
 
-    /// Overrides whether the test platform can apply native no-input windows.
-    pub fn set_platform_no_input_windows(&self, supported: bool) {
-        self.test_platform.set_no_input_windows(supported);
+    /// Overrides whether the test platform advertises live pointer-input mutation.
+    pub fn set_platform_pointer_input_mutation_supported(&self, supported: bool) {
+        self.test_platform
+            .set_pointer_input_mutation_supported(supported);
+    }
+
+    /// Overrides the complete test-platform window mutation capability matrix.
+    pub fn set_platform_window_mutation_capabilities(
+        &self,
+        capabilities: PlatformWindowMutationCapabilities,
+    ) {
+        self.test_platform
+            .set_window_mutation_capabilities(capabilities);
     }
 
     /// Overrides whether the test platform can open independent platform viewport windows.

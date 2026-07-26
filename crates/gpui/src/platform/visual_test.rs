@@ -10,8 +10,8 @@ use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, ForegroundExecutor, Keymap, Menu, MenuItem,
     MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformHoveredWindow,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, Task, TestDispatcher, WindowAppearance,
-    WindowParams,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowMutationCapabilities, Task,
+    TestDispatcher, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -126,6 +126,14 @@ impl Platform for VisualTestPlatform {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         self.platform.viewport_capabilities()
+    }
+
+    fn window_mutation_capabilities(
+        &self,
+        kind: &crate::WindowKind,
+        display_id: Option<crate::DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        self.platform.window_mutation_capabilities(kind, display_id)
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {

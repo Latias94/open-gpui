@@ -3,8 +3,9 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHeadlessRenderer,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata,
-    Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
+    PlatformWindowMutationCapabilities, PromptButton, ScreenCaptureFrame, ScreenCaptureSource,
+    ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow, ThermalState,
+    WindowAppearance, WindowCoordinateSpace, WindowMutationSupport, WindowParams, size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -28,7 +29,8 @@ pub(crate) struct TestPlatform {
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     window_stack: RefCell<Option<Vec<TestWindow>>>,
     platform_viewport_windows: RefCell<bool>,
-    no_input_windows: RefCell<bool>,
+    pointer_input_mutation_supported: RefCell<bool>,
+    window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -141,7 +143,8 @@ impl TestPlatform {
             hovered_window: Default::default(),
             window_stack: Default::default(),
             platform_viewport_windows: RefCell::new(true),
-            no_input_windows: RefCell::new(true),
+            pointer_input_mutation_supported: RefCell::new(true),
+            window_mutation_capabilities_override: RefCell::new(None),
             expect_restart: Default::default(),
             quit_requested: Default::default(),
             system_wake_callback: Default::default(),
@@ -157,8 +160,15 @@ impl TestPlatform {
         })
     }
 
-    pub(crate) fn set_no_input_windows(&self, supported: bool) {
-        *self.no_input_windows.borrow_mut() = supported;
+    pub(crate) fn set_pointer_input_mutation_supported(&self, supported: bool) {
+        *self.pointer_input_mutation_supported.borrow_mut() = supported;
+    }
+
+    pub(crate) fn set_window_mutation_capabilities(
+        &self,
+        capabilities: PlatformWindowMutationCapabilities,
+    ) {
+        *self.window_mutation_capabilities_override.borrow_mut() = Some(capabilities);
     }
 
     pub(crate) fn set_platform_viewport_windows(&self, supported: bool) {
@@ -507,9 +517,38 @@ impl Platform for TestPlatform {
             window_stack: self.window_stack.borrow().is_some(),
             display_work_area: true,
             dpi_scale: true,
-            no_input_windows: *self.no_input_windows.borrow(),
             hovered_window_ignores_no_input: true,
             ..Default::default()
+        }
+    }
+
+    fn window_mutation_capabilities(
+        &self,
+        _kind: &crate::WindowKind,
+        _display_id: Option<crate::DisplayId>,
+    ) -> PlatformWindowMutationCapabilities {
+        if let Some(capabilities) = *self.window_mutation_capabilities_override.borrow() {
+            return capabilities;
+        }
+        PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::Live,
+            size: WindowMutationSupport::Live,
+            windowed: WindowMutationSupport::Live,
+            maximized: WindowMutationSupport::Live,
+            fullscreen: WindowMutationSupport::Live,
+            minimized: WindowMutationSupport::Live,
+            restore_bounds: WindowMutationSupport::Live,
+            pointer_input: if *self.pointer_input_mutation_supported.borrow() {
+                WindowMutationSupport::Live
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            focus_on_appearing: WindowMutationSupport::CreationOnly,
+            focus_on_click: WindowMutationSupport::Unsupported,
+            alpha: WindowMutationSupport::CreationOnly,
+            topmost: WindowMutationSupport::Unsupported,
+            taskbar_visibility: WindowMutationSupport::Unsupported,
+            coordinate_space: WindowCoordinateSpace::GlobalScreen,
         }
     }
 

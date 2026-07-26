@@ -2,7 +2,7 @@
 
 use open_gpui::{
     App, Bounds, Context, KeyBinding, PromptButton, PromptLevel, Window, WindowBounds, WindowKind,
-    WindowOptions, actions, div, prelude::*, px, rgb, size,
+    WindowMutationDispatch, WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 use open_gpui_platform::application;
 
@@ -265,7 +265,19 @@ impl Render for WindowDemo {
             }))
             .child(button("Resize", |window, _| {
                 let content_size = window.bounds().size;
-                window.resize(size(content_size.height, content_size.width));
+                match window.resize(size(content_size.height, content_size.width)) {
+                    WindowMutationDispatch::Queued(ticket) => {
+                        println!("Resize queued as generation {}", ticket.generation());
+                    }
+                    WindowMutationDispatch::Unchanged => {}
+                    WindowMutationDispatch::Unsupported => {
+                        eprintln!("Live resize is unsupported for this window");
+                    }
+                    WindowMutationDispatch::Rejected => {
+                        eprintln!("The platform rejected the resize request");
+                    }
+                    WindowMutationDispatch::WindowClosed => {}
+                }
             }))
             .child(button("Prompt", |window, cx| {
                 let answer = window.prompt(

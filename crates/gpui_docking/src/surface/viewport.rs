@@ -7,7 +7,8 @@ use crate::{
     DockPolicyError, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportOpenOutcome, DockViewportOpenStatus,
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreReadiness, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
+    DockViewportRestoreReadiness, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
+    DockViewportShouldCloseStatus,
 };
 use open_gpui::{AnyWindowHandle, App, WindowId, WindowOptions};
 use thiserror::Error;
@@ -176,6 +177,11 @@ impl DockSurfaceViewportSession {
     /// Returns registered platform viewport spaces in stable lexical order.
     pub fn registered_spaces(&self, cx: &App) -> Vec<DockSpaceId> {
         self.surface.registered_viewport_spaces(cx)
+    }
+
+    /// Returns a read-only diagnostic snapshot of the viewport runtime and active backend.
+    pub fn runtime_status(&self, cx: &App) -> DockViewportRuntimeStatus {
+        self.surface.viewport_runtime(cx).runtime_status_for_app(cx)
     }
 
     /// Returns true when a platform viewport is registered for the dock space.

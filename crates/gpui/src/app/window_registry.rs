@@ -8,6 +8,8 @@ pub(super) fn reserve(app: &mut App) -> WindowId {
 
 pub(super) fn commit(app: &mut App, id: WindowId, window: Window) {
     app.window_handles.insert(id, window.handle);
+    app.window_mutation_profiles
+        .insert(id, window.window_mutation_profile());
     app.windows
         .get_mut(id)
         .expect("reserved window id should still exist")
@@ -21,6 +23,7 @@ pub(super) fn rollback_reserved(app: &mut App, id: WindowId) {
 pub(super) fn clear(app: &mut App) {
     app.windows.clear();
     app.window_handles.clear();
+    app.window_mutation_profiles.clear();
 }
 
 pub(super) fn handles(app: &App) -> Vec<AnyWindowHandle> {
@@ -42,6 +45,7 @@ pub(super) fn finish_window_update(app: &mut App, id: WindowId, window: Box<Wind
 
 fn unregister_removed_window(app: &mut App, id: WindowId) {
     app.window_handles.remove(&id);
+    app.window_mutation_profiles.remove(&id);
     app.windows.remove(id);
     cleanup_entity_window_links(app, id);
     notify_window_closed(app, id);

@@ -226,6 +226,7 @@ impl VisualTestAppContext {
             let mut app = self.app.borrow_mut();
             app.windows.remove(window.id);
             app.window_handles.remove(&window.id);
+            app.window_mutation_profiles.remove(&window.id);
         }
         self.run_until_parked();
         Ok(())

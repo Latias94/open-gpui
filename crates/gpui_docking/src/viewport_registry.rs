@@ -1,5 +1,8 @@
 use crate::{DockSpaceId, DockViewportHostGeometry, DockViewportIdentity};
-use open_gpui::{AnyWindowHandle, App, Bounds, DisplayId, Pixels, Window, WindowBounds, WindowId};
+use open_gpui::{
+    AnyWindowHandle, App, Bounds, DisplayId, Pixels, Window, WindowBounds, WindowCoordinateSpace,
+    WindowId, WindowPlatformFacts,
+};
 use std::collections::{BTreeMap, HashMap};
 
 /// State of a registered platform viewport from the routing model's perspective.
@@ -234,20 +237,31 @@ impl DockViewportWindowFacts {
         }
     }
 
-    pub(crate) fn from_window(window: &Window, cx: &App) -> Self {
-        let current_bounds = if cx.viewport_capabilities().global_window_bounds {
-            DockViewportWindowBoundsFrame::GlobalScreen(window.bounds())
-        } else {
-            DockViewportWindowBoundsFrame::WindowLocal(window.bounds())
+    pub(crate) fn from_window(window: &Window, _cx: &App) -> Self {
+        Self::from_platform_facts(window.platform_facts())
+    }
+
+    /// Converts one GPUI-committed platform-facts snapshot into Dock route and placement facts.
+    ///
+    /// Dock must not reconstruct these values from backend-facing `Window` getters because a
+    /// queued live mutation is not an observed platform fact.
+    pub(crate) fn from_platform_facts(platform_facts: &WindowPlatformFacts) -> Self {
+        let current_bounds = match platform_facts.coordinate_space {
+            WindowCoordinateSpace::GlobalScreen => {
+                DockViewportWindowBoundsFrame::GlobalScreen(platform_facts.bounds)
+            }
+            WindowCoordinateSpace::WindowLocal => {
+                DockViewportWindowBoundsFrame::WindowLocal(platform_facts.bounds)
+            }
         };
         let mut facts = Self::with_current_bounds(
-            window.display(cx).map(|display| display.id()),
-            window.window_bounds(),
+            platform_facts.display_id,
+            platform_facts.window_bounds,
             current_bounds,
         );
-        if window.is_minimized() {
+        if platform_facts.is_minimized {
             facts.input_mask = DockViewportInputMask::Minimized;
-        } else if !window.accepts_pointer_input() {
+        } else if !platform_facts.accepts_pointer_input {
             facts.input_mask = DockViewportInputMask::NoInputPassThrough;
         }
         facts

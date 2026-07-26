@@ -292,8 +292,6 @@ fn common_import_paths_compile() {
     let prelude_viewport_readiness_status = prelude::DockSurfaceViewportReadinessStatus::Openable;
     let root_viewport_platform_capabilities =
         root::DockSurfaceViewportPlatformCapabilities::default();
-    let prelude_viewport_flag_capabilities =
-        prelude::DockSurfaceViewportFlagCapabilities::default();
     let root_viewport_flag_warning =
         root::DockSurfaceViewportFlagWarning::PointerInputPassThroughUnsupported;
     let prelude_viewport_route_status = prelude::DockSurfaceViewportRouteStatus::RouteReady;
@@ -368,7 +366,6 @@ fn common_import_paths_compile() {
         root_viewport_readiness_type,
         prelude_viewport_readiness_status,
         root_viewport_platform_capabilities,
-        prelude_viewport_flag_capabilities,
         root_viewport_flag_warning,
         prelude_viewport_route_status,
         root_viewport_input_status,

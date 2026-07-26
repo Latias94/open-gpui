@@ -83,11 +83,19 @@ pub struct WindowsWindowState {
     pub input_dispatch: Cell<WindowsInputDispatchState>,
     pub pressed_caption_button: Cell<Option<WindowsCaptionButtonAction>>,
     accepts_pointer_input: Cell<bool>,
+    focus_on_appearing: bool,
+    focus_on_click: bool,
+    taskbar_visible: bool,
 
     pub display: Cell<WindowsDisplay>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub invalidate_devices: Arc<AtomicBool>,
+    placement_mutation_generation: Cell<Option<u64>>,
+    pointer_input_mutation_generation: Cell<Option<u64>>,
+    deferred_placement_mutation: Cell<Option<DeferredWindowPlacementMutation>>,
+    #[cfg(test)]
+    pub(crate) fail_next_pointer_input_frame_change: Cell<bool>,
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
     hwnd: HWND,
@@ -122,6 +130,9 @@ impl WindowsWindowState {
         disable_direct_composition: bool,
         invalidate_devices: Arc<AtomicBool>,
         accepts_pointer_input: bool,
+        focus_on_appearing: bool,
+        focus_on_click: bool,
+        taskbar_visible: bool,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -155,6 +166,9 @@ impl WindowsWindowState {
         let pressed_caption_button = None;
         let fullscreen = None;
         let initial_placement = None;
+        let placement_mutation_generation = Cell::new(None);
+        let pointer_input_mutation_generation = Cell::new(None);
+        let deferred_placement_mutation = Cell::new(None);
 
         let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
             .context("initializing Direct Manipulation")?;
@@ -185,7 +199,15 @@ impl WindowsWindowState {
             input_dispatch,
             pressed_caption_button: Cell::new(pressed_caption_button),
             accepts_pointer_input: Cell::new(accepts_pointer_input),
+            focus_on_appearing,
+            focus_on_click,
+            taskbar_visible,
             display: Cell::new(display),
+            placement_mutation_generation,
+            pointer_input_mutation_generation,
+            deferred_placement_mutation,
+            #[cfg(test)]
+            fail_next_pointer_input_frame_change: Cell::new(false),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
             hwnd,
@@ -272,6 +294,9 @@ impl WindowsWindowInner {
             context.disable_direct_composition,
             context.invalidate_devices.clone(),
             context.accepts_pointer_input,
+            context.focus_on_appearing,
+            context.focus_on_click,
+            context.taskbar_visible,
         )?;
 
         Ok(Rc::new(Self {
@@ -290,67 +315,559 @@ impl WindowsWindowInner {
         }))
     }
 
-    fn toggle_fullscreen(self: &Rc<Self>) {
-        let this = self.clone();
-        self.executor
-            .spawn(async move {
-                let StyleAndBounds {
-                    style,
-                    x,
-                    y,
-                    cx,
-                    cy,
-                } = match this.state.fullscreen.take() {
-                    Some(state) => state,
-                    None => {
-                        let (window_bounds, _) = this.state.calculate_window_bounds();
-                        this.state.fullscreen_restore_bounds.set(window_bounds);
+    /// Applies a fullscreen transition on the window-owning thread.
+    ///
+    /// Initial placement uses this directly so the creation path finishes its requested state
+    /// before the GPUI window has installed callbacks. Live placement schedules this method through
+    /// the foreground executor and reports the resulting coherent facts through a mutation ticket.
+    fn toggle_fullscreen_now(&self) -> Result<()> {
+        let previous_fullscreen = self.state.fullscreen.take();
+        let previous_restore_bounds = self.state.fullscreen_restore_bounds.get();
+        let StyleAndBounds {
+            style,
+            x,
+            y,
+            cx,
+            cy,
+        } = match previous_fullscreen {
+            Some(state) => state,
+            None => {
+                let (window_bounds, _) = self.state.calculate_window_bounds();
 
-                        let style =
-                            WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
-                        let mut rc = RECT::default();
-                        unsafe { GetWindowRect(this.hwnd, &mut rc) }
-                            .context("failed to get window rect")
-                            .log_err();
-                        let _ = this.state.fullscreen.set(Some(StyleAndBounds {
-                            style,
-                            x: rc.left,
-                            y: rc.top,
-                            cx: rc.right - rc.left,
-                            cy: rc.bottom - rc.top,
-                        }));
-                        let style = style
-                            & !(WS_THICKFRAME
-                                | WS_SYSMENU
-                                | WS_MAXIMIZEBOX
-                                | WS_MINIMIZEBOX
-                                | WS_CAPTION);
-                        let physical_bounds = this.state.display.get().physical_bounds();
-                        StyleAndBounds {
-                            style,
-                            x: physical_bounds.left().0,
-                            y: physical_bounds.top().0,
-                            cx: physical_bounds.size.width.0,
-                            cy: physical_bounds.size.height.0,
+                let style = WINDOW_STYLE(
+                    self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as _,
+                );
+                let mut rc = RECT::default();
+                unsafe { GetWindowRect(self.hwnd, &mut rc) }
+                    .context("failed to get window rect")?;
+                let fullscreen_restore = StyleAndBounds {
+                    style,
+                    x: rc.left,
+                    y: rc.top,
+                    cx: rc.right - rc.left,
+                    cy: rc.bottom - rc.top,
+                };
+                self.state.fullscreen_restore_bounds.set(window_bounds);
+                let style = style
+                    & !(WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_CAPTION);
+                let physical_bounds = self.state.display.get().physical_bounds();
+                let fullscreen_bounds = StyleAndBounds {
+                    style,
+                    x: physical_bounds.left().0,
+                    y: physical_bounds.top().0,
+                    cx: physical_bounds.size.width.0,
+                    cy: physical_bounds.size.height.0,
+                };
+                let result = self.apply_fullscreen_style_and_bounds(fullscreen_bounds);
+                if result.is_ok() {
+                    self.state.fullscreen.set(Some(fullscreen_restore));
+                    set_non_rude_hwnd(self.hwnd, false)?;
+                } else if self.native_is_fullscreen_from_native().unwrap_or(false) {
+                    self.state.fullscreen.set(Some(fullscreen_restore));
+                    if let Err(non_rude_error) = set_non_rude_hwnd(self.hwnd, false) {
+                        return Err(result.expect_err("fullscreen application failed")).context(
+                            format!(
+                                "fullscreen NonRudeHWND recovery also failed: {non_rude_error:#}"
+                            ),
+                        );
+                    }
+                } else {
+                    self.state
+                        .fullscreen_restore_bounds
+                        .set(previous_restore_bounds);
+                }
+                return result;
+            }
+        };
+
+        let result = self.apply_fullscreen_style_and_bounds(StyleAndBounds {
+            style,
+            x,
+            y,
+            cx,
+            cy,
+        });
+        if let Err(error) = result {
+            if self.native_is_fullscreen_from_native().unwrap_or(false) {
+                self.state.fullscreen.set(previous_fullscreen);
+                self.state
+                    .fullscreen_restore_bounds
+                    .set(previous_restore_bounds);
+            } else if let Err(non_rude_error) = set_non_rude_hwnd(self.hwnd, true) {
+                return Err(error).context(format!(
+                    "fullscreen NonRudeHWND recovery also failed: {non_rude_error:#}"
+                ));
+            }
+            return Err(error);
+        }
+        set_non_rude_hwnd(self.hwnd, true)?;
+        Ok(())
+    }
+
+    fn apply_fullscreen_style_and_bounds(&self, style_and_bounds: StyleAndBounds) -> Result<()> {
+        let rollback = self.current_style_and_bounds()?;
+        let StyleAndBounds {
+            style,
+            x,
+            y,
+            cx,
+            cy,
+        } = style_and_bounds;
+        self.set_window_long_checked(
+            GWL_STYLE,
+            style.0 as isize,
+            "failed to update fullscreen window style",
+        )?;
+        let placement_result = unsafe {
+            SetWindowPos(
+                self.hwnd,
+                None,
+                x,
+                y,
+                cx,
+                cy,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        }
+        .context("failed to apply fullscreen window placement");
+        if let Err(error) = placement_result {
+            if let Err(rollback_error) = self.restore_style_and_bounds(rollback) {
+                return Err(error).context(format!(
+                    "fullscreen placement rollback also failed: {rollback_error:#}"
+                ));
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn current_style_and_bounds(&self) -> Result<StyleAndBounds> {
+        let style = WINDOW_STYLE(
+            self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as _,
+        );
+        let mut rect = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut rect) }.context("failed to get window rect")?;
+        Ok(StyleAndBounds {
+            style,
+            x: rect.left,
+            y: rect.top,
+            cx: rect.right - rect.left,
+            cy: rect.bottom - rect.top,
+        })
+    }
+
+    fn restore_style_and_bounds(&self, snapshot: StyleAndBounds) -> Result<()> {
+        self.set_window_long_checked(
+            GWL_STYLE,
+            snapshot.style.0 as isize,
+            "failed to restore window style",
+        )?;
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                None,
+                snapshot.x,
+                snapshot.y,
+                snapshot.cx,
+                snapshot.cy,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        }
+        .context("failed to restore window bounds")?;
+        Ok(())
+    }
+
+    fn capture_window_placement_snapshot(&self) -> Result<WindowPlacementRollbackSnapshot> {
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetWindowPlacement(self.hwnd, &mut placement) }
+            .context("failed to capture window placement rollback state")?;
+        Ok(WindowPlacementRollbackSnapshot {
+            placement,
+            style_and_bounds: self.current_style_and_bounds()?,
+            fullscreen: self.state.fullscreen.get(),
+            fullscreen_restore_bounds: self.state.fullscreen_restore_bounds.get(),
+            non_rude_hwnd: non_rude_hwnd_for_fullscreen(self.state.fullscreen.get()),
+            display: self.state.display.get(),
+            scale_factor: self.state.scale_factor.get(),
+        })
+    }
+
+    fn restore_window_placement_snapshot(
+        &self,
+        snapshot: WindowPlacementRollbackSnapshot,
+    ) -> Result<()> {
+        self.restore_style_and_bounds(snapshot.style_and_bounds)?;
+        unsafe { SetWindowPlacement(self.hwnd, &snapshot.placement) }
+            .context("failed to restore native window placement")?;
+        self.state.fullscreen.set(snapshot.fullscreen);
+        self.state
+            .fullscreen_restore_bounds
+            .set(snapshot.fullscreen_restore_bounds);
+        set_non_rude_hwnd(self.hwnd, snapshot.non_rude_hwnd)?;
+        self.state.display.set(snapshot.display);
+        self.state.scale_factor.set(snapshot.scale_factor);
+        Ok(())
+    }
+
+    fn window_placement_for_bounds(&self, bounds: Bounds<Pixels>) -> Result<WINDOWPLACEMENT> {
+        retrieve_window_placement(
+            self.hwnd,
+            self.state.display.get(),
+            bounds,
+            self.state.scale_factor.get(),
+            &self.state.border_offset,
+        )
+    }
+
+    fn set_window_restore_bounds(
+        &self,
+        bounds: Bounds<Pixels>,
+        state: WindowPlacementState,
+    ) -> Result<()> {
+        let mut placement = self.window_placement_for_bounds(bounds)?;
+        placement.showCmd = match state {
+            WindowPlacementState::Windowed | WindowPlacementState::Fullscreen => {
+                SW_SHOWNORMAL.0 as u32
+            }
+            WindowPlacementState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
+            WindowPlacementState::Minimized => SW_SHOWMINIMIZED.0 as u32,
+        };
+        unsafe { SetWindowPlacement(self.hwnd, &placement) }
+            .context("failed to set window restore placement")?;
+        Ok(())
+    }
+
+    fn set_fullscreen_restore_bounds(&self, bounds: Bounds<Pixels>) -> Result<()> {
+        let placement = self.window_placement_for_bounds(bounds)?;
+        unsafe { SetWindowPlacement(self.hwnd, &placement) }
+            .context("failed to set fullscreen restore placement")?;
+        self.state.fullscreen_restore_bounds.set(bounds);
+        if let Some(mut fullscreen) = self.state.fullscreen.take() {
+            let rect = placement.rcNormalPosition;
+            fullscreen.x = rect.left;
+            fullscreen.y = rect.top;
+            fullscreen.cx = rect.right - rect.left;
+            fullscreen.cy = rect.bottom - rect.top;
+            self.state.fullscreen.set(Some(fullscreen));
+        }
+        Ok(())
+    }
+
+    fn apply_windowed_placement(&self, bounds: Bounds<Pixels>) -> Result<()> {
+        if self.state.is_fullscreen() {
+            self.toggle_fullscreen_now()?;
+        }
+        self.set_window_restore_bounds(bounds, WindowPlacementState::Windowed)?;
+        if unsafe {
+            IsWindowVisible(self.hwnd).as_bool()
+                && (IsZoomed(self.hwnd).as_bool() || IsIconic(self.hwnd).as_bool())
+        } {
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_RESTORE);
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_maximized_placement(&self, restore_bounds: Bounds<Pixels>) -> Result<()> {
+        if self.state.is_fullscreen() {
+            self.toggle_fullscreen_now()?;
+        }
+        self.set_window_restore_bounds(restore_bounds, WindowPlacementState::Maximized)?;
+        if unsafe { IsWindowVisible(self.hwnd).as_bool() } {
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_fullscreen_placement(&self, restore_bounds: Bounds<Pixels>) -> Result<()> {
+        if self.state.is_fullscreen() {
+            return self.set_fullscreen_restore_bounds(restore_bounds);
+        }
+
+        if self.state.is_maximized() && unsafe { IsWindowVisible(self.hwnd).as_bool() } {
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_RESTORE);
+            }
+        }
+        self.set_window_restore_bounds(restore_bounds, WindowPlacementState::Windowed)?;
+        self.toggle_fullscreen_now()?;
+        self.state.fullscreen_restore_bounds.set(restore_bounds);
+        Ok(())
+    }
+
+    fn apply_window_placement_request(
+        &self,
+        request: WindowPlacementRequest,
+        current_facts: &WindowPlatformFacts,
+    ) -> Result<()> {
+        let rollback = self.capture_window_placement_snapshot()?;
+        let result = (|| {
+            self.state.scale_factor.set(current_facts.scale_factor);
+            if let Some(display_id) = current_facts.display_id
+                && let Some(display) = WindowsDisplay::new(display_id)
+            {
+                self.state.display.set(display);
+            }
+
+            let window_bounds = current_facts.window_bounds;
+            let current_state = if current_facts.is_minimized {
+                WindowPlacementState::Minimized
+            } else if current_facts.is_fullscreen {
+                WindowPlacementState::Fullscreen
+            } else if current_facts.is_maximized {
+                WindowPlacementState::Maximized
+            } else {
+                WindowPlacementState::Windowed
+            };
+
+            if request.state.is_none() {
+                return match current_state {
+                    WindowPlacementState::Windowed => {
+                        let bounds = Bounds::new(
+                            request
+                                .position
+                                .unwrap_or(window_bounds.get_bounds().origin),
+                            request.size.unwrap_or(window_bounds.get_bounds().size),
+                        );
+                        self.apply_windowed_placement(bounds)
+                    }
+                    WindowPlacementState::Maximized => self.set_window_restore_bounds(
+                        request
+                            .restore_bounds
+                            .unwrap_or_else(|| window_bounds.get_bounds()),
+                        WindowPlacementState::Maximized,
+                    ),
+                    WindowPlacementState::Fullscreen => self.set_fullscreen_restore_bounds(
+                        request
+                            .restore_bounds
+                            .unwrap_or_else(|| window_bounds.get_bounds()),
+                    ),
+                    WindowPlacementState::Minimized => {
+                        let restore_bounds = request
+                            .restore_bounds
+                            .unwrap_or_else(|| window_bounds.get_bounds());
+                        if current_facts.is_fullscreen {
+                            self.set_fullscreen_restore_bounds(restore_bounds)
+                        } else {
+                            self.set_window_restore_bounds(
+                                restore_bounds,
+                                WindowPlacementState::Minimized,
+                            )
                         }
                     }
                 };
-                set_non_rude_hwnd(this.hwnd, !this.state.is_fullscreen());
-                unsafe { set_window_long(this.hwnd, GWL_STYLE, style.0 as isize) };
-                unsafe {
-                    SetWindowPos(
-                        this.hwnd,
-                        None,
-                        x,
-                        y,
-                        cx,
-                        cy,
-                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
-                    )
+            }
+
+            match request.state.expect("state checked above") {
+                WindowPlacementState::Windowed => {
+                    let bounds = Bounds::new(
+                        request
+                            .position
+                            .unwrap_or(window_bounds.get_bounds().origin),
+                        request.size.unwrap_or(window_bounds.get_bounds().size),
+                    );
+                    self.apply_windowed_placement(bounds)
                 }
-                .log_err();
-            })
-            .detach();
+                WindowPlacementState::Maximized => {
+                    let restore_bounds = request
+                        .restore_bounds
+                        .unwrap_or_else(|| window_bounds.get_bounds());
+                    self.apply_maximized_placement(restore_bounds)
+                }
+                WindowPlacementState::Fullscreen => {
+                    let restore_bounds = request
+                        .restore_bounds
+                        .unwrap_or_else(|| window_bounds.get_bounds());
+                    self.apply_fullscreen_placement(restore_bounds)
+                }
+                WindowPlacementState::Minimized => {
+                    Err(anyhow::anyhow!("live minimized placement is not supported"))
+                }
+            }
+        })();
+
+        if let Err(error) = result {
+            if let Err(rollback_error) = self.restore_window_placement_snapshot(rollback) {
+                return Err(error).context(format!(
+                    "window placement rollback also failed: {rollback_error:#}"
+                ));
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn set_accepts_pointer_input_now(&self, accepts_pointer_input: bool) -> Result<()> {
+        let current = self.native_accepts_pointer_input()?;
+        self.state.accepts_pointer_input.set(current);
+        if current == accepts_pointer_input {
+            return Ok(());
+        }
+        let original_style =
+            self.get_window_long_checked(GWL_EXSTYLE, "failed to read pointer-input window style")?;
+        let mut style = original_style;
+        if accepts_pointer_input {
+            style &= !(WS_EX_TRANSPARENT.0 as isize);
+        } else {
+            style |= WS_EX_TRANSPARENT.0 as isize;
+        }
+        self.set_window_long_checked(
+            GWL_EXSTYLE,
+            style,
+            "failed to update pointer-input window style",
+        )?;
+        #[cfg(test)]
+        let fail_frame_change = self
+            .state
+            .fail_next_pointer_input_frame_change
+            .replace(false);
+        #[cfg(not(test))]
+        let fail_frame_change = false;
+        let frame_result = if fail_frame_change {
+            Err(anyhow::anyhow!(
+                "injected pointer-input frame-change failure"
+            ))
+        } else {
+            unsafe {
+                SetWindowPos(
+                    self.hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER,
+                )
+            }
+            .context("failed to apply pointer-input window style")
+        };
+        if let Err(error) = frame_result {
+            let rollback_result = self.set_window_long_checked(
+                GWL_EXSTYLE,
+                original_style,
+                "failed to roll back pointer-input window style",
+            );
+            if rollback_result.is_ok() {
+                let _ = unsafe {
+                    SetWindowPos(
+                        self.hwnd,
+                        None,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER,
+                    )
+                };
+            }
+            if let Ok(actual) = self.native_accepts_pointer_input() {
+                self.state.accepts_pointer_input.set(actual);
+            }
+            if let Err(rollback_error) = rollback_result {
+                return Err(error).context(format!(
+                    "pointer-input style rollback also failed: {rollback_error:#}"
+                ));
+            }
+            return Err(error);
+        }
+        let actual = self.native_accepts_pointer_input()?;
+        self.state.accepts_pointer_input.set(actual);
+        if actual != accepts_pointer_input {
+            return Err(anyhow::anyhow!(
+                "native pointer-input style did not match the requested value"
+            ));
+        }
+        Ok(())
+    }
+
+    fn get_window_long_checked(
+        &self,
+        index: WINDOW_LONG_PTR_INDEX,
+        error_context: &'static str,
+    ) -> Result<isize> {
+        unsafe {
+            SetLastError(WIN32_ERROR(0));
+            let value = get_window_long(self.hwnd, index);
+            if value == 0 && GetLastError().0 != 0 {
+                return Err(windows::core::Error::from_thread()).context(error_context);
+            }
+            Ok(value)
+        }
+    }
+
+    fn set_window_long_checked(
+        &self,
+        index: WINDOW_LONG_PTR_INDEX,
+        value: isize,
+        error_context: &'static str,
+    ) -> Result<()> {
+        unsafe {
+            SetLastError(WIN32_ERROR(0));
+            if set_window_long(self.hwnd, index, value) == 0 && GetLastError().0 != 0 {
+                return Err(windows::core::Error::from_thread()).context(error_context);
+            }
+        }
+        Ok(())
+    }
+
+    fn native_accepts_pointer_input(&self) -> Result<bool> {
+        Ok((self
+            .get_window_long_checked(GWL_EXSTYLE, "failed to read pointer-input window style")?
+            & WS_EX_TRANSPARENT.0 as isize)
+            == 0)
+    }
+
+    fn native_is_fullscreen(
+        window_rect: RECT,
+        monitor: HMONITOR,
+        window_style: WINDOW_STYLE,
+    ) -> bool {
+        if monitor.is_invalid() || !Self::has_fullscreen_window_style(window_style) {
+            return false;
+        }
+
+        let mut monitor_info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let read_monitor_info = unsafe { GetMonitorInfoW(monitor, &mut monitor_info).as_bool() };
+        if !read_monitor_info {
+            return false;
+        }
+        let monitor_rect = monitor_info.rcMonitor;
+        window_rect.left <= monitor_rect.left
+            && window_rect.top <= monitor_rect.top
+            && window_rect.right >= monitor_rect.right
+            && window_rect.bottom >= monitor_rect.bottom
+    }
+
+    fn native_is_fullscreen_from_native(&self) -> Result<bool> {
+        let mut window_rect = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut window_rect) }
+            .context("failed to read native fullscreen bounds")?;
+        let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
+        let window_style = WINDOW_STYLE(
+            self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as u32,
+        );
+        Ok(Self::native_is_fullscreen(
+            window_rect,
+            monitor,
+            window_style,
+        ))
+    }
+
+    fn has_fullscreen_window_style(window_style: WINDOW_STYLE) -> bool {
+        !window_style.contains(WS_THICKFRAME)
+            && !window_style.contains(WS_SYSMENU)
+            && !window_style.contains(WS_MAXIMIZEBOX)
+            && !window_style.contains(WS_MINIMIZEBOX)
+            && !window_style.contains(WS_CAPTION)
     }
 
     fn set_window_placement(self: &Rc<Self>) -> Result<()> {
@@ -362,10 +879,13 @@ impl WindowsWindowInner {
                 if open_status.activate {
                     SetWindowPlacement(self.hwnd, &open_status.placement)
                         .context("failed to set window placement")?;
-                    ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+                    let _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
                 } else {
-                    apply_window_open_position_without_activation(self.hwnd, &open_status)?;
-                    ShowWindowAsync(self.hwnd, SW_SHOWNOACTIVATE).ok()?;
+                    let mut placement = open_status.placement;
+                    placement.showCmd = SW_SHOWMAXIMIZED.0 as u32;
+                    SetWindowPlacement(self.hwnd, &placement)
+                        .context("failed to set maximized window placement")?;
+                    let _ = ShowWindow(self.hwnd, SW_SHOWNA);
                 }
             },
             WindowOpenState::Fullscreen => {
@@ -373,19 +893,300 @@ impl WindowsWindowInner {
                     SetWindowPlacement(self.hwnd, &open_status.placement)
                         .context("failed to set window placement")?
                 };
-                self.toggle_fullscreen();
+                self.toggle_fullscreen_now()?;
+                unsafe {
+                    let _ = ShowWindow(
+                        self.hwnd,
+                        if open_status.activate {
+                            SW_SHOWNORMAL
+                        } else {
+                            SW_SHOWNOACTIVATE
+                        },
+                    );
+                };
             }
             WindowOpenState::Windowed => unsafe {
                 if open_status.activate {
                     SetWindowPlacement(self.hwnd, &open_status.placement)
                         .context("failed to set window placement")?;
+                    let _ = ShowWindow(self.hwnd, SW_SHOWNORMAL);
                 } else {
                     apply_window_open_position_without_activation(self.hwnd, &open_status)?;
-                    ShowWindowAsync(self.hwnd, SW_SHOWNOACTIVATE).ok()?;
+                    let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 }
             },
         }
         Ok(())
+    }
+
+    fn has_pending_initial_placement(&self) -> bool {
+        let initial_placement = self.state.initial_placement.take();
+        let is_pending = initial_placement.is_some();
+        self.state.initial_placement.set(initial_placement);
+        is_pending
+    }
+
+    fn merge_deferred_initial_placement(&self, request: WindowPlacementRequest) -> Result<()> {
+        let Some(mut open_status) = self.state.initial_placement.take() else {
+            anyhow::bail!("pending creation placement disappeared before activation");
+        };
+        let mut restore_bounds = calculate_client_rect(
+            open_status.placement.rcNormalPosition,
+            &self.state.border_offset,
+            self.state.scale_factor.get(),
+        );
+        if let Some(bounds) = request.restore_bounds {
+            restore_bounds = bounds;
+        }
+        if let Some(position) = request.position {
+            restore_bounds.origin = position;
+        }
+        if let Some(size) = request.size {
+            restore_bounds.size = size;
+        }
+        if let Some(state) = request.state {
+            open_status.state = match state {
+                WindowPlacementState::Windowed => WindowOpenState::Windowed,
+                WindowPlacementState::Maximized => WindowOpenState::Maximized,
+                WindowPlacementState::Fullscreen => WindowOpenState::Fullscreen,
+                WindowPlacementState::Minimized => {
+                    self.state.initial_placement.set(Some(open_status));
+                    anyhow::bail!("live minimized placement is not supported");
+                }
+            };
+        }
+
+        open_status.placement.rcNormalPosition = calculate_window_rect(
+            restore_bounds.to_device_pixels(self.state.scale_factor.get()),
+            &self.state.border_offset,
+        );
+        open_status.placement.showCmd = match open_status.state {
+            WindowOpenState::Windowed | WindowOpenState::Fullscreen => SW_SHOWNORMAL.0 as u32,
+            WindowOpenState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
+        };
+        self.state.initial_placement.set(Some(open_status));
+        Ok(())
+    }
+
+    fn observed_platform_facts(&self) -> WindowPlatformFacts {
+        self.observed_platform_facts_from_native()
+            .unwrap_or_else(|error| {
+                log::warn!("Windows platform fact readback failed: {error:#}");
+                self.cached_platform_facts()
+            })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observed_platform_facts_for_test(&self) -> Result<WindowPlatformFacts> {
+        self.observed_platform_facts_from_native()
+    }
+
+    fn observed_platform_facts_from_native(&self) -> Result<WindowPlatformFacts> {
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        if dpi == 0 {
+            anyhow::bail!("failed to read native window DPI");
+        }
+        let scale_factor = dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32;
+        let mut window_rect = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut window_rect) }
+            .context("failed to read native window bounds")?;
+        let mut client_rect = RECT::default();
+        unsafe { GetClientRect(self.hwnd, &mut client_rect) }
+            .context("failed to read native client bounds")?;
+        let mut client_origin = POINT::default();
+        unsafe { ClientToScreen(self.hwnd, &mut client_origin) }
+            .ok()
+            .context("failed to read native client origin")?;
+        let bounds = Bounds::new(
+            logical_point(client_origin.x as f32, client_origin.y as f32, scale_factor),
+            size(
+                DevicePixels(client_rect.right - client_rect.left),
+                DevicePixels(client_rect.bottom - client_rect.top),
+            )
+            .to_pixels(scale_factor),
+        );
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetWindowPlacement(self.hwnd, &mut placement) }
+            .context("failed to read native window placement")?;
+        let is_minimized = unsafe { IsIconic(self.hwnd).as_bool() };
+        let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
+        let window_style = WINDOW_STYLE(
+            self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as u32,
+        );
+        let window_ex_style = WINDOW_EX_STYLE(
+            self.get_window_long_checked(GWL_EXSTYLE, "failed to read extended window style")?
+                as u32,
+        );
+        let is_fullscreen = self.state.is_fullscreen()
+            && if is_minimized {
+                Self::has_fullscreen_window_style(window_style)
+            } else {
+                Self::native_is_fullscreen(window_rect, monitor, window_style)
+            };
+        let is_maximized = !is_fullscreen
+            && (placement.showCmd == SW_SHOWMAXIMIZED.0 as u32
+                || (is_minimized && placement.flags.contains(WPF_RESTORETOMAXIMIZED)));
+        let restore_bounds = calculate_client_rect(
+            placement.rcNormalPosition,
+            &self.state.border_offset,
+            scale_factor,
+        );
+        let window_bounds = if is_fullscreen {
+            WindowBounds::Fullscreen(restore_bounds)
+        } else if is_maximized {
+            WindowBounds::Maximized(restore_bounds)
+        } else {
+            WindowBounds::Windowed(restore_bounds)
+        };
+        let display_id =
+            (!monitor.is_invalid()).then(|| WindowsDisplay::display_id_for_monitor(monitor));
+        let accepts_pointer_input = self.native_accepts_pointer_input()?;
+        let focus_on_click = window_ex_style.0 & WS_EX_NOACTIVATE.0 == 0;
+        let taskbar_visible = window_ex_style.0 & WS_EX_APPWINDOW.0 != 0
+            && window_ex_style.0 & WS_EX_TOOLWINDOW.0 == 0;
+        let topmost = window_ex_style.0 & WS_EX_TOPMOST.0 != 0;
+
+        Ok(WindowPlatformFacts {
+            bounds,
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
+            window_bounds,
+            inner_window_bounds: window_bounds,
+            content_size: bounds.size,
+            scale_factor,
+            display_id,
+            is_minimized,
+            is_maximized,
+            is_fullscreen,
+            accepts_pointer_input,
+            focus_on_appearing: self.state.focus_on_appearing,
+            focus_on_click,
+            background_appearance: self.state.background_appearance.get(),
+            topmost,
+            taskbar_visible,
+            is_active: self.hwnd == unsafe { GetForegroundWindow() },
+        })
+    }
+
+    fn cached_platform_facts(&self) -> WindowPlatformFacts {
+        let window_bounds = self.state.window_bounds();
+        WindowPlatformFacts {
+            bounds: self.state.bounds(),
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
+            window_bounds,
+            inner_window_bounds: window_bounds,
+            content_size: self.state.content_size(),
+            scale_factor: self.state.scale_factor.get(),
+            display_id: Some(self.state.display.get().id()),
+            is_minimized: unsafe { IsIconic(self.hwnd).as_bool() },
+            is_maximized: self.state.is_maximized(),
+            is_fullscreen: self.state.is_fullscreen(),
+            accepts_pointer_input: self.state.accepts_pointer_input(),
+            focus_on_appearing: self.state.focus_on_appearing,
+            focus_on_click: self.state.focus_on_click,
+            background_appearance: self.state.background_appearance.get(),
+            topmost: false,
+            taskbar_visible: self.state.taskbar_visible,
+            is_active: self.hwnd == unsafe { GetForegroundWindow() },
+        }
+    }
+
+    fn prepare_window_mutation(&self, domain: WindowMutationDomain, generation: u64) {
+        match domain {
+            WindowMutationDomain::Placement => {
+                self.state
+                    .placement_mutation_generation
+                    .set(Some(generation));
+                self.state.deferred_placement_mutation.set(None);
+            }
+            WindowMutationDomain::PointerInput => {
+                self.state
+                    .pointer_input_mutation_generation
+                    .set(Some(generation));
+            }
+            WindowMutationDomain::FocusOnAppearing
+            | WindowMutationDomain::FocusOnClick
+            | WindowMutationDomain::Alpha
+            | WindowMutationDomain::Topmost
+            | WindowMutationDomain::TaskbarVisibility => {}
+        }
+    }
+
+    fn invalidate_window_mutation(&self, domain: WindowMutationDomain) {
+        match domain {
+            WindowMutationDomain::Placement => {
+                self.state.placement_mutation_generation.set(None);
+                self.state.deferred_placement_mutation.set(None);
+            }
+            WindowMutationDomain::PointerInput => {
+                self.state.pointer_input_mutation_generation.set(None);
+            }
+            WindowMutationDomain::FocusOnAppearing
+            | WindowMutationDomain::FocusOnClick
+            | WindowMutationDomain::Alpha
+            | WindowMutationDomain::Topmost
+            | WindowMutationDomain::TaskbarVisibility => {}
+        }
+    }
+
+    fn placement_mutation_is_current(&self, generation: u64) -> bool {
+        self.state.placement_mutation_generation.get() == Some(generation)
+    }
+
+    fn pointer_input_mutation_is_current(&self, generation: u64) -> bool {
+        self.state.pointer_input_mutation_generation.get() == Some(generation)
+    }
+
+    fn terminal_facts_after_mutation(
+        &self,
+        mutation: &str,
+        result: Result<()>,
+        before_facts: WindowPlatformFacts,
+    ) -> (PlatformWindowMutationTerminal, WindowPlatformFacts) {
+        match result {
+            Ok(()) => match self.observed_platform_facts_from_native() {
+                Ok(facts) => (PlatformWindowMutationTerminal::Observed, facts),
+                Err(error) => {
+                    log::warn!(
+                        "Windows {mutation} completed but terminal fact readback failed: {error:#}"
+                    );
+                    (PlatformWindowMutationTerminal::Rejected, before_facts)
+                }
+            },
+            Err(error) => {
+                log::warn!("Windows {mutation} request failed: {error:#}");
+                match self.observed_platform_facts_from_native() {
+                    Ok(facts) => (PlatformWindowMutationTerminal::Rejected, facts),
+                    Err(readback_error) => {
+                        log::warn!(
+                            "Windows {mutation} rejected and terminal fact readback failed: {readback_error:#}"
+                        );
+                        (PlatformWindowMutationTerminal::Rejected, before_facts)
+                    }
+                }
+            }
+        }
+    }
+
+    fn emit_window_mutation_observation(
+        &self,
+        domain: WindowMutationDomain,
+        generation: u64,
+        terminal: PlatformWindowMutationTerminal,
+        facts: WindowPlatformFacts,
+    ) {
+        let callback = self.state.callbacks.window_mutation_observation.take();
+        if let Some(mut callback) = callback {
+            callback(PlatformWindowMutationObservation::terminal(
+                domain, generation, terminal, facts,
+            ));
+            self.state
+                .callbacks
+                .window_mutation_observation
+                .set(Some(callback));
+        }
     }
 
     pub(crate) fn system_settings(&self) -> &WindowsSystemSettings {
@@ -401,6 +1202,9 @@ pub(crate) struct Callbacks {
     pub(crate) hovered_status_change: Cell<Option<Box<dyn FnMut(bool)>>>,
     pub(crate) resize: Cell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>,
     pub(crate) moved: Cell<Option<Box<dyn FnMut()>>>,
+    pub(crate) window_state_change: Cell<Option<Box<dyn FnMut()>>>,
+    pub(crate) window_mutation_observation:
+        Cell<Option<Box<dyn FnMut(PlatformWindowMutationObservation)>>>,
     pub(crate) should_close: Cell<Option<Box<dyn FnMut() -> bool>>>,
     pub(crate) close: Cell<Option<Box<dyn FnOnce()>>>,
     pub(crate) hit_test_window_control: Cell<Option<Box<dyn FnMut() -> Option<WindowControlArea>>>>,
@@ -433,6 +1237,9 @@ struct WindowCreateContext {
     invalidate_devices: Arc<AtomicBool>,
     parent_hwnd: Option<HWND>,
     accepts_pointer_input: bool,
+    focus_on_appearing: bool,
+    focus_on_click: bool,
+    taskbar_visible: bool,
 }
 
 impl WindowsWindow {
@@ -513,6 +1320,9 @@ impl WindowsWindow {
         if !params.focus {
             dwexstyle |= WS_EX_NOACTIVATE;
         }
+        let focus_on_appearing = params.focus;
+        let focus_on_click = params.focus;
+        let taskbar_visible = matches!(params.kind, WindowKind::Normal | WindowKind::Floating);
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -543,6 +1353,9 @@ impl WindowsWindow {
             invalidate_devices,
             parent_hwnd,
             accepts_pointer_input: params.accepts_pointer_input,
+            focus_on_appearing,
+            focus_on_click,
+            taskbar_visible,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -568,32 +1381,24 @@ impl WindowsWindow {
         let this = this.unwrap();
 
         register_drag_drop(&this)?;
-        set_non_rude_hwnd(hwnd, true);
+        set_non_rude_hwnd(hwnd, true)?;
         configure_dwm_dark_mode(hwnd, appearance);
         this.state.border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
             display,
-            params.bounds,
+            params.window_bounds.get_bounds(),
             this.state.scale_factor.get(),
             &this.state.border_offset,
         )?;
         let open_status = WindowOpenStatus {
             placement,
-            state: WindowOpenState::Windowed,
+            state: WindowOpenState::from(params.window_bounds),
             activate: params.focus,
         };
+        this.state.initial_placement.set(Some(open_status));
         if params.show {
-            if params.focus {
-                unsafe { SetWindowPlacement(hwnd, &open_status.placement)? };
-            } else {
-                unsafe {
-                    apply_window_open_position_without_activation(hwnd, &open_status)?;
-                    ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE).ok()?;
-                }
-            }
-        } else {
-            this.state.initial_placement.set(Some(open_status));
+            this.set_window_placement()?;
         }
 
         Ok(Self(this))
@@ -633,6 +1438,74 @@ impl Drop for WindowsWindow {
     }
 }
 
+impl WindowsWindow {
+    fn request_pointer_input_mutation(
+        &mut self,
+        generation: u64,
+        accepts_pointer_input: bool,
+    ) -> PlatformWindowDispatch {
+        let current = match self.0.native_accepts_pointer_input() {
+            Ok(current) => current,
+            Err(error) => {
+                log::warn!(
+                    "Windows pointer-input request rejected because native facts could not be read: {error:#}"
+                );
+                return PlatformWindowDispatch::Rejected;
+            }
+        };
+        self.state.accepts_pointer_input.set(current);
+        if current == accepts_pointer_input {
+            return PlatformWindowDispatch::Unchanged;
+        }
+        if !self.0.pointer_input_mutation_is_current(generation) {
+            return PlatformWindowDispatch::Rejected;
+        }
+        let this = self.0.clone();
+        let executor = this.executor.clone();
+        executor
+            .spawn(async move {
+                if !this.pointer_input_mutation_is_current(generation)
+                    || (unsafe { !IsWindow(Some(this.hwnd)).as_bool() })
+                {
+                    return;
+                }
+                let before_facts = match this.observed_platform_facts_from_native() {
+                    Ok(facts) => facts,
+                    Err(error) => {
+                        log::warn!(
+                            "Windows pointer-input mutation rejected before dispatch because native facts could not be read: {error:#}"
+                        );
+                        this.emit_window_mutation_observation(
+                            WindowMutationDomain::PointerInput,
+                            generation,
+                            PlatformWindowMutationTerminal::Rejected,
+                            this.cached_platform_facts(),
+                        );
+                        return;
+                    }
+                };
+                let result = this.set_accepts_pointer_input_now(accepts_pointer_input);
+                if this.pointer_input_mutation_is_current(generation)
+                    && (unsafe { IsWindow(Some(this.hwnd)).as_bool() })
+                {
+                    let (terminal, facts) = this.terminal_facts_after_mutation(
+                        "pointer-input",
+                        result,
+                        before_facts,
+                    );
+                    this.emit_window_mutation_observation(
+                        WindowMutationDomain::PointerInput,
+                        generation,
+                        terminal,
+                        facts,
+                    );
+                }
+            })
+            .detach();
+        PlatformWindowDispatch::Queued
+    }
+}
+
 impl PlatformWindow for WindowsWindow {
     fn bounds(&self) -> Bounds<Pixels> {
         self.state.bounds()
@@ -650,30 +1523,82 @@ impl PlatformWindow for WindowsWindow {
         self.state.accepts_pointer_input.get()
     }
 
-    fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
-        if self.state.accepts_pointer_input.get() == accepts_pointer_input {
-            return true;
-        }
-        unsafe {
-            let mut style = get_window_long(self.0.hwnd, GWL_EXSTYLE);
-            if accepts_pointer_input {
-                style &= !(WS_EX_TRANSPARENT.0 as isize);
-            } else {
-                style |= WS_EX_TRANSPARENT.0 as isize;
+    fn platform_facts(&self) -> WindowPlatformFacts {
+        self.0.observed_platform_facts()
+    }
+
+    fn request_window_mutation(
+        &mut self,
+        generation: u64,
+        request: WindowMutationRequest,
+    ) -> PlatformWindowDispatch {
+        let WindowMutationRequest::Placement(request) = request else {
+            if let WindowMutationRequest::PointerInput(accepts_pointer_input) = request {
+                return self.request_pointer_input_mutation(generation, accepts_pointer_input);
             }
-            set_window_long(self.0.hwnd, GWL_EXSTYLE, style);
-            let _ = SetWindowPos(
-                self.0.hwnd,
-                None,
-                0,
-                0,
-                0,
-                0,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER,
-            );
+            return PlatformWindowDispatch::Unsupported;
+        };
+        if request.state == Some(WindowPlacementState::Minimized) {
+            return PlatformWindowDispatch::Unsupported;
         }
-        self.state.accepts_pointer_input.set(accepts_pointer_input);
-        true
+        if !self.0.placement_mutation_is_current(generation) {
+            return PlatformWindowDispatch::Rejected;
+        }
+        if self.0.has_pending_initial_placement() {
+            self.state
+                .deferred_placement_mutation
+                .set(Some(DeferredWindowPlacementMutation {
+                    generation,
+                    request,
+                }));
+            return PlatformWindowDispatch::Queued;
+        }
+        if unsafe { !IsWindowVisible(self.0.hwnd).as_bool() } {
+            return PlatformWindowDispatch::Rejected;
+        }
+        let this = self.0.clone();
+        let executor = this.executor.clone();
+        executor
+            .spawn(async move {
+                if !this.placement_mutation_is_current(generation)
+                    || (unsafe { !IsWindow(Some(this.hwnd)).as_bool() })
+                {
+                    return;
+                }
+                let before_facts = match this.observed_platform_facts_from_native() {
+                    Ok(facts) => facts,
+                    Err(error) => {
+                        log::warn!(
+                            "Windows live placement rejected before dispatch because native facts could not be read: {error:#}"
+                        );
+                        this.emit_window_mutation_observation(
+                            WindowMutationDomain::Placement,
+                            generation,
+                            PlatformWindowMutationTerminal::Rejected,
+                            this.cached_platform_facts(),
+                        );
+                        return;
+                    }
+                };
+                let result = this.apply_window_placement_request(request, &before_facts);
+                if this.placement_mutation_is_current(generation)
+                    && (unsafe { IsWindow(Some(this.hwnd)).as_bool() })
+                {
+                    let (terminal, facts) = this.terminal_facts_after_mutation(
+                        "live placement",
+                        result,
+                        before_facts,
+                    );
+                    this.emit_window_mutation_observation(
+                        WindowMutationDomain::Placement,
+                        generation,
+                        terminal,
+                        facts,
+                    );
+                }
+            })
+            .detach();
+        PlatformWindowDispatch::Queued
     }
 
     fn window_bounds(&self) -> WindowBounds {
@@ -686,32 +1611,6 @@ impl PlatformWindow for WindowsWindow {
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.state.content_size()
-    }
-
-    fn resize(&mut self, size: Size<Pixels>) {
-        let hwnd = self.0.hwnd;
-        let bounds =
-            open_gpui::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
-        let rect = calculate_window_rect(bounds, &self.state.border_offset);
-
-        self.0
-            .executor
-            .spawn(async move {
-                unsafe {
-                    SetWindowPos(
-                        hwnd,
-                        None,
-                        bounds.origin.x.0,
-                        bounds.origin.y.0,
-                        rect.right - rect.left,
-                        rect.bottom - rect.top,
-                        SWP_NOMOVE,
-                    )
-                    .context("unable to set window content size")
-                    .log_err();
-                }
-            })
-            .detach();
     }
 
     fn scale_factor(&self) -> f32 {
@@ -860,9 +1759,48 @@ impl PlatformWindow for WindowsWindow {
         self.0
             .executor
             .spawn(async move {
-                this.set_window_placement().log_err();
+                let deferred_placement = this.state.deferred_placement_mutation.take();
+                let had_initial_placement = this.has_pending_initial_placement();
+                let before_facts = deferred_placement.map(|_| {
+                    this.observed_platform_facts_from_native()
+                        .unwrap_or_else(|_| this.cached_platform_facts())
+                });
+                let placement_result = (|| {
+                    if let Some(deferred) = deferred_placement {
+                        this.merge_deferred_initial_placement(deferred.request)?;
+                    }
+                    this.set_window_placement()
+                })();
+
+                if let Some(deferred) = deferred_placement {
+                    if this.placement_mutation_is_current(deferred.generation)
+                        && (unsafe { IsWindow(Some(hwnd)).as_bool() })
+                    {
+                        let (terminal, facts) = this.terminal_facts_after_mutation(
+                            "deferred live placement",
+                            placement_result,
+                            before_facts.expect("deferred placement captured initial facts"),
+                        );
+                        this.emit_window_mutation_observation(
+                            WindowMutationDomain::Placement,
+                            deferred.generation,
+                            terminal,
+                            facts,
+                        );
+                    }
+                } else {
+                    placement_result.log_err();
+                }
 
                 unsafe {
+                    if !had_initial_placement && !IsWindowVisible(hwnd).as_bool() {
+                        let command = if this.state.is_maximized() {
+                            SW_MAXIMIZE
+                        } else {
+                            SW_SHOWNORMAL
+                        };
+                        let _ = ShowWindow(hwnd, command);
+                    }
                     // If the window is minimized, restore it.
                     if IsIconic(hwnd).as_bool() {
                         ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
@@ -957,30 +1895,6 @@ impl PlatformWindow for WindowsWindow {
         }
     }
 
-    fn minimize(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE).ok().log_err() };
-    }
-
-    fn zoom(&self) {
-        unsafe {
-            if IsWindowVisible(self.0.hwnd).as_bool() {
-                ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
-            } else if let Some(mut status) = self.state.initial_placement.take() {
-                status.state = WindowOpenState::Maximized;
-                self.state.initial_placement.set(Some(status));
-            }
-        }
-    }
-
-    fn toggle_fullscreen(&self) {
-        if unsafe { IsWindowVisible(self.0.hwnd).as_bool() } {
-            self.0.toggle_fullscreen();
-        } else if let Some(mut status) = self.state.initial_placement.take() {
-            status.state = WindowOpenState::Fullscreen;
-            self.state.initial_placement.set(Some(status));
-        }
-    }
-
     fn is_fullscreen(&self) -> bool {
         self.state.is_fullscreen()
     }
@@ -1015,6 +1929,28 @@ impl PlatformWindow for WindowsWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.state.callbacks.moved.set(Some(callback));
+    }
+
+    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
+        self.state.callbacks.window_state_change.set(Some(callback));
+    }
+
+    fn on_window_mutation_observation(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowMutationObservation)>,
+    ) {
+        self.state
+            .callbacks
+            .window_mutation_observation
+            .set(Some(callback));
+    }
+
+    fn prepare_window_mutation(&self, domain: WindowMutationDomain, generation: u64) {
+        self.0.prepare_window_mutation(domain, generation);
+    }
+
+    fn invalidate_window_mutation(&self, domain: WindowMutationDomain) {
+        self.0.invalidate_window_mutation(domain);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
@@ -1370,6 +2306,17 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+#[derive(Copy, Clone)]
+struct WindowPlacementRollbackSnapshot {
+    placement: WINDOWPLACEMENT,
+    style_and_bounds: StyleAndBounds,
+    fullscreen: Option<StyleAndBounds>,
+    fullscreen_restore_bounds: Bounds<Pixels>,
+    non_rude_hwnd: bool,
+    display: WindowsDisplay,
+    scale_factor: f32,
+}
+
 #[repr(C)]
 struct WINDOWCOMPOSITIONATTRIBDATA {
     attrib: u32,
@@ -1421,10 +2368,26 @@ struct WindowOpenStatus {
 }
 
 #[derive(Clone, Copy)]
+struct DeferredWindowPlacementMutation {
+    generation: u64,
+    request: WindowPlacementRequest,
+}
+
+#[derive(Clone, Copy)]
 enum WindowOpenState {
     Maximized,
     Fullscreen,
     Windowed,
+}
+
+impl From<WindowBounds> for WindowOpenState {
+    fn from(window_bounds: WindowBounds) -> Self {
+        match window_bounds {
+            WindowBounds::Windowed(_) => Self::Windowed,
+            WindowBounds::Maximized(_) => Self::Maximized,
+            WindowBounds::Fullscreen(_) => Self::Fullscreen,
+        }
+    }
 }
 
 const WINDOW_CLASS_NAME: PCWSTR = w!("OpenGPUI::Window");
@@ -1688,19 +2651,42 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
 // When the platform title bar is hidden, Windows may think that our application is meant to appear 'fullscreen'
 // and will stop the taskbar from appearing on top of our window. Prevent this.
 // https://devblogs.microsoft.com/oldnewthing/20250522-00/?p=111211
-fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) {
+fn non_rude_hwnd_for_fullscreen(fullscreen: Option<StyleAndBounds>) -> bool {
+    fullscreen.is_none()
+}
+
+fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) -> Result<()> {
     if non_rude {
-        unsafe { SetPropW(hwnd, w!("NonRudeHWND"), Some(HANDLE(1 as _))) }.log_err();
+        unsafe { SetPropW(hwnd, w!("NonRudeHWND"), Some(HANDLE(1 as _))) }
+            .context("failed to set NonRudeHWND")?;
     } else {
-        unsafe { RemovePropW(hwnd, w!("NonRudeHWND")) }.log_err();
+        unsafe { RemovePropW(hwnd, w!("NonRudeHWND")) }.context("failed to remove NonRudeHWND")?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ClickState;
-    use open_gpui::{DevicePixels, MouseButton, point};
+    use super::{ClickState, StyleAndBounds, WindowOpenState, non_rude_hwnd_for_fullscreen};
+    use open_gpui::{DevicePixels, MouseButton, WindowBounds, point};
     use std::time::Duration;
+    use windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE;
+
+    #[test]
+    fn canonical_window_bounds_select_open_state() {
+        assert!(matches!(
+            WindowOpenState::from(WindowBounds::Windowed(Default::default())),
+            WindowOpenState::Windowed
+        ));
+        assert!(matches!(
+            WindowOpenState::from(WindowBounds::Maximized(Default::default())),
+            WindowOpenState::Maximized
+        ));
+        assert!(matches!(
+            WindowOpenState::from(WindowBounds::Fullscreen(Default::default())),
+            WindowOpenState::Fullscreen
+        ));
+    }
 
     #[test]
     fn test_double_click_interval() {
@@ -1749,5 +2735,17 @@ mod tests {
             state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
         );
+    }
+
+    #[test]
+    fn non_rude_hwnd_is_the_inverse_of_fullscreen_state() {
+        assert!(non_rude_hwnd_for_fullscreen(None));
+        assert!(!non_rude_hwnd_for_fullscreen(Some(StyleAndBounds {
+            style: WINDOW_STYLE(0),
+            x: 0,
+            y: 0,
+            cx: 0,
+            cy: 0,
+        })));
     }
 }

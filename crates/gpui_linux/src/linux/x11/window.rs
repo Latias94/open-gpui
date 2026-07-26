@@ -3,11 +3,11 @@ use x11rb::connection::RequestConnection;
 
 use crate::linux::X11ClientStatePtr;
 use open_gpui::{
-    AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge,
-    ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowDecorations, WindowKind, WindowParams, px,
+    AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, DisplayId, ForegroundExecutor,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, px,
 };
 use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -170,8 +170,8 @@ struct VisualSet {
     black_pixel: u32,
 }
 
-fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
-    let screen = &xcb.setup().roots[screen_index];
+fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> Option<VisualSet> {
+    let screen = xcb.setup().roots.get(screen_index)?;
     let mut set = VisualSet {
         inherit: Visual {
             id: screen.root_visual,
@@ -225,7 +225,22 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
         }
     }
 
-    set
+    Some(set)
+}
+
+pub(crate) fn x11_supports_alpha_creation(xcb: &XCBConnection, screen_index: usize) -> bool {
+    find_visuals(xcb, screen_index).is_some_and(|visuals| visuals.transparent.is_some())
+}
+
+pub(crate) fn resolve_x11_screen_index(
+    display_id: Option<DisplayId>,
+    default_screen_index: usize,
+    screen_count: usize,
+) -> Option<usize> {
+    display_id
+        .and_then(|display_id| usize::try_from(u64::from(display_id)).ok())
+        .filter(|screen_index| *screen_index < screen_count)
+        .or_else(|| (default_screen_index < screen_count).then_some(default_screen_index))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -242,6 +257,104 @@ struct RawWindow {
 unsafe impl Send for RawWindow {}
 unsafe impl Sync for RawWindow {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum X11InitialWindowState {
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct X11WindowCreationProjection {
+    device_bounds: Bounds<DevicePixels>,
+    restore_bounds: Bounds<Pixels>,
+    initial_state: X11InitialWindowState,
+    alpha_capable: bool,
+    focus_on_appearing: bool,
+    focus_on_click: bool,
+    topmost: bool,
+    taskbar_visible: bool,
+}
+
+impl X11WindowCreationProjection {
+    fn new(
+        window_bounds: WindowBounds,
+        kind: &WindowKind,
+        scale_factor: f32,
+        alpha_capable: bool,
+    ) -> Self {
+        let mut device_bounds = window_bounds.get_bounds().to_device_pixels(scale_factor);
+        let mut restore_bounds = window_bounds.get_bounds();
+        if device_bounds.size.width.0 == 0 || device_bounds.size.height.0 == 0 {
+            device_bounds.size.width = 800.into();
+            device_bounds.size.height = 600.into();
+            restore_bounds = device_bounds.to_pixels(scale_factor);
+        }
+
+        let initial_state = if x11_supports_toplevel_creation_state(kind) {
+            match window_bounds {
+                WindowBounds::Windowed(_) => X11InitialWindowState::Windowed,
+                WindowBounds::Maximized(_) => X11InitialWindowState::Maximized,
+                WindowBounds::Fullscreen(_) => X11InitialWindowState::Fullscreen,
+            }
+        } else {
+            X11InitialWindowState::Windowed
+        };
+
+        Self {
+            device_bounds,
+            restore_bounds,
+            initial_state,
+            alpha_capable,
+            focus_on_appearing: !matches!(kind, WindowKind::PopUp),
+            focus_on_click: !matches!(kind, WindowKind::PopUp),
+            topmost: false,
+            taskbar_visible: !matches!(kind, WindowKind::PopUp),
+        }
+    }
+
+    fn create_x(self) -> i16 {
+        (self.device_bounds.origin.x.0 + 2) as i16
+    }
+
+    fn create_y(self) -> i16 {
+        self.device_bounds.origin.y.0 as i16
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct X11WindowBackgroundProjection {
+    observed_appearance: WindowBackgroundAppearance,
+    renderer_transparent: bool,
+}
+
+impl X11WindowBackgroundProjection {
+    fn new(requested: WindowBackgroundAppearance, alpha_capable: bool) -> Self {
+        let observed_appearance = if alpha_capable {
+            match requested {
+                WindowBackgroundAppearance::Opaque | WindowBackgroundAppearance::Transparent => {
+                    requested
+                }
+                WindowBackgroundAppearance::Blurred
+                | WindowBackgroundAppearance::MicaBackdrop
+                | WindowBackgroundAppearance::MicaAltBackdrop => {
+                    WindowBackgroundAppearance::Transparent
+                }
+            }
+        } else {
+            WindowBackgroundAppearance::Opaque
+        };
+        Self {
+            observed_appearance,
+            renderer_transparent: observed_appearance != WindowBackgroundAppearance::Opaque,
+        }
+    }
+}
+
+pub(crate) fn x11_supports_toplevel_creation_state(kind: &WindowKind) -> bool {
+    matches!(kind, WindowKind::Normal | WindowKind::Floating)
+}
+
 #[derive(Default)]
 pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -250,6 +363,7 @@ pub struct Callbacks {
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
+    window_state_change: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
@@ -269,12 +383,18 @@ pub struct X11WindowState {
     pub(crate) counter_id: sync::Counter,
     pub(crate) last_sync_counter: Option<sync::Int64>,
     bounds: Bounds<Pixels>,
+    restore_bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: WgpuRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
     background_appearance: WindowBackgroundAppearance,
+    alpha_capable: bool,
+    focus_on_appearing: bool,
+    focus_on_click: bool,
+    topmost: bool,
+    taskbar_visible: bool,
     maximized_vertical: bool,
     maximized_horizontal: bool,
     hidden: bool,
@@ -430,11 +550,16 @@ impl X11WindowState {
         supports_xinput_gestures: bool,
         is_bgr: bool,
     ) -> anyhow::Result<Self> {
-        let x_screen_index = params
-            .display_id
-            .map_or(x_main_screen_index, |did| u64::from(did) as usize);
+        let x_screen_index = resolve_x11_screen_index(
+            params.display_id,
+            x_main_screen_index,
+            xcb.setup().roots.len(),
+        )
+        .context("X11 has no available screen for the requested or default display")?;
 
-        let visual_set = find_visuals(xcb, x_screen_index);
+        let visual_set =
+            find_visuals(xcb, x_screen_index).context("X11 target screen disappeared")?;
+        let alpha_capable = visual_set.transparent.is_some();
 
         let visual = match visual_set.transparent {
             Some(visual) => visual,
@@ -444,6 +569,12 @@ impl X11WindowState {
             }
         };
         log::info!("Using {:?}", visual);
+        let creation = X11WindowCreationProjection::new(
+            params.window_bounds,
+            &params.kind,
+            scale_factor,
+            alpha_capable,
+        );
 
         let colormap = if visual.colormap != 0 {
             visual.colormap
@@ -472,16 +603,18 @@ impl X11WindowState {
                     | xproto::EventMask::VISIBILITY_CHANGE,
             );
 
-        let mut bounds = params.bounds.to_device_pixels(scale_factor);
-        if bounds.size.width.0 == 0 || bounds.size.height.0 == 0 {
+        let requested_bounds = params
+            .window_bounds
+            .get_bounds()
+            .to_device_pixels(scale_factor);
+        if requested_bounds.size.width.0 == 0 || requested_bounds.size.height.0 == 0 {
             log::warn!(
                 "Window bounds contain a zero value. height={}, width={}. Falling back to defaults.",
-                bounds.size.height.0,
-                bounds.size.width.0
+                requested_bounds.size.height.0,
+                requested_bounds.size.width.0
             );
-            bounds.size.width = 800.into();
-            bounds.size.height = 600.into();
         }
+        let mut bounds = creation.device_bounds;
 
         check_reply(
             || {
@@ -490,8 +623,8 @@ impl X11WindowState {
                     visual.depth,
                     x_window,
                     visual_set.root,
-                    bounds.origin.x.0 + 2,
-                    bounds.origin.y.0,
+                    creation.create_x(),
+                    creation.create_y(),
                     bounds.size.width.0,
                     bounds.size.height.0
                 )
@@ -500,8 +633,8 @@ impl X11WindowState {
                 visual.depth,
                 x_window,
                 visual_set.root,
-                (bounds.origin.x.0 + 2) as i16,
-                bounds.origin.y.0 as i16,
+                creation.create_x(),
+                creation.create_y(),
                 bounds.size.width.0 as u16,
                 bounds.size.height.0 as u16,
                 0,
@@ -559,6 +692,27 @@ impl X11WindowState {
                         atoms._NET_WM_NAME,
                         atoms.UTF8_STRING,
                         title.as_bytes(),
+                    ),
+                )?;
+            }
+
+            let initial_window_state = match creation.initial_state {
+                X11InitialWindowState::Windowed => &[][..],
+                X11InitialWindowState::Maximized => &[
+                    atoms._NET_WM_STATE_MAXIMIZED_VERT,
+                    atoms._NET_WM_STATE_MAXIMIZED_HORZ,
+                ],
+                X11InitialWindowState::Fullscreen => &[atoms._NET_WM_STATE_FULLSCREEN],
+            };
+            if !initial_window_state.is_empty() {
+                check_reply(
+                    || "X11 ChangeProperty32 setting initial _NET_WM_STATE failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_STATE,
+                        atoms.XA_ATOM,
+                        initial_window_state,
                     ),
                 )?;
             }
@@ -785,6 +939,7 @@ impl X11WindowState {
                 x_screen_index,
                 visual_id: visual.id,
                 bounds: bounds.to_pixels(scale_factor),
+                restore_bounds: creation.restore_bounds,
                 scale_factor,
                 renderer,
                 atoms: *atoms,
@@ -799,6 +954,11 @@ impl X11WindowState {
                 appearance,
                 handle,
                 background_appearance: WindowBackgroundAppearance::Opaque,
+                alpha_capable: creation.alpha_capable,
+                focus_on_appearing: creation.focus_on_appearing,
+                focus_on_click: creation.focus_on_click,
+                topmost: creation.topmost,
+                taskbar_visible: creation.taskbar_visible,
                 destroyed: false,
                 client_side_decorations_supported,
                 decorations: WindowDecorations::Server,
@@ -917,7 +1077,7 @@ impl X11Window {
         };
 
         let state = ptr.state.borrow_mut();
-        ptr.set_wm_properties(state)?;
+        let _ = ptr.set_wm_properties(state)?;
 
         Ok(Self(ptr))
     }
@@ -1018,12 +1178,42 @@ impl X11WindowStatePtr {
 
     pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) -> anyhow::Result<()> {
         let state = self.state.borrow_mut();
-        if event.atom == state.atoms._NET_WM_STATE {
-            self.set_wm_properties(state)?;
+        let state_changed = if event.atom == state.atoms._NET_WM_STATE {
+            self.set_wm_properties(state)?
         } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
             self.set_edge_constraints(state)?;
+            false
+        } else {
+            false
+        };
+        if state_changed {
+            self.emit_window_state_change();
         }
         Ok(())
+    }
+
+    pub(crate) fn set_mapped(&self, mapped: bool) {
+        let changed = {
+            let mut state = self.state.borrow_mut();
+            let hidden = !mapped;
+            if state.hidden == hidden {
+                false
+            } else {
+                state.hidden = hidden;
+                true
+            }
+        };
+        if changed {
+            self.emit_window_state_change();
+        }
+    }
+
+    fn emit_window_state_change(&self) {
+        let callback = self.callbacks.borrow_mut().window_state_change.take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.callbacks.borrow_mut().window_state_change = Some(callback);
+        }
     }
 
     fn set_edge_constraints(
@@ -1058,7 +1248,7 @@ impl X11WindowStatePtr {
     fn set_wm_properties(
         &self,
         mut state: std::cell::RefMut<X11WindowState>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let reply = get_reply(
             || "X11 GetProperty for _NET_WM_STATE failed.",
             self.xcb.get_property(
@@ -1076,6 +1266,13 @@ impl X11WindowStatePtr {
             .chunks_exact(4)
             .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
 
+        let previous = (
+            state.active,
+            state.fullscreen,
+            state.maximized_vertical,
+            state.maximized_horizontal,
+            state.hidden,
+        );
         state.active = false;
         state.fullscreen = false;
         state.maximized_vertical = false;
@@ -1096,7 +1293,14 @@ impl X11WindowStatePtr {
             }
         }
 
-        Ok(())
+        Ok(previous
+            != (
+                state.active,
+                state.fullscreen,
+                state.maximized_vertical,
+                state.maximized_horizontal,
+                state.hidden,
+            ))
     }
 
     pub fn add_child(&self, child: xproto::Window) {
@@ -1250,6 +1454,13 @@ impl X11WindowStatePtr {
             } else {
                 state.bounds = bounds;
             }
+            if !state.fullscreen
+                && !state.maximized_vertical
+                && !state.maximized_horizontal
+                && !state.hidden
+            {
+                state.restore_bounds = state.bounds;
+            }
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
             state.renderer.update_drawable_size(gpu_size);
@@ -1327,17 +1538,42 @@ impl PlatformWindow for X11Window {
         let state = self.0.state.borrow();
 
         // A maximized window that gets minimized will still retain its maximized state.
-        !state.hidden && state.maximized_vertical && state.maximized_horizontal
+        state.maximized_vertical && state.maximized_horizontal
     }
 
     fn is_minimized(&self) -> bool {
         self.0.state.borrow().hidden
     }
 
+    fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
+        let window_bounds = self.window_bounds();
+        open_gpui::WindowPlatformFacts {
+            bounds: self.bounds(),
+            coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
+            window_bounds,
+            inner_window_bounds: self.inner_window_bounds(),
+            content_size: self.content_size(),
+            scale_factor: self.scale_factor(),
+            display_id: self.display().map(|display| display.id()),
+            is_minimized: self.is_minimized(),
+            is_maximized: self.is_maximized(),
+            is_fullscreen: self.is_fullscreen(),
+            accepts_pointer_input: self.accepts_pointer_input(),
+            focus_on_appearing: self.0.state.borrow().focus_on_appearing,
+            focus_on_click: self.0.state.borrow().focus_on_click,
+            background_appearance: self.background_appearance(),
+            topmost: self.0.state.borrow().topmost,
+            taskbar_visible: self.0.state.borrow().taskbar_visible,
+            is_active: self.is_active(),
+        }
+    }
+
     fn window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
-        if self.is_maximized() {
-            WindowBounds::Maximized(state.bounds)
+        if state.fullscreen {
+            WindowBounds::Fullscreen(state.restore_bounds)
+        } else if state.maximized_vertical && state.maximized_horizontal {
+            WindowBounds::Maximized(state.restore_bounds)
         } else {
             WindowBounds::Windowed(state.bounds)
         }
@@ -1345,8 +1581,10 @@ impl PlatformWindow for X11Window {
 
     fn inner_window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
-        if self.is_maximized() {
-            WindowBounds::Maximized(state.bounds)
+        if state.fullscreen {
+            WindowBounds::Fullscreen(state.restore_bounds)
+        } else if state.maximized_vertical && state.maximized_horizontal {
+            WindowBounds::Maximized(state.restore_bounds)
         } else {
             let mut bounds = state.bounds;
             let [left, right, top, bottom] = state.last_insets;
@@ -1372,30 +1610,6 @@ impl PlatformWindow for X11Window {
         // (bounds.size is already divided by scale_factor in set_bounds), so no further
         // division is needed here. This matches the Wayland implementation.
         self.0.state.borrow().content_size()
-    }
-
-    fn resize(&mut self, size: Size<Pixels>) {
-        let state = self.0.state.borrow();
-        let size = size.to_device_pixels(state.scale_factor);
-        let width = size.width.0 as u32;
-        let height = size.height.0 as u32;
-
-        check_reply(
-            || {
-                format!(
-                    "X11 ConfigureWindow failed. width: {}, height: {}",
-                    width, height
-                )
-            },
-            self.0.xcb.configure_window(
-                self.0.x_window,
-                &xproto::ConfigureWindowAux::new()
-                    .width(width)
-                    .height(height),
-            ),
-        )
-        .log_err();
-        xcb_flush(&self.0.xcb);
     }
 
     fn scale_factor(&self) -> f32 {
@@ -1559,9 +1773,12 @@ impl PlatformWindow for X11Window {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut state = self.0.state.borrow_mut();
-        state.background_appearance = background_appearance;
-        let transparent = state.is_transparent();
-        state.renderer.update_transparency(transparent);
+        let projection =
+            X11WindowBackgroundProjection::new(background_appearance, state.alpha_capable);
+        state.background_appearance = projection.observed_appearance;
+        state
+            .renderer
+            .update_transparency(projection.renderer_transparent);
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
@@ -1584,49 +1801,6 @@ impl PlatformWindow for X11Window {
                     .is_some_and(|ctx| ctx.supports_dual_source_blending())
             })
             .unwrap_or_default()
-    }
-
-    fn minimize(&self) {
-        let state = self.0.state.borrow();
-        const WINDOW_ICONIC_STATE: u32 = 3;
-        let message = ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            state.atoms.WM_CHANGE_STATE,
-            [WINDOW_ICONIC_STATE, 0, 0, 0, 0],
-        );
-        check_reply(
-            || "X11 SendEvent to minimize window failed.",
-            self.0.xcb.send_event(
-                false,
-                state.x_root_window,
-                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
-            ),
-        )
-        .log_err();
-    }
-
-    fn zoom(&self) {
-        let state = self.0.state.borrow();
-        self.set_wm_hints(
-            || "X11 SendEvent to maximize a window failed.",
-            WmHintPropertyState::Toggle,
-            state.atoms._NET_WM_STATE_MAXIMIZED_VERT,
-            state.atoms._NET_WM_STATE_MAXIMIZED_HORZ,
-        )
-        .log_err();
-    }
-
-    fn toggle_fullscreen(&self) {
-        let state = self.0.state.borrow();
-        self.set_wm_hints(
-            || "X11 SendEvent to fullscreen a window failed.",
-            WmHintPropertyState::Toggle,
-            state.atoms._NET_WM_STATE_FULLSCREEN,
-            xproto::AtomEnum::NONE.into(),
-        )
-        .log_err();
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -1655,6 +1829,10 @@ impl PlatformWindow for X11Window {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
+    }
+
+    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().window_state_change = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
@@ -1983,5 +2161,145 @@ struct TrivialDeactivationHandler {
 impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     fn deactivate_accessibility(&mut self) {
         (self.callback)();
+    }
+}
+
+#[cfg(test)]
+mod creation_projection_tests {
+    use super::*;
+    use open_gpui::{point, size};
+
+    fn restore_bounds() -> Bounds<Pixels> {
+        Bounds::new(point(px(10.0), px(20.0)), size(px(640.0), px(480.0)))
+    }
+
+    #[test]
+    fn screen_resolution_uses_valid_targets_and_falls_back_without_panicking() {
+        assert_eq!(
+            resolve_x11_screen_index(Some(DisplayId::from(1)), 0, 2),
+            Some(1)
+        );
+        assert_eq!(
+            resolve_x11_screen_index(Some(DisplayId::from(9)), 0, 2),
+            Some(0)
+        );
+        assert_eq!(
+            resolve_x11_screen_index(Some(DisplayId::from(9)), 3, 2),
+            None
+        );
+    }
+
+    #[test]
+    fn creation_projection_drives_position_size_state_restore_and_alpha_visual() {
+        let restore_bounds = restore_bounds();
+        let cases = [
+            (
+                WindowBounds::Windowed(restore_bounds),
+                X11InitialWindowState::Windowed,
+            ),
+            (
+                WindowBounds::Maximized(restore_bounds),
+                X11InitialWindowState::Maximized,
+            ),
+            (
+                WindowBounds::Fullscreen(restore_bounds),
+                X11InitialWindowState::Fullscreen,
+            ),
+        ];
+
+        for (window_bounds, expected_state) in cases {
+            let projection =
+                X11WindowCreationProjection::new(window_bounds, &WindowKind::Normal, 2.0, true);
+            assert_eq!(projection.device_bounds.origin.x.0, 20);
+            assert_eq!(projection.device_bounds.origin.y.0, 40);
+            assert_eq!(projection.device_bounds.size.width.0, 1280);
+            assert_eq!(projection.device_bounds.size.height.0, 960);
+            assert_eq!(projection.create_x(), 22);
+            assert_eq!(projection.create_y(), 40);
+            assert_eq!(projection.restore_bounds, restore_bounds);
+            assert_eq!(projection.initial_state, expected_state);
+            assert!(projection.alpha_capable);
+            assert!(projection.focus_on_appearing);
+            assert!(projection.focus_on_click);
+            assert!(!projection.topmost);
+            assert!(projection.taskbar_visible);
+        }
+    }
+
+    #[test]
+    fn popup_projection_does_not_emit_unmanaged_toplevel_state() {
+        let projection = X11WindowCreationProjection::new(
+            WindowBounds::Fullscreen(restore_bounds()),
+            &WindowKind::PopUp,
+            1.0,
+            true,
+        );
+
+        assert_eq!(projection.initial_state, X11InitialWindowState::Windowed);
+        assert_eq!(projection.restore_bounds, restore_bounds());
+        assert!(!projection.focus_on_appearing);
+        assert!(!projection.focus_on_click);
+        assert!(!projection.topmost);
+        assert!(!projection.taskbar_visible);
+
+        let dialog = X11WindowCreationProjection::new(
+            WindowBounds::Maximized(restore_bounds()),
+            &WindowKind::Dialog,
+            1.0,
+            true,
+        );
+        assert_eq!(dialog.initial_state, X11InitialWindowState::Windowed);
+    }
+
+    #[test]
+    fn zero_sized_creation_projection_uses_the_native_fallback_as_restore_bounds() {
+        let projection = X11WindowCreationProjection::new(
+            WindowBounds::Maximized(Bounds::new(point(px(4.0), px(8.0)), size(px(0.0), px(0.0)))),
+            &WindowKind::Normal,
+            2.0,
+            true,
+        );
+
+        assert_eq!(projection.device_bounds.size.width.0, 800);
+        assert_eq!(projection.device_bounds.size.height.0, 600);
+        assert_eq!(projection.restore_bounds.size, size(px(400.0), px(300.0)));
+    }
+
+    #[test]
+    fn background_projection_reports_actual_alpha_visual_result() {
+        let transparent =
+            X11WindowBackgroundProjection::new(WindowBackgroundAppearance::Transparent, true);
+        assert_eq!(
+            transparent.observed_appearance,
+            WindowBackgroundAppearance::Transparent
+        );
+        assert!(transparent.renderer_transparent);
+
+        let blurred = X11WindowBackgroundProjection::new(WindowBackgroundAppearance::Blurred, true);
+        assert_eq!(
+            blurred.observed_appearance,
+            WindowBackgroundAppearance::Transparent
+        );
+        assert!(blurred.renderer_transparent);
+
+        for requested in [
+            WindowBackgroundAppearance::MicaBackdrop,
+            WindowBackgroundAppearance::MicaAltBackdrop,
+        ] {
+            let adjusted = X11WindowBackgroundProjection::new(requested, true);
+            assert_eq!(
+                adjusted.observed_appearance,
+                WindowBackgroundAppearance::Transparent
+            );
+            assert!(adjusted.renderer_transparent);
+        }
+
+        let adjusted =
+            X11WindowBackgroundProjection::new(WindowBackgroundAppearance::Transparent, false);
+        assert_eq!(
+            adjusted.observed_appearance,
+            WindowBackgroundAppearance::Opaque
+        );
+        assert!(!adjusted.renderer_transparent);
     }
 }
