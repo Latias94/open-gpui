@@ -13,7 +13,7 @@
 //! ## Example
 //!
 //! ```
-//! use gpui;
+//! use open_gpui::TestAppContext;
 //!
 //! #[open_gpui::test]
 //! async fn test_example(cx: &TestAppContext) {
