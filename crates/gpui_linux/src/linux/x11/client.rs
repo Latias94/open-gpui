@@ -1623,6 +1623,21 @@ fn x11_window_mutation_capabilities(
     }
 }
 
+fn x11_window_mutation_capabilities_for_screens(
+    kind: &WindowKind,
+    display_id: Option<DisplayId>,
+    default_screen_index: usize,
+    screens: &[xproto::Screen],
+) -> PlatformWindowMutationCapabilities {
+    let Some(screen_index) =
+        resolve_x11_screen_index(display_id, default_screen_index, screens.len())
+    else {
+        return PlatformWindowMutationCapabilities::default();
+    };
+
+    x11_window_mutation_capabilities(kind, x11_supports_alpha_creation(screens, screen_index))
+}
+
 impl LinuxClient for X11Client {
     fn compositor_name(&self) -> &'static str {
         "X11"
@@ -1941,16 +1956,11 @@ impl LinuxClient for X11Client {
         display_id: Option<DisplayId>,
     ) -> PlatformWindowMutationCapabilities {
         let state = self.0.borrow();
-        let Some(screen_index) = resolve_x11_screen_index(
+        x11_window_mutation_capabilities_for_screens(
+            kind,
             display_id,
             state.x_root_index,
-            state.xcb_connection.setup().roots.len(),
-        ) else {
-            return PlatformWindowMutationCapabilities::default();
-        };
-        x11_window_mutation_capabilities(
-            kind,
-            x11_supports_alpha_creation(&state.xcb_connection, screen_index),
+            &state.xcb_connection.setup().roots,
         )
     }
 
@@ -3004,38 +3014,175 @@ fn xkb_state_for_key_event(xkb: &xkbc::State, event_state: xproto::KeyButMask) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "wayland")]
+    use open_gpui::layer_shell::LayerShellOptions;
+
+    fn expected_x11_capabilities(
+        toplevel_state: WindowMutationSupport,
+        alpha: WindowMutationSupport,
+    ) -> PlatformWindowMutationCapabilities {
+        PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::CreationOnly,
+            size: WindowMutationSupport::CreationOnly,
+            windowed: WindowMutationSupport::CreationOnly,
+            maximized: toplevel_state,
+            fullscreen: toplevel_state,
+            minimized: WindowMutationSupport::Unsupported,
+            restore_bounds: toplevel_state,
+            pointer_input: WindowMutationSupport::Unsupported,
+            focus_on_appearing: WindowMutationSupport::Unsupported,
+            focus_on_click: WindowMutationSupport::Unsupported,
+            alpha,
+            topmost: WindowMutationSupport::Unsupported,
+            taskbar_visibility: WindowMutationSupport::Unsupported,
+            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+        }
+    }
+
+    fn x11_test_screen(transparent_visual: bool) -> xproto::Screen {
+        let visual = |visual_id| xproto::Visualtype {
+            visual_id,
+            class: xproto::VisualClass::TRUE_COLOR,
+            bits_per_rgb_value: 8,
+            colormap_entries: 256,
+            red_mask: 0xFF0000,
+            green_mask: 0xFF00,
+            blue_mask: 0xFF,
+        };
+        let mut allowed_depths = vec![xproto::Depth {
+            depth: 24,
+            visuals: vec![visual(1)],
+        }];
+        if transparent_visual {
+            allowed_depths.push(xproto::Depth {
+                depth: 32,
+                visuals: vec![visual(2)],
+            });
+        }
+
+        xproto::Screen {
+            root: 1,
+            default_colormap: 1,
+            white_pixel: 0,
+            black_pixel: 0,
+            current_input_masks: xproto::EventMask::NO_EVENT,
+            width_in_pixels: 1920,
+            height_in_pixels: 1080,
+            width_in_millimeters: 500,
+            height_in_millimeters: 300,
+            min_installed_maps: 1,
+            max_installed_maps: 1,
+            root_visual: 1,
+            backing_stores: xproto::BackingStore::NOT_USEFUL,
+            save_unders: false,
+            root_depth: 24,
+            allowed_depths,
+        }
+    }
 
     #[test]
     fn window_mutation_capabilities_match_x11_creation_paths() {
         assert_eq!(
             x11_window_mutation_capabilities(&WindowKind::Normal, true),
-            PlatformWindowMutationCapabilities {
-                position: WindowMutationSupport::CreationOnly,
-                size: WindowMutationSupport::CreationOnly,
-                windowed: WindowMutationSupport::CreationOnly,
-                maximized: WindowMutationSupport::CreationOnly,
-                fullscreen: WindowMutationSupport::CreationOnly,
-                minimized: WindowMutationSupport::Unsupported,
-                restore_bounds: WindowMutationSupport::CreationOnly,
-                alpha: WindowMutationSupport::CreationOnly,
-                coordinate_space: WindowCoordinateSpace::GlobalScreen,
-                ..Default::default()
-            }
+            expected_x11_capabilities(
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::CreationOnly,
+            )
         );
+        assert_eq!(
+            x11_window_mutation_capabilities(&WindowKind::Floating, true),
+            expected_x11_capabilities(
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::CreationOnly,
+            )
+        );
+        assert_eq!(
+            x11_window_mutation_capabilities(&WindowKind::PopUp, true),
+            expected_x11_capabilities(
+                WindowMutationSupport::Unsupported,
+                WindowMutationSupport::CreationOnly,
+            )
+        );
+        assert_eq!(
+            x11_window_mutation_capabilities(&WindowKind::Dialog, true),
+            expected_x11_capabilities(
+                WindowMutationSupport::Unsupported,
+                WindowMutationSupport::CreationOnly,
+            )
+        );
+        #[cfg(feature = "wayland")]
+        assert_eq!(
+            x11_window_mutation_capabilities(
+                &WindowKind::LayerShell(LayerShellOptions::default()),
+                true
+            ),
+            expected_x11_capabilities(
+                WindowMutationSupport::Unsupported,
+                WindowMutationSupport::CreationOnly,
+            )
+        );
+        assert_eq!(
+            x11_window_mutation_capabilities(&WindowKind::Normal, false),
+            expected_x11_capabilities(
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::Unsupported,
+            )
+        );
+        assert_eq!(
+            x11_window_mutation_capabilities(&WindowKind::PopUp, false),
+            expected_x11_capabilities(
+                WindowMutationSupport::Unsupported,
+                WindowMutationSupport::Unsupported,
+            )
+        );
+    }
 
-        let popup = x11_window_mutation_capabilities(&WindowKind::PopUp, true);
-        assert_eq!(popup.maximized, WindowMutationSupport::Unsupported);
-        assert_eq!(popup.fullscreen, WindowMutationSupport::Unsupported);
-        assert_eq!(popup.restore_bounds, WindowMutationSupport::Unsupported);
-
-        let dialog = x11_window_mutation_capabilities(&WindowKind::Dialog, true);
-        assert_eq!(dialog.maximized, WindowMutationSupport::Unsupported);
-        assert_eq!(dialog.fullscreen, WindowMutationSupport::Unsupported);
-        assert_eq!(dialog.restore_bounds, WindowMutationSupport::Unsupported);
+    #[test]
+    fn window_mutation_capabilities_use_target_screen_visuals() {
+        let screens = [x11_test_screen(false), x11_test_screen(true)];
 
         assert_eq!(
-            x11_window_mutation_capabilities(&WindowKind::Normal, false).alpha,
-            WindowMutationSupport::Unsupported
+            x11_window_mutation_capabilities_for_screens(
+                &WindowKind::Normal,
+                Some(DisplayId::from(0)),
+                1,
+                &screens,
+            ),
+            expected_x11_capabilities(
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::Unsupported,
+            )
+        );
+        assert_eq!(
+            x11_window_mutation_capabilities_for_screens(
+                &WindowKind::Normal,
+                Some(DisplayId::from(1)),
+                0,
+                &screens,
+            ),
+            expected_x11_capabilities(
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::CreationOnly,
+            )
+        );
+        assert_eq!(
+            x11_window_mutation_capabilities_for_screens(&WindowKind::Normal, None, 1, &screens),
+            expected_x11_capabilities(
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::CreationOnly,
+            )
+        );
+        assert_eq!(
+            x11_window_mutation_capabilities_for_screens(
+                &WindowKind::Normal,
+                Some(DisplayId::from(9)),
+                0,
+                &screens,
+            ),
+            expected_x11_capabilities(
+                WindowMutationSupport::CreationOnly,
+                WindowMutationSupport::Unsupported,
+            )
         );
     }
 

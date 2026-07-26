@@ -1579,41 +1579,49 @@ mod window_mutation_capability_tests {
         PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowMutationSupport,
     };
 
+    fn expected_macos_capabilities(
+        supports_toplevel_state: bool,
+    ) -> PlatformWindowMutationCapabilities {
+        let toplevel_state = if supports_toplevel_state {
+            WindowMutationSupport::CreationOnly
+        } else {
+            WindowMutationSupport::Unsupported
+        };
+        PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::CreationOnly,
+            size: WindowMutationSupport::CreationOnly,
+            windowed: WindowMutationSupport::CreationOnly,
+            maximized: toplevel_state,
+            fullscreen: toplevel_state,
+            minimized: WindowMutationSupport::Unsupported,
+            restore_bounds: toplevel_state,
+            pointer_input: WindowMutationSupport::CreationOnly,
+            focus_on_appearing: toplevel_state,
+            focus_on_click: WindowMutationSupport::Unsupported,
+            alpha: WindowMutationSupport::CreationOnly,
+            topmost: WindowMutationSupport::Unsupported,
+            taskbar_visibility: WindowMutationSupport::Unsupported,
+            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+        }
+    }
+
     #[test]
-    fn capabilities_match_creation_and_observation_paths() {
+    fn capabilities_match_exact_kind_specific_creation_paths() {
         assert_eq!(
             super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Normal),
-            PlatformWindowMutationCapabilities {
-                position: WindowMutationSupport::CreationOnly,
-                size: WindowMutationSupport::CreationOnly,
-                windowed: WindowMutationSupport::CreationOnly,
-                maximized: WindowMutationSupport::CreationOnly,
-                fullscreen: WindowMutationSupport::CreationOnly,
-                minimized: WindowMutationSupport::Unsupported,
-                restore_bounds: WindowMutationSupport::CreationOnly,
-                pointer_input: WindowMutationSupport::CreationOnly,
-                focus_on_appearing: WindowMutationSupport::CreationOnly,
-                focus_on_click: WindowMutationSupport::Unsupported,
-                alpha: WindowMutationSupport::CreationOnly,
-                topmost: WindowMutationSupport::Unsupported,
-                taskbar_visibility: WindowMutationSupport::Unsupported,
-                coordinate_space: WindowCoordinateSpace::GlobalScreen,
-            }
+            expected_macos_capabilities(true)
         );
-
-        let popup = super::macos_window_mutation_capabilities(&open_gpui::WindowKind::PopUp);
-        assert_eq!(popup.maximized, WindowMutationSupport::Unsupported);
-        assert_eq!(popup.fullscreen, WindowMutationSupport::Unsupported);
-        assert_eq!(popup.restore_bounds, WindowMutationSupport::Unsupported);
-        assert_eq!(popup.focus_on_appearing, WindowMutationSupport::Unsupported);
-
-        let dialog = super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Dialog);
-        assert_eq!(dialog.maximized, WindowMutationSupport::Unsupported);
-        assert_eq!(dialog.fullscreen, WindowMutationSupport::Unsupported);
-        assert_eq!(dialog.restore_bounds, WindowMutationSupport::Unsupported);
         assert_eq!(
-            dialog.focus_on_appearing,
-            WindowMutationSupport::Unsupported
+            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Floating),
+            expected_macos_capabilities(true)
+        );
+        assert_eq!(
+            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::PopUp),
+            expected_macos_capabilities(false)
+        );
+        assert_eq!(
+            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Dialog),
+            expected_macos_capabilities(false)
         );
     }
 }

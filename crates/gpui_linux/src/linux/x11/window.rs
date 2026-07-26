@@ -170,8 +170,8 @@ struct VisualSet {
     black_pixel: u32,
 }
 
-fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> Option<VisualSet> {
-    let screen = xcb.setup().roots.get(screen_index)?;
+fn find_visuals(screens: &[xproto::Screen], screen_index: usize) -> Option<VisualSet> {
+    let screen = screens.get(screen_index)?;
     let mut set = VisualSet {
         inherit: Visual {
             id: screen.root_visual,
@@ -228,8 +228,8 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> Option<VisualSet> {
     Some(set)
 }
 
-pub(crate) fn x11_supports_alpha_creation(xcb: &XCBConnection, screen_index: usize) -> bool {
-    find_visuals(xcb, screen_index).is_some_and(|visuals| visuals.transparent.is_some())
+pub(crate) fn x11_supports_alpha_creation(screens: &[xproto::Screen], screen_index: usize) -> bool {
+    find_visuals(screens, screen_index).is_some_and(|visuals| visuals.transparent.is_some())
 }
 
 pub(crate) fn resolve_x11_screen_index(
@@ -557,8 +557,8 @@ impl X11WindowState {
         )
         .context("X11 has no available screen for the requested or default display")?;
 
-        let visual_set =
-            find_visuals(xcb, x_screen_index).context("X11 target screen disappeared")?;
+        let visual_set = find_visuals(&xcb.setup().roots, x_screen_index)
+            .context("X11 target screen disappeared")?;
         let alpha_capable = visual_set.transparent.is_some();
 
         let visual = match visual_set.transparent {

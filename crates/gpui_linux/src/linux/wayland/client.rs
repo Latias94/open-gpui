@@ -2617,32 +2617,53 @@ mod window_mutation_capability_tests {
     use super::*;
     use open_gpui::layer_shell::LayerShellOptions;
 
-    #[test]
-    fn xdg_and_layer_shell_capabilities_remain_kind_specific() {
-        let xdg = wayland_window_mutation_capabilities(&WindowKind::Normal);
-        assert_eq!(xdg.size, WindowMutationSupport::CreationOnly);
-        assert_eq!(xdg.windowed, WindowMutationSupport::CreationOnly);
-        assert_eq!(xdg.maximized, WindowMutationSupport::CreationOnly);
-        assert_eq!(xdg.fullscreen, WindowMutationSupport::CreationOnly);
-        assert_eq!(xdg.restore_bounds, WindowMutationSupport::CreationOnly);
-        assert_eq!(xdg.alpha, WindowMutationSupport::CreationOnly);
-        assert_eq!(xdg.coordinate_space, WindowCoordinateSpace::WindowLocal);
-
-        let layer_shell = wayland_window_mutation_capabilities(&WindowKind::LayerShell(
-            LayerShellOptions::default(),
-        ));
-        assert_eq!(layer_shell.size, WindowMutationSupport::CreationOnly);
-        assert_eq!(layer_shell.windowed, WindowMutationSupport::Unsupported);
-        assert_eq!(layer_shell.maximized, WindowMutationSupport::Unsupported);
-        assert_eq!(layer_shell.fullscreen, WindowMutationSupport::Unsupported);
-        assert_eq!(
-            layer_shell.restore_bounds,
+    fn expected_wayland_capabilities(layer_shell: bool) -> PlatformWindowMutationCapabilities {
+        let toplevel_state = if layer_shell {
             WindowMutationSupport::Unsupported
-        );
-        assert_eq!(layer_shell.alpha, WindowMutationSupport::CreationOnly);
+        } else {
+            WindowMutationSupport::CreationOnly
+        };
+        PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::Unsupported,
+            size: WindowMutationSupport::CreationOnly,
+            windowed: toplevel_state,
+            maximized: toplevel_state,
+            fullscreen: toplevel_state,
+            minimized: WindowMutationSupport::Unsupported,
+            restore_bounds: toplevel_state,
+            pointer_input: WindowMutationSupport::Unsupported,
+            focus_on_appearing: WindowMutationSupport::Unsupported,
+            focus_on_click: WindowMutationSupport::Unsupported,
+            alpha: WindowMutationSupport::CreationOnly,
+            topmost: WindowMutationSupport::Unsupported,
+            taskbar_visibility: WindowMutationSupport::Unsupported,
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
+        }
+    }
+
+    #[test]
+    fn capabilities_match_exact_kind_specific_creation_paths() {
         assert_eq!(
-            layer_shell.coordinate_space,
-            WindowCoordinateSpace::WindowLocal
+            wayland_window_mutation_capabilities(&WindowKind::Normal),
+            expected_wayland_capabilities(false)
+        );
+        assert_eq!(
+            wayland_window_mutation_capabilities(&WindowKind::PopUp),
+            expected_wayland_capabilities(false)
+        );
+        assert_eq!(
+            wayland_window_mutation_capabilities(&WindowKind::Floating),
+            expected_wayland_capabilities(false)
+        );
+        assert_eq!(
+            wayland_window_mutation_capabilities(&WindowKind::Dialog),
+            expected_wayland_capabilities(false)
+        );
+        assert_eq!(
+            wayland_window_mutation_capabilities(&WindowKind::LayerShell(
+                LayerShellOptions::default(),
+            )),
+            expected_wayland_capabilities(true)
         );
     }
 }
