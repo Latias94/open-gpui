@@ -71,6 +71,14 @@ impl ReqwestClient {
         let client_has_proxy;
 
         if let Some(proxy) = proxy.as_ref().and_then(|proxy_url| {
+            if !matches!(
+                proxy_url.scheme(),
+                "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
+            ) {
+                log::error!("Unsupported proxy URL scheme '{}'", proxy_url.scheme());
+                return None;
+            }
+
             reqwest::Proxy::all(proxy_url.clone())
                 .inspect_err(|e| {
                     log::error!(
@@ -560,13 +568,15 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_proxy_uri() {
-        let proxy = Url::parse("socks://127.0.0.1:20170").unwrap();
-        let client = ReqwestClient::proxy_and_user_agent(Some(proxy), "test").unwrap();
-        assert!(
-            client.proxy.is_none(),
-            "An invalid proxy URL should add no proxy to the client!"
-        )
+    fn test_unsupported_proxy_schemes() {
+        for proxy in ["socks://127.0.0.1:20170", "ftp://127.0.0.1:20170"] {
+            let proxy = Url::parse(proxy).unwrap();
+            let client = ReqwestClient::proxy_and_user_agent(Some(proxy), "test").unwrap();
+            assert!(
+                client.proxy.is_none(),
+                "An unsupported proxy URL should add no proxy to the client!"
+            )
+        }
     }
 
     #[test]
