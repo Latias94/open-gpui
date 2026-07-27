@@ -86,6 +86,7 @@ jobs:
             libx11-dev \
             libxcb1-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-dev \
             pkg-config
 
       - name: Run host-testable web pointer sessions
