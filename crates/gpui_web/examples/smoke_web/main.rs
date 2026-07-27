@@ -2,7 +2,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     App, Bounds, Context, DispatchPhase, FocusHandle, InteractiveElement, KeyDownEvent,
     MouseButton, MouseDownEvent, PointerCancelEvent, PointerCancelReason, PointerCaptureHandle,
-    Window, WindowBounds, WindowOptions, canvas, div, px, rgb, size,
+    TargetedEvent, Window, WindowBounds, WindowOptions, canvas, div, px, rgb, size,
 };
 use open_gpui_docking::prelude::{
     DockPanelPlacement, DockSurface, DockSurfaceViewportOpenOutcome,
@@ -222,7 +222,7 @@ impl Render for SmokeWeb {
             .track_pointer_capture(&pointer_capture)
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, _: &TargetedEvent<MouseDownEvent>, window, cx| {
                     window
                         .capture_pointer(&pointer_capture, MouseButton::Left)
                         .expect("web smoke pointer owner must capture after pointer down");
@@ -327,7 +327,7 @@ fn docking_probe(cx: &mut App) -> DockingProbe {
         outcome,
         opened,
         window_delta: after_windows.saturating_sub(before_windows) as u64,
-        registered_spaces: surface.registered_viewport_spaces().len() as u64,
+        registered_spaces: surface.registered_viewport_spaces(cx).len() as u64,
     }
 }
 

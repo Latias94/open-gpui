@@ -1852,7 +1852,7 @@ mod abi_layout_tests {
         assert_eq!(size_of::<Underline>(), 88);
         assert_eq!(size_of::<MonochromeSprite>(), 112);
         assert_eq!(size_of::<SubpixelSprite>(), 112);
-        assert_eq!(size_of::<PolychromeSprite>(), 112);
+        assert_eq!(size_of::<PolychromeSprite>(), 120);
     }
 
     #[test]
