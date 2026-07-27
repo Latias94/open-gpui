@@ -239,19 +239,9 @@ fn read_file(path: &Path, label: &str, failures: &mut Vec<String>) -> Option<Str
 }
 
 fn changelog_section<'a>(contents: &'a str, label: &str) -> Option<&'a str> {
-    let lines = contents.lines().collect::<Vec<_>>();
-    let start_heading = lines
-        .iter()
-        .position(|line| line.starts_with("## ") && line.contains(label))?;
-    let body_start = start_heading + 1;
-    let body_end = lines[body_start..]
-        .iter()
-        .position(|line| line.starts_with("## "))
-        .map_or(lines.len(), |offset| body_start + offset);
-
-    let start_byte: usize = lines[..body_start].iter().map(|line| line.len() + 1).sum();
-    let end_byte: usize = lines[..body_end].iter().map(|line| line.len() + 1).sum();
-    contents.get(start_byte..end_byte.min(contents.len()))
+    markdown_section_after_heading(contents, |line| {
+        line.starts_with("## ") && line.contains(label)
+    })
 }
 
 fn changelog_manual_wrap_failures(section_label: &str, section: &str) -> Vec<String> {
@@ -517,16 +507,29 @@ fn breaking_change_rows(contents: &str, failures: &mut Vec<String>) -> Vec<Break
 }
 
 fn markdown_section<'a>(contents: &'a str, heading: &str) -> Option<&'a str> {
-    let lines = contents.lines().collect::<Vec<_>>();
-    let start_heading = lines.iter().position(|line| line.trim() == heading)?;
-    let body_start = start_heading + 1;
-    let body_end = lines[body_start..]
-        .iter()
-        .position(|line| line.starts_with("## "))
-        .map_or(lines.len(), |offset| body_start + offset);
-    let start_byte: usize = lines[..body_start].iter().map(|line| line.len() + 1).sum();
-    let end_byte: usize = lines[..body_end].iter().map(|line| line.len() + 1).sum();
-    contents.get(start_byte..end_byte.min(contents.len()))
+    markdown_section_after_heading(contents, |line| line.trim() == heading)
+}
+
+fn markdown_section_after_heading<'a>(
+    contents: &'a str,
+    mut matches_heading: impl FnMut(&str) -> bool,
+) -> Option<&'a str> {
+    let mut body_start = None;
+    let mut offset = 0;
+
+    for raw_line in contents.split_inclusive('\n') {
+        let line = raw_line.trim_end_matches(['\r', '\n']);
+        if let Some(start) = body_start {
+            if line.starts_with("## ") {
+                return Some(&contents[start..offset]);
+            }
+        } else if matches_heading(line) {
+            body_start = Some(offset + raw_line.len());
+        }
+        offset += raw_line.len();
+    }
+
+    body_start.map(|start| &contents[start..])
 }
 
 fn markdown_table_cells(line: &str) -> Vec<String> {
@@ -612,7 +615,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn changelog_section_extracts_only_requested_version() {
+    fn changelog_section_extracts_only_requested_version_with_standard_line_endings() {
         let changelog = "\
 # Changelog
 
@@ -628,9 +631,52 @@ mod tests {
 
 - Old
 ";
+        for line_ending in ["\n", "\r\n"] {
+            let changelog = changelog.replace('\n', line_ending);
+            assert_eq!(
+                changelog_section(&changelog, "[0.2.0]").unwrap().trim(),
+                "- Current"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_section_preserves_exact_content_with_standard_line_endings() {
+        let contents = "\
+# Breaking Change Inventory
+
+## Next Release
+
+| Crate | Old path | New path or replacement | Reason | Release-note text | Verification |
+|---|---|---|---|---|---|
+| `open-gpui` | `open_gpui::Old` | `open_gpui::New` | Better boundary. | `open-gpui` moved `Old`. | ok |
+
+## Previous Release
+
+Ignored
+";
+        let expected_section = "\n\
+| Crate | Old path | New path or replacement | Reason | Release-note text | Verification |
+|---|---|---|---|---|---|
+| `open-gpui` | `open_gpui::Old` | `open_gpui::New` | Better boundary. | `open-gpui` moved `Old`. | ok |
+
+";
+
+        for line_ending in ["\n", "\r\n"] {
+            let contents = contents.replace('\n', line_ending);
+            let expected_section = expected_section.replace('\n', line_ending);
+            assert_eq!(
+                markdown_section(&contents, "## Next Release"),
+                Some(expected_section.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_section_retains_a_final_line_without_a_line_ending() {
         assert_eq!(
-            changelog_section(changelog, "[0.2.0]").unwrap().trim(),
-            "- Current"
+            markdown_section("## Next Release\r\nFinal row", "## Next Release"),
+            Some("Final row")
         );
     }
 
@@ -681,23 +727,24 @@ mod tests {
     }
 
     #[test]
-    fn breaking_inventory_parser_reads_rows() {
-        let mut failures = Vec::new();
-        let rows = breaking_change_rows(
-            "\
+    fn breaking_inventory_parser_reads_rows_with_standard_line_endings() {
+        let inventory = "\
 # Breaking Change Inventory
 
 ## Next Release
 
 | Crate | Old path | New path or replacement | Reason | Release-note text | Verification |
 |---|---|---|---|---|---|
-| `open-gpui` | `open_gpui::Old` | `open_gpui::New` | Better boundary. | `open-gpui` moved `Old`. | `cargo test` |
-",
-            &mut failures,
-        );
-        assert!(failures.is_empty());
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].old_path, "`open_gpui::Old`");
+| `open-gpui` | `open_gpui::Old` | `open_gpui::New` | Better boundary. | `open-gpui` moved `Old`. | ok |
+";
+        for line_ending in ["\n", "\r\n"] {
+            let mut failures = Vec::new();
+            let inventory = inventory.replace('\n', line_ending);
+            let rows = breaking_change_rows(&inventory, &mut failures);
+            assert!(failures.is_empty());
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].old_path, "`open_gpui::Old`");
+        }
     }
 
     #[test]
