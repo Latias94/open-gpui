@@ -6,14 +6,14 @@ artifact_contract: ce-unified-plan/v1
 artifact_readiness: implementation-ready
 product_contract_source: ce-plan-bootstrap
 execution: code
-deepened: 2026-07-10
+deepened: 2026-07-27
 ---
 
 # Open GPUI UI Framework Authority Convergence - Plan
 
 ## Goal Capsule
 
-Open GPUI should leave this work as a credible general-purpose desktop UI framework foundation, not only a large component catalog. The framework must have one authoritative path for form lifecycle, focus and overlay arbitration, accessibility semantics and announcements, activation, theme resolution, collection typeahead, component conformance, post-layout subtree geometry, layout-preserving subtree presentation, portal anchors, nested reveal, rounded subtree clipping, Dock presentation and application ownership, and live platform-window mutation.
+Open GPUI should leave this work as a credible general-purpose desktop UI framework foundation, not only a large component catalog. The framework must have one authoritative path for form lifecycle, focus and overlay arbitration, accessibility semantics and announcements, activation, theme resolution, collection typeahead, component conformance, post-layout subtree geometry, layout-preserving subtree presentation, portal anchors, nested reveal, rounded subtree clipping, Dock presentation and application ownership, lossless platform-event delivery, live platform-window mutation, native multi-viewport drag transport, and DockSurface window-session teardown.
 
 The refactor is intentionally breaking. New authorities replace old forwarding layers, duplicated metadata, source-string scanners, and public callbacks in the same implementation unit. No compatibility aliases or parallel runtimes remain after a migration unit lands.
 
@@ -33,6 +33,10 @@ Success is observable when:
 - rectangular and rounded-rect subtree clips constrain paint and hit testing through one checked stack without changing layout;
 - Dock hosts resolve one complete visual style at render time, and application code observes one stable surface revision/event stream plus typed panel activation completion;
 - platform windows expose capability-specific mutation requests whose queued dispatch and observed native facts remain distinct, allowing Dock viewports to move, resize, change state, and apply supported flags without fabricated success;
+- a platform callback that arrives while `App` is already mutably borrowed is queued and replayed under an explicit event-ordering contract rather than logged and dropped, and a frame is never acknowledged as painted until it is accepted for drawing or re-invalidated;
+- a detached Dock viewport may appear without stealing focus yet remain normally activatable later, carries an explicit native owner/transient relationship where supported, and belongs to one generation-bound DockSurface window session;
+- native pointer capture can route a Dock drag across real windows without the target HWND receiving raw mouse messages, a provisional viewport is visibly presented before release, and release or cancellation settles exactly one graph transition;
+- closing a DockSurface anchor cancels active and provisional work and closes only that surface's owned viewports, while another surface in the same application remains intact;
 - the existing GPUI substrate, table engine, virtualizer, motion engine, text editing, choice models, and `FormStore` architecture remain deep modules rather than being rewritten for symmetry.
 
 ## Product Contract
@@ -57,6 +61,12 @@ The framework currently has several models that look complete in isolation but a
 - Public callbacks expose `ClickEvent` even where consumers only need semantic activation or value change.
 - Tree and VirtualizedList duplicate typeahead buffer and timeout behavior.
 - Component contract rows, API inventory, public owner tables, gallery catalog, accessibility evidence, and source parsers repeat product facts that can drift while all string checks remain green.
+- GPUI platform callbacks all attempt to reenter `App` through the same fallible mutable borrow and currently log and discard the callback on failure. A nested native message can therefore lose frame, placement, activation, mutation-observation, input, or close facts, and the shared log target does not identify which callback was dropped.
+- Dock tear-off opens a native window from the source input transaction, and at least one failure path closes that window while still holding the viewport runtime's `RefMut`; synchronous close observers can then reborrow the same runtime.
+- Win32 pointer capture keeps move and button-up delivery on the source HWND, while Dock's foreign-hover layer assumes the target window receives raw movement. Existing visual tests inject target events directly and therefore bypass the production transport failure.
+- A tear-off viewport is created only after `MouseUp`, so no detached HWND exists to display while the pointer is still down. The source-window drag view is clipped at its own native boundary.
+- The creation-time `focus` option is encoded by the Windows backend as permanent `WS_EX_NOACTIVATE`, conflating initial appearance policy with later activation capability.
+- `DockSurface` tracks committed Dock facts but not an anchor/window-session lifecycle. Detached viewports are independent top-level windows, and closing the primary can leave them and the process alive.
 
 The failure mode is authority drift: each layer is locally plausible, but no single module owns the end-to-end invariant.
 
@@ -110,7 +120,17 @@ R23. Provide one immutable `DockVisualStyle` authority for root surfaces, tabs, 
 
 R24. Make `DockSurface` the application-level owner of committed Dock changes. It exposes a monotonic revision and typed layout/viewport change events whose coalescing is defined by an explicit logical transaction identity, stable-item `activate_panel` intent routed through one generation-bound activation host per space with typed focus completion, and explicit snapshot export for caller-owned debounce and storage. It does not perform file I/O, merge independent commands merely because they share an App turn, or treat selection, focus request, mutation dispatch, or dropped observation subscriptions as committed facts.
 
-R25. Provide capability-specific GPUI platform-window mutation for position, size, state, and dynamic flags. Dispatch reports queued, unchanged, unsupported, rejected, or closed without claiming native commitment; a generation-bound observation ticket separately settles as exact, adjusted, superseded, rejected, unsupported, or window closed. Position, size, state, and restore bounds form one explicit placement conflict domain, while independent flags may partially dispatch. All public platform-fact getters read the same committed observation authority. Dock consumes that contract and removes capability claims, direct-backend reads, or sync records that fabricate live support.
+R25. Provide capability-specific GPUI platform-window mutation for position, size, state, and dynamic flags. Dispatch reports queued, unchanged, unsupported, rejected, or closed without claiming native commitment; a generation-bound observation ticket separately settles as exact, adjusted, superseded, rejected, unsupported, or window closed. Position, size, state, and restore bounds form one explicit placement conflict domain, while independent flags may partially dispatch. Lifetime activation acceptance and click-focus remain independent fields inside one coherent activation-policy domain: they share one generation and terminal observation but are never aliases and cannot partially commit within that domain. All public platform-fact getters read the same committed observation authority. Dock consumes that contract and removes capability claims, direct-backend reads, or sync records that fabricate live support.
+
+R26. Deliver every asynchronous native platform-window callback through one typed, generation-bound event authority that remains usable while `App` is mutably borrowed. Every event receives an application-wide ingress sequence before direct delivery is considered; envelopes also carry the full generation-bearing `WindowId`, event domain, and only the domain-specific pointer, mutation, Dock session, or drag generation they require. A callback-registration epoch is added only if one `WindowId` can demonstrably replace callbacks while remaining live. A callback may drain inline only when no older queued event, active drain, or unresolved barrier can be bypassed. Frame, coherent placement, hover, and continuous pointer movement may coalesce only within the same window/domain/domain generation; button edges, text/key input, pointer cancellation, close lifecycle, and mutation terminal observations are ordered and non-droppable. Pointer cancellation and close are ordering barriers, stale events cannot target a replacement window, and a deferred frame is re-requested rather than acknowledged as painted. Synchronous native queries never wait on this queue: hit testing reads committed immutable facts, and close permission conservatively prevents immediate native destruction while queueing close intent. A hybrid input callback whose native default disposition depends on the current `DispatchEventResult` is not eligible for a fixed committed fallback. Before such a callback migrates, its busy-App path must preserve the immediate consumed/propagate result through a proven reentrancy-safe synchronous path or exact native-default replay; otherwise that callback category remains unmigrated and blocks U24 completion. Any other return-valued callback must define and prove an equally explicit equivalent result contract before it migrates.
+
+R27. Separate creation-time appearance from lifetime activation and native ownership. A window may be shown without initial activation while remaining eligible for later click, programmatic activation, and focus. Permanent non-activation is an explicit capability, not a side effect of `focus_on_appearing = false`. A typed owner/transient relationship is projected to each capable backend without creating a child window or replacing explicit application teardown; unsupported native relationships remain observable.
+
+R28. Give each facade-managed `DockSurface` one explicit, generation-bound window session with a unique anchor, owned committed and provisional viewports, and `Vacant/Closed -> Opening -> Active -> ShuttingDown -> Closed` lifecycle. Only an active anchor accepts viewport work. Opening failure, synchronous close during creation, duplicate open, application shutdown, and stale generation callbacks settle explicitly. Closing the current anchor freezes new work, cancels active drag and pending/provisional viewport work, then force-closes a snapshot of only that surface's owned windows after all runtime borrows are released. `ShuttingDown` reaches `Closed` only after the current-generation runtime registry is empty and every snapshotted native window has produced a terminal close observation or is confirmed absent; reopen is rejected before that point. Shutdown is idempotent, bypasses per-viewport `Prevent` and `MergeBack` policies, never unconditionally quits the application, and cannot be triggered by stale anchor generations or implicit low-level hosts.
+
+R29. Route native cross-window Dock drag from the capture-owning source through one generation-bound active-drag authority using current screen coordinates, an ordered underlay stack of full `WindowId` values, Dock surface/session and host-scene generations, scale factor, and committed host-scene facts. Underlay resolution follows current native z-order and committed application-window geometry while explicitly skipping the provisional/session-suppressed window that may cover the pointer. The route accepts only current hosts from the same surface, excludes provisional and session-suppressed/non-input windows, revalidates at release, and delivers preview, release, and cancellation without depending on raw mouse delivery to the target HWND or transferring native capture. A host from another Dock surface is a typed forbidden target with rejected preview; release over it cancels and restores the source rather than falling through to desktop promotion.
+
+R30. Present a single provisional tear-off viewport before release once a drag crosses the live-undock threshold. It owns a generation-bound presentation lease while the committed `DockGraph` remains unchanged, follows the pointer, and has a visible non-empty first presentation. The native window is created with the ordinary detached viewport's final lifetime activation/input capability but no initial activation; the Dock session suppresses input, focus, activation, routing eligibility, and accessibility ownership until promotion. While that suppression is active, the source retains one stable tab semantic/focus proxy rather than a duplicate panel subtree. Every fallible native effect and promotion preflight completes while the provisional remains suppressed; one final App transaction atomically commits graph ownership, viewport registration, presentation lease, semantic/focus ownership, and gate removal. Input or accessibility work arriving during promotion is bound to the promotion generation and drains only after commit or retires after rollback. Desktop release promotes that same window without requiring a native capability transition; release to another valid host transfers and commits there before activating the target host; return or cancellation restores source presentation and focus. Source deactivation or shutdown never steals focus back. Rejection, Escape, capture loss, source/anchor close, stale generation, creation/presentation failure, or commit failure restores or cancels without graph mutation, duplicate semantic ownership, or leaked windows.
 
 ### Acceptance Examples
 
@@ -132,6 +152,11 @@ R25. Provide capability-specific GPUI platform-window mutation for position, siz
 16. Two Dock hosts render under different theme scopes. Each host, its floating panels, and its drop affordances use the local style; a drag preview retains its opening style while the target guide follows the target host, and changing one scope does not mutate the other host or Dock layout.
 17. An application activates a panel by stable item ID in a detached viewport. Selection and window activation may be requested first, but one current host-registration generation owns activation and completion reports success only after the exact panel descendant commits focus. One explicit surface transaction coalesces its committed categories into one revision/event, while a second command in the same App turn receives a distinct transaction and revision. The application exports and debounces its own snapshot.
 18. A detached Dock viewport is dragged on a backend that supports live placement but not topmost. Its placement request is queued, direct getters still expose the prior committed facts, and an adjusted native callback settles the observation ticket and updates route/snapshot geometry. Topmost reports unsupported without blocking the independent placement dispatch, and the runtime never claims the window moved from dispatch alone.
+19. Win32 delivers a frame, placement observation, pointer release, and close callback while another GPUI window update owns the mutable `App`, followed by a synchronous close-permission query and hybrid inputs whose handlers respectively consume and propagate native default behavior. All asynchronous events retain application ingress order, coalescible facts converge only within their domain generation, ordered terminal events arrive exactly once behind their barriers, the query returns from its immutable snapshot without reentry, and both hybrid inputs return the same immediate disposition as the idle path rather than a fixed fallback. Stale `WindowId`/domain generations do not touch replacement state, and the queued frame is eventually presented after the App transaction commits without a `RefCell already borrowed` event loss.
+20. A detached viewport is shown without taking initial focus. It still activates by click and `activate_panel`, reports its native owner/transient relationship when supported, and never acquires permanent no-activate styling merely because initial focus was disabled.
+21. Two independent Dock surfaces each open an anchor and detached viewports. The first admits no viewport until synchronous `App::open_window` returns a committed full `WindowId` and its `Opening` token validates into `Active`. Closing that anchor during an active drag enters shutdown once, cancels its provisional viewport and pending effects, force-closes only its runtime-registered windows despite `Prevent` or `MergeBack`, and leaves the second surface usable. It remains `ShuttingDown` while any old-generation HWND is registered or lacks terminal close observation; reopening is rejected until `Closed`, after which a new generation admits no stale create/close callback.
+22. With Win32 capture held by the source HWND, the pointer crosses a second viewport that receives no raw mouse move. The source-owned route resolves an ordered underlay stack through any provisional HWND, converts the current screen point into the target's current coordinate space, publishes the target preview before release, revalidates the same surface and host generation on button-up, and commits the drop exactly once. A host from another Dock surface shows a rejected preview and cancels on release rather than becoming a desktop tear-off. Capture loss, Escape, source close, or anchor shutdown clears every preview and pending task without using the last valid target. Closing only the current target clears that target's preview and pending work while retaining the source-owned drag; the next movement or release resolves again from the current screen point.
+23. A user drags a tab onto the desktop. Before button-up, one runtime-registered provisional viewport is visible with a non-empty presented frame while its final native lifetime profile is session-suppressed, one source semantic/focus proxy remains authoritative, and the durable graph/revision remain unchanged. Repeated movement repositions rather than recreates it; entering a host hides the provisional presentation without destroying its reusable HWND and shows only that host's guide. Desktop release completes fallible promotion work while suppressed, then one App transaction commits graph/registry/lease ownership and removes the gate before activating the new viewport and restoring the previously focused live panel descendant. Release over another valid host transfers and commits there before its activation host receives focus; return to the source host or cancellation restores source presentation and focus before destroying the provisional. Recoverable creation, renderer, surface, presentation, optional native-effect, or commit failure restores only while the source generation remains live. Source deactivation or shutdown cancels without stealing focus or attempting restoration into a dead source.
 
 ### Scope Boundaries
 
@@ -152,6 +177,12 @@ In scope:
 - layout-neutral rectangular and rounded-rect subtree clipping across paint, hit testing, transform, deferred/cache, accessibility, and native renderers;
 - a complete render-time Dock visual style, one application-level DockSurface revision/event owner, and stable-item activation completion;
 - capability-specific live platform-window position, size, state, and flag mutation consumed by multi-viewport Docking;
+- lossless, typed native callback delivery and two-phase platform side effects under App and Dock runtime reentrancy;
+- separate window appearance, lifetime activation, and native owner/transient contracts;
+- explicit DockSurface anchor/window-session lifecycle with surface-scoped forced teardown;
+- source-capture-owned cross-HWND Dock drag routing and release-time target revalidation;
+- a pre-release-visible provisional Dock viewport with presentation lease, promotion, rollback, and cancellation semantics;
+- owning-platform real-window integration and subprocess evidence for the above behavior;
 - common public-surface cleanup, gallery, DevTools, ADRs, migration notes, and verification.
 
 Explicitly out of scope:
@@ -163,7 +194,7 @@ Explicitly out of scope:
 - moving command execution into the UI activation module or deleting `ActionDescriptor`/`ResolvedActionState` without new evidence;
 - replacing the neutral accessibility vocabulary merely to mirror AccessKit types;
 - tokenizing every pixel literal; structural component metrics remain local;
-- cross-window overlays, portal routing across native windows, or a generalized dependency-injection container;
+- cross-window overlays, general portal routing across native windows, or a generalized dependency-injection container; the scoped Dock active-drag transport in R29 is the sole cross-window routing exception;
 - rotation, skew, perspective, 3D transforms, negative or zero scale, and a general affine-transform public API;
 - arbitrary path subtree clipping, true group opacity/compositing, and a multi-pointer gesture arena; these remain research-only until their missing renderer or pointer substrate is designed;
 - direct ports of ImGui's global `DockContext`, binary split tree, per-frame DockSpace keep-alive, PlatformIO callback table, DockBuilder node pointers, or `.ini` persistence;
@@ -222,7 +253,17 @@ KTD22. **Dock style is a named immutable render input.** `gpui_docking` owns one
 
 KTD23. **DockSurface publishes committed facts; applications own persistence.** A private owner entity allocates an explicit root transaction identity at every facade, host, or runtime mutation boundary and threads it through typed controller and viewport-runtime commits. Nested work carrying that identity coalesces categories and publishes once when the transaction commits; two root commands in one App turn and work across turns never merge. Asynchronous platform observations enter a new observation transaction and dispatch status never creates a persistence revision. Each Dock space has at most one committed activation-host registration generation; duplicate live registrations reject rather than silently replace. `select_panel` remains selection-only, while stable-item `activate_panel` routes through that owner and settles through GPUI focus completion. Snapshot export is explicit and revision-consistent; storage, serialization timing, debounce, and I/O remain caller responsibilities.
 
-KTD24. **Window mutation is dispatch plus terminal observation, not synchronous truth.** Backend setters first adopt an honest dispatch contract: queued means GPUI handed work to a backend path, not that the OS accepted or applied it, and legacy unit/bool returns cannot be guessed into richer outcomes. A generation-bound ticket later settles from a coherent observed `WindowPlatformFacts` snapshot as exact, adjusted, superseded, rejected, unsupported, or window closed. Position, size, state, and restore bounds share one placement conflict domain and generation because native state transitions move/resize windows; the GPUI planner rejects contradictory placement batches before dispatch and never exposes partially committed placement. Independent flag domains may partially dispatch. Public bounds/state/flag getters read this committed cache, seeded at creation and updated only by platform callbacks or an explicit observation refresh that enters the same generation/event path.
+KTD24. **Window mutation is dispatch plus terminal observation, not synchronous truth.** Backend setters first adopt an honest dispatch contract: queued means GPUI handed work to a backend path, not that the OS accepted or applied it, and legacy unit/bool returns cannot be guessed into richer outcomes. A generation-bound ticket later settles from a coherent observed `WindowPlatformFacts` snapshot as exact, adjusted, superseded, rejected, unsupported, or window closed. Position, size, state, and restore bounds share one placement conflict domain and generation because native state transitions move/resize windows; the GPUI planner rejects contradictory placement batches before dispatch and never exposes partially committed placement. Lifetime `accepts_activation` and `focus_on_click` are independent fields in one coherent `ActivationPolicy` domain with one generation and terminal observation; they are never aliases and cannot partially commit. Other independent flag domains may partially dispatch. Public bounds/state/flag getters read this committed cache, seeded at creation and updated only by platform callbacks or an explicit observation refresh that enters the same generation/event path.
+
+KTD25. **Platform callbacks are sequenced facts, not borrow-or-drop notifications.** `AppCell` owns a private native-event ingress beside, not inside, its `RefCell<App>`. Asynchronous callbacks take one application-wide ingress sequence before entering that inbox. Direct delivery is an optimization only when no backlog, active drain, or barrier can be overtaken; otherwise the event queues and wakes the foreground executor. Ordering barriers and generation-scoped per-domain merge rules are part of the runtime contract, not backend folklore. Synchronous native queries use immutable AppCell-adjacent snapshots or documented conservative responses instead of blocking or reentering `App`. Hybrid input whose native default handling depends on the current handler result is a separate contract: a fixed snapshot response is forbidden, and each message class must prove an immediate busy/idle-equivalent result or remain outside the ingress migration. Frame validation acknowledges accepted or rescheduled work rather than a callback invocation, and diagnostics identify callback kind, full `WindowId`, domain generation, sequence, and disposition.
+
+KTD26. **Native effects cross subordinate borrow boundaries, not the App transaction.** GPUI and Dock calculate typed effects while entity, controller, or viewport-runtime state is borrowed, release those guards, then apply open, create, show, close, remove, activate, present, or mutation work through the owning `&mut App`. `AppCell` ingress makes synchronous native callbacks non-reentrant: events targeting a reserved/current full `WindowId` wait until the App/window transaction commits or rolls back, then drain or retire. This preserves the synchronous `App::open_window` deep module and rejects a generic asynchronous native-effect outbox until another proven consumer requires it. No backend's current asynchronous implementation is treated as a non-reentrancy guarantee.
+
+KTD27. **Initial appearance, lifetime activation, and native ownership are separate contracts.** `focus_on_appearing` is a one-shot show policy. Click/programmatic activation and permanent non-activation are lifetime capabilities. `transient_for`/owner is a typed top-level relationship for z-order, activation, and platform grouping, never `WS_CHILD` and never a substitute for explicit teardown. A provisional viewport is created with the final detached window's lifetime native capabilities but without initial activation; a generation-bound Dock session gate, not an unsupported native flag transition, suppresses input, focus, activation, route eligibility, and accessibility until same-window promotion.
+
+KTD28. **DockSurface owns a window session, not application exit.** `open_primary_window` first reserves an `Opening` anchor token, then calls synchronous `App::open_window` inside the current App transaction. Registry commit returns the full `WindowId`; a short owner borrow validates that ID and token before transitioning to the one current `Active` anchor generation. Native callbacks raised during creation queue until commit or rollback and never activate the session themselves. Opening failure and synchronous close settle that token without admitting viewport work. Active-anchor shutdown first retires the session and freezes new work, then closes an ownership snapshot outside all borrows. Surface-owned forced teardown bypasses individual viewport close policies and is isolated from other surfaces. `ShuttingDown` reaches `Closed` only when the current-generation runtime registry is empty and every snapshotted native window has a terminal close observation or is confirmed absent; reopen is rejected until then. A later generation remains isolated from delayed prior-generation callbacks. Last-window application exit stays GPUI policy rather than a Dock `quit` shortcut.
+
+KTD29. **Live undock and durable graph commit are separate.** The native capture owner transports the current screen point plus an ordered application-window underlay stack; Dock resolves the first eligible same-surface host after skipping provisional/session-suppressed windows, and target HWND input is not required. A foreign-surface host is a typed forbidden target, never desktop fallback. Dock interaction/controller state exclusively owns the panel presentation lease, stable source semantic/focus proxy, and graph saga; the viewport runtime solely stores window handles, DockSurface owns session/shutdown authority over that registry, and GPUI reports only native frame/presentation facts. Release revalidates the target and completes every fallible promotion preflight or native effect while the provisional remains session-suppressed. One final App transaction atomically commits graph ownership, viewport registration, presentation lease, semantic/focus ownership, and gate removal; generation-bound queued input then drains after commit or retires after rollback. Promotion activates the committed destination and restores the valid pre-drag descendant through the destination activation host, while cancellation restores only a live source and source deactivation/shutdown never steals focus. ImGui anchors the visible-before-release behavior and platform-window staging, while Open GPUI retains retained graph transactions and rollback.
 
 ### High-Level Technical Design
 
@@ -338,6 +379,63 @@ native coherent placement/flag callbacks -> committed WindowPlatformFacts -> ter
                                                            `-> public getters + Dock route/snapshot reconciliation
 ```
 
+Reentrancy-safe native event delivery:
+
+```text
+native callback
+      -> typed envelope(window instance + generation + domain + sequence)
+            |-> App available: ordered delivery
+            `-> App busy: mailbox -> foreground wake -> ordered drain
+                                      |-> explicit per-domain coalescing
+                                      |-> cancel/close ordering barriers
+                                      `-> accepted frame or re-invalidation
+
+model/runtime transaction -> typed native effects -> release all borrows -> open/show/close/activate
+```
+
+Dock native window session and live drag:
+
+```text
+DockSurface window session
+  Vacant/Closed -> Opening(anchor token) -> Active(anchor generation)
+      |-> committed viewport ownership
+      |-> active drag generation
+      |     `-> local -> routed target / provisional visible viewport
+      |                         |-> valid-host release: transfer + graph commit
+      |                         |-> desktop release: promote + graph commit
+      |                         `-> cancel/failure/close: restore + destroy
+      `-> anchor close
+             -> ShuttingDown (freeze + cancel + snapshot)
+             -> close owned windows outside borrows
+             -> terminal close observations + empty current-generation registry
+             -> Closed (reopen eligible)
+```
+
+Live-undock presentation:
+
+```text
+Opening       -> source snapshot/proxy remains authoritative; no empty native shell
+DesktopVisible -> one non-empty provisional follows the pointer
+HostPreview   -> retain but hide provisional; target host owns the guide
+Rejected      -> retain but hide provisional; forbidden host owns rejected feedback
+Unavailable   -> source presentation remains authoritative
+Commit        -> atomic graph/registry/lease/semantic/gate handoff, then activation
+Cancel/Failure -> restore only a live source, destroy provisional, retire generation
+```
+
+State ownership remains non-overlapping:
+
+| Authority | Sole state owned |
+| --- | --- |
+| AppCell native-event ingress | callback ingress sequence, queued envelopes, drain/barrier state, immutable synchronous-query snapshots |
+| App/window transaction | reserved/current full `WindowId`, commit/rollback boundary, and application of typed native effects after subordinate borrows release |
+| GPUI active drag | generic capture-owner pointer transport and terminal input |
+| DockSurface owner | session phase, anchor token/generation, and shutdown authority |
+| Dock viewport runtime | sole generation-tagged registry of committed and provisional window handles |
+| Dock live-undock session | current route, provisional presentation state/handle reference, panel presentation lease, source semantic/focus proxy, and release/compensation saga |
+
+The DockSurface owner snapshots the viewport runtime registry during shutdown but does not mirror it. GPUI does not understand Dock panels or presentation leases, and the Dock live-undock session does not become a second durable graph.
+
 Dependency order:
 
 ```text
@@ -359,10 +457,18 @@ U12 Interactive Subtree Transform -> U13 Presentation State -> U14 Live Regions
 U15 Typed Portal Anchors -> U16 Bring Into View -> U17 Rounded Clip
                                                         |
                                                         v
-U18 Dock Visual Style -> U19 DockSurface Owner/Intent -> U20 Window Mutation -> final gate
+U18 Dock Visual Style -> U19 DockSurface Owner/Intent -> U20 Window Mutation
+                                                             |
+                                                             v
+U24 Platform Event Safety -> U25 Window Appearance/Owner -> U26 Dock Window Session
+                                                             |
+                                                             v
+U27 Native Drag + Live Tear-Off -> U28 Owning-Platform Evidence -> final gate
 ```
 
-U2 and U3 have no logical dependency and may be developed independently, although shared-worktree execution may serialize their Cargo gates. U3 and U4 share one authority-completion gate: U3 may commit pure policy and private preparation, but Focus Scope is not declared the production authority until U4 has migrated official overlay consumers and removed their duplicate focus bookkeeping. U12-U20 are serialized after the prior product-surface audit because they change GPUI frame boundaries or converge consumers that exercise those authorities. U14 lands before geometry follow-ons because it closes a renderer-independent accessibility gap. U15 establishes typed committed targets before U16 records scroll ancestry, and U17 follows a renderer/ABI review gate before changing every primitive clip representation. U18 then removes Dock's visual dual authority. U19 installs one application owner over Dock commits but admits only observed viewport facts, never the current sync layer's optimistic `applied` status; U20 can therefore reshape backend dispatch and observation through that stable owner seam without preserving a false revision contract.
+U2 and U3 have no logical dependency and may be developed independently, although shared-worktree execution may serialize their Cargo gates. U3 and U4 share one authority-completion gate: U3 may commit pure policy and private preparation, but Focus Scope is not declared the production authority until U4 has migrated official overlay consumers and removed their duplicate focus bookkeeping. U12-U20 are serialized after the prior product-surface audit because they change GPUI frame boundaries or converge consumers that exercise those authorities. U14 lands before geometry follow-ons because it closes a renderer-independent accessibility gap. U15 establishes typed committed targets before U16 records scroll ancestry, and U17 follows a renderer/ABI review gate before changing every primitive clip representation. U18 then removes Dock's visual dual authority. U19 installs one application owner over Dock commits but admits only observed viewport facts, never the current sync layer's optimistic `applied` status; U20 reshapes backend dispatch and observation through that stable owner seam without preserving a false revision contract.
+
+The native docking correction remains strictly ordered. U24 fixes the lower-level event-loss and effect-reentrancy substrate before later units depend on callback delivery. U25 separates window appearance, activation, and ownership on that substrate. U26 then gives every provisional or committed viewport a session owner and teardown path. U27 may create and route live provisional windows only after those lifecycle guarantees exist. U28 supplies owning-platform evidence and cannot be replaced by `VisualTestContext` coverage.
 
 ### Assumptions
 
@@ -376,6 +482,8 @@ U2 and U3 have no logical dependency and may be developed independently, althoug
 - The workspace's AccessKit version exposes live politeness, atomicity, and busy state, and its supported platform adapters derive native announcements from committed tree changes rather than requiring a direct speech API.
 - Existing renderer rounded-rectangle math is reusable only after U17 proves one shared clip ABI and exact hit-test contract; shader support alone is not treated as subtree-clip support.
 - Existing platform backends may support only a subset of placement and independent flag mutations. U20 records partial capability honestly across independent conflict domains, while position, size, state, and restore bounds remain one coherent placement domain rather than a partially committed native batch.
+- Native APIs may synchronously pump callbacks during create, show, position, activate, or close regardless of whether a current backend usually defers one operation. KTD25-KTD26 therefore treat reentrancy as a platform contract, not a Windows-only anomaly.
+- Native owner/transient semantics differ by backend and may be unavailable on some Wayland configurations. Explicit DockSurface teardown remains authoritative even when platform grouping is supported.
 
 ### Phased Delivery
 
@@ -397,23 +505,26 @@ Phase 7: Close the researched interface gaps in dependency order: U14 committed 
 
 Phase 8: Converge Dock as a real consumer rather than a special-case subsystem: U18 replaces hard-coded visual state, U19 makes DockSurface the committed application owner, and U20 closes the GPUI live-window mutation gap required by multi-viewport behavior.
 
+Phase 9: Close the native multi-viewport correctness gap discovered by real Windows use: U24 makes callback delivery and native effects reentrancy-safe, U25 separates appearance/activation/owner semantics, U26 adds DockSurface window sessions and deterministic teardown, U27 adds source-capture routing and visible provisional tear-off, and U28 proves the behavior with real native windows and corrects overstated verification claims. These are completion units, not post-plan candidates.
+
 Each unit receives a focused commit after its tests and local review pass. Wide mechanical migrations are serialized even where model work could theoretically run in parallel.
 
 ### System-Wide Impact
 
-- `crates/gpui`: test accessibility capture/action support; narrowly scoped inherited render context only if U7's prototype and independent-consumer proof hold; focus/tab-stop support needed by U3; authoritative subtree transform, presentation, announcement, anchor, reveal, and clip state spanning scene, input, focus/IME, accessibility, deferred work, and frame-journal replay.
+- `crates/gpui`: test accessibility capture/action support; narrowly scoped inherited render context only if U7's prototype and independent-consumer proof hold; focus/tab-stop support needed by U3; authoritative subtree transform, presentation, announcement, anchor, reveal, and clip state spanning scene, input, focus/IME, accessibility, deferred work, and frame-journal replay; AppCell-adjacent native-event ingress and synchronous-query snapshots, run-loop wake/fair draining, reserved-window commit/rollback delivery, drag transport, first-presentation acknowledgement, and separate appearance/activation/owner window contracts.
 - `crates/form`: validation generation/activity and derived status authority.
 - `crates/ui_core`: pure focus/overlay policies, semantic descriptors including renderer-neutral live facts, reveal alignment vocabulary, tokens, and public contract boundaries.
 - `crates/ui_components`: window runtime adapters, component migrations, recipes, typeahead session, federated contract/probe bindings, public callback breaks, live-region consumers, typed overlay-anchor conversion, and virtual reveal materialization.
 - `crates/open-gpui-command`: call-site migration only unless a concrete command bridge defect is exposed; command ownership remains unchanged.
 - `crates/devtools`: projection from real semantic/runtime authorities with redaction.
-- `crates/gpui_docking`: immutable visual style resolution, private surface owner and revision/events, stable-item activation completion, and platform-window mutation consumption while preserving retained graph/session architecture.
-- `crates/gpui_wgpu`, `crates/gpui_windows`, `crates/gpui_macos`, and `crates/gpui_linux`: consume backend-neutral transformed scene and rounded-clip contracts and prove matrix/primitive ABI consistency on supported runners.
-- `crates/gpui_windows`, `crates/gpui_macos`, and `crates/gpui_linux`: additionally implement and report the supported position, size, state, and dynamic window-flag mutations without overstating unavailable capabilities.
+- `crates/gpui_docking`: immutable visual style resolution, private surface owner and revision/events, stable-item activation completion, platform-window mutation consumption, two-phase runtime effects, explicit window sessions, source-capture routing, presentation leases, and provisional viewport promotion/rollback while preserving retained graph/session architecture.
+- `crates/gpui_wgpu`, `crates/gpui_windows`, `crates/gpui_macos`, and `crates/gpui_linux`: consume backend-neutral transformed scene and rounded-clip contracts, prove matrix/primitive ABI consistency, and distinguish accepted draw, submitted present, non-empty presentation, renderer/device/surface failure, and native visibility on supported runners.
+- `crates/gpui_windows`, `crates/gpui_macos`, and `crates/gpui_linux`: additionally implement and report the supported position, size, state, dynamic window-flag, initial-appearance, lifetime-activation, and owner/transient capabilities without overstating unavailable behavior.
+- `crates/gpui_web`: compile against the split appearance/activation/owner and callback/effect contracts, project unsupported native ownership honestly, and preserve its run-loop/presentation behavior without fabricating desktop capabilities.
 - `crates/motion`: adapt scale/translation motion to the GPUI transform authority without taking geometry ownership.
 - `examples/ui-foundation-gallery`: real lifecycle scenarios and contract-derived catalog.
-- `examples/docking-native`, `examples/docking-minimal`, and `examples/docking-multiviewport`: style-scope, application-event/persistence, activation, and live-window capability demonstrations without adding Docking to the foundation Gallery dependency surface.
-- `xtask`, CI, docs, and ADRs: structured conformance, new gates, migrations, and architecture decisions.
+- `examples/docking-native`, `examples/docking-minimal`, and `examples/docking-multiviewport`: style-scope, application-event/persistence, activation, live-window capability, capture-owned drag, visible provisional viewport, and anchor-teardown demonstrations without adding Docking to the foundation Gallery dependency surface.
+- `xtask`, CI, docs, and ADRs: structured conformance, new gates, migrations, architecture decisions, and honest separation between simulated visual coverage and real native-window integration.
 
 ### Risks & Mitigations
 
@@ -451,6 +562,28 @@ Each unit receives a focused commit after its tests and local review pass. Wide 
 
 **Window mutation capability lies or races observation.** Existing unit/bool setters cannot distinguish unchanged, queued, or later native failure, state transitions also move/resize windows, and direct backend getters can bypass an observation cache. Mitigation: U20 reshapes backend dispatch first, defines one placement conflict domain plus independent flag domains, returns generation-bound tickets, settles only from coherent callbacks into one `WindowPlatformFacts` authority used by all public getters, and tests adjustment, partial support, stale generations, close, and external window-manager movement.
 
+**Platform callbacks disappear under App reentrancy.** A nested native message can fail the shared `App` borrow, and coalescing every callback would silently erase input or terminal facts. Mitigation: U24 introduces typed envelopes, per-domain merge rules, FIFO terminal delivery, cancel/close barriers, full generation-bearing `WindowId` values, bounded foreground draining, callback-specific diagnostics, and deterministic already-borrowed tests. A failed frame remains invalidated until accepted.
+
+**A later fast path overtakes queued causality.** A directly deliverable callback can arrive after an older queued event, while related source, target, and anchor events span multiple windows. Mitigation: every callback receives one application-wide ingress sequence first; inline drain requires an empty backlog and exclusive drain ownership, barriers span the relevant session generation, and merge keys include full `WindowId` plus their actual domain generation.
+
+**A synchronous native query cannot wait for the inbox.** Hit testing, close permission, and other snapshot-answerable callbacks may require an answer while `App` is borrowed. Mitigation: U24 classifies queries separately, publishes immutable AppCell-adjacent snapshots, defines conservative responses only where they are semantically equivalent, and queues follow-up facts without blocking or recursive App access.
+
+**Hybrid input fallback changes native behavior.** The current event handler dynamically decides whether native default handling propagates, so a fixed snapshot can suppress a real default or execute it twice after queued replay. Mitigation: U24 inventories hybrid message classes separately, requires consumed and propagated busy/idle equivalence through a reentrancy-safe synchronous result or exact default replay, and blocks migration of any class that cannot prove that contract.
+
+**Inbox delivery does not make subordinate runtime effects borrow-safe.** Opening, closing, activating, or updating sibling windows while holding an entity/controller/viewport-runtime guard can synchronously invoke in-process observers that reborrow that state. Mitigation: U24 makes those domains return typed effects, releases subordinate guards before applying them through `&mut App`, reserves the full `WindowId` before native create, and drains or retires queued callbacks only after App/window commit or rollback. A generic asynchronous open-window outbox is deliberately avoided.
+
+**Creation or presentation fails between pending and active state.** Staged synchronous creation can fail, pump a close callback, roll back its reserved window, or lose a renderer surface after an anchor token or presentation lease exists. Mitigation: U24 holds create-time callbacks until App/window commit or rollback, U26 activates the opening token only from the returned committed full `WindowId`, U25 separates accepted draw from non-empty presentation, and U27 compensates renderer/device/surface failures before any durable graph commit.
+
+**Initial no-focus becomes permanent no-activation.** A single boolean can map a harmless initial-show preference to `WS_EX_NOACTIVATE`, leaving detached windows impossible to activate later. Mitigation: U25 separates one-shot appearance, lifetime activation/click, input acceptance, and owner/transient facts; native tests assert both non-stealing first show and later activation.
+
+**Native ownership is mistaken for lifecycle authority.** OS owner/group semantics differ and may not cascade every shutdown case. Mitigation: U25 uses native ownership only for supported z-order/activation UX, while U26's generation-bound DockSurface session always performs explicit, surface-scoped, idempotent teardown.
+
+**Captured drag routes stale or foreign targets.** Screen coordinates, DPI, host scenes, full `WindowId`, or Dock surface/session ownership can change between preview and release, while a visible provisional may cover the real host. Mitigation: U27 resolves an ordered native/application underlay stack and current coordinate conversion from the capture owner, skips provisional/session-suppressed windows, accepts only current same-surface host registrations, classifies foreign-surface hosts as rejected rather than desktop fallback, revalidates release, and treats cancel/close as barriers.
+
+**Provisional viewports leak, flash, or duplicate semantic ownership.** Repeated motion, failed first paint, target switching, delayed promotion, or shutdown can leave windows alive, expose an empty shell, or render one panel as two focus/accessibility owners. Mitigation: U27 allows one provisional viewport, one presentation lease, and one source semantic/focus proxy per drag generation; defines explicit opening/desktop/host/rejected/unavailable/terminal presentation states; keeps durable graph/revision unchanged; completes fallible work under session suppression; and atomically hands off graph, registry, lease, semantic/focus ownership, and the gate before destination activation.
+
+**Native tests reproduce only the model.** `VisualTestContext` does not exercise HWND capture, WndProc reentrancy, paint validation, z-order, or process lifetime. Mitigation: U28 adds deterministic real-window and subprocess gates on the owning platform, exposes event/presentation generations for assertions, bounds every worker by timeout, and relabels existing simulated coverage honestly.
+
 **Windows resource exhaustion.** Mitigation: focused package gates per unit, serialized final DevTools/all-feature builds, and one final workspace gate rather than competing full builds.
 
 ### Sources & Research
@@ -470,6 +603,9 @@ Repository evidence:
 - `crates/gpui/src/style.rs`
 - `crates/gpui/src/scene.rs`
 - `crates/gpui/src/window.rs`
+- `crates/gpui/src/app.rs`
+- `crates/gpui/src/app/async_context.rs`
+- `crates/gpui/src/app/window_registry.rs`
 - `crates/gpui/src/window/input_dispatch.rs`
 - `crates/gpui/src/window/frame_journal.rs`
 - `crates/gpui/src/elements/svg.rs`
@@ -494,7 +630,17 @@ Repository evidence:
 - `crates/gpui_docking/src/surface.rs`
 - `crates/gpui_docking/src/surface/`
 - `crates/gpui_docking/src/viewport_platform_sync.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle/route_ops.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle/close_ops.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle/scene_ops.rs`
+- `crates/gpui_docking/src/viewport_runtime_effects.rs`
+- `crates/gpui_docking/src/viewport_window_ownership.rs`
 - `crates/gpui/src/platform.rs`
+- `crates/gpui_windows/src/events.rs`
+- `crates/gpui_windows/src/window.rs`
+- `crates/gpui_windows/src/platform.rs`
+- `.github/workflows/verify.yml`
 
 Durable decisions and verification:
 
@@ -509,7 +655,9 @@ Durable decisions and verification:
 - `docs/plans/2026-07-05-001-refactor-ui-framework-layer-motion-conformance-plan.md`
 - `docs/plans/2026-06-08-001-feat-docking-plan.md`
 - `docs/plans/2026-06-08-009-feat-docking-user-api-multiviewport-roadmap-plan.md`
+- `docs/plans/2026-06-09-016-feat-imgui-like-multiviewport-docking-plan.md`
 - `docs/research/2026-07-18-ui-interface-follow-on-research.md`
+- `docs/verification.md`
 
 Reference implementations:
 
@@ -528,8 +676,9 @@ Reference implementations:
 - `repo-ref/fret/crates/fret-core/src/semantics.rs`
 - `repo-ref/imgui/imgui.cpp`
 - `repo-ref/imgui/imgui_internal.h`
+- `repo-ref/imgui/backends/imgui_impl_win32.cpp`
 
-The references inform behavior and ownership only. Their package layouts, APIs, and runtimes are not copied wholesale.
+The references inform behavior and ownership only. Their package layouts, APIs, and runtimes are not copied wholesale. The repository has no `docs/solutions/` corpus to inherit for App borrow reentrancy, cross-HWND capture routing, or Dock window-session teardown; the code, native reproduction evidence, prior plans, and exact ImGui clone are the grounding sources for U24-U28.
 
 ## Implementation Units
 
@@ -555,6 +704,11 @@ The references inform behavior and ownership only. Their package layouts, APIs, 
 | U18 | Dock visual style authority | `crates/gpui_docking/src/render*.rs`, Dock examples | U17 |
 | U19 | DockSurface owner and activation intent | `crates/gpui_docking/src/surface.rs`, controller/runtime events | U18 |
 | U20 | Platform-window mutation authority | `crates/gpui/src/platform.rs`, native backends, Dock viewport sync | U19 |
+| U24 | Reentrancy-safe platform event delivery | `crates/gpui/src/app/async_context.rs`, `crates/gpui/src/window.rs`, Dock runtime effects | U20 |
+| U25 | Window appearance, activation, and ownership | GPUI window options/params and native backends | U24 |
+| U26 | DockSurface window sessions and teardown | Dock surface owner, viewport ownership, close/effect orchestration | U19, U24, U25 |
+| U27 | Native cross-window drag and live tear-off | GPUI active drag plus Dock route/provisional runtime | U26 |
+| U28 | Owning-platform docking evidence | Windows native integration, Dock examples, CI, verification docs | U27 |
 
 ### U1. Repair Form Validation And Submission Authority
 
@@ -1146,7 +1300,7 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 
 **Outcome**
 
-The product surfaces already updated by U1-U10 are audited together, architecture decisions and migration notes are cross-linked, obsolete code is absent, and the existing gates cover the newly added GPUI/accessibility paths. U11 does not close the expanded plan: U12-U20 own their own Gallery/example, documentation, and release-gate changes rather than hiding them in this prior-surface audit.
+The product surfaces already updated by U1-U10 are audited together, architecture decisions and migration notes are cross-linked, obsolete code is absent, and the existing gates cover the newly added GPUI/accessibility paths. U11 does not close the expanded plan: U12-U20 and U24-U28 own their own Gallery/example, documentation, and release-gate changes rather than hiding them in this prior-surface audit.
 
 **Primary files**
 
@@ -1684,7 +1838,7 @@ GPUI exposes one backend-neutral contract for mutating an already-open window's 
 - Define the ticket's terminal observation independently: exact observed facts, adjusted observed facts, superseded by a newer generation in the same conflict domain, rejected/native failure when observable, unsupported, or window closed. Dropping an observation subscription cancels delivery only, not queued intent. Every terminal path is exactly once and bounded even if callbacks reorder or never arrive before close.
 - Treat position, size, state, and restore bounds as one placement request, generation, and conflict domain. The planner canonicalizes a coherent placement before dispatch, defines windowed restore-bounds semantics, and rejects contradictory or unrepresentable state-plus-geometry input without sending a partial native request. Independent flag domains may coexist and partially dispatch; partial success never exists inside placement itself.
 - Add one committed `WindowPlatformFacts` cache inside `Window`, seeded from creation facts. Coherent moved/bounds/state/flag callbacks or an explicit backend observation refresh update that cache and settle matching tickets; queued intent cannot update it. Existing public `window_bounds`, `inner_window_bounds`, `bounds`, fullscreen/minimized, pointer-input, and related getters read this authority rather than querying a second backend fact path.
-- Give seven domains monotonic generations: one coherent placement domain plus pointer input, focus-on-appearing, focus-on-click, alpha, topmost, and taskbar visibility. A newer request supersedes older pending intent in that domain; unrelated flag requests may coexist. Every backend terminal carries its domain and generation, and GPUI rejects stale generations before committing their facts. State-generated move/resize callbacks belong to the placement generation and commit one coherent snapshot rather than accidentally settling independent size/position tickets. External user or window-manager adjustments publish actual facts without a corrective loop unless a newer explicit request still owns the domain. Window close invalidates queued backend generations before settling retained tickets.
+- Give six live request domains monotonic generations: one coherent placement domain, pointer input, one coherent `ActivationPolicy` domain, alpha, topmost, and taskbar visibility. `ActivationPolicy` carries independent `accepts_activation` and `focus_on_click` fields under one generation and terminal observation; neither field derives the other and the domain cannot partially commit. A newer request supersedes older pending intent in that domain; unrelated flag requests may coexist. `focus_on_appearing` remains a creation-time fact and never becomes a live mutation domain. Every backend terminal carries its domain and generation, and GPUI rejects stale generations before committing their facts. State-generated move/resize callbacks belong to the placement generation and commit one coherent snapshot rather than accidentally settling independent size/position tickets. External user or window-manager adjustments publish actual facts without a corrective loop unless a newer explicit request still owns the domain. Window close invalidates queued backend generations before settling retained tickets.
 - Require a readable observation path for any property advertised as live. If a backend can issue a setter but cannot determine the resulting fact, it remains creation-only or unsupported in the public capability contract.
 - Migrate existing resize, pointer-input, fullscreen, and creation-option paths into the common dispatch/ticket vocabulary where they represent the same operation. Preserve ergonomic single-property helpers as thin typed wrappers over placement or a flag domain rather than parallel authorities.
 - Replace Dock's `live_window_move` and flag capability mirrors with projections of the GPUI contract. Dock viewport sync requests only changed domains, records queued dispatch separately from terminal observation, uses committed facts for snapshots/routes/readiness, and reports independent unsupported flags without discarding a supported placement request. U19 may revision only the resulting observed placement transaction, never this dispatch record.
@@ -1693,7 +1847,7 @@ GPUI exposes one backend-neutral contract for mutating an already-open window's 
 
 **Test scenarios**
 
-- Pure tests cover capability projection, unsupported/creation-only/live distinctions, all seven request domains, dispatch and terminal outcomes, unchanged detection, coherent state/geometry planning, restore bounds, contradictory batch rejection, DPI/shared-coordinate conversion, independent-flag partial dispatch, generation supersession, and stale-terminal rejection before fact commit.
+- Pure tests cover capability projection, unsupported/creation-only/live distinctions, all six live request domains plus creation-time appearance, every independent `accepts_activation`/`focus_on_click` combination inside one coherent generation, dispatch and terminal outcomes, unchanged detection, coherent state/geometry planning, restore bounds, contradictory batch rejection, DPI/shared-coordinate conversion, independent-domain partial dispatch, rejection of partial activation-policy commit, generation supersession, and stale-terminal rejection before fact commit.
 - `TestPlatform` tests deterministically separate queued dispatch from observation, report backend rejection, adjust requested placement, inject external movement, emit state and geometry callbacks in either order, omit callbacks until close, normalize unavailable display ids to the default before creation, and prove committed facts plus one-shot observers cannot be forged by intent. Request, immediate public getter, callback, terminal delivery, supersession, dropped subscription, and close ordering are all explicit.
 - Dock tests cover move-only, resize-only, move-plus-resize, windowed/maximized/fullscreen/minimized transitions with restore bounds, mixed supported/unsupported flags, stale/adjusted observations, external user movement, route/preview geometry, placement export, no retry loop, and absence of a revision from dispatch alone.
 - Native Windows, macOS, and Linux tests compile every trait implementation and assert exact capability matrices plus kind-specific and display-dependent projections such as Wayland LayerShell and X11 screens with or without a transparent visual. On every backend that advertises a live domain, owning-platform integration tests exercise supported dispatch, native failure, getter-cache seeding, callback conversion, placement, and each live flag against actual coherent observed facts. Creation-only backends prove their creation projection without fabricating live dispatch.
@@ -1711,10 +1865,311 @@ GPUI exposes one backend-neutral contract for mutating an already-open window's 
 - GPUI/TestPlatform, Dock sync/readiness/runtime, examples, public API, migration, and release tests pass locally. Every native backend compiles on its owning runner, and its advertised live properties pass observed-fact integration tests before U20 is complete.
 - Review confirms capability honesty, dispatch/terminal-observation separation, placement conflict and restore-bounds semantics, coherent committed getter authority, independent-domain partial support, coordinate correctness, and no Dock-local platform authority.
 
-### Post-U20 Candidate Roadmap
+### U24. Make Platform Event Delivery Reentrancy-Safe
+
+**Outcome**
+
+Every asynchronous native callback reaches GPUI through an AppCell-owned typed ingress even when another window update already owns the mutable `App`; synchronous native queries have an immutable, non-reentrant answer path. Hybrid input retains its immediate handler-derived native disposition or remains explicitly outside the migration rather than returning a guessed fallback. Callback delivery has explicit global sequencing, merge, and barrier rules, frames remain invalid until accepted, and GPUI/Dock native commands execute through the current App transaction only after subordinate model/runtime borrows are released.
+
+**Requirements**
+
+- R1-R2, R15, and R25-R26.
+
+**Primary files**
+
+- `crates/gpui/src/app.rs`
+- `crates/gpui/src/app/cell.rs`
+- `crates/gpui/src/app/async_context.rs`
+- `crates/gpui/src/app/window_registry.rs`
+- `crates/gpui/src/window.rs`
+- private native-event ingress and synchronous-query snapshot modules adjacent to `AppCell`
+- `crates/gpui/src/platform/test/`
+- `crates/gpui_windows/src/events.rs`
+- `crates/gpui_windows/src/platform.rs`
+- corresponding callback adapters in `crates/gpui_macos/` and `crates/gpui_linux/`
+- `crates/gpui_web/` compile and run-loop adapters
+- `crates/gpui_docking/src/viewport_runtime_handle.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle/close_ops.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle/scene_ops.rs`
+- `crates/gpui_docking/src/viewport_runtime_effects.rs`
+- focused GPUI callback and Dock runtime reentrancy tests
+
+**Behavioral work**
+
+- Inventory every platform callback currently routed through `AsyncApp::update_window` and classify it first as an asynchronous fact/event, synchronous query, or hybrid event plus immediate platform disposition. For asynchronous events, assign a typed domain, merge policy, ordering/barrier requirement, terminal behavior, and stale-window disposition. Hit testing reads committed immutable facts, and close permission prevents immediate native destruction while queueing close intent for later approval. For every hybrid input message class, first record whether native default handling depends on the current `DispatchEventResult`; a fixed committed policy is forbidden for those classes. Before migration, prove an immediate busy-App result equivalent to the idle handler path through a reentrancy-safe synchronous mechanism or exact native-default replay. If neither is possible, keep that class on a non-reentrant synchronous path and fail the U24 gate rather than queueing it with guessed disposition. Any other return-valued callback must name and prove its equivalent result contract before implementation.
+- Put the private ingress beside `RefCell<App>` in `AppCell`, where a native callback can write while `App` is borrowed. The envelope carries the full generation-bearing `WindowId`, application-wide ingress sequence, callback kind, typed payload, and only its actual pointer/mutation/session/drag domain generation. Do not add another generic window generation unless callback replacement within one still-live `WindowId` proves a separate epoch necessary.
+- Assign ingress sequence before testing the App borrow. A callback may drain inline only after acquiring exclusive drain ownership when no backlog, active drain, or unresolved barrier exists. Otherwise it queues and schedules a foreground wake. Reentrant events created during drain return to the sequenced queue rather than recursively borrowing `App`.
+- Define event-domain behavior before implementation. Frame requests, hover, continuous pointer movement within one unchanged capture/button generation, and coherent move/resize/state facts may replace older pending facts in their domain. Button edges, key/text input, pointer cancellation, asynchronous close-request/closed lifecycle facts, and mutation terminal observations are FIFO and non-droppable. Pointer cancellation and close create barriers after which older input cannot run; close settles retained mutation observations and retires the generation before a reused ID can receive events.
+- Bound each drain turn so an input or callback storm cannot starve the foreground executor. Preserve application ingress order and defined cross-window session barriers across partial drains, schedule another wake while work remains, and expose structured pending/delivered/coalesced/stale/closed dispositions to test diagnostics without retaining user input text.
+- Change frame acknowledgement so an App-borrow conflict does not count as a successful paint. A native invalidation remains pending until GPUI accepts a draw/present request or explicitly re-invalidates and schedules it. Windows paint validation cannot permanently consume a failed callback; repeated frame callbacks for one generation may coalesce while guaranteeing a later presentation opportunity.
+- Route placement/state, activation, hover, input, close, frame, and U20 mutation-observation callbacks through the same authority. No backend may keep a privileged direct path whose loss semantics differ.
+- Make entity/controller/viewport-runtime operations return typed native effects. Release those subordinate guards, then apply create/open, root-ready/show, remove/close, activate, present, sibling-window update, and mutation work through the current `&mut App`. Before native creation, reserve the full `WindowId`; synchronous callback envelopes wait in AppCell ingress until the window transaction commits or rolls back, then deliver to the committed window or retire against the rolled-back ID. Keep `App::open_window` synchronous; no generic asynchronous effect outbox is added.
+- Fix the known tear-off failure path that closes a newly opened viewport while holding the runtime `RefMut`. Apply the same two/three-phase pattern to scene reconciliation, activation, source invalidation, close observers, and shutdown preparation: collect identity/generation, release the guard, obtain external facts or apply effects, then short-borrow to finalize only if the generation still matches.
+- Establish the smallest reusable Windows real-HWND test support needed for reentrant create/show/paint/activate/close, reserved-window commit/rollback, and ingress observations. U25-U27 extend this same harness; U28 completes the scenario matrix and CI/subprocess hardening.
+
+**Test scenarios**
+
+- Deterministic App-borrow tests inject every asynchronous callback domain while an update is active and prove direct and queued delivery produce the same committed result, callback kind is observable, no event is reduced to a generic `RefCell already borrowed` log, and nested drain-time callbacks do not recurse. Synchronous/hybrid tests prove committed hit testing, prevent-and-queue close intent, and at least one consumed plus one propagated native-default result whose busy-App disposition exactly matches the idle path. The test matrix covers every migrated return-valued message class and rejects any fixed fallback that masks a handler-dependent result.
+- Ordering tests cover an older queued event followed by a borrowable callback, cross-window source/target/anchor causality, coalesced frame/hover/move/placement facts, non-coalesced down/up/key/text/terminal observations, cancellation and close barriers, generation-bearing `WindowId` reuse, close settling pending mutation tickets, partial drains, wake coalescing, and exactly-once terminal delivery.
+- Frame tests force a callback borrow conflict, observe that paint remains pending, then prove one later accepted non-empty presentation. Multiple invalidations coalesce without either losing the last request or drawing after close.
+- TestPlatform and the minimal real-HWND harness cover callbacks arriving synchronously during create, show, mutation dispatch, activation, paint, and close rather than assuming every backend defers. Reserved-window events deliver after commit and retire after rollback; synchronous close after commit follows normal ordered teardown.
+- Dock tests reproduce the registered tear-off commit-error close-observer path, source close, activation callback, sibling reconciliation, and surface sink reentry. They prove native effects execute with no runtime borrow held and stale finalize work cannot mutate a replacement generation.
+- Cross-backend and web compile/adapter tests prove every existing asynchronous callback enters the typed authority, synchronous queries use the declared snapshot/fallback contract, and no owning backend retains log-and-drop behavior.
+
+**Deletion/replacement**
+
+- Delete callback-local `.log_err()` handling that discards a platform event, generic callback diagnostics without event identity, and backend-specific retry tails superseded by the mailbox.
+- Delete Dock paths that hold a runtime `RefMut` across controller/entity/window updates or open/show/close/remove/activate/native-mutation effects.
+- Do not turn the mailbox into a public arbitrary-event queue, serialize user input to disk, retry an event without generation checks, or coalesce ordered terminal/input facts merely for throughput.
+
+**Unit gate**
+
+- GPUI ingress, synchronous-query, reserved-window commit/rollback, TestPlatform synchronous-callback, minimal real-HWND, Dock reentrancy, native-adapter, docs, and public-surface tests pass.
+- Review confirms AppCell ownership, global ingress order, explicit query/merge/barrier semantics, busy/idle equivalence for every migrated hybrid result, bounded fair draining, full-`WindowId` isolation, commit/rollback settlement, accepted-or-reinvalidated frame behavior, no callback loss, and no native side effect under an entity/controller/runtime borrow.
+
+### U25. Separate Window Appearance, Activation, And Ownership
+
+**Outcome**
+
+GPUI models creation-time appearance, lifetime activation/input policy, and native owner/transient relationships as independent facts. A detached viewport can appear without stealing focus, present its first frame, and later activate normally; a provisional viewport has the same final native lifetime capability but remains session-suppressed until same-window promotion.
+
+**Requirements**
+
+- R1-R2, R15, R25, and R27.
+
+**Primary files**
+
+- `crates/gpui/src/platform.rs`
+- `crates/gpui/src/window.rs`
+- `crates/gpui/src/window_platform_mutation.rs`
+- `crates/gpui/src/platform/test/window.rs`
+- window creation and mutation adapters in `crates/gpui_windows/`, `crates/gpui_macos/`, and `crates/gpui_linux/`
+- `crates/gpui_web/` window contract projection
+- `crates/gpui_docking/src/viewport_runtime.rs`
+- `crates/gpui_docking/src/viewport_activation.rs`
+- `crates/gpui_docking/src/viewport_platform_sync.rs`
+- window option, platform-fact, activation, ownership, and native integration tests
+- window lifecycle ADR and breaking migration documentation
+
+**Behavioral work**
+
+- Replace the overloaded creation `focus` meaning with final typed vocabulary: creation-only `focus_on_appearing`; lifetime `accepts_activation`, `focus_on_click`, and `accepts_pointer_input`; plus `transient_for`. Permanent non-activation is explicit and limited to window kinds or options that request it. `accepts_activation` and `focus_on_click` remain independent fields in U20's one coherent `ActivationPolicy` mutation domain, sharing generation and terminal observation without aliasing or partial commit.
+- Keep `focus_on_appearing` creation-only. Delete `WindowMutationDomain::FocusOnAppearing`, `WindowMutationRequest::FocusOnAppearing`, `request_focus_on_appearing`, and equivalent backend live setters. Initial no-activate show cannot install permanent no-activate native style or disable later click focus. Existing public facts and options migrate atomically; no compatibility boolean remains to recreate the ambiguity.
+- Add a typed top-level owner/transient relationship from window options through resolved creation params and owning backends. It references one live owner generation, rejects self/closed/foreign-application owners, and reports unsupported behavior rather than guessing. Windows uses top-level owner semantics rather than `WS_CHILD`; macOS and Linux project their supported child/group/transient relationships; Wayland limitations remain explicit.
+- Treat native owner semantics as z-order, activation, minimization/grouping assistance only. Closing the owner does not satisfy R28 by itself, and a backend without owner support does not weaken DockSurface's explicit teardown.
+- Define staged appearance facts for windows that must not expose an empty shell: native window created without activation, root/callbacks installed, first frame accepted and presented, then shown under the requested appearance policy. Backends that must show earlier still expose presentation generation separately, and no caller may equate `IsWindowVisible` with non-empty presentation.
+- Define the ordinary detached Dock native profile as no initial activation, later programmatic/click activation, pointer input accepted, and current-surface ownership. Create the provisional with that same final lifetime native profile; while the source owns capture, a Dock session gate suppresses its GPUI input, focus, activation, route eligibility, and accessibility participation. U27's final atomic promotion transaction removes that gate after fallible preflight and does not depend on a live native activation/input transition. Optional taskbar/topmost changes remain honest U20 capabilities and cannot block correctness.
+- Keep platform facts coherent with U20: initial appearance is immutable creation history, lifetime flags use their own live or creation-only capabilities, owner relationship is observed or capability-qualified, and public getters never infer facts from requested options alone.
+
+**Test scenarios**
+
+- Contract tests prove every combination of initial appearance, later activation, click focus, pointer input, and permanent non-activation without deriving one fact from another, including coherent generation and no-partial-commit behavior for the two-field activation policy.
+- Windows native tests show an ordinary detached viewport without foreground theft, assert absence of permanent no-activate style, then activate it by click and programmatic request. A deliberately permanent non-activating window remains non-activating.
+- Owner tests cover valid owner, closed/stale/self owner rejection, owner generation replacement, same-process top-level relationship, z-order/activation behavior where supported, and honest unsupported capability on other backends.
+- Presentation tests distinguish native creation, visibility, first accepted frame, submitted present, and first non-empty presentation; a deferred frame or renderer/device/surface failure cannot be treated as presented and terminally settles pending opening work.
+- Provisional tests cover final native lifetime capability plus session-level suppression, exclusion from hovered-window and Dock route targeting, same-window promotion without native profile mutation, optional unsupported taskbar/topmost changes, and no intermediate focus or accessibility ownership.
+- TestPlatform, web, and every owning backend compile against the new option/param/fact contract; web and unsupported backends project ownership/activation limitations honestly, and migration scans prove the old overloaded `focus` path is absent.
+
+**Deletion/replacement**
+
+- Delete the overloaded creation-focus boolean and Windows mapping from no-initial-focus to permanent `WS_EX_NOACTIVATE`.
+- Delete implicit "current active window" owner selection and Dialog-only owner special cases that bypass the typed relationship.
+- Do not promise that native ownership cascades lifecycle, expose raw HWND/NSWindow/X11 handles, use `focus_on_click` as an alias for lifetime activation capability, or make correctness depend on a creation-only flag changing live.
+
+**Unit gate**
+
+- GPUI option/fact, TestPlatform, Dock profile, native appearance/activation/owner, migration, and documentation tests pass.
+- Review confirms non-stealing initial show plus later activation, explicit permanent non-activation, owner generation safety, first-presentation observability, same-window session promotion, and honest optional per-backend flag capability.
+
+### U26. Add DockSurface Window Sessions And Deterministic Teardown
+
+**Outcome**
+
+Each facade-managed `DockSurface` owns one explicit anchor session and shutdown authority, while the viewport runtime remains the sole registry of committed and provisional handles for that session. Anchor close freezes and drains only that surface through an idempotent, borrow-safe shutdown sequence; another DockSurface remains independent.
+
+**Requirements**
+
+- R1-R2, R15, R24, R26-R28.
+
+**Primary files**
+
+- `crates/gpui_docking/src/surface.rs`
+- `crates/gpui_docking/src/surface/owner.rs`
+- `crates/gpui_docking/src/surface/viewport.rs`
+- `crates/gpui_docking/src/viewport_window_ownership.rs`
+- `crates/gpui_docking/src/viewport_runtime.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle/close_ops.rs`
+- `crates/gpui_docking/src/viewport_runtime_effects.rs`
+- `crates/gpui_docking/src/surface_tests.rs`
+- `crates/gpui_docking/src/surface_owner_tests.rs`
+- `crates/gpui_docking/src/host_viewport_close_tests.rs`
+- `crates/gpui_docking/src/host_viewport_lifecycle_tests.rs`
+- `examples/docking-native/` and `examples/docking-multiviewport/`
+- Dock facade, lifecycle ADR, migration, and verification documentation
+
+**Behavioral work**
+
+- Extend the private surface owner only with session phase, unique session generation, optional opening/active anchor token or handle, and shutdown cause. The generation-tagged viewport runtime registry remains the single storage authority for committed and provisional window handles; the owner snapshots it for teardown rather than mirroring it.
+- Make `open_primary_window` reserve an `Opening` anchor token before applying the U24 typed native-create effect through the current App transaction. Synchronous `App::open_window` reserves and commits the full `WindowId` before returning; afterward a short owner borrow validates that ID and opening token, then transitions to `Active`. Native callbacks raised during creation remain in AppCell ingress until commit or rollback and can settle failure/close afterward, but never activate the session. Creation failure, rollback, synchronous close, App shutdown, or cancellation settles without viewport admission. A second opening or active anchor returns a typed conflict. Low-level `host_view` and independently constructed runtimes do not implicitly become facade anchors or acquire facade teardown policy.
+- Permit an explicit later `open_primary_window` only after the prior session reaches `Closed`, creating a new generation. `ShuttingDown` reaches `Closed` only when the current-generation runtime registry is empty and every snapshotted native window has produced terminal close observation or is confirmed absent; reopen while any old HWND remains unresolved returns a typed not-closed result. Delayed close, observer, activation, drag, platform observation, or native-event work from an older generation cannot join or shut down the replacement.
+- Only `Active` accepts committed/provisional viewport work. On current-anchor close, transition to `ShuttingDown` before invoking any external callback. Freeze new viewport open, activation, drag, route, mutation, and registration work; cancel active drag, polling, prepared/provisional tear-off, pending promotion, and focus restoration; atomically retire surface mappings; then snapshot the viewport runtime's current-generation handles and typed close effects.
+- Release every owner/controller/runtime/entity borrow before applying close effects. The forced shutdown path bypasses per-viewport `Prevent` and `MergeBack`, suppresses normal merge-back graph mutation and focus restore, tolerates windows already destroyed by the OS, and lets each close observer converge idempotently.
+- Close only windows owned by the current surface generation. Multiple surfaces, low-level independent runtimes, ordinary application windows, and a later surface generation are untouched. Dock never calls `cx.quit`; GPUI's normal last-window rule decides application exit.
+- Preserve U19 revision semantics. Entering shutdown, cancelling preview-only work, and dispatching close intent do not fabricate committed layout revisions. Any durable graph cleanup caused by the authoritative session transition publishes once under a typed shutdown transaction, and repeated/late observers publish nothing.
+- Integrate U25 owner/transient relationship for committed and provisional viewports where supported while retaining the viewport runtime registry as the sole cross-platform handle authority.
+
+**Test scenarios**
+
+- Session tests cover `Opening` reservation, synchronous `App::open_window` registry commit followed by token/`WindowId` activation, native create success, creation rollback, callbacks queued during creation, synchronous close during creation, duplicate opening/active-primary conflict, App shutdown while opening, explicit reopen with a new generation, stale old-anchor close, stale viewport callback, and registration attempts before `Active` or during `ShuttingDown`/`Closed`.
+- Shutdown tests create multiple detached and provisional windows, begin drag/activation/mutation work, close the anchor, and prove freeze-before-close ordering, borrow-free native effects, exactly-once cancellation, complete ownership retirement, no focus restore, and idempotent repeated/late close.
+- Policy tests prove ordinary child-window close still honors `Prevent`, `MergeBack`, and close-request semantics, while anchor shutdown force-closes those same windows without merging them back or being blocked.
+- Isolation tests run two Dock surfaces plus an independent low-level runtime; closing one anchor leaves the other surface's anchor, viewports, drag route, revisions, and activation usable.
+- Failure-order tests cover the OS destroying a child first, anchor close during provisional creation or promotion, tear-off commit failure, close observer reentry, callback-opened work, delayed terminal observation for one old HWND, rejected reopen while the registry or close observations remain incomplete, and successful reopen only after deterministic convergence.
+- Example tests close the real primary through the facade and assert owned viewport convergence without relying on example-level `cx.quit`.
+
+**Deletion/replacement**
+
+- Delete window ownership represented only by unscoped `WindowId` sets, any surface-owner mirror of the viewport runtime handle registry, activation-only close cleanup, and tests that require detached facade viewports to survive the current primary by default.
+- Delete example-specific primary-close `cx.quit` behavior used to mask absent surface teardown.
+- Do not make all low-level Dock runtimes application-global, infer an anchor from the first rendered host, or delegate forced shutdown to per-viewport close policy.
+
+**Unit gate**
+
+- Surface owner/session, viewport close/lifecycle, reentrancy, example, public API, migration, and documentation tests pass.
+- Review confirms non-overlapping state ownership, synchronous registry-commit activation of opening tokens, explicit reopen only after native-window terminal convergence, freeze/snapshot/release/apply shutdown ordering, forced-policy behavior, multi-surface isolation, commit-only revisions, and absence of Dock-owned application exit.
+
+### U27. Add Native Cross-Window Drag Transport And Live Tear-Off
+
+**Outcome**
+
+A source HWND that owns native pointer capture transports one Dock drag generation across application windows using current screen-space facts. A real provisional viewport with one presentation lease appears and presents before release, while durable Dock topology changes only after a revalidated release outcome.
+
+**Requirements**
+
+- R1-R2, R15, R26-R30.
+
+**Primary files**
+
+- GPUI active-drag and pointer-session code in `crates/gpui/src/app.rs`, `crates/gpui/src/window.rs`, and input dispatch modules
+- `crates/gpui/src/app/test_context/pointer_session_tests.rs`
+- `crates/gpui_windows/src/events.rs`
+- `crates/gpui_docking/src/interaction.rs`
+- `crates/gpui_docking/src/drop_runtime.rs`
+- `crates/gpui_docking/src/render.rs`
+- `crates/gpui_docking/src/host_interaction_outcome.rs`
+- `crates/gpui_docking/src/host_render_actions.rs`
+- `crates/gpui_docking/src/host_outside_release.rs`
+- `crates/gpui_docking/src/host_viewport_drop.rs`
+- `crates/gpui_docking/src/viewport_target_context.rs`
+- `crates/gpui_docking/src/viewport_tear_off.rs`
+- `crates/gpui_docking/src/viewport_tear_off_move.rs`
+- `crates/gpui_docking/src/viewport_runtime_handle/route_ops.rs`
+- Dock host interaction, route, tear-off, render, and lifecycle tests
+- `examples/docking-native/` and `examples/docking-multiviewport/`
+
+**Behavioral work**
+
+- Extend GPUI's active-drag boundary with a typed captured-pointer transport. The source capture owner samples the current screen point and an ordered application-window underlay stack from current native z-order plus committed window geometry, preserves source button/cancel ordering, and delivers a generation-bound drag fact to the registered consumer. The stack explicitly skips the visible provisional/session-suppressed window that may cover the pointer. The transport does not inject arbitrary raw GPUI input into another window or transfer native capture.
+- Resolve the target fresh from each full `WindowId` candidate, scale factor, current screen-to-window conversion, current committed host-scene generation, Dock surface/session generation, and input eligibility. Skip provisional and session-suppressed/non-input windows, ordinary non-Dock windows, closed/replaced registrations, and stale local coordinates while continuing through the underlay stack. Resolve a registered host from another Dock surface as `ForbiddenTarget`, not absence: that host owns a rejected preview, and release cancels/restores rather than falling through to desktop tear-off.
+- Let the target host consume routed preview facts through Dock's existing interaction authority without assuming its HWND received `MouseMove`. Source and target redraw scheduling use U24; only one route owns the current preview, and stale target callbacks cannot restore an old guide.
+- Treat `MouseUp`, Escape, `PointerCanceled`, native capture change/cancel mode, source deactivation, source close, anchor shutdown, and drag-generation replacement as terminal inputs to one idempotent cancellation/release state machine. Terminal handling clears preview, active drag, capture, polling task, presentation lease, and provisional viewport exactly once.
+- Add one private `DockLiveUndockSession` as the sole owner of current route, provisional handle reference, panel presentation lease, and release/compensation saga. GPUI active drag owns only generic capture transport; the DockSurface owner owns session phase/anchor/shutdown; the viewport runtime registry remains the sole handle store. Existing interaction, outside-release, and tear-off states are folded into this session rather than retained as parallel state machines.
+- Advance that retained live-undock session from prepared payload through provisional opening, first presentation, visible movement, promotion/transfer, committed, cancelled, and superseded states. One drag generation may own at most one provisional viewport; repeated movement repositions it through U20 rather than opening another.
+- Let Dock interaction/controller state exclusively acquire and transfer the presentation lease. The committed graph remains unchanged, the source retains one stable tab semantic/focus proxy rather than a duplicate panel subtree, and the provisional renders the real session-bound content while its Dock session gate suppresses focus, input, activation, route eligibility, and accessibility. The proxy preserves one semantic owner and the pre-drag focused descendant identity without claiming that the hidden source still presents the full panel. GPUI reports frame/presentation facts but does not understand the panel lease. If creation, renderer/device/surface setup, or first presentation fails, the lease stays/restores at the source and desktop release returns a typed unavailable result.
+- Make provisional visibility require both native show and a non-empty presentation generation. Its explicit presentation states are: `Opening`, where the source snapshot/proxy remains authoritative and no empty native shell is shown; `DesktopVisible`, where one non-empty provisional follows the pointer; `HostPreview`, where the same HWND is retained but hidden and only the valid target host draws its guide; `Rejected`, where the provisional is hidden and the forbidden host draws rejected feedback; `Unavailable`, where the live source remains authoritative; and terminal `Commit`, `Cancel`, or `Failure`, which atomically hand off or restore ownership and destroy/retain no extra window. The provisional has the final detached window's lifetime native capabilities already present, belongs to the current U26 session, remains session-suppressed and ineligible as a drop target, and is reused if the pointer leaves a host again.
+- Define the release decision table:
+  - a current valid target in another viewport completes all fallible target/native preflight while the provisional stays suppressed, then one App transaction transfers presentation, commits the cross-window Dock transaction and semantic/focus ownership, removes the gate, destroys the provisional, and activates the target host;
+  - a current valid source-host target performs the normal local drop or no-op, restores source presentation plus the valid pre-drag descendant focus, then destroys the provisional;
+  - desktop release completes all fallible promotion/native work while the already-presented window stays suppressed, then one App transaction atomically commits graph/registration/presentation/semantic ownership and removes the gate before activating the new viewport;
+  - a target that closed, changed generation, moved, changed DPI, or became invalid is resolved again from the current screen point and becomes a current target, desktop tear-off, or cancellation; the last preview is never release authority;
+  - a foreign-surface host is a forbidden target that retains rejected feedback and cancels/restores on release rather than silently using a prior accepted route or desktop promotion;
+  - source deactivation, source/anchor shutdown, or a dead source cancels without focus restoration or any attempt to reattach presentation to the dead generation.
+- Execute release as one generation-bound compensating saga. Prepare the graph transaction and complete every fallible native effect or promotion preflight while the provisional remains session-suppressed. Bind input, focus, and accessibility work arriving during that interval to the promotion generation. One final App transaction atomically commits graph ownership, viewport registration, presentation lease, semantic/focus ownership, and gate removal; queued work then drains against the committed destination or retires after rollback. If preflight or commit fails, compensation restores the exact live source lease and destroys the provisional without exposing an interactive half-promoted window. U19 publishes one revision only after final commit, while opening, movement, preview, and compensation remain non-durable.
+- Define focus and accessibility handoff by release outcome. During drag, the source semantic/focus proxy remains the only AccessKit owner. Desktop promotion and cross-window transfer restore the previously focused live panel descendant through the committed destination's U19 activation host after durable commit; local return and cancellation restore it at the live source. Source deactivation, source close, or anchor shutdown never requests activation or steals focus. Every terminal path removes the proxy and leaves exactly one final AccessKit subtree.
+
+**Test scenarios**
+
+- Captured-routing tests inject movement and release only into the source window while target raw input remains absent. The ordered underlay resolver skips a visible provisional and finds the current same-surface target, which receives preview and one release result with correct DPI/coordinate conversion.
+- Route eligibility tests cover target resize/move/DPI change, host-scene generation replacement, target close just before release, foreign-surface forbidden preview/cancellation, provisional and non-input windows, non-Dock underlays, stale local points, and last-preview rejection. Host-to-desktop-to-host movement proves the same provisional never obscures the restored host route.
+- Closing only the current target immediately clears that target's preview and pending work while retaining the source-owned drag; the next movement or release resolves again from the current screen point.
+- Terminal tests cover Escape, pointer cancel, native capture loss, source deactivation, source or anchor close, replacement drag generation, repeated terminal callbacks, and poll-task races; each leaves no capture, preview, lease, pending task, or provisional window.
+- Provisional tests cover every `Opening`/`DesktopVisible`/`HostPreview`/`Rejected`/`Unavailable`/terminal transition, one-window reuse across repeated motion and target transitions, no empty shell, final lifetime native capability plus active session suppression, native visibility plus non-empty first presentation before `MouseUp`, live position updates, one source semantic/focus proxy, no duplicate focus/accessibility/input ownership, and no early graph revision.
+- Release-table tests cover other host, source host, same-window desktop promotion, foreign-surface forbidden target, invalid target, stale target re-resolution, optional native flag failure, provisional creation/renderer/surface/first-presentation failure, promotion preflight failure, graph commit failure, queued input/focus/accessibility during delayed promotion, compensation failure handling, and rollback to the exact source generation. Each success and cancellation path asserts final activation completion, focused descendant, one AccessKit owner, and proxy removal; source deactivation/shutdown asserts no focus steal.
+- Multi-surface and shutdown tests prove route/session isolation and atomic cleanup when the anchor closes during any provisional state.
+- Existing direct-target VisualTest flows are rewritten or relabeled so they remain model-level tests and no longer claim to reproduce Win32 capture transport.
+
+**Deletion/replacement**
+
+- Delete the assumption that a target HWND receives raw mouse movement under source capture, the outside-release polling path as route authority, and release-only viewport creation.
+- Delete duplicate source-window and provisional semantic presentations, parallel outside-release/tear-off/interaction route state superseded by `DockLiveUndockSession`, last-valid-preview release fallback, hovered-top-window-only routing that cannot see through a provisional, and any provisional window not owned by the current surface/drag generation.
+- Do not expose a general cross-window event injection API, copy ImGui's global moving-window context, commit the durable graph merely to obtain a drag visual, or transfer native capture between HWNDs.
+
+**Unit gate**
+
+- GPUI pointer-session, Dock interaction/route/tear-off/lifecycle, multi-surface, example, migration, and documentation tests pass.
+- Review confirms non-overlapping state ownership, capture-owner transport, z-ordered underlay resolution through the provisional, foreign-surface rejection, complete terminal cleanup, one presentation lease and semantic/focus proxy, explicit presentation states, visible non-empty pre-release viewport, gate-preserving preflight plus atomic final handoff, exhaustive release/focus/accessibility outcomes, graph atomicity, and no duplicate semantic owner.
+
+### U28. Prove Owning-Platform Multi-Viewport Behavior
+
+**Outcome**
+
+The release gate distinguishes model simulation from real native-window behavior. Deterministic Windows integration and subprocess scenarios exercise actual HWND creation, capture, nested message dispatch, first presentation, activation, ownership, cross-window drag, provisional teardown, and process/window convergence.
+
+**Requirements**
+
+- R13, R15, and R26-R30.
+
+**Primary files**
+
+- native integration support and tests in `crates/gpui_windows/src/platform.rs` and `crates/gpui_windows/src/events.rs`, or a dedicated Windows integration target in that crate
+- GPUI test diagnostics for native-event and presentation generations
+- `crates/gpui_wgpu/` presentation outcome hooks and cross-backend compile fixtures
+- `crates/gpui_web/` contract compile coverage
+- `crates/gpui_docking/` native-integration fixtures
+- `examples/docking-native/`
+- `examples/docking-multiviewport/`
+- `.github/workflows/verify.yml`
+- `docs/verification.md`
+- Dock verification, ADR, migration, and release documentation
+
+**Behavioral work**
+
+- Extend U24's `gpui_windows`-owned real-HWND support into a deterministic full harness around the Windows application, message pump, WndProc, renderer/present path, and worker subprocess. `gpui_docking` supplies backend-neutral fixtures but does not own raw-HWND infrastructure. Test-only observation and input-control seams cannot replace HWNDs with `TestWindow`, call Dock handlers directly, or inject target-window events that production capture would prevent.
+- Expose typed, metadata-only test observations for callback envelope/disposition, window and session generation, capture owner, first accepted frame, first non-empty presentation, native visibility, activation, owner relationship, and terminal shutdown. Assertions use those facts rather than parsing one generic log or treating visibility as paint.
+- Exercise accepted draw, submitted present, non-empty presentation, renderer/device/surface failure, and native visibility as distinct facts. Opening/provisional work must terminally compensate when presentation cannot complete.
+- Exercise create/show/position/activate/close callbacks while another GPUI update owns `App`, including nested Windows message dispatch. Prove queued replay, ordering barriers, no dropped mutation terminal, no runtime double borrow, and eventual first presentation.
+- Drive two real HWNDs with capture retained by the source. Before release, assert the target Dock preview commits a presentation generation without target raw mouse input. Outside every host, assert the provisional HWND is visible, contains a non-empty presented frame, follows the pointer, has the final native lifetime profile, and remains Dock-session-suppressed for input/focus/activation/routing/accessibility.
+- Add at least one Windows scenario that uses system-level pointer injection at screen coordinates and never selects the receiving HWND. At down, cross-window move, and up, assert `GetCapture`, the actual WndProc recipient, the source-only raw move/up stream, and final capture release; retain the negative assertion that the target HWND receives no raw move/up. Directly sending those messages to the source remains useful deterministic coverage but cannot satisfy this routing claim.
+- Cover the full release and cancellation matrix through actual native messages: valid cross-window drop, desktop promotion, source return, Escape, capture loss, target-close re-resolution, source or anchor terminal close, provisional creation or presentation failure, commit failure, repeated close, and stale generation. Bound every worker with a timeout and guaranteed process-level cleanup so failures cannot leave CI windows/processes alive.
+- Verify ordinary detached creation does not steal foreground focus but later click and programmatic activation work. Assert native owner/top-level relationship where Windows supports it, while separately proving explicit surface teardown.
+- Start two Dock surfaces in one process, close one real anchor during active/provisional work, and assert all and only its HWNDs disappear. Close the remaining anchor and assert the application reaches its normal last-window/process termination condition without example-level `cx.quit`.
+- Keep TestPlatform/Visual tests as fast graph, route, and presentation-model evidence. Rename CI jobs and documentation that call them native rendered or end-to-end tests unless they execute the real owning-platform harness.
+- Add compile/capability gates for the U25 appearance/owner and U24 ingress/commit-boundary contracts on macOS, Linux, and web. Platform-specific real drag scenarios are required when a desktop backend advertises equivalent native capture and window capabilities; unsupported relationships are documented rather than imitated.
+
+**Test scenarios**
+
+- Real callback-reentrancy tests cover every U24 event class, merge/barrier order, close during queued work, a reused window generation, and first paint after a deferred frame.
+- Real two-HWND tests cover OS-routed source-only captured move/up through system pointer injection, actual recipient and `GetCapture` observations, underlay resolution through a visible provisional, target preview before release, provisional presentation and every display state before release, coordinate/DPI changes, activation/focus/AccessKit handoff after no-focus appearance, and owner/z-order facts.
+- Real failure tests cover capture cancel/deactivation, source/target/anchor destruction, failed provisional first presentation, failed promotion/commit, runtime close-observer reentry, and repeated/late close with no graph corruption or leaked HWND.
+- Real surface tests cover `Prevent`/`MergeBack` under ordinary close, forced bypass under anchor shutdown, two-surface isolation, delayed child terminal-close observation, rejected reopen while any old HWND remains live or registered, explicit reopen generation after convergence, absence of overlapping old/new generation HWNDs, and final process convergence.
+- CI-negative fixtures prove a VisualTest-only target cannot satisfy the native gate and that missing presentation/event observations fail with the exact window/session/event domain.
+
+**Deletion/replacement**
+
+- Delete or rename claims that direct `VisualTestContext` event injection is native Dock end-to-end coverage.
+- Delete example-only quit behavior, manual-only acceptance credit, and log-string-only checks superseded by typed native observations.
+- Do not require pixel-perfect screenshots for correctness, depend on a human moving the pointer, or let timeout/retry hide deterministic event loss.
+
+**Unit gate**
+
+- Windows real-HWND integration, Dock subprocess, fast simulated suites, cross-platform compile/capability, CI, verification docs, ADR, migration, and release gates pass.
+- Review confirms the tests cross the actual WndProc/capture/present/lifetime boundaries, every reported regression has a native negative-then-positive scenario, simulated evidence is labeled honestly, and no test worker can leak a process or HWND after failure.
+
+### Post-U28 Candidate Roadmap
 
 The following labels are planning handles for separate design/implementation epics. They do not
-add requirements, acceptance credit, or Definition-of-Done work to this convergence plan, and U20
+add requirements, acceptance credit, or Definition-of-Done work to this convergence plan, and U28
 must not publish placeholder APIs for them.
 
 - **Candidate U21: Locale and logical direction authority.** Design separate immutable
@@ -1741,13 +2196,14 @@ must not publish placeholder APIs for them.
 
 Verification is layered. A lower layer cannot substitute for a higher authority claim.
 
-1. **Pure/domain tests:** form generations/status, overlay stack policy, focus ordering, token/schema, typeahead session, table characterization, transform validation/composition/inversion, presentation lattice, live semantics, reveal alignment, rounded-clip containment, Dock style completeness, surface revision categories, and window-mutation capabilities/outcomes.
-2. **GPUI runtime tests:** real input dispatch, focus traversal, per-window isolation, controlled lifecycle, final accessibility updates/actions/announcements, deferred theme capture, transformed scene/input/IME/cache behavior, dynamic hidden/inert cleanup, anchor binding, nested reveal, exact clipped hit testing, Dock activation completion, and window request-versus-observation ordering.
-3. **Projection tests:** UI state, every transformed and clipped scene primitive, final AccessKit tree/bounds/actions/live facts, allowlisted DevTools summaries, inspector geometry, Dock style/event/readiness projections, federated contract/Gallery/scenario/public-API bindings, and redaction agree.
-4. **Gallery and example flows:** representative user journeys run through actual component adapters; U12-U17 exercise transformed and visible/inert/hidden subtrees, live regions, typed anchors, nested reveal, and rounded clips through pointer, keyboard, scrolling, text input, deferred content, AccessKit, and inspector paths. U18-U20 use the Dock examples for scoped styling, events/snapshot export, stable-item activation, and multi-viewport mutation because the foundation Gallery intentionally excludes a Docking dependency.
-5. **Workspace/release gates:** formatting, checks, nextest, docs, xtask scanners, dependency/import boundaries, supported-platform renderer compile/ABI/render smoke, native window-mutation capability tests, and release verification.
+1. **Pure/domain tests:** form generations/status, overlay stack policy, focus ordering, token/schema, typeahead session, table characterization, transform validation/composition/inversion, presentation lattice, live semantics, reveal alignment, rounded-clip containment, Dock style completeness, surface revision categories, coherent two-field activation-policy mutation, window-mutation capabilities/outcomes, mailbox ordering/merge/barriers, Dock window-session generations and terminal convergence, release decisions, foreign-surface rejection, and provisional presentation-state transitions.
+2. **GPUI runtime tests:** real input dispatch, busy/idle hybrid native-disposition equivalence, focus traversal, per-window isolation, controlled lifecycle, final accessibility updates/actions/announcements, deferred theme capture, transformed scene/input/IME/cache behavior, dynamic hidden/inert cleanup, anchor binding, nested reveal, exact clipped hit testing, Dock activation completion, window request-versus-observation ordering, already-borrowed callback replay, source-only captured drag transport, ordered underlay resolution, presentation leases, semantic/focus proxy handoff, and borrow-free native effects.
+3. **Projection tests:** UI state, every transformed and clipped scene primitive, final AccessKit tree/bounds/actions/live facts, allowlisted DevTools summaries, inspector geometry, Dock style/event/readiness projections, native callback/presentation generations, federated contract/Gallery/scenario/public-API bindings, and redaction agree.
+4. **Gallery and example flows:** representative user journeys run through actual component adapters; U12-U17 exercise transformed and visible/inert/hidden subtrees, live regions, typed anchors, nested reveal, and rounded clips through pointer, keyboard, scrolling, text input, deferred content, AccessKit, and inspector paths. U18-U20 and U24-U28 use the Dock examples for scoped styling, events/snapshot export, stable-item activation, multi-viewport mutation, capture-owned drag, pre-release provisional presentation, and anchor teardown because the foundation Gallery intentionally excludes a Docking dependency.
+5. **Owning-platform integration:** real native windows, message dispatch, system-level pointer injection, capture ownership and actual WndProc recipients, presentation, activation/focus/accessibility handoff, ownership, terminal close observation, and process/window teardown prove claims that TestPlatform and visual injection cannot exercise. Fast model tests remain required but provide no native credit.
+6. **Workspace/release gates:** formatting, checks, nextest, docs, xtask scanners, dependency/import boundaries, supported-platform renderer compile/ABI/render smoke, native window-mutation and multi-viewport integration tests, and release verification.
 
-Focused commands are run per unit using the packages and test targets named above. After U20 and its review checkpoint, the deterministic local final gate is:
+Focused commands are run per unit using the packages and test targets named above. After U28 and its review checkpoint, the deterministic local final gate is:
 
 ```powershell
 $env:CARGO_BUILD_JOBS = '1'
@@ -1771,7 +2227,7 @@ cargo run -p xtask -- verify
 git diff --check
 ```
 
-The local command block is necessary but not sufficient for U12, U17, or U20. CI must also compile each supported native renderer and platform window backend on its owning platform, run transform and clip primitive conversion/ABI tests, run the designated render-pixel smokes on capable runners, and prove every advertised live window mutation from observed native facts. Those jobs are part of the final gate even though no single developer platform can execute the whole matrix.
+The local command block is necessary but not sufficient for U12, U17, U20, or U28. CI must also compile each supported native renderer and platform window backend on its owning platform, run transform and clip primitive conversion/ABI tests, run the designated render-pixel smokes on capable runners, prove every advertised live window mutation from observed native facts, and execute the real-window multi-viewport scenarios where supported. Those jobs are part of the final gate even though no single developer platform can execute the whole matrix.
 
 Test execution rules:
 
@@ -1789,11 +2245,16 @@ Test execution rules:
 - Dock style correctness requires state-complete structural assertions, immutable per-surface/explicit-host resolver isolation and purity, source-opening versus target-host drag behavior, payload-identity separation, the `DockDropGuideMetrics` migration, and a source scan; pixel-perfect ImGui colors are not evidence and are not a goal.
 - DockSurface correctness is asserted from explicit transaction identities, typed committed controller/observed-runtime events, unique activation-host generations, and exact focus completion. Generic notifications, App-turn coalescing, selection alone, mutation dispatch, a dropped completion subscription, snapshot diffing, or timer passage cannot claim an activation or persistence revision.
 - Platform-window mutation correctness separates queued dispatch from terminal observation, treats state/geometry/restore bounds as one placement domain, verifies partial capabilities only across independent domains on each owning backend, and uses one committed fact cache for public getters, bounds, routes, and snapshots. A queued request cannot satisfy an observed-state assertion.
+- Platform-event correctness is asserted from AppCell-owned typed ingress, application-wide sequence, explicit domain merge and FIFO/cross-window barrier rules, full `WindowId` plus actual domain generations, immutable synchronous-query behavior, busy/idle-equivalent immediate disposition for every migrated hybrid input class, and accepted-or-reinvalidated frame state. A fixed default policy, generic log absence, executor flush, or final snapshot alone cannot prove an ordered input/terminal event was delivered correctly.
+- Native-effect correctness requires entity/controller/runtime guards to be released before native create/show/close/remove/activate/present/mutation work through the current App transaction. Reserved-window callbacks must wait for commit or retire on rollback. An asynchronous current backend implementation is not evidence that a subordinate call site is reentrancy-safe.
+- Dock window-session correctness covers synchronous registry-commit activation of `Opening`, active anchor generations, one runtime handle registry, freeze-before-close, forced policy bypass, multi-surface isolation, stale callback rejection, `Closed` only after registry and native terminal convergence, and reopen only afterward. Native owner relationships or `cx.quit` cannot substitute for surface-scoped teardown.
+- Native drag correctness requires OS-routed source-only captured input, actual capture/recipient observation, z-ordered underlay resolution through the provisional, current screen-to-target conversion, typed foreign-surface rejection, release-time revalidation, one live-undock session/presentation lease and source semantic/focus proxy, explicit presentation states, a visible non-empty provisional frame before `MouseUp`, fallible preflight under suppression, atomic graph/registry/lease/semantic/gate handoff, destination activation/focus completion, compensation, and complete terminal cleanup. Direct target event injection, direct source message injection alone, `IsWindowVisible` alone, or a release-created window cannot satisfy the claim.
+- U28 native scenarios run without correctness retries. Timeouts are failure bounds and cleanup guards, never a retry policy; every failed worker must still terminate and destroy its HWNDs.
 - Redaction tests use unique canary strings, including Table identity/debug-label/selector sources, and assert their absence from live capture, history, diff, Inspector detail/copy, session export, artifact, report, and Gallery fixtures. Post-hoc generic string sanitization does not satisfy this contract.
 
 ## Definition of Done
 
-- U1-U20 are implemented in dependency order. Every unit's focused local tests pass before its commit; platform-owned CI evidence that requires a committed revision passes before that unit and the plan are declared complete.
+- U1-U20 and U24-U28 are implemented in dependency order. Candidate U21-U23 remain separate follow-on epics. Every unit's focused local tests pass before its commit; platform-owned CI evidence that requires a committed revision passes before that unit and the plan are declared complete.
 - `FormStatus::Validating` is reachable from real store activity, stale validation cannot mutate newer state, and UI/DevTools projections agree.
 - Every official overlay family uses the per-window runtime; old component-specific Escape/outside/focus tails and shallow host forwarding are gone. U3/U4 share this completion gate.
 - Nested modal focus trap, controlled close, exit/reopen, callback reentrancy, trigger loss, LIFO restore, and multi-window isolation are proven with real GPUI tests.
@@ -1811,7 +2272,14 @@ Test execution rules:
 - Rectangular and rounded-rect subtree clipping uses one exact paint/hit stack across transforms, presentation, deferred/cache replay, portals, debug, accessibility limits, and supported renderer ABIs. Arbitrary path and silent AABB/native-surface fallbacks are absent.
 - Every Dock render path consumes one complete immutable style resolved by an immutable per-surface or explicit-host pure resolver. Hard-coded production palettes, stale cross-window/subtree style, UI Components reverse dependencies, generic/global style lookup, visual data in payload identity, and the misleading `DockDropGuideStyle` name are absent.
 - Every facade-created Dock host and viewport belongs to one private DockSurface owner with explicit transaction boundaries, monotonic commit-only revisions, typed change events, and one generation-bound activation host per space. Independent commands in one App turn never coalesce; stable-item activation settles from exact focus completion; selection-only remains explicit; snapshot export is revision-consistent; and persistence debounce/I/O remains application-owned.
-- GPUI exposes honest property capabilities, placement-conflict semantics, typed dispatch outcomes, and generation-bound terminal observations, while one committed `WindowPlatformFacts` authority backs public bounds/state/flag getters. Dock no longer carries an ambiguous `live_window_move`, optimistic applied records, or duplicate mutation authority, and owning-platform tests prove every advertised live domain.
+- GPUI exposes honest property capabilities, placement-conflict semantics, typed dispatch outcomes, and generation-bound terminal observations, while one committed `WindowPlatformFacts` authority backs public bounds/state/flag getters. Lifetime activation acceptance and click-focus are independent fields in one coherent no-partial-commit policy domain. Dock no longer carries an ambiguous `live_window_move`, optimistic applied records, or duplicate mutation authority, and owning-platform tests prove every advertised live domain.
+- Native callbacks never disappear because `App` is already borrowed. Every asynchronous callback receives an application-wide sequence and enters the AppCell-owned typed ingress without overtaking backlog; ordered input/terminal facts remain non-droppable behind cancel/close barriers, coalescing is domain-generation-specific, frames are accepted or re-invalidated, and callback-specific diagnostics replace the generic `RefCell already borrowed` loss path. Synchronous native queries use the declared immutable snapshot/conservative contract without recursive App access. Every migrated hybrid input class preserves its handler-derived immediate native disposition under App contention; a fixed fallback or unproven replay fails the plan.
+- GPUI and Dock apply typed native window effects through the current App transaction only after all entity/controller/runtime borrows are released. Reserved/current `WindowId` callbacks settle through the ingress after commit or rollback, and the registered tear-off commit-error close-observer path, sibling reconciliation, activation, mutation observation, and shutdown cannot reborrow the same runtime.
+- Creation-time focus, lifetime activation/click/input, permanent non-activation, accepted/submitted/non-empty presentation, and owner/transient relationships are independent facts. An ordinary detached viewport does not steal initial focus but later activates; a provisional viewport starts with the final native lifetime profile but remains Dock-session-suppressed until same-window promotion; unsupported ownership and optional flags remain explicit.
+- Every facade-managed DockSurface has an explicit `Opening` token, one current active anchor generation, and an idempotent window session. Synchronous window creation must return a committed full `WindowId` before a short token validation activates the session; creation callbacks cannot activate it. The surface owner stores phase/anchor/shutdown, the viewport runtime solely stores window handles, and opening failure or synchronous close settles before viewport admission. Anchor shutdown freezes new work, cancels provisional/pending work, force-closes only the current surface outside all borrows, bypasses `Prevent`/`MergeBack`, leaves other surfaces intact, reaches `Closed` only after registry/native terminal convergence, rejects premature reopen, and never relies on `cx.quit` or stale callbacks.
+- Native captured Dock drag routes from the source using current screen-space and an ordered native/application underlay stack without target raw mouse delivery. Release revalidates the target, foreign-surface hosts are typed rejected targets rather than desktop fallback, all cancel/close paths clear exactly one drag generation, and stale/provisional targets cannot receive a drop.
+- One Dock live-undock session exclusively owns route, provisional reference, presentation lease, source semantic/focus proxy, and compensation saga. Its explicit display states never expose an empty or duplicate shell, and its viewport becomes visibly non-empty before release while the graph/revision remain unchanged. Every fallible promotion step completes under session suppression; one final App transaction atomically commits graph, registry, lease, semantic/focus ownership, and gate removal before destination activation. Creation, renderer/surface, presentation, native preflight, graph commit, cancellation, or shutdown failure restores only a live source, never steals focus on deactivation/shutdown, and leaks no window or duplicate semantic owner.
+- Windows real-HWND and subprocess gates cross WndProc, system-injected pointer routing, actual capture/recipient observation, paint/present, activation/focus/AccessKit handoff, owner, native terminal close, and process-lifetime boundaries. TestPlatform coverage is labeled as simulation and cannot claim native end-to-end credit.
 - Action presentation and command execution remain separate, with no speculative replacement runtime.
 - ADRs and breaking migration documentation match the shipped architecture; stale helpers, aliases, evidence, and docs are deleted.
 - DevTools allowlist and canary tests prove that sensitive free text cannot enter or persist through capture, inspection, export, artifact, report, or Gallery paths.
@@ -1823,7 +2291,7 @@ Test execution rules:
 
 | Requirement | Owning unit(s) | Completion evidence |
 | --- | --- | --- |
-| R1-R2 | all units; preservation gates in U10-U20 | import/dependency scans and preserved-module focused tests |
+| R1-R2 | all units; preservation gates in U10-U20 and U24-U28 | import/dependency scans and preserved-module focused tests |
 | R3 | U1 | lifecycle table tests from store through UI/DevTools |
 | R4 | U2 | final `TreeUpdate` capture and real action dispatch |
 | R5 | U3, completed with U4 | real nested Tab/Shift-Tab and restore tests |
@@ -1834,7 +2302,7 @@ Test execution rules:
 | R12 | U9 | fake-clock cross-collection tests and duplicate implementation deletion |
 | R13 | U10 | federated binding fixtures and source-scanner deletion |
 | R14 | U5, U10 | typed-identity/stage tests and post-U5 Table characterization through export cleanup |
-| R15 | each breaking unit; U11 audits prior surfaces; U12-U20 own their migrations | same-unit migration docs/Gallery/examples/DevTools updates and final residual scan |
+| R15 | each breaking unit; U11 audits prior surfaces; U12-U20 and U24-U28 own their migrations | same-unit migration docs/Gallery/examples/DevTools updates and final residual scan |
 | R16 | U5; preservation gates in U10/U11 | occurrence invalidation and explicit-instance focus/edit/callback/NodeId/measurement tests, normalized partial-order characterization, and Table redaction canaries |
 | R17 | U12 | checked construction/inverse/composition and numeric fail-closed tests, layout invariance, all-primitive scene projection, inverse input/capture, IME/debug/a11y/deferred/cache/motion coverage, Gallery flow, and supported-renderer matrix |
 | R18 | U13 | exact channel matrix, nested/dynamic suppression, stale-state cleanup, transformed/deferred/cache/portal coverage, final-tree absence, and old-authority deletion scans |
@@ -1843,20 +2311,25 @@ Test execution rules:
 | R21 | U16 | nested-axis alignment, focus/AccessKit/application parity, transform-correct deltas, generation cancellation, virtual materialization, and Gallery flow |
 | R22 | U17 | exact rounded containment, all-primitive clip projection, cross-channel inheritance/reset/failure, accessibility limits, renderer ABI, and native pixel smokes |
 | R23 | U18 | complete style/state lookup, immutable resolver isolation/purity, window/subtree and out-of-band drag-generation resolution, payload identity stability, guide-metrics rename, dependency and literal-color scans, Dock example smokes |
-| R24 | U19 | explicit transaction-boundary/coalescing matrix, unique activation-host generations, commit-only revision/event matrix, stable-item activation completion, clone/window lifecycle, revision-consistent snapshot export, caller-owned fake-clock debounce |
-| R25 | U20 | capability plus dispatch/terminal-outcome matrix, coherent placement/restore-bounds conflicts, committed getter authority, Dock independent-domain partial sync, native owning-platform observation tests, old-capability/direct-backend absence scan |
+| R24 | U19, U26-U27 | explicit transaction-boundary/coalescing matrix, unique activation-host and window-session generations, commit-only revision/event matrix, stable-item activation completion, surface lifecycle, revision-consistent snapshot export, caller-owned fake-clock debounce, and provisional non-revision tests |
+| R25 | U20, U24-U25 | capability plus dispatch/terminal-outcome matrix, coherent placement/restore-bounds conflicts, coherent two-field activation-policy domain, committed getter authority, Dock independent-domain partial sync, callback-safe observations, separate appearance/activation facts, native owning-platform tests, and old-capability/direct-backend absence scan |
+| R26 | U24, U28 | AppCell-owned ingress, application sequence and merge/FIFO/barrier matrix, synchronous-query snapshots, busy/idle-equivalent hybrid input disposition, already-borrowed replay, full-`WindowId` commit/rollback isolation, borrow-free subordinate effects, accepted-or-reinvalidated frame tests, and real nested native-message evidence |
+| R27 | U25, U28 | independent appearance/activation/input/owner contract, deletion of live focus-on-appear mutation, accepted/submitted/non-empty presentation generations, no-focus-then-activate native flow, owner capability tests, and same-window session promotion |
+| R28 | U26, U28 | synchronous registry-commit activation of opening token, sole runtime handle registry, forced shutdown policy, borrow-free close snapshot, terminal native-window convergence before `Closed`/reopen, stale generations, multi-surface isolation, real HWND and process convergence |
+| R29 | U27-U28 | OS-routed source-only captured move/up, actual capture/recipient facts, z-ordered underlay resolution through provisional windows, screen/DPI conversion, current same-surface host eligibility, foreign-surface rejection, release revalidation, cancel/close barriers, and real two-HWND preview/drop evidence |
+| R30 | U27-U28 | one live-undock session, presentation lease, and semantic/focus proxy, explicit presentation states, non-empty pre-release viewport, fallible preflight under suppression, atomic graph/registry/lease/semantic/gate handoff, destination focus completion, exhaustive release/cancel/failure table, and leak-free native teardown |
 
 ### Priority Rationale
 
 - **P0 correctness:** U1 and U2. They fix data corruption risk and make a critical user-facing authority observable.
-- **P1 interaction/runtime:** U3-U6, U12-U17, and U19-U20. They resolve modal, focus, accessibility, activation, geometry, presentation, announcement, anchoring, reveal, clipping, Dock application ownership, and native viewport correctness with the largest user impact. The later units were discovered or promoted by substrate and real-consumer audits; their execution position does not reduce their severity.
+- **P1 interaction/runtime:** U3-U6, U12-U17, U19-U20, and U24-U28. They resolve modal, focus, accessibility, activation, geometry, presentation, announcement, anchoring, reveal, clipping, Dock application ownership, platform-event loss, native window semantics, session teardown, and real multi-viewport drag with the largest user impact. The later units were discovered or promoted by substrate, real-consumer, and owning-platform audits; their execution position does not reduce their severity.
 - **P2 framework depth:** U7-U9 and U18. Scoped resolution is proven before the complete Theme v1 replaces its payload; typeahead improves interaction consistency independently; Dock visual styling then consumes the established theme boundary without inverting dependencies.
 - **P3 convergence/release:** U10-U11. They delete drift-prone scaffolding only after executable authorities can replace it.
 
 ### Deferred Follow-on Research
 
 These candidates have no requirement IDs, acceptance credit, or Definition-of-Done credit in this
-plan. Candidate U21-U23 are post-plan scheduling handles only; U12-U20 must not add public
+plan. Candidate U21-U23 are post-plan scheduling handles only; U12-U20 and U24-U28 must not add public
 placeholders for them.
 
 - **Group opacity and compositing:** determine isolation boundaries, offscreen target ownership, nested blend semantics, native-surface behavior, cache invalidation, GPU memory cost, and backend parity before exposing subtree opacity as more than a leaf paint property.
@@ -1872,7 +2345,7 @@ placeholders for them.
 - The renderer-neutral accessibility vocabulary stays unless an individual type demonstrably adds no domain value; only duplicate mappings/evidence are deleted.
 - `open-gpui-motion` retains execution ownership; theme supplies policy/defaults only.
 - Taffy measurement, layout order, scroll extent, and sibling flow stay authoritative; U12, U13, U15, U16, and U17 consume committed layout without replacing it. Existing renderer matrices and clip payloads remain internal projections rather than public subtree semantics.
-- Dock retains its canonical retained `DockGraph`, n-ary same-axis split normalization, transaction/session generations, and explicit `DockLayout`/`DockSurfaceSnapshot` persistence values. U18-U20 do not port ImGui's immediate-mode context or binary node identity.
+- Dock retains its canonical retained `DockGraph`, n-ary same-axis split normalization, transaction/session generations, and explicit `DockLayout`/`DockSurfaceSnapshot` persistence values. U18-U20 and U24-U28 do not port ImGui's immediate-mode context or binary node identity; U27 adds a transient presentation lease without making provisional state durable topology.
 - `Display::None`, component disabled state, overlay presence, and decorative semantic omission remain distinct facts; U13 deletes only competing ancestor-level presentation authorities.
 - Cargo/typed contracts remain the distribution seam; no registry/scaffold system returns.
 
@@ -1891,6 +2364,13 @@ placeholders for them.
 - After U17: require cross-backend paint/hit parity, deferred/cache/portal and presentation review, accessibility-limit documentation, and source scans proving no rectangle-only competing stack or arbitrary path placeholder remains.
 - After U18: require Dock/theme/dependency review of style completeness, resolver scope/purity, cache/deferred and cross-window/subtree resolution, out-of-band drag source/target generation semantics, payload identity stability, guide-metrics naming, and hard-coded palette deletion.
 - After U19: require Dock/application/focus review of explicit transaction boundaries, same-turn independent commands, commit-only observed event ordering, revision coalescing, unique activation-host generations, activation terminal outcomes, reentrancy, close/replacement, and caller-owned persistence.
-- Before U20 public API: require Windows/macOS/Linux capability and legacy-return census plus review of coordinate spaces, creation-only versus live flags, placement/restore-bounds conflict semantics, dispatch/terminal-observation vocabulary, committed getter authority, independent-domain partial batches, and test feasibility.
+- Before U20 public API: require Windows/macOS/Linux capability and legacy-return census plus review of coordinate spaces, creation-only versus live flags, placement/restore-bounds conflict semantics, coherent two-field activation-policy semantics, dispatch/terminal-observation vocabulary, committed getter authority, independent-domain partial batches, and test feasibility.
 - After U20: require owning-platform evidence for every advertised live domain plus Dock route/placement/readiness review proving coherent observed facts remain authoritative and dispatch never creates a persistence revision.
-- Before completion: simplify-code pass, structured code review, supported-platform renderer and window-mutation evidence, full Verification Contract after U20, and release-doc audit.
+- Before U24 implementation: require a callback-by-callback asynchronous-event, synchronous-query, and hybrid-result taxonomy; a consumed/propagated busy-versus-idle native-disposition prototype for every migrated hybrid class; application ingress sequence plus merge/FIFO/cross-window barrier rules; full-`WindowId`/domain-generation identity; and an audit of every native effect currently executed under App/entity/controller/runtime borrows.
+- After U24: require GPUI/platform/Dock reentrancy review of AppCell ingress ownership, immutable query snapshots, handler-equivalent hybrid dispositions without fixed fallback, bounded fair drain, terminal ordering, reserved-window commit/rollback delivery, subordinate effect boundaries, frame invalidation/validation, nested callbacks, and the tear-off close-observer failure path.
+- Before U25 public API: require Windows/macOS/Linux/web review of creation-only `focus_on_appearing`, lifetime activation/click/input, deletion of live focus-on-appear mutation, permanent non-activation, owner/transient semantics, accepted/submitted/non-empty presentation, and same-window session promotion.
+- After U26: require Dock/application/platform review of non-overlapping owner/runtime/live-undock state, synchronous registry-commit activation of opening tokens, explicit reopen only after registry/native terminal convergence, freeze/snapshot/release/apply shutdown, forced close-policy bypass, stale callbacks, commit-only revisions, and two-surface isolation without `cx.quit`.
+- Before U27 live content: require Dock/GPUI/accessibility review of the single live-undock session, controller-owned presentation lease, source semantic/focus proxy, explicit provisional presentation states, session suppression, z-ordered underlay and foreign-surface qualification, exhaustive release/focus/accessibility decisions, gate-preserving preflight, atomic final handoff, and renderer/surface failure rollback.
+- After U27: require native-input/Dock review of source-capture transport, target raw-event independence, underlay resolution through the provisional, release revalidation, all terminal cancellation paths, visible non-empty pre-release presentation, same-window promotion, one-window reuse, destination activation/focus/AccessKit ownership, and graph/registry/lease/gate atomicity.
+- After U28: require evidence review proving the designated tests use U24's real-HWND support, system-level pointer injection without a selected receiver, actual WndProc/capture/present/lifetime boundaries, delayed-close/reopen exclusion, every reported regression's failure path, deterministic worker cleanup, and honest VisualTest labeling.
+- Before completion: simplify-code pass, structured code review, supported-platform renderer/window-mutation/multi-viewport evidence, full Verification Contract after U28, and release-doc audit.
