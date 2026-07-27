@@ -26,7 +26,7 @@ use open_gpui::{
     PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
     PlatformWindowMutationCapabilities, Result, RunnableVariant, Task, ThermalState,
-    WindowAppearance, WindowButtonLayout, WindowParams,
+    WindowAppearance, WindowButtonLayout, WindowKind, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use open_gpui::{CursorStyle, Pixels, Point, px};
