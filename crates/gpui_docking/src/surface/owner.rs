@@ -1,6 +1,6 @@
-use super::DockSurfaceActivationState;
+use super::{DockSurfaceActivationState, window_session::DockSurfaceWindowSession};
 use crate::{DockController, DockSpaceId, DockViewportRuntimeHandle};
-use open_gpui::{App, AppContext, Context, Entity, EventEmitter, Subscription};
+use open_gpui::{App, AppContext, Context, Entity, EntityId, EventEmitter, Subscription};
 
 /// A durable category of committed docking-surface change.
 ///
@@ -118,6 +118,7 @@ pub(crate) struct DockSurfaceOwner {
     controller: Entity<DockController>,
     viewport_runtime: DockViewportRuntimeHandle,
     primary_space: DockSpaceId,
+    window_session: DockSurfaceWindowSession,
     activation: DockSurfaceActivationState,
     revision: u64,
     last_transaction_id: u64,
@@ -130,11 +131,13 @@ impl DockSurfaceOwner {
         controller: Entity<DockController>,
         viewport_runtime: DockViewportRuntimeHandle,
         primary_space: DockSpaceId,
+        entity_id: EntityId,
     ) -> Self {
         Self {
             controller,
             viewport_runtime,
             primary_space,
+            window_session: DockSurfaceWindowSession::new(entity_id),
             activation: DockSurfaceActivationState::new(),
             revision: 0,
             last_transaction_id: 0,
@@ -155,6 +158,14 @@ impl DockSurfaceOwner {
     /// Returns the default logical dock space.
     pub(crate) fn primary_space(&self) -> &DockSpaceId {
         &self.primary_space
+    }
+
+    pub(crate) fn window_session(&self) -> &DockSurfaceWindowSession {
+        &self.window_session
+    }
+
+    pub(crate) fn window_session_mut(&mut self) -> &mut DockSurfaceWindowSession {
+        &mut self.window_session
     }
 
     pub(crate) fn activation(&self) -> &DockSurfaceActivationState {

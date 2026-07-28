@@ -5,6 +5,10 @@ mod panel;
 mod state;
 mod viewport;
 mod viewport_readiness;
+pub(crate) mod window_session;
+
+#[cfg(test)]
+mod window_session_tests;
 
 pub use activation::{DockSurfaceActivationOutcome, DockSurfaceActivationRequestId};
 pub use builder::{DockSurfaceBuildError, DockSurfaceBuilder};
@@ -19,9 +23,9 @@ pub use viewport::{
     DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
     DockSurfaceViewportOpened, DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
-    DockSurfaceViewportSession, DockSurfaceViewportShouldCloseOutcome,
-    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
-    DockSurfaceViewportUnavailable,
+    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
+    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportUnavailable,
+    DockSurfaceViewports,
 };
 pub use viewport_readiness::{
     DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
@@ -30,6 +34,11 @@ pub use viewport_readiness::{
     DockSurfaceViewportReadinessReport, DockSurfaceViewportReadinessStatus,
     DockSurfaceViewportRouteStatus, DockSurfaceViewportStaleReason,
     DockSurfaceViewportUnsupportedFlag,
+};
+pub use window_session::{
+    DockSurfacePrimaryWindowOpenConflict, DockSurfaceWindowSessionOpeningRollbackReason,
+    DockSurfaceWindowSessionPhase, DockSurfaceWindowSessionReason,
+    DockSurfaceWindowSessionShutdownReason, DockSurfaceWindowSessionStatus,
 };
 
 use crate::{
@@ -97,8 +106,14 @@ impl DockSurface {
             }
             None => DockViewportRuntimeHandle::with_close_policy(controller.clone(), close_policy),
         };
-        let owner =
-            cx.new(|_| DockSurfaceOwner::new(controller, viewport_runtime, primary_space.clone()));
+        let owner = cx.new(|cx| {
+            DockSurfaceOwner::new(
+                controller,
+                viewport_runtime,
+                primary_space.clone(),
+                cx.entity_id(),
+            )
+        });
         let weak_owner = owner.downgrade();
         let runtime = cx.read_entity(&owner, |owner, _| owner.runtime());
         runtime.install_surface_owner(owner.downgrade());
@@ -146,6 +161,11 @@ impl DockSurface {
 
     pub(crate) fn owner(&self) -> &Entity<DockSurfaceOwner> {
         &self.owner
+    }
+
+    /// Returns a read-only snapshot of this surface's primary-window session.
+    pub fn window_session_status(&self, cx: &App) -> DockSurfaceWindowSessionStatus {
+        cx.read_entity(&self.owner, |owner, _| owner.window_session().status())
     }
 
     /// Returns the default logical dock space for primary host windows.

@@ -307,9 +307,20 @@ fn common_import_paths_compile() {
     let root_viewport_restore_outcome_space = root::DockSurfaceViewportRestoreOutcome::space;
     let root_close_merge_target = root::DockSurfaceViewportCloseOutcome::merge_target_space;
     let prelude_should_close_allows = prelude::DockSurfaceViewportShouldCloseOutcome::allows_close;
-    let root_viewport_session_type: Option<root::DockSurfaceViewportSession> = None;
-    let prelude_viewport_session_type: Option<prelude::DockSurfaceViewportSession> = None;
+    let root_viewports_type: Option<root::DockSurfaceViewports> = None;
+    let prelude_viewports_type: Option<prelude::DockSurfaceViewports> = None;
     let root_surface_viewports = root::DockSurface::viewports;
+    let root_window_session_phase = root::DockSurfaceWindowSessionPhase::Vacant;
+    let prelude_window_session_reason: Option<prelude::DockSurfaceWindowSessionReason> = None;
+    let root_window_session_shutdown_reason =
+        root::DockSurfaceWindowSessionShutdownReason::AppShutdown;
+    let prelude_window_session_rollback_reason =
+        prelude::DockSurfaceWindowSessionOpeningRollbackReason::Cancelled;
+    let root_window_session_status: fn(
+        &root::DockSurface,
+        &open_gpui::App,
+    ) -> root::DockSurfaceWindowSessionStatus = root::DockSurface::window_session_status;
+    let root_primary_open_conflict: Option<root::DockSurfacePrimaryWindowOpenConflict> = None;
     let root_snapshot_type: Option<root::DockSurfaceSnapshot> = None;
     let prelude_snapshot_type: Option<prelude::DockSurfaceSnapshot> = None;
     let root_surface_export_snapshot: fn(
@@ -378,9 +389,15 @@ fn common_import_paths_compile() {
         root_viewport_restore_outcome_space,
         root_close_merge_target,
         prelude_should_close_allows,
-        root_viewport_session_type,
-        prelude_viewport_session_type,
+        root_viewports_type,
+        prelude_viewports_type,
         root_surface_viewports,
+        root_window_session_phase,
+        prelude_window_session_reason,
+        root_window_session_shutdown_reason,
+        prelude_window_session_rollback_reason,
+        root_window_session_status,
+        root_primary_open_conflict,
         root_snapshot_type,
         prelude_snapshot_type,
         root_surface_export_snapshot,
@@ -417,6 +434,25 @@ fn removed_drop_guide_style_name_is_absent_from_public_authority_sources() {
             .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
         assert!(!source.contains("DockDropGuideStyle"));
         assert!(!source.contains("drop_guide_style"));
+    }
+}
+
+#[test]
+fn removed_viewport_session_facade_name_is_absent_from_public_authority_sources() {
+    for file_name in [
+        "src/lib.rs",
+        "src/prelude.rs",
+        "src/surface.rs",
+        "src/surface/viewport.rs",
+        "README.md",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file_name);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+        assert!(
+            !source.contains("DockSurfaceViewportSession"),
+            "{file_name} retained the removed viewport-session facade name"
+        );
     }
 }
 

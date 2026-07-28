@@ -18,7 +18,7 @@ Low-level controller, graph, action, workspace, host, raw layout parts, and runt
   outcomes.
 - `DockSurfaceSnapshot` as the revision-consistent app-level persistence payload that combines
   durable layout with facade-opened viewport placement hints.
-- `DockSurfaceViewportSession`, `DockSurfaceViewportSpec`, `DockSurfaceViewportReadinessReport`,
+- `DockSurfaceViewports`, `DockSurfaceViewportSpec`, `DockSurfaceViewportReadinessReport`,
   `DockSurfaceViewportOpenReport`, and `DockSurfaceViewportRestoreReport` as facade-level platform
   window lifecycle, requests, capability checks, and batch outcomes for multi-viewport applications.
 - `DockSurfaceViewportShouldCloseOutcome` and `DockSurfaceViewportCloseOutcome` as facade-level
@@ -54,7 +54,7 @@ Platform viewport windows fail closed unless both gates are true:
 - Application policy allows them through `DockSurfaceBuilder::allow_platform_viewports(true)` or `DockPolicy`.
 - The active backend reports `PlatformViewportCapabilities::platform_viewport_windows`.
 
-`DockSurface::viewports` returns a `DockSurfaceViewportSession` for the common multi-window path. The session can check `readiness`, `readiness_many`, or `restore_readiness` before opening windows, then open detached dock spaces, restore saved placement data, export placement snapshots, and handle GPUI close hooks while keeping applications away from raw runtime handles. Readiness and open outcomes distinguish policy-disabled, backend-unsupported, unsupported requested platform flags, invalid placement, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
+`DockSurface::viewports` returns a `DockSurfaceViewports` facade for the common multi-window path. The facade can check `readiness`, `readiness_many`, or `restore_readiness` before opening windows, then open detached dock spaces, restore saved placement data, export placement snapshots, and handle GPUI close hooks while keeping applications away from raw runtime handles. Readiness and open outcomes distinguish policy-disabled, backend-unsupported, unsupported requested platform flags, invalid placement, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
 
 For an already-open detached viewport, Dock projects GPUI's property-specific window-mutation
 capabilities from that viewport window's actual immutable kind and target-display profile. Its

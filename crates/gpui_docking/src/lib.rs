@@ -39,7 +39,7 @@
 //! Applications can persist both logical layout and facade-opened viewport placement through
 //! [`DockSurface::export_snapshot`], then restore the durable layout through
 //! [`DockSurfaceBuilder::try_snapshot`] before reopening platform windows through
-//! [`DockSurfaceViewportSession::restore_snapshot`].
+//! [`DockSurfaceViewports::restore_snapshot`].
 //! Multi-window applications should keep one [`DockSurface`] as the graph, panel, and host-window
 //! owner, use [`DockSurface::viewports`] for controller-backed viewport lifecycle, and use
 //! [`DockSurface::detach_panel_to_space`] before opening a panel in a child dock space. Direct
@@ -313,17 +313,21 @@ pub use surface::{
     DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange, DockSurfaceChangeCategory,
     DockSurfaceChangeEvent, DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError,
     DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
-    DockSurfacePanelSnapshot, DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome,
-    DockSurfaceViewportCloseStatus, DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
+    DockSurfacePanelSnapshot, DockSurfacePrimaryWindowOpenConflict, DockSurfaceSnapshot,
+    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
+    DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
     DockSurfaceViewportLifecycleReadiness, DockSurfaceViewportOpenOutcome,
     DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
     DockSurfaceViewportPlatformCapabilities, DockSurfaceViewportPlatformReadiness,
     DockSurfaceViewportReadiness, DockSurfaceViewportReadinessReport,
     DockSurfaceViewportReadinessStatus, DockSurfaceViewportRestoreOutcome,
-    DockSurfaceViewportRestoreReport, DockSurfaceViewportRouteStatus, DockSurfaceViewportSession,
+    DockSurfaceViewportRestoreReport, DockSurfaceViewportRouteStatus,
     DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
     DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportStaleReason,
-    DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag,
+    DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag, DockSurfaceViewports,
+    DockSurfaceWindowSessionOpeningRollbackReason, DockSurfaceWindowSessionPhase,
+    DockSurfaceWindowSessionReason, DockSurfaceWindowSessionShutdownReason,
+    DockSurfaceWindowSessionStatus,
 };
 pub(crate) use viewport::*;
 #[cfg(test)]

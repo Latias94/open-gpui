@@ -4,9 +4,9 @@ use crate::{
     DockSurfaceChangeCategory, DockSurfacePanelError, DockSurfacePanelLocationKind,
     DockSurfacePanelOutcome, DockSurfaceSnapshot, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportReadinessStatus, DockSurfaceViewportSession,
-    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
-    DockSurfaceViewportUnsupportedFlag, DockViewportClosePolicy, DockViewportPlacement,
+    DockSurfaceViewportReadinessStatus, DockSurfaceViewportShouldCloseStatus,
+    DockSurfaceViewportSpec, DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag,
+    DockSurfaceViewports, DockViewportClosePolicy, DockViewportPlacement,
     DockViewportPlacementLayout, DockViewportRestoreReadiness, DockViewportWindowBounds,
     DockViewportWindowState,
     model::{DockLayoutNode, DockLayoutSpace},
@@ -692,7 +692,7 @@ fn surface_revisions_only_observed_platform_placement_not_queued_dispatch(
 }
 
 #[open_gpui::test]
-fn surface_viewport_session_opens_detached_panel_space(cx: &mut open_gpui::TestAppContext) {
+fn surface_viewports_facade_opens_detached_panel_space(cx: &mut open_gpui::TestAppContext) {
     cx.update(|cx| {
         let child_space = DockSpaceId::from("preview-window");
         let surface = DockSurface::builder("main")
@@ -707,7 +707,7 @@ fn surface_viewport_session_opens_detached_panel_space(cx: &mut open_gpui::TestA
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
-        let viewports: DockSurfaceViewportSession = surface.viewports();
+        let viewports: DockSurfaceViewports = surface.viewports();
 
         let detached = surface
             .detach_panel_to_space("main", "preview", child_space.clone(), cx)
