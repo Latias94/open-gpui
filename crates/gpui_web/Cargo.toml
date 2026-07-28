@@ -25,6 +25,9 @@ path = "src/gpui_web.rs"
 [dependencies]
 open_gpui.workspace = true
 
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
+
 [target.'cfg(target_family = "wasm")'.dependencies]
 parking_lot = { workspace = true, features = ["nightly"] }
 open_gpui_wgpu.workspace = true

@@ -388,13 +388,18 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
         .expect("transformed DockHost fixture window should remain live");
     cx.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear());
-    host.update(cx, |host, _| {
+    let restored_generation = host.update(cx, |host, _| {
         assert!(
             host.viewport_runtime()
                 .rendered_leaf_bounds_for_tabs(host.space(), Some(window_id), root)
                 .is_some(),
             "restoring the host subtree must publish a fresh route scene"
         );
+        host.viewport_runtime()
+            .borrow()
+            .adapter()
+            .snapshot_facts_generation(host.space(), window_id)
+            .expect("the restored host subtree must publish current route facts")
     });
 
     window
@@ -412,8 +417,8 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
                 .borrow()
                 .adapter()
                 .snapshot_facts_generation(host.space(), window_id),
-            Some(second_generation),
-            "cached journal replay must preserve the committed route generation"
+            Some(restored_generation),
+            "cached journal replay must preserve the restored route generation"
         );
         assert!(host.interaction().viewport_host_scene_frame().is_some());
         assert!(host.last_presentation_scene().is_some());
@@ -2919,8 +2924,14 @@ fn platform_activation_notifies_when_pending_activation_is_consumed_without_new_
     workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
     let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
     let controller = host.update(cx, |host, _| host.controller().clone());
-    let activation = DockViewportActivationTransaction::new(
-        space(),
+    let registration = cx
+        .read_entity(&host, |host, _| {
+            host.viewport_runtime()
+                .registration_key_for_space_window(host.space(), window.window_id())
+        })
+        .expect("rendered host should have an exact viewport registration");
+    let activation = DockViewportActivationTransaction::registered(
+        registration,
         window,
         DockViewportFocusRequest::panel("b"),
     );

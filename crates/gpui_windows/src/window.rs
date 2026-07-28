@@ -4,7 +4,7 @@ use std::{
     cell::{Cell, RefCell},
     num::NonZeroIsize,
     path::PathBuf,
-    rc::{Rc, Weak},
+    rc::Rc,
     str::FromStr,
     sync::{
         Arc, Once,
@@ -37,6 +37,79 @@ use open_gpui::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeWindowLifecycle {
+    Live,
+    Destroying,
+    Destroyed,
+}
+
+struct CreatedNativeWindowGuard {
+    hwnd: Option<HWND>,
+}
+
+impl CreatedNativeWindowGuard {
+    fn new(hwnd: HWND) -> Self {
+        Self { hwnd: Some(hwnd) }
+    }
+
+    fn commit(mut self) {
+        self.hwnd = None;
+    }
+}
+
+impl Drop for CreatedNativeWindowGuard {
+    fn drop(&mut self) {
+        let Some(hwnd) = self.hwnd.take() else {
+            return;
+        };
+        if unsafe { IsWindow(Some(hwnd)).as_bool() } {
+            unsafe {
+                DestroyWindow(hwnd)
+                    .context("rolling back partially constructed native window")
+                    .log_err();
+            }
+        }
+    }
+}
+
+struct ModalParentGuard {
+    hwnd: Option<HWND>,
+}
+
+impl ModalParentGuard {
+    fn acquire(parent_hwnd: Option<HWND>) -> Self {
+        let hwnd = parent_hwnd.filter(|parent_hwnd| unsafe {
+            if !IsWindowEnabled(*parent_hwnd).as_bool() {
+                return false;
+            }
+            let _ = EnableWindow(*parent_hwnd, false);
+            true
+        });
+        Self { hwnd }
+    }
+
+    fn owns_disable(&self) -> bool {
+        self.hwnd.is_some()
+    }
+
+    fn commit(mut self) {
+        self.hwnd = None;
+    }
+}
+
+impl Drop for ModalParentGuard {
+    fn drop(&mut self) {
+        let Some(hwnd) = self.hwnd.take() else {
+            return;
+        };
+        unsafe {
+            let _ = EnableWindow(hwnd, true);
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+}
+
 impl std::ops::Deref for WindowsWindow {
     type Target = WindowsWindowInner;
 
@@ -57,7 +130,7 @@ pub struct WindowsWindowState {
     pub restore_from_minimized: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
 
     pub callbacks: Callbacks,
-    pub input_handler: Cell<Option<PlatformInputHandler>>,
+    pub input_handler: PlatformInputHandlerSlot,
     pub ime_enabled: Cell<bool>,
     pub pending_surrogate: Cell<Option<u16>>,
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
@@ -103,7 +176,10 @@ pub struct WindowsWindowState {
 }
 
 pub(crate) struct WindowsWindowInner {
-    hwnd: HWND,
+    pub(crate) hwnd: HWND,
+    native_window_lifecycle: Cell<NativeWindowLifecycle>,
+    drag_drop_registered: Cell<bool>,
+    show_on_initial_presentation: Cell<bool>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: WindowsWindowState,
     system_settings: WindowsSystemSettings,
@@ -112,9 +188,15 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) validation_number: usize,
+    pub(crate) registration: RegisteredWindow,
+    pub(crate) recovered_directx_devices: Arc<parking_lot::RwLock<Option<DirectXDevices>>>,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
+    raw_window_handles: std::sync::Weak<RegisteredWindows>,
     pub(crate) parent_hwnd: Option<HWND>,
+    modal_parent_disabled: Cell<bool>,
+    #[cfg(test)]
+    lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
 
 impl WindowsWindowState {
@@ -155,7 +237,7 @@ impl WindowsWindowState {
         let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
             .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
-        let input_handler = None;
+        let input_handler = PlatformInputHandlerSlot::default();
         let pending_surrogate = None;
         let last_reported_modifiers = None;
         let last_reported_capslock = None;
@@ -184,7 +266,7 @@ impl WindowsWindowState {
             restore_from_minimized: Cell::new(restore_from_minimized),
             min_size,
             callbacks,
-            input_handler: Cell::new(input_handler),
+            input_handler,
             ime_enabled: Cell::new(true),
             pending_surrogate: Cell::new(pending_surrogate),
             last_reported_modifiers: Cell::new(last_reported_modifiers),
@@ -301,6 +383,9 @@ impl WindowsWindowInner {
 
         Ok(Rc::new(Self {
             hwnd,
+            native_window_lifecycle: Cell::new(NativeWindowLifecycle::Live),
+            drag_drop_registered: Cell::new(false),
+            show_on_initial_presentation: Cell::new(context.show_on_initial_presentation),
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
@@ -308,18 +393,334 @@ impl WindowsWindowInner {
             is_movable: context.is_movable,
             executor: context.executor.clone(),
             validation_number: context.validation_number,
+            registration: RegisteredWindow::new(hwnd, context.native_window_generation),
+            recovered_directx_devices: context.recovered_directx_devices.clone(),
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
+            raw_window_handles: context.raw_window_handles.clone(),
             system_settings: WindowsSystemSettings::new(),
             parent_hwnd: context.parent_hwnd,
+            modal_parent_disabled: Cell::new(context.modal_parent_disabled),
+            #[cfg(test)]
+            lifecycle_test_probe: context.lifecycle_test_probe.clone(),
         }))
+    }
+
+    fn retire_native_callbacks(&self) {
+        self.state.input_handler.terminate();
+        self.state.callbacks.input.terminate();
+        self.state.callbacks.should_close.terminate();
+    }
+
+    pub(crate) fn accepts_generation_bound_message(&self, generation: usize) -> bool {
+        self.native_window_lifecycle.get() == NativeWindowLifecycle::Live
+            && self.registration.generation() == generation
+    }
+
+    fn revoke_drag_drop(&self) {
+        if !self.drag_drop_registered.replace(false) {
+            return;
+        }
+        unsafe {
+            RevokeDragDrop(self.hwnd)
+                .context("revoking native window drag-drop registration")
+                .log_err();
+        }
+    }
+
+    fn unregister_from_platform(&self) {
+        let Some(raw_window_handles) = self.raw_window_handles.upgrade() else {
+            return;
+        };
+        let mut raw_window_handles = raw_window_handles.write();
+        if let Some(index) = raw_window_handles
+            .iter()
+            .position(|registered| registered.matches(self.registration))
+        {
+            raw_window_handles.remove(index);
+        }
+    }
+
+    pub(crate) fn mark_native_window_destroying(&self) {
+        if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
+            return;
+        }
+        self.native_window_lifecycle
+            .set(NativeWindowLifecycle::Destroying);
+        self.settle_pointer_capture_before_native_teardown();
+        self.retire_native_callbacks();
+        self.unregister_from_platform();
+        self.revoke_drag_drop();
+    }
+
+    pub(crate) fn mark_native_window_destroyed(&self) {
+        if self.native_window_lifecycle.get() == NativeWindowLifecycle::Destroyed {
+            return;
+        }
+        self.settle_pointer_capture_before_native_teardown();
+        self.native_window_lifecycle
+            .set(NativeWindowLifecycle::Destroyed);
+        self.retire_native_callbacks();
+        self.drag_drop_registered.set(false);
+        self.release_modal_parent();
+    }
+
+    pub(crate) fn release_modal_parent(&self) {
+        if !self.modal_parent_disabled.replace(false) {
+            return;
+        }
+        let Some(parent_hwnd) = self.parent_hwnd else {
+            return;
+        };
+        unsafe {
+            let _ = EnableWindow(parent_hwnd, true);
+            let _ = SetForegroundWindow(parent_hwnd);
+        }
+    }
+
+    pub(crate) fn destroy_native_window(&self) -> bool {
+        if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
+            return false;
+        }
+        #[cfg(test)]
+        if self.lifecycle_test_probe.take_fail_next_destroy() {
+            return false;
+        }
+
+        if unsafe { IsWindow(Some(self.hwnd)).as_bool() } {
+            self.settle_pointer_capture_before_native_teardown();
+            if let Err(error) = unsafe { DestroyWindow(self.hwnd) } {
+                log::error!("failed to destroy native window: {error}");
+                return false;
+            }
+        }
+        if unsafe { !IsWindow(Some(self.hwnd)).as_bool() } {
+            self.mark_native_window_destroyed();
+        }
+        true
+    }
+
+    fn is_native_window_terminal(&self) -> bool {
+        if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
+            return true;
+        }
+        if unsafe { !IsWindow(Some(self.hwnd)).as_bool() } {
+            self.mark_native_window_destroyed();
+            return true;
+        }
+        false
+    }
+
+    fn prepare_pending_initial_placement(&self) -> Result<()> {
+        let Some(open_status) = self.state.initial_placement.take() else {
+            return Ok(());
+        };
+        let rect = open_status.placement.rcNormalPosition;
+        let result = unsafe {
+            SetWindowPos(
+                self.hwnd,
+                None,
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        }
+        .context("failed to prepare hidden window placement");
+        self.state.initial_placement.set(Some(open_status));
+        result
+    }
+
+    fn present_pending_initial_placement(
+        self: &Rc<Self>,
+        activate: bool,
+        force_show: bool,
+    ) -> Result<bool> {
+        if !force_show && !self.show_on_initial_presentation.get() {
+            return Ok(false);
+        }
+        let Some(open_status) = self.state.initial_placement.take() else {
+            return Ok(false);
+        };
+        #[cfg(test)]
+        if self
+            .lifecycle_test_probe
+            .take_fail_next_initial_presentation()
+        {
+            self.state.initial_placement.set(Some(open_status));
+            anyhow::bail!("injected initial-presentation failure");
+        }
+        let result = (|| {
+            let rect = open_status.placement.rcNormalPosition;
+            unsafe {
+                SetWindowPos(
+                    self.hwnd,
+                    None,
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                )
+            }
+            .context("failed to apply initial restore geometry")?;
+
+            match open_status.state {
+                WindowOpenState::Maximized => unsafe {
+                    let mut placement = open_status.placement;
+                    placement.showCmd = SW_SHOWMAXIMIZED.0 as u32;
+                    SetWindowPlacement(self.hwnd, &placement)
+                        .context("failed to apply initial maximized placement")?;
+                },
+                WindowOpenState::Fullscreen => {
+                    if !self.state.is_fullscreen() {
+                        self.toggle_fullscreen_now()?;
+                    }
+                }
+                WindowOpenState::Windowed => {}
+            }
+
+            let command = match (open_status.state, activate) {
+                (WindowOpenState::Maximized, true) => SW_MAXIMIZE,
+                (WindowOpenState::Maximized, false) => SW_SHOWNA,
+                (WindowOpenState::Fullscreen | WindowOpenState::Windowed, true) => SW_SHOWNORMAL,
+                (WindowOpenState::Fullscreen | WindowOpenState::Windowed, false) => {
+                    SW_SHOWNOACTIVATE
+                }
+            };
+            unsafe {
+                let _ = ShowWindow(self.hwnd, command);
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.show_on_initial_presentation.set(false);
+                Ok(true)
+            }
+            Err(error) => {
+                self.state.initial_placement.set(Some(open_status));
+                Err(error)
+            }
+        }
+    }
+
+    fn complete_initial_presentation(
+        self: &Rc<Self>,
+        activate: bool,
+    ) -> PlatformWindowCommandOutcome {
+        if self.is_native_window_terminal() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+        #[cfg(test)]
+        self.lifecycle_test_probe
+            .run_initial_presentation_hook(self.hwnd);
+        match self.present_pending_initial_placement(activate, false) {
+            Ok(_) => PlatformWindowCommandOutcome::Accepted,
+            Err(error) => {
+                log::error!("failed to complete initial window presentation: {error:#}");
+                PlatformWindowCommandOutcome::Rejected
+            }
+        }
+    }
+
+    /// Must stay synchronous because activation APIs can pump window messages and command
+    /// dispatch runs only after the application has released its mutable borrow.
+    fn activate_now(self: &Rc<Self>) {
+        if self.is_native_window_terminal() {
+            return;
+        }
+
+        let hwnd = self.hwnd;
+        let deferred_placement = self.state.deferred_placement_mutation.take();
+        let had_initial_placement = self.has_pending_initial_placement();
+        let before_facts = deferred_placement.map(|_| {
+            self.observed_platform_facts_from_native()
+                .unwrap_or_else(|_| self.cached_platform_facts())
+        });
+        let placement_result = (|| {
+            if let Some(deferred) = deferred_placement {
+                self.merge_deferred_initial_placement(deferred.request)?;
+            }
+            self.present_pending_initial_placement(true, true)
+                .map(|_| ())
+        })();
+
+        if let Some(deferred) = deferred_placement {
+            if self.placement_mutation_is_current(deferred.generation)
+                && (unsafe { IsWindow(Some(hwnd)).as_bool() })
+            {
+                let (terminal, facts) = self.terminal_facts_after_mutation(
+                    "deferred live placement",
+                    placement_result,
+                    before_facts.expect("deferred placement captured initial facts"),
+                );
+                self.emit_window_mutation_observation(
+                    WindowMutationDomain::Placement,
+                    deferred.generation,
+                    terminal,
+                    facts,
+                );
+            }
+        } else {
+            placement_result.log_err();
+        }
+
+        if self.is_native_window_terminal() {
+            return;
+        }
+        if !had_initial_placement && unsafe { !IsWindowVisible(hwnd).as_bool() } {
+            let command = if self.state.is_maximized() {
+                SW_MAXIMIZE
+            } else {
+                SW_SHOWNORMAL
+            };
+            unsafe {
+                let _ = ShowWindow(hwnd, command);
+            }
+        }
+
+        if self.is_native_window_terminal() {
+            return;
+        }
+        // If the window is minimized, restore it.
+        if unsafe { IsIconic(hwnd).as_bool() } {
+            unsafe {
+                ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+            }
+        }
+
+        if self.is_native_window_terminal() {
+            return;
+        }
+        unsafe {
+            SetActiveWindow(hwnd).ok();
+        }
+
+        if self.is_native_window_terminal() {
+            return;
+        }
+        unsafe {
+            SetFocus(Some(hwnd)).ok();
+        }
+
+        if self.is_native_window_terminal() {
+            return;
+        }
+        // Foreground activation remains subject to the operating system's focus-stealing policy.
+        // Never synthesize keyboard input to bypass that policy: framework commands must not
+        // fabricate user input or feed it back through GPUI's must-immediate input boundary.
+        unsafe {
+            let _ = SetForegroundWindow(hwnd);
+        }
     }
 
     /// Applies a fullscreen transition on the window-owning thread.
     ///
-    /// Initial placement uses this directly so the creation path finishes its requested state
-    /// before the GPUI window has installed callbacks. Live placement schedules this method through
-    /// the foreground executor and reports the resulting coherent facts through a mutation ticket.
+    /// Initial presentation and live placement call this only on the window-owning thread after
+    /// GPUI has installed callbacks. Live placement reports the resulting coherent facts through a
+    /// mutation ticket.
     fn toggle_fullscreen_now(&self) -> Result<()> {
         let previous_fullscreen = self.state.fullscreen.take();
         let previous_restore_bounds = self.state.fullscreen_restore_bounds.get();
@@ -870,60 +1271,14 @@ impl WindowsWindowInner {
             && !window_style.contains(WS_CAPTION)
     }
 
-    fn set_window_placement(self: &Rc<Self>) -> Result<()> {
-        let Some(open_status) = self.state.initial_placement.take() else {
-            return Ok(());
-        };
-        match open_status.state {
-            WindowOpenState::Maximized => unsafe {
-                if open_status.activate {
-                    SetWindowPlacement(self.hwnd, &open_status.placement)
-                        .context("failed to set window placement")?;
-                    let _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
-                } else {
-                    let mut placement = open_status.placement;
-                    placement.showCmd = SW_SHOWMAXIMIZED.0 as u32;
-                    SetWindowPlacement(self.hwnd, &placement)
-                        .context("failed to set maximized window placement")?;
-                    let _ = ShowWindow(self.hwnd, SW_SHOWNA);
-                }
-            },
-            WindowOpenState::Fullscreen => {
-                unsafe {
-                    SetWindowPlacement(self.hwnd, &open_status.placement)
-                        .context("failed to set window placement")?
-                };
-                self.toggle_fullscreen_now()?;
-                unsafe {
-                    let _ = ShowWindow(
-                        self.hwnd,
-                        if open_status.activate {
-                            SW_SHOWNORMAL
-                        } else {
-                            SW_SHOWNOACTIVATE
-                        },
-                    );
-                };
-            }
-            WindowOpenState::Windowed => unsafe {
-                if open_status.activate {
-                    SetWindowPlacement(self.hwnd, &open_status.placement)
-                        .context("failed to set window placement")?;
-                    let _ = ShowWindow(self.hwnd, SW_SHOWNORMAL);
-                } else {
-                    apply_window_open_position_without_activation(self.hwnd, &open_status)?;
-                    let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-                }
-            },
-        }
-        Ok(())
+    fn has_pending_initial_placement(&self) -> bool {
+        self.pending_initial_placement().is_some()
     }
 
-    fn has_pending_initial_placement(&self) -> bool {
+    fn pending_initial_placement(&self) -> Option<WindowOpenStatus> {
         let initial_placement = self.state.initial_placement.take();
-        let is_pending = initial_placement.is_some();
-        self.state.initial_placement.set(initial_placement);
-        is_pending
+        self.state.initial_placement.set(initial_placement.clone());
+        initial_placement
     }
 
     fn merge_deferred_initial_placement(&self, request: WindowPlacementRequest) -> Result<()> {
@@ -969,11 +1324,39 @@ impl WindowsWindowInner {
     }
 
     fn observed_platform_facts(&self) -> WindowPlatformFacts {
-        self.observed_platform_facts_from_native()
+        let facts = self
+            .observed_platform_facts_from_native()
             .unwrap_or_else(|error| {
                 log::warn!("Windows platform fact readback failed: {error:#}");
                 self.cached_platform_facts()
-            })
+            });
+        self.project_pending_initial_placement(facts)
+    }
+
+    fn project_pending_initial_placement(
+        &self,
+        mut facts: WindowPlatformFacts,
+    ) -> WindowPlatformFacts {
+        let Some(open_status) = self.pending_initial_placement() else {
+            return facts;
+        };
+        let restore_bounds = calculate_client_rect(
+            open_status.placement.rcNormalPosition,
+            &self.state.border_offset,
+            facts.scale_factor,
+        );
+        let window_bounds = match open_status.state {
+            WindowOpenState::Windowed => WindowBounds::Windowed(restore_bounds),
+            WindowOpenState::Maximized => WindowBounds::Maximized(restore_bounds),
+            WindowOpenState::Fullscreen => WindowBounds::Fullscreen(restore_bounds),
+        };
+        facts.window_bounds = window_bounds;
+        facts.inner_window_bounds = window_bounds;
+        facts.is_minimized = false;
+        facts.is_maximized = matches!(open_status.state, WindowOpenState::Maximized);
+        facts.is_fullscreen = matches!(open_status.state, WindowOpenState::Fullscreen);
+        facts.is_active = false;
+        facts
     }
 
     #[cfg(test)]
@@ -1195,9 +1578,68 @@ impl WindowsWindowInner {
 }
 
 #[derive(Default)]
+pub(crate) struct WindowsShouldCloseCallbackSlot {
+    callback: Cell<Option<Box<dyn FnMut() -> bool>>>,
+    checked_out: Cell<bool>,
+    terminal: Cell<bool>,
+}
+
+impl WindowsShouldCloseCallbackSlot {
+    fn set(&self, callback: Box<dyn FnMut() -> bool>) {
+        if !self.terminal.get() {
+            self.callback.set(Some(callback));
+        }
+    }
+
+    pub(crate) fn invoke(&self) -> bool {
+        if self.terminal.get() || self.checked_out.replace(true) {
+            return false;
+        }
+        let Some(callback) = self.callback.take() else {
+            self.checked_out.set(false);
+            return false;
+        };
+        let mut checkout = WindowsShouldCloseCallbackCheckout {
+            slot: self,
+            callback: Some(callback),
+        };
+        checkout
+            .callback
+            .as_mut()
+            .expect("checked-out should-close callback must remain available")()
+    }
+
+    fn terminate(&self) {
+        self.terminal.set(true);
+        self.callback.take();
+    }
+}
+
+struct WindowsShouldCloseCallbackCheckout<'a> {
+    slot: &'a WindowsShouldCloseCallbackSlot,
+    callback: Option<Box<dyn FnMut() -> bool>>,
+}
+
+impl Drop for WindowsShouldCloseCallbackCheckout<'_> {
+    fn drop(&mut self) {
+        self.slot.checked_out.set(false);
+        let replacement = self.slot.callback.take();
+        if self.slot.terminal.get() {
+            return;
+        }
+        if let Some(replacement) = replacement {
+            self.slot.callback.set(Some(replacement));
+        } else {
+            self.slot.callback.set(self.callback.take());
+        }
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct Callbacks {
     pub(crate) request_frame: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
-    pub(crate) input: Cell<Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>>,
+    pub(crate) input: PlatformInputCallbackSlot,
+    pub(crate) modifiers_changed: Cell<Option<Box<dyn FnMut(ModifiersChangedEvent)>>>,
     pub(crate) active_status_change: Cell<Option<Box<dyn FnMut(bool)>>>,
     pub(crate) hovered_status_change: Cell<Option<Box<dyn FnMut(bool)>>>,
     pub(crate) resize: Cell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>,
@@ -1205,15 +1647,23 @@ pub(crate) struct Callbacks {
     pub(crate) window_state_change: Cell<Option<Box<dyn FnMut()>>>,
     pub(crate) window_mutation_observation:
         Cell<Option<Box<dyn FnMut(PlatformWindowMutationObservation)>>>,
-    pub(crate) should_close: Cell<Option<Box<dyn FnMut() -> bool>>>,
+    pub(crate) should_close: WindowsShouldCloseCallbackSlot,
     pub(crate) close: Cell<Option<Box<dyn FnOnce()>>>,
     pub(crate) hit_test_window_control: Cell<Option<Box<dyn FnMut() -> Option<WindowControlArea>>>>,
     pub(crate) appearance_changed: Cell<Option<Box<dyn FnMut()>>>,
 }
 
 impl Callbacks {
-    pub(crate) fn set_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
-        self.input.set(Some(callback));
+    pub(crate) fn set_input(&self, callback: PlatformInputCallback) {
+        self.input.set(callback);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_input(
+        &self,
+        callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>,
+    ) {
+        self.set_input(PlatformInputCallback::new_unleased_for_test(callback));
     }
 }
 
@@ -1229,17 +1679,24 @@ struct WindowCreateContext {
     cursor_visible: Arc<AtomicBool>,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
+    native_window_generation: usize,
+    recovered_directx_devices: Arc<parking_lot::RwLock<Option<DirectXDevices>>>,
     main_receiver: PriorityQueueReceiver<RunnableVariant>,
     platform_window_handle: HWND,
+    raw_window_handles: std::sync::Weak<RegisteredWindows>,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     parent_hwnd: Option<HWND>,
+    modal_parent_disabled: bool,
+    show_on_initial_presentation: bool,
     accepts_pointer_input: bool,
     focus_on_appearing: bool,
     focus_on_click: bool,
     taskbar_visible: bool,
+    #[cfg(test)]
+    lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
 
 impl WindowsWindow {
@@ -1255,27 +1712,18 @@ impl WindowsWindow {
             cursor_visible,
             drop_target_helper,
             validation_number,
+            native_window_generation,
+            recovered_directx_devices,
             main_receiver,
             platform_window_handle,
+            raw_window_handles,
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
+            #[cfg(test)]
+            lifecycle_test_probe,
         } = creation_info;
         register_window_class(icon);
-        let parent_hwnd = if params.kind == WindowKind::Dialog {
-            let parent_window = unsafe { GetActiveWindow() };
-            if parent_window.is_invalid() {
-                None
-            } else {
-                // Disable the parent window to make this dialog modal
-                unsafe {
-                    EnableWindow(parent_window, false).as_bool();
-                };
-                Some(parent_window)
-            }
-        } else {
-            None
-        };
         let hide_title_bar = params
             .titlebar
             .as_ref()
@@ -1333,6 +1781,13 @@ impl WindowsWindow {
         .or_else(WindowsDisplay::primary_monitor)
         .context("failed to find any monitor")?;
         let appearance = system_appearance().unwrap_or_default();
+        let parent_hwnd = if params.kind == WindowKind::Dialog {
+            let parent_window = unsafe { GetActiveWindow() };
+            (!parent_window.is_invalid()).then_some(parent_window)
+        } else {
+            None
+        };
+        let modal_parent_guard = ModalParentGuard::acquire(parent_hwnd);
         let mut context = WindowCreateContext {
             inner: None,
             handle,
@@ -1345,17 +1800,24 @@ impl WindowsWindow {
             cursor_visible,
             drop_target_helper,
             validation_number,
+            native_window_generation,
+            recovered_directx_devices,
             main_receiver,
             platform_window_handle,
+            raw_window_handles,
             appearance,
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
             parent_hwnd,
+            modal_parent_disabled: modal_parent_guard.owns_disable(),
+            show_on_initial_presentation: params.show,
             accepts_pointer_input: params.accepts_pointer_input,
             focus_on_appearing,
             focus_on_click,
             taskbar_visible,
+            #[cfg(test)]
+            lifecycle_test_probe,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -1374,34 +1836,53 @@ impl WindowsWindow {
             )
         };
 
-        // Failure to create a `WindowsWindowState` can cause window creation to fail,
-        // so check the inner result first.
-        let this = context.inner.take().transpose()?;
-        let hwnd = creation_result?;
-        let this = this.unwrap();
+        let hwnd = match creation_result {
+            Ok(hwnd) => hwnd,
+            Err(create_error) => {
+                if let Some(Err(inner_error)) = context.inner.take() {
+                    return Err(inner_error);
+                }
+                return Err(create_error.into());
+            }
+        };
+        let hwnd_guard = CreatedNativeWindowGuard::new(hwnd);
+        let this = context
+            .inner
+            .take()
+            .context("native window creation did not initialize window state")??;
+        let window = Self(this);
+        hwnd_guard.commit();
+        modal_parent_guard.commit();
 
-        register_drag_drop(&this)?;
+        #[cfg(test)]
+        window.lifecycle_test_probe.record_created_hwnd(hwnd);
+
+        register_drag_drop(&window.0)?;
+        window.0.drag_drop_registered.set(true);
+        #[cfg(test)]
+        if window
+            .lifecycle_test_probe
+            .take_fail_after_drag_drop_registration()
+        {
+            anyhow::bail!("injected failure after native drag-drop registration");
+        }
         set_non_rude_hwnd(hwnd, true)?;
         configure_dwm_dark_mode(hwnd, appearance);
-        this.state.border_offset.update(hwnd)?;
+        window.state.border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
             display,
             params.window_bounds.get_bounds(),
-            this.state.scale_factor.get(),
-            &this.state.border_offset,
+            window.state.scale_factor.get(),
+            &window.state.border_offset,
         )?;
         let open_status = WindowOpenStatus {
             placement,
             state: WindowOpenState::from(params.window_bounds),
-            activate: params.focus,
         };
-        this.state.initial_placement.set(Some(open_status));
-        if params.show {
-            this.set_window_placement()?;
-        }
+        window.state.initial_placement.set(Some(open_status));
 
-        Ok(Self(this))
+        Ok(window)
     }
 }
 
@@ -1423,18 +1904,7 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
-        // clone this `Rc` to prevent early release of the pointer
-        let this = self.0.clone();
-        self.0
-            .executor
-            .spawn(async move {
-                let handle = this.hwnd;
-                unsafe {
-                    RevokeDragDrop(handle).log_err();
-                    DestroyWindow(handle).log_err();
-                }
-            })
-            .detach();
+        self.0.destroy_native_window();
     }
 }
 
@@ -1507,6 +1977,52 @@ impl WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
+    fn map_window(&mut self) -> Result<()> {
+        let was_hidden = unsafe { !IsWindowVisible(self.hwnd).as_bool() };
+        #[cfg(test)]
+        self.lifecycle_test_probe
+            .record_hidden_before_map(was_hidden);
+        anyhow::ensure!(
+            was_hidden,
+            "native window became visible before PlatformWindow::map_window"
+        );
+
+        self.0.prepare_pending_initial_placement()?;
+        anyhow::ensure!(
+            unsafe { !IsWindowVisible(self.hwnd).as_bool() },
+            "native window became visible during precommit map"
+        );
+        Ok(())
+    }
+
+    fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
+        let window = Rc::downgrade(&self.0);
+        PlatformWindowCommandDispatcher::new(move |command| {
+            let Some(window) = window.upgrade() else {
+                return PlatformWindowCommandOutcome::Rejected;
+            };
+            if window.is_native_window_terminal() {
+                return PlatformWindowCommandOutcome::Rejected;
+            }
+
+            match command {
+                PlatformWindowCommand::CompleteInitialPresentation { activate } => {
+                    window.complete_initial_presentation(activate)
+                }
+                PlatformWindowCommand::Activate => {
+                    window.activate_now();
+                    PlatformWindowCommandOutcome::Accepted
+                }
+                // Preserve the existing Windows behavior for currently unsupported commands.
+                PlatformWindowCommand::ShowWindowMenu(_)
+                | PlatformWindowCommand::StartWindowMove
+                | PlatformWindowCommand::StartWindowResize(_) => {
+                    PlatformWindowCommandOutcome::Rejected
+                }
+            }
+        })
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.state.bounds()
     }
@@ -1662,7 +2178,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.state.input_handler.set(Some(input_handler));
+        self.state.input_handler.set(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
@@ -1753,99 +2269,6 @@ impl PlatformWindow for WindowsWindow {
         Some(done_rx)
     }
 
-    fn activate(&self) {
-        let hwnd = self.0.hwnd;
-        let this = self.0.clone();
-        self.0
-            .executor
-            .spawn(async move {
-                let deferred_placement = this.state.deferred_placement_mutation.take();
-                let had_initial_placement = this.has_pending_initial_placement();
-                let before_facts = deferred_placement.map(|_| {
-                    this.observed_platform_facts_from_native()
-                        .unwrap_or_else(|_| this.cached_platform_facts())
-                });
-                let placement_result = (|| {
-                    if let Some(deferred) = deferred_placement {
-                        this.merge_deferred_initial_placement(deferred.request)?;
-                    }
-                    this.set_window_placement()
-                })();
-
-                if let Some(deferred) = deferred_placement {
-                    if this.placement_mutation_is_current(deferred.generation)
-                        && (unsafe { IsWindow(Some(hwnd)).as_bool() })
-                    {
-                        let (terminal, facts) = this.terminal_facts_after_mutation(
-                            "deferred live placement",
-                            placement_result,
-                            before_facts.expect("deferred placement captured initial facts"),
-                        );
-                        this.emit_window_mutation_observation(
-                            WindowMutationDomain::Placement,
-                            deferred.generation,
-                            terminal,
-                            facts,
-                        );
-                    }
-                } else {
-                    placement_result.log_err();
-                }
-
-                unsafe {
-                    if !had_initial_placement && !IsWindowVisible(hwnd).as_bool() {
-                        let command = if this.state.is_maximized() {
-                            SW_MAXIMIZE
-                        } else {
-                            SW_SHOWNORMAL
-                        };
-                        let _ = ShowWindow(hwnd, command);
-                    }
-                    // If the window is minimized, restore it.
-                    if IsIconic(hwnd).as_bool() {
-                        ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
-                    }
-
-                    SetActiveWindow(hwnd).ok();
-                    SetFocus(Some(hwnd)).ok();
-                }
-
-                // premium ragebait by windows, this is needed because the window
-                // must have received an input event to be able to set itself to foreground
-                // so let's just simulate user input as that seems to be the most reliable way
-                // some more info: https://gist.github.com/Aetopia/1581b40f00cc0cadc93a0e8ccb65dc8c
-                // bonus: this bug also doesn't manifest if you have vs attached to the process
-                let inputs = [
-                    INPUT {
-                        r#type: INPUT_KEYBOARD,
-                        Anonymous: INPUT_0 {
-                            ki: KEYBDINPUT {
-                                wVk: VK_MENU,
-                                dwFlags: KEYBD_EVENT_FLAGS(0),
-                                ..Default::default()
-                            },
-                        },
-                    },
-                    INPUT {
-                        r#type: INPUT_KEYBOARD,
-                        Anonymous: INPUT_0 {
-                            ki: KEYBDINPUT {
-                                wVk: VK_MENU,
-                                dwFlags: KEYEVENTF_KEYUP,
-                                ..Default::default()
-                            },
-                        },
-                    },
-                ];
-                unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-
-                // todo(windows)
-                // crate `windows 0.56` reports true as Err
-                unsafe { SetForegroundWindow(hwnd).as_bool() };
-            })
-            .detach();
-    }
-
     fn is_active(&self) -> bool {
         self.0.hwnd == unsafe { GetForegroundWindow() }
     }
@@ -1903,8 +2326,12 @@ impl PlatformWindow for WindowsWindow {
         self.state.callbacks.request_frame.set(Some(callback));
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
+    fn on_input(&self, callback: PlatformInputCallback) {
         self.state.callbacks.set_input(callback);
+    }
+
+    fn on_modifiers_changed(&self, callback: Box<dyn FnMut(ModifiersChangedEvent)>) {
+        self.state.callbacks.modifiers_changed.set(Some(callback));
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
@@ -1954,7 +2381,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.state.callbacks.should_close.set(Some(callback));
+        self.state.callbacks.should_close.set(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
@@ -2364,7 +2791,6 @@ impl WindowBorderOffset {
 struct WindowOpenStatus {
     placement: WINDOWPLACEMENT,
     state: WindowOpenState,
-    activate: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -2420,8 +2846,13 @@ unsafe extern "system" fn window_procedure(
         let window_creation_context = unsafe { &mut *window_creation_context };
         return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {
             Ok(window_state) => {
-                let weak = Box::new(Rc::downgrade(&window_state));
-                unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
+                // The native HWND owns one strong reference until WM_NCDESTROY. If a teardown
+                // attempt fails after GPUI drops its PlatformWindow, callbacks and exact-generation
+                // registry lookup therefore remain valid for a later retry.
+                let native_owner = Box::new(window_state.clone());
+                unsafe {
+                    set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(native_owner) as isize)
+                };
                 window_creation_context.inner = Some(Ok(window_state));
                 unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
@@ -2432,16 +2863,15 @@ unsafe extern "system" fn window_procedure(
         };
     }
 
-    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowInner>;
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Rc<WindowsWindowInner>;
     if ptr.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let inner = unsafe { &*ptr };
-    let result = if let Some(inner) = inner.upgrade() {
-        inner.handle_msg(hwnd, msg, wparam, lparam)
-    } else {
-        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-    };
+    if msg == WM_NCDESTROY {
+        inner.mark_native_window_destroyed();
+    }
+    let result = inner.handle_msg(hwnd, msg, wparam, lparam);
 
     if msg == WM_NCDESTROY {
         unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
@@ -2456,10 +2886,10 @@ pub(crate) fn window_from_hwnd(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         return None;
     }
 
-    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowInner>;
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Rc<WindowsWindowInner>;
     if !ptr.is_null() {
         let inner = unsafe { &*ptr };
-        inner.upgrade()
+        Some(inner.clone())
     } else {
         None
     }
@@ -2559,26 +2989,6 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(scale_factor);
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
-}
-
-unsafe fn apply_window_open_position_without_activation(
-    hwnd: HWND,
-    open_status: &WindowOpenStatus,
-) -> Result<()> {
-    let rect = open_status.placement.rcNormalPosition;
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            None,
-            rect.left,
-            rect.top,
-            rect.right - rect.left,
-            rect.bottom - rect.top,
-            SWP_NOACTIVATE | SWP_NOZORDER,
-        )
-        .context("failed to set window position without activation")?;
-    }
-    Ok(())
 }
 
 fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {

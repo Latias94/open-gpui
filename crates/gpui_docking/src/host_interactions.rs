@@ -210,6 +210,7 @@ impl DockHost {
         let outcome = if let Some(delivery) = local_delivery {
             let commit = self.commit_resolved_payload_drop_interaction(
                 delivery.workspace_request(),
+                window,
                 cx,
                 true,
             );
@@ -220,7 +221,9 @@ impl DockHost {
             drop_preview_cleared = self.clear_drop_preview_interaction();
             outcome
         } else {
-            let runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+            let runtime_preview_cleared = self
+                .viewport_runtime()
+                .clear_routed_drop_preview_from_window(window, cx);
             return DockHostInteractionOutcome::Notify { changed: false }
                 .merge(DockHostInteractionOutcome::from_session_changed(
                     runtime_preview_cleared,
@@ -228,7 +231,9 @@ impl DockHost {
                 .merge(self.finish_floating_drag_interaction());
         };
 
-        let runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+        let runtime_preview_cleared = self
+            .viewport_runtime()
+            .clear_routed_drop_preview_from_window(window, cx);
         outcome
             .merge(DockHostInteractionOutcome::from_session_changed(
                 runtime_preview_cleared || drop_preview_cleared,
@@ -288,6 +293,7 @@ impl DockHost {
     fn commit_resolved_payload_drop_interaction(
         &mut self,
         request: DockWorkspacePayloadDropRequest<'_>,
+        window: &Window,
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostResolvedDropCommit {
@@ -298,28 +304,34 @@ impl DockHost {
             DockSurfaceChangeCategory::Selection,
             DockSurfaceChangeCategory::PanelLifecycle,
         ];
+        let runtime = self.viewport_runtime().clone();
+        let prepared_source_vacate =
+            runtime.prepare_empty_payload_drop_source_vacate(&source_space, &target_space);
         let Some(owner) = self.surface_owner_entity() else {
             return match self.mutate_controller_from_host_with(
                 cx,
                 &categories,
                 |controller| {
-                    controller
+                    let outcome = controller
                         .workspace_mut()
-                        .commit_resolved_payload_drop(request)
+                        .commit_resolved_payload_drop(request)?;
+                    let source_is_empty = outcome.changed()
+                        && source_space != target_space
+                        && controller
+                            .graph()
+                            .collect_items_in_space(&source_space)
+                            .is_empty();
+                    Ok((outcome, source_is_empty))
                 },
-                |outcome| outcome.changed(),
+                |(outcome, _)| outcome.changed(),
             ) {
-                Ok(outcome) => {
-                    let vacated_source_changed = if outcome.changed() {
-                        self.viewport_runtime()
-                            .vacate_empty_payload_drop_source_viewport(
-                                &source_space,
-                                &target_space,
-                                cx,
-                            )
-                    } else {
-                        false
-                    };
+                Ok((outcome, source_is_empty)) => {
+                    let vacated_source_changed = runtime
+                        .finalize_empty_payload_drop_source_vacate_from_window(
+                            prepared_source_vacate.apply(source_is_empty),
+                            window,
+                            cx,
+                        );
                     DockHostResolvedDropCommit {
                         outcome: DockHostInteractionOutcome::from_commit_result(
                             Ok(outcome.action()),
@@ -344,21 +356,27 @@ impl DockHost {
         };
 
         let controller = self.controller_entity();
-        let runtime = self.viewport_runtime().clone();
         with_detached_root_transaction(&owner, cx, |transaction, cx| {
-            let (result, did_change) = cx.update_entity(&controller, |controller, cx| {
-                let result = controller
-                    .workspace_mut()
-                    .commit_resolved_payload_drop(request);
-                let did_change = result
-                    .as_ref()
-                    .map(|outcome| outcome.changed())
-                    .unwrap_or(false);
-                if did_change {
-                    cx.notify();
-                }
-                (result, did_change)
-            });
+            let (result, did_change, source_is_empty) =
+                cx.update_entity(&controller, |controller, cx| {
+                    let result = controller
+                        .workspace_mut()
+                        .commit_resolved_payload_drop(request);
+                    let did_change = result
+                        .as_ref()
+                        .map(|outcome| outcome.changed())
+                        .unwrap_or(false);
+                    if did_change {
+                        cx.notify();
+                    }
+                    let source_is_empty = did_change
+                        && source_space != target_space
+                        && controller
+                            .graph()
+                            .collect_items_in_space(&source_space)
+                            .is_empty();
+                    (result, did_change, source_is_empty)
+                });
             if did_change {
                 cx.update_entity(&owner, |owner, _| {
                     owner.record_changes(transaction, categories);
@@ -366,16 +384,13 @@ impl DockHost {
             }
             match result {
                 Ok(outcome) => {
-                    let vacated_source_changed = if did_change {
-                        runtime.vacate_empty_payload_drop_source_viewport_with_transaction(
-                            &source_space,
-                            &target_space,
+                    let vacated_source_changed = runtime
+                        .finalize_empty_payload_drop_source_vacate_with_transaction_from_window(
+                            prepared_source_vacate.apply(source_is_empty),
                             Some(transaction),
+                            window,
                             cx,
-                        )
-                    } else {
-                        false
-                    };
+                        );
                     DockHostResolvedDropCommit {
                         outcome: DockHostInteractionOutcome::from_commit_result(
                             Ok(outcome.action()),

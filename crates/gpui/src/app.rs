@@ -69,6 +69,10 @@ mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod headless_app_context;
+mod native_callback_diagnostics;
+mod native_event_ingress;
+mod native_platform_commands;
+mod native_query_snapshot;
 #[cfg(any(test, feature = "test-support"))]
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
@@ -76,7 +80,16 @@ mod test_context;
 #[cfg(any(test, feature = "test-support"))]
 mod visual_test_context;
 mod window_registry;
+pub(crate) use cell::NativeCallbackLease;
 pub use cell::{AppCell, AppRef, AppRefMut};
+#[doc(hidden)]
+pub use native_callback_diagnostics::{
+    NativeBoundaryDiagnostic, NativeBoundaryDiagnosticCursor, NativeBoundaryDiagnosticsSnapshot,
+    NativeBoundaryDisposition, NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget,
+    NativeCallbackKind, NativeInputBoundary, NativeInputDeliveryResult,
+    NativeInputHandlerOperation, NativeInvariantFailure, NativePlatformCommandKind,
+};
+pub(crate) use native_platform_commands::PlatformWindowCommandSink;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
@@ -171,43 +184,36 @@ impl Application {
 
     /// Register a handler to be invoked when the platform instructs the application
     /// to open one or more URLs.
-    pub fn on_open_urls<F>(&self, mut callback: F) -> &Self
+    ///
+    /// Replaces the previously registered handler, if any.
+    pub fn on_open_urls<F>(&self, callback: F) -> &Self
     where
-        F: 'static + FnMut(Vec<String>),
+        F: 'static + FnMut(Vec<String>, &mut App),
     {
-        self.0.borrow().platform.on_open_urls(Box::new(callback));
+        self.0.set_open_urls_handler(Box::new(callback));
         self
     }
 
     /// Invokes a handler when an already-running application is launched.
     /// On macOS, this can occur when the application icon is double-clicked or the app is launched via the dock.
-    pub fn on_reopen<F>(&self, mut callback: F) -> &Self
+    ///
+    /// Replaces the previously registered handler, if any.
+    pub fn on_reopen<F>(&self, callback: F) -> &Self
     where
         F: 'static + FnMut(&mut App),
     {
-        let this = Rc::downgrade(&self.0);
-        self.0.borrow_mut().platform.on_reopen(Box::new(move || {
-            if let Some(app) = this.upgrade() {
-                callback(&mut app.borrow_mut());
-            }
-        }));
+        self.0.set_reopen_handler(Box::new(callback));
         self
     }
 
     /// Invokes a handler when the system wakes from sleep.
-    pub fn on_system_wake<F>(&self, mut callback: F) -> &Self
+    ///
+    /// Replaces the previously registered handler, if any.
+    pub fn on_system_wake<F>(&self, callback: F) -> &Self
     where
         F: 'static + FnMut(&mut App),
     {
-        let this = Rc::downgrade(&self.0);
-        self.0
-            .borrow_mut()
-            .platform
-            .on_system_wake(Box::new(move || {
-                if let Some(app) = this.upgrade() {
-                    callback(&mut app.borrow_mut());
-                }
-            }));
+        self.0.set_system_wake_handler(Box::new(callback));
         self
     }
 
@@ -677,6 +683,45 @@ pub struct App {
     _ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
+struct AppUpdateTransaction<'a> {
+    app: &'a mut App,
+    pending_updates_before: usize,
+    flushing_effects_before: bool,
+    finished: bool,
+}
+
+impl<'a> AppUpdateTransaction<'a> {
+    fn begin(app: &'a mut App) -> Self {
+        let pending_updates_before = app.pending_updates;
+        let flushing_effects_before = app.flushing_effects;
+        app.start_update();
+        Self {
+            app,
+            pending_updates_before,
+            flushing_effects_before,
+            finished: false,
+        }
+    }
+
+    fn app_mut(&mut self) -> &mut App {
+        &mut *self.app
+    }
+
+    fn finish(mut self) {
+        self.app.finish_update();
+        self.finished = true;
+    }
+}
+
+impl Drop for AppUpdateTransaction<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.app.pending_updates = self.pending_updates_before;
+            self.app.flushing_effects = self.flushing_effects_before;
+        }
+    }
+}
+
 impl App {
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
@@ -768,19 +813,45 @@ impl App {
             })
         });
 
-        init_app_menus(platform.as_ref(), &app.borrow());
+        init_app_menus(platform.as_ref(), &app);
         SystemWindowTabController::init(&mut app.borrow_mut());
+
+        platform.on_open_urls(Box::new({
+            let app = Rc::downgrade(&app);
+            move |urls| {
+                if let Some(app) = app.upgrade() {
+                    app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::OpenUrls(
+                        urls,
+                    ));
+                }
+            }
+        }));
+
+        platform.on_reopen(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::Reopen);
+                }
+            }
+        }));
+
+        platform.on_system_wake(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::SystemWake);
+                }
+            }
+        }));
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = cx.platform.keyboard_layout();
-                    cx.keyboard_mapper = cx.platform.keyboard_mapper();
-                    cx.keyboard_layout_observers
-                        .clone()
-                        .retain(&(), move |callback| (callback)(cx));
+                    app.enqueue_native_app_event(
+                        native_event_ingress::NativeAppEvent::KeyboardLayoutChanged,
+                    );
                 }
             }
         }));
@@ -789,19 +860,18 @@ impl App {
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
-                    cx.thermal_state_observers
-                        .clone()
-                        .retain(&(), move |callback| (callback)(cx));
+                    app.enqueue_native_app_event(
+                        native_event_ingress::NativeAppEvent::ThermalStateChanged,
+                    );
                 }
             }
         }));
 
         platform.on_quit(Box::new({
-            let cx = Rc::downgrade(&app);
+            let app = Rc::downgrade(&app);
             move || {
-                if let Some(cx) = cx.upgrade() {
-                    cx.borrow_mut().shutdown();
+                if let Some(app) = app.upgrade() {
+                    app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::Quit);
                 }
             }
         }));
@@ -924,9 +994,9 @@ impl App {
     }
 
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
-        self.start_update();
-        let result = update(self);
-        self.finish_update();
+        let mut transaction = AppUpdateTransaction::begin(self);
+        let result = update(transaction.app_mut());
+        transaction.finish();
         result
     }
 
@@ -1091,6 +1161,28 @@ impl App {
         window_registry::handles(self)
     }
 
+    pub(crate) fn set_native_window_control_area(
+        &self,
+        window_id: WindowId,
+        area: Option<crate::WindowControlArea>,
+    ) {
+        if let Some(app) = self.this.upgrade() {
+            app.set_native_window_control_area(window_id, area);
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn native_boundary_diagnostics(
+        &self,
+        cursor: NativeBoundaryDiagnosticCursor,
+    ) -> NativeBoundaryDiagnosticsSnapshot {
+        self.this
+            .upgrade()
+            .map(|app| app.native_boundary_diagnostics(cursor))
+            .unwrap_or_default()
+    }
+
     /// Returns the window handles ordered by their appearance on screen, front to back.
     ///
     /// The first window in the returned list is the active/topmost window of the application.
@@ -1167,30 +1259,34 @@ impl App {
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {
-            let id = window_registry::reserve(cx);
+            let mut reservation = window_registry::reserve(cx);
+            let id = reservation.id();
             let handle = WindowHandle::new(id);
-            match Window::new(handle.into(), options, cx) {
+            match Window::new(handle.into(), options, reservation.app_mut()) {
                 Ok(mut window) => {
-                    cx.window_update_stack.push(id);
-                    let root_view = build_root_view(&mut window, cx);
-                    cx.window_update_stack.pop();
+                    let root_view =
+                        reservation.with_update_scope(|cx| build_root_view(&mut window, cx));
+                    if window.removed {
+                        return Err(anyhow!(
+                            "window closed while building its initial root view"
+                        ));
+                    }
                     window.root.replace(root_view.into());
-                    window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
+                    window.defer(reservation.app_mut(), |window: &mut Window, cx| {
+                        window.appearance_changed(cx)
+                    });
 
                     // allow a window to draw at least once before returning
                     // this didn't cause any issues on non windows platforms as it seems we always won the race to on_request_frame
                     // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
                     // where DispatchTree::root_node_id asserts on empty nodes
-                    let clear = window.draw(cx);
+                    let clear = window.draw(reservation.app_mut());
                     clear.clear();
 
-                    window_registry::commit(cx, id, window);
+                    reservation.commit(window)?;
                     Ok(handle)
                 }
-                Err(e) => {
-                    window_registry::rollback_reserved(cx, id);
-                    Err(e)
-                }
+                Err(error) => Err(error),
             }
         })
     }
@@ -1547,6 +1643,7 @@ impl App {
     /// reference count has become zero. We invoke any release observers before dropping
     /// each entity.
     fn release_dropped_entities(&mut self) {
+        let mut first_panic = None;
         loop {
             let dropped = self.entities.take_dropped();
             if dropped.is_empty() {
@@ -1559,9 +1656,24 @@ impl App {
                 self.window_invalidators_by_entity.remove(&entity_id);
                 self.current_window_by_entity.remove(&entity_id);
                 for release_callback in self.release_listeners.remove(&entity_id) {
-                    release_callback(entity.as_mut(), self);
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        release_callback(entity.as_mut(), self);
+                    }));
+                    if first_panic.is_none() {
+                        first_panic = result.err();
+                    }
+                }
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    drop(entity);
+                }));
+                if first_panic.is_none() {
+                    first_panic = result.err();
                 }
             }
+        }
+
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
         }
     }
 
@@ -1679,14 +1791,9 @@ impl App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
-            let mut window = cx.windows.get_mut(id)?.take()?;
-
-            let root_view = window.root.clone().unwrap();
-
-            cx.window_update_stack.push(window.handle.id);
-            let result = update(root_view, &mut window, cx);
-            cx.window_update_stack.pop();
-            window_registry::finish_window_update(cx, id, window)?;
+            let mut transaction = window_registry::WindowUpdateTransaction::begin(cx, id)?;
+            let result = transaction.update(update);
+            transaction.finish()?;
 
             Some(result)
         })
@@ -2480,12 +2587,17 @@ impl AppContext for App {
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(handle);
-            let result = update(
-                &mut entity,
-                &mut Context::new_context(cx, handle.downgrade()),
-            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                update(
+                    &mut entity,
+                    &mut Context::new_context(cx, handle.downgrade()),
+                )
+            }));
             cx.entities.end_lease(entity);
-            result
+            match result {
+                Ok(result) => result,
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
         })
     }
 
@@ -2708,16 +2820,16 @@ impl HttpClient for NullHttpClient {
 /// A mutable reference to an entity owned by GPUI
 pub struct GpuiBorrow<'a, T> {
     inner: Option<Lease<T>>,
-    app: &'a mut App,
+    transaction: Option<AppUpdateTransaction<'a>>,
 }
 
 impl<'a, T: 'static> GpuiBorrow<'a, T> {
     fn new(inner: Entity<T>, app: &'a mut App) -> Self {
-        app.start_update();
-        let lease = app.entities.lease(&inner);
+        let mut transaction = AppUpdateTransaction::begin(app);
+        let lease = transaction.app_mut().entities.lease(&inner);
         Self {
             inner: Some(lease),
-            app,
+            transaction: Some(transaction),
         }
     }
 }
@@ -2751,26 +2863,39 @@ impl<'a, T: 'static> std::ops::DerefMut for GpuiBorrow<'a, T> {
 impl<'a, T> Drop for GpuiBorrow<'a, T> {
     fn drop(&mut self) {
         let lease = self.inner.take().unwrap();
-        self.app.notify(lease.id);
-        self.app.entities.end_lease(lease);
-        self.app.finish_update();
+        let mut transaction = self
+            .transaction
+            .take()
+            .expect("GPUI borrow must own its update transaction");
+        let app = transaction.app_mut();
+        app.notify(lease.id);
+        app.entities.end_lease(lease);
+
+        if !std::thread::panicking() {
+            transaction.finish();
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
+    use super::window_registry;
     use std::{
         cell::{Cell, RefCell},
+        panic::{AssertUnwindSafe, catch_unwind},
         rc::Rc,
     };
 
     use crate::{
-        AnyWindowHandle, AppContext, Context, Empty, Entity, IntoElement, Render, TestAppContext,
-        Window,
+        AnyWindowHandle, AppContext, Context, Empty, Entity, IntoElement, QuitMode, Render,
+        TestAppContext, Window, WindowOptions,
     };
     use crate::{px, size};
 
-    actions!(app_focus_tests, [DispatchProbe]);
+    actions!(
+        app_focus_tests,
+        [DispatchProbe, MenuProbe, UnknownMenuProbe]
+    );
 
     #[test]
     fn test_gpui_borrow() {
@@ -2803,6 +2928,573 @@ mod test {
         assert_eq!(*observation_count.borrow(), 2);
     }
 
+    #[test]
+    fn gpui_borrow_restores_app_transaction_when_observer_panics() {
+        let cx = TestAppContext::single();
+        let panic_on_observe = Rc::new(Cell::new(true));
+        let successful_observations = Rc::new(Cell::new(0));
+        let state = cx.update(|cx| {
+            let state = cx.new(|_| false);
+            cx.observe(&state, {
+                let panic_on_observe = panic_on_observe.clone();
+                let successful_observations = successful_observations.clone();
+                move |_, _| {
+                    assert!(
+                        !panic_on_observe.get(),
+                        "injected GPUI borrow observer panic"
+                    );
+                    successful_observations.set(successful_observations.get() + 1);
+                }
+            })
+            .detach();
+            state
+        });
+
+        let mut app = cx.app.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            *std::borrow::BorrowMut::borrow_mut(&mut state.as_mut(&mut *app)) = true;
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(app.pending_updates, 0);
+        assert!(!app.flushing_effects);
+        panic_on_observe.set(false);
+        *std::borrow::BorrowMut::borrow_mut(&mut state.as_mut(&mut *app)) = false;
+        assert_eq!(
+            successful_observations.get(),
+            1,
+            "the observer set must survive a callback panic"
+        );
+        assert_eq!(app.pending_updates, 0);
+        assert!(!app.flushing_effects);
+    }
+
+    #[test]
+    fn gpui_borrow_does_not_flush_observers_during_unwind() {
+        let cx = TestAppContext::single();
+        let observation_count = Rc::new(Cell::new(0));
+        let state = cx.update(|cx| {
+            let state = cx.new(|_| false);
+            cx.observe(&state, {
+                let observation_count = observation_count.clone();
+                move |_, _| observation_count.set(observation_count.get() + 1)
+            })
+            .detach();
+            state
+        });
+
+        let mut app = cx.app.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let mut state = state.as_mut(&mut *app);
+            *state = true;
+            panic!("injected panic while holding a GPUI borrow");
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(observation_count.get(), 0);
+        assert_eq!(app.pending_updates, 0);
+        assert!(!app.flushing_effects);
+
+        app.update(|_| {});
+        assert_eq!(observation_count.get(), 1);
+        assert_eq!(app.pending_updates, 0);
+        assert!(!app.flushing_effects);
+    }
+
+    #[test]
+    fn release_callback_panic_does_not_skip_remaining_entity_cleanup() {
+        let cx = TestAppContext::single();
+        let later_callback_count = Rc::new(Cell::new(0));
+        let dependent_release_count = Rc::new(Cell::new(0));
+        let first = cx.update(|app| {
+            let first = app.new(|_| ());
+            let dependent = app.new(|_| ());
+            app.observe_release(&dependent, {
+                let dependent_release_count = dependent_release_count.clone();
+                move |_, _| dependent_release_count.set(dependent_release_count.get() + 1)
+            })
+            .detach();
+            app.observe_release(&first, move |_, _| {
+                drop(dependent);
+                panic!("injected release callback panic");
+            })
+            .detach();
+            app.observe_release(&first, {
+                let later_callback_count = later_callback_count.clone();
+                move |_, _| later_callback_count.set(later_callback_count.get() + 1)
+            })
+            .detach();
+            first
+        });
+
+        drop(first);
+        let result = catch_unwind(AssertUnwindSafe(|| cx.update(|_| {})));
+
+        assert!(result.is_err());
+        assert_eq!(
+            later_callback_count.get(),
+            1,
+            "all callbacks for the panicking entity must reach a terminal outcome"
+        );
+        assert_eq!(
+            dependent_release_count.get(),
+            1,
+            "entities dropped by a panicking callback must still be released"
+        );
+        cx.update(|_| {});
+        assert_app_transaction_idle(&cx);
+    }
+
+    #[crate::test]
+    fn entity_update_returns_lease_before_resuming_callback_panic(cx: &mut TestAppContext) {
+        let state = cx.update(|app| app.new(|_| 0usize));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            state.update(cx, |state, _| {
+                *state = 1;
+                panic!("injected entity update panic");
+            });
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(
+            cx.read(|app| *state.read(app)),
+            1,
+            "the entity remains available with its last in-memory value"
+        );
+        state.update(cx, |state, _| *state = 2);
+        assert_eq!(cx.read(|app| *state.read(app)), 2);
+        assert_app_transaction_idle(cx);
+    }
+
+    fn assert_app_transaction_idle(cx: &TestAppContext) {
+        cx.read(|app| {
+            assert_eq!(app.pending_updates, 0);
+            assert!(!app.flushing_effects);
+            assert!(app.window_update_stack.is_empty());
+        });
+    }
+
+    #[crate::test]
+    fn app_update_restores_depth_after_callback_panics(cx: &mut TestAppContext) {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|app| {
+                assert_eq!(app.pending_updates, 1);
+                panic!("injected app update panic");
+            })
+        }));
+
+        assert!(result.is_err());
+        assert_app_transaction_idle(cx);
+        cx.update(|app| assert_eq!(app.pending_updates, 1));
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn open_window_rolls_back_exact_reservation_when_root_builder_panics(cx: &mut TestAppContext) {
+        let reserved_id = Rc::new(Cell::new(None));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|app| {
+                let _: anyhow::Result<crate::WindowHandle<Empty>> =
+                    app.open_window(WindowOptions::default(), {
+                        let reserved_id = reserved_id.clone();
+                        move |window, _| -> Entity<Empty> {
+                            reserved_id.set(Some(window.window_handle().window_id()));
+                            panic!("injected root builder panic");
+                        }
+                    });
+            })
+        }));
+
+        assert!(result.is_err());
+        let reserved_id = reserved_id
+            .get()
+            .expect("the builder must observe its reserved window id");
+        assert_app_transaction_idle(cx);
+        cx.read(|app| {
+            assert!(!app.windows.contains_key(reserved_id));
+            assert!(!app.window_handles.contains_key(&reserved_id));
+            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+        });
+        assert!(
+            cx.app.dispatch_window_should_close(reserved_id),
+            "the rolled-back id must also be absent from native query snapshots"
+        );
+
+        let replacement = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
+        assert!(replacement.update(cx, |_, _, _| ()).is_ok());
+    }
+
+    #[crate::test]
+    fn reserved_window_rollback_cleans_entity_window_links(cx: &mut TestAppContext) {
+        let anchor: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let marker = cx.update(|app| app.new(|_| ()));
+        let marker_id = marker.entity_id();
+        let reserved_id = cx.update(|app| {
+            let invalidator = app
+                .windows
+                .get(anchor.window_id())
+                .and_then(Option::as_deref)
+                .expect("the anchor window must be committed")
+                .invalidator
+                .clone();
+            let mut reservation = window_registry::reserve(app);
+            let reserved_id = reservation.id();
+            let app = reservation.app_mut();
+            app.tracked_entities
+                .entry(reserved_id)
+                .or_default()
+                .insert(marker_id);
+            app.current_window_by_entity.insert(marker_id, reserved_id);
+            app.window_invalidators_by_entity
+                .entry(marker_id)
+                .or_default()
+                .insert(reserved_id, invalidator);
+            drop(reservation);
+            reserved_id
+        });
+
+        cx.read(|app| {
+            assert!(!app.windows.contains_key(reserved_id));
+            assert!(!app.tracked_entities.contains_key(&reserved_id));
+            assert_ne!(
+                app.current_window_by_entity.get(&marker_id),
+                Some(&reserved_id)
+            );
+            assert!(
+                app.window_invalidators_by_entity
+                    .get(&marker_id)
+                    .is_none_or(|windows| !windows.contains_key(&reserved_id))
+            );
+        });
+    }
+
+    #[crate::test]
+    fn builder_closed_reserved_window_is_not_committed(cx: &mut TestAppContext) {
+        let reserved_id = Rc::new(Cell::new(None));
+        let closed_count = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            app.set_quit_mode(QuitMode::LastWindowClosed);
+            app.on_window_closed({
+                let closed_count = closed_count.clone();
+                move |_, _| closed_count.set(closed_count.get() + 1)
+            })
+            .detach();
+        });
+
+        let result: anyhow::Result<crate::WindowHandle<Empty>> = cx.update(|app| {
+            app.open_window(WindowOptions::default(), {
+                let reserved_id = reserved_id.clone();
+                move |window, app| {
+                    reserved_id.set(Some(window.window_handle().window_id()));
+                    window.remove_window(app);
+                    app.new(|_| Empty)
+                }
+            })
+        });
+
+        assert!(result.is_err());
+        let reserved_id = reserved_id
+            .get()
+            .expect("the builder must observe its reserved window id");
+        cx.read(|app| {
+            assert!(!app.windows.contains_key(reserved_id));
+            assert!(!app.window_handles.contains_key(&reserved_id));
+            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+        });
+        assert!(cx.app.dispatch_window_should_close(reserved_id));
+        assert!(
+            crate::WindowHandle::<Empty>::new(reserved_id)
+                .update(cx, |_, _, _| ())
+                .is_err()
+        );
+        assert_eq!(closed_count.get(), 0);
+        assert!(!cx.did_quit());
+        assert_app_transaction_idle(cx);
+    }
+
+    struct PanicOnInitialDraw;
+
+    impl Render for PanicOnInitialDraw {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            if std::hint::black_box(true) {
+                panic!("injected initial draw panic");
+            }
+            Empty
+        }
+    }
+
+    struct CloseOnInitialDraw;
+
+    impl Render for CloseOnInitialDraw {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            window.remove_window(cx);
+            Empty
+        }
+    }
+
+    #[crate::test]
+    fn initial_draw_closed_reserved_window_is_not_committed(cx: &mut TestAppContext) {
+        let reserved_id = Rc::new(Cell::new(None));
+        let closed_count = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            app.set_quit_mode(QuitMode::LastWindowClosed);
+            app.on_window_closed({
+                let closed_count = closed_count.clone();
+                move |_, _| closed_count.set(closed_count.get() + 1)
+            })
+            .detach();
+        });
+
+        let result: anyhow::Result<crate::WindowHandle<CloseOnInitialDraw>> = cx.update(|app| {
+            app.open_window(WindowOptions::default(), {
+                let reserved_id = reserved_id.clone();
+                move |window, app| {
+                    reserved_id.set(Some(window.window_handle().window_id()));
+                    app.new(|_| CloseOnInitialDraw)
+                }
+            })
+        });
+
+        assert!(result.is_err());
+        let reserved_id = reserved_id
+            .get()
+            .expect("the builder must observe its reserved window id");
+        cx.read(|app| {
+            assert!(!app.windows.contains_key(reserved_id));
+            assert!(!app.window_handles.contains_key(&reserved_id));
+            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+        });
+        assert!(cx.app.dispatch_window_should_close(reserved_id));
+        assert!(
+            crate::WindowHandle::<CloseOnInitialDraw>::new(reserved_id)
+                .update(cx, |_, _, _| ())
+                .is_err()
+        );
+        assert_eq!(closed_count.get(), 0);
+        assert!(!cx.did_quit());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn open_window_rolls_back_exact_reservation_when_initial_draw_panics(cx: &mut TestAppContext) {
+        let reserved_id = Rc::new(Cell::new(None));
+        let observed_creations = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            app.observe_new::<PanicOnInitialDraw>({
+                let observed_creations = observed_creations.clone();
+                move |_, _, _| observed_creations.set(observed_creations.get() + 1)
+            })
+            .detach();
+        });
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|app| {
+                let _: anyhow::Result<crate::WindowHandle<PanicOnInitialDraw>> =
+                    app.open_window(WindowOptions::default(), {
+                        let reserved_id = reserved_id.clone();
+                        move |window, app| -> Entity<PanicOnInitialDraw> {
+                            reserved_id.set(Some(window.window_handle().window_id()));
+                            app.new(|_| PanicOnInitialDraw)
+                        }
+                    });
+            })
+        }));
+
+        assert!(result.is_err());
+        let reserved_id = reserved_id
+            .get()
+            .expect("the builder must observe its reserved window id");
+        assert_app_transaction_idle(cx);
+        cx.read(|app| {
+            assert!(!app.windows.contains_key(reserved_id));
+            assert!(!app.window_handles.contains_key(&reserved_id));
+            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+        });
+        assert!(
+            cx.app.dispatch_window_should_close(reserved_id),
+            "the rolled-back id must also be absent from native query snapshots"
+        );
+        cx.update(|_| {});
+        assert_eq!(
+            observed_creations.get(),
+            0,
+            "a root entity from a rolled-back window must not emit a creation effect"
+        );
+    }
+
+    #[crate::test]
+    fn window_update_panics_restore_exact_parent_stack_and_registry(cx: &mut TestAppContext) {
+        let first: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let second: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            first
+                .update(cx, |_, _, app| -> () {
+                    assert_eq!(app.window_update_stack, [first.window_id()]);
+                    let nested = catch_unwind(AssertUnwindSafe(|| {
+                        app.update_window_id(second.window_id(), |_, _, _| -> () {
+                            panic!("injected nested window update panic")
+                        })
+                    }));
+                    assert!(nested.is_err());
+                    assert_eq!(
+                        app.window_update_stack,
+                        [first.window_id()],
+                        "the nested transaction must restore the exact parent stack"
+                    );
+                    panic!("injected outer window update panic");
+                })
+                .expect("the first window must exist before the injected panic");
+        }));
+
+        assert!(result.is_err());
+        assert_app_transaction_idle(cx);
+        cx.read(|app| {
+            assert!(
+                app.windows
+                    .get(first.window_id())
+                    .is_some_and(Option::is_some)
+            );
+            assert!(
+                app.windows
+                    .get(second.window_id())
+                    .is_some_and(Option::is_some)
+            );
+        });
+        first
+            .update(cx, |_, _, _| ())
+            .expect("the first window must remain updateable");
+        second
+            .update(cx, |_, _, _| ())
+            .expect("the second window must remain updateable");
+    }
+
+    #[crate::test]
+    fn window_removed_before_update_panic_is_not_restored(cx: &mut TestAppContext) {
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let closed_count = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            app.on_window_closed({
+                let closed_count = closed_count.clone();
+                move |_, closed_window| {
+                    assert_eq!(closed_window, window.window_id());
+                    closed_count.set(closed_count.get() + 1);
+                }
+            })
+            .detach();
+        });
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            window
+                .update(cx, |_, window, app| -> () {
+                    window.remove_window(app);
+                    panic!("injected panic after removing a window");
+                })
+                .expect("the window must exist before removal");
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(closed_count.get(), 1);
+        assert_app_transaction_idle(cx);
+        cx.read(|app| {
+            assert!(!app.windows.contains_key(window.window_id()));
+            assert!(!app.window_handles.contains_key(&window.window_id()));
+            assert!(
+                !app.window_mutation_profiles
+                    .contains_key(&window.window_id())
+            );
+        });
+        assert!(
+            window.update(cx, |_, _, _| ()).is_err(),
+            "a removed window must not be resurrected after the callback panic"
+        );
+    }
+
+    #[crate::test]
+    fn window_close_observer_panic_does_not_skip_fanout_or_last_window_quit(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::LastWindowClosed));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let later_observer_count = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            app.on_window_closed({
+                let expected = window.window_id();
+                move |_, closed_window| {
+                    assert_eq!(closed_window, expected);
+                    panic!("injected first close observer panic");
+                }
+            })
+            .detach();
+            app.on_window_closed({
+                let later_observer_count = later_observer_count.clone();
+                move |_, closed_window| {
+                    assert_eq!(closed_window, window.window_id());
+                    later_observer_count.set(later_observer_count.get() + 1);
+                }
+            })
+            .detach();
+        });
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            window
+                .update(cx, |_, window, app| window.remove_window(app))
+                .expect("the window must exist before removal");
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(
+            later_observer_count.get(),
+            1,
+            "a panicking observer must not skip later close observers"
+        );
+        assert!(
+            cx.did_quit(),
+            "LastWindowClosed must still request application quit"
+        );
+        assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn window_update_preserves_callback_panic_after_close_observer_panic(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        cx.update(|app| {
+            app.on_window_closed(|_, _| panic!("injected close observer panic"))
+                .detach();
+        });
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            window
+                .update(cx, |_, window, app| -> () {
+                    window.remove_window(app);
+                    panic!("injected original window update panic");
+                })
+                .expect("the window must exist before removal");
+        }));
+
+        let payload = result.expect_err("the window callback must panic");
+        let message = payload
+            .downcast_ref::<&'static str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+        assert_eq!(message, Some("injected original window update panic"));
+        assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
+    }
+
     #[crate::test]
     fn application_on_system_wake_runs_callback(cx: &mut TestAppContext) {
         let wake_count = Rc::new(Cell::new(0));
@@ -2815,6 +3507,140 @@ mod test {
         cx.simulate_system_wake();
 
         assert_eq!(wake_count.get(), 2);
+    }
+
+    #[crate::test]
+    fn native_application_callbacks_wait_for_app_borrow_and_preserve_fifo(cx: &mut TestAppContext) {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let application = super::Application(cx.app.clone());
+        application.on_open_urls({
+            let observed = observed.clone();
+            move |urls, _| {
+                observed
+                    .borrow_mut()
+                    .push(format!("open:{}", urls.join(",")))
+            }
+        });
+        application.on_reopen({
+            let observed = observed.clone();
+            move |_| observed.borrow_mut().push("reopen".to_string())
+        });
+        application.on_system_wake({
+            let observed = observed.clone();
+            move |_| observed.borrow_mut().push("wake".to_string())
+        });
+
+        let simulator = cx.clone();
+        cx.update(|_| {
+            simulator.simulate_open_urls(["one", "two"]);
+            simulator.simulate_reopen();
+            simulator.simulate_will_open_app_menu();
+            simulator.simulate_system_wake();
+            assert!(
+                observed.borrow().is_empty(),
+                "native application callbacks must not re-enter a borrowed App"
+            );
+        });
+
+        assert_eq!(
+            *observed.borrow(),
+            ["open:one,two", "reopen", "wake"],
+            "native application callbacks must retain callback-entry order"
+        );
+    }
+
+    #[crate::test]
+    fn replacing_native_application_handler_during_delivery_retires_old_generation(
+        cx: &mut TestAppContext,
+    ) {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let app = Rc::downgrade(&cx.app);
+        super::Application(cx.app.clone()).on_system_wake({
+            let observed = observed.clone();
+            move |_| {
+                observed.borrow_mut().push("old");
+                let app = app
+                    .upgrade()
+                    .expect("test application must outlive its native handler");
+                super::Application(app).on_system_wake({
+                    let observed = observed.clone();
+                    move |_| observed.borrow_mut().push("new")
+                });
+            }
+        });
+
+        cx.simulate_system_wake();
+        cx.simulate_system_wake();
+
+        assert_eq!(*observed.borrow(), ["old", "new"]);
+    }
+
+    #[crate::test]
+    fn app_menu_action_is_deferred_and_validation_uses_committed_snapshot_when_busy(
+        cx: &mut TestAppContext,
+    ) {
+        let dispatch_count = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            let dispatch_count = dispatch_count.clone();
+            app.on_action(move |_: &MenuProbe, _| {
+                dispatch_count.set(dispatch_count.get() + 1);
+            });
+        });
+
+        assert!(
+            cx.simulate_validate_app_menu_command(&MenuProbe),
+            "idle validation must commit the exact action availability"
+        );
+
+        let simulator = cx.clone();
+        cx.update(|_| {
+            simulator.simulate_app_menu_action(&MenuProbe);
+            assert_eq!(
+                dispatch_count.get(),
+                0,
+                "menu action must wait until the outer App borrow is released"
+            );
+        });
+        assert_eq!(
+            dispatch_count.get(),
+            1,
+            "menu action must dispatch after the outer App borrow is released"
+        );
+
+        cx.update(|app| {
+            app.global_action_listeners.clear();
+            assert!(
+                simulator.simulate_validate_app_menu_command(&MenuProbe),
+                "busy validation must use the last committed result"
+            );
+            assert!(
+                !simulator.simulate_validate_app_menu_command(&UnknownMenuProbe),
+                "an unknown busy validation must conservatively return false"
+            );
+        });
+
+        assert!(
+            !cx.simulate_validate_app_menu_command(&MenuProbe),
+            "the next idle validation must refresh the committed result"
+        );
+    }
+
+    #[crate::test]
+    fn quit_barrier_discards_later_native_application_callbacks(cx: &mut TestAppContext) {
+        let wake_count = Rc::new(Cell::new(0));
+        super::Application(cx.app.clone()).on_system_wake({
+            let wake_count = wake_count.clone();
+            move |_| wake_count.set(wake_count.get() + 1)
+        });
+
+        let app = cx.app.clone();
+        let simulator = cx.clone();
+        cx.update(|_| {
+            app.enqueue_quit_for_test();
+            simulator.simulate_system_wake();
+        });
+
+        assert_eq!(wake_count.get(), 0);
     }
 
     struct WindowTrackingView {

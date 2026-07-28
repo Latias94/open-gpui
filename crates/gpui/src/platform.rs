@@ -32,13 +32,14 @@ pub(crate) type PlatformScreenCaptureFrame = PlatformPixelBuffer;
 pub type PlatformPixelBuffer = objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, FocusId, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout,
-    MouseButton, Pixels, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
-    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, WindowMutationRequest,
-    geometry::ResolvedSubtreeTransform, hash, point, px, size,
+    Action, AnyWindowHandle, App, AppCell, AsyncApp, AsyncWindowContext, BackgroundExecutor,
+    Bounds, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, FocusId, Font, FontId,
+    FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+    LineLayout, ModifiersChangedEvent, MouseButton, NativeInputBoundary,
+    NativeInputHandlerOperation, NativeInvariantFailure, Pixels, PlatformInput, Point, Priority,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
+    WindowId, WindowMutationRequest, geometry::ResolvedSubtreeTransform, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -57,6 +58,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
@@ -65,7 +67,7 @@ use std::{
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 use strum::EnumIter;
@@ -874,6 +876,368 @@ pub enum ResizeEdge {
     TopLeft,
 }
 
+/// A platform-window operation that may synchronously pump native input or delegate callbacks.
+///
+/// GPUI executes this closed command set only after releasing the outer application borrow.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlatformWindowCommand {
+    CompleteInitialPresentation { activate: bool },
+    Activate,
+    ShowWindowMenu(Point<Pixels>),
+    StartWindowMove,
+    StartWindowResize(ResizeEdge),
+}
+
+/// The synchronous terminal result of a platform-window command.
+///
+/// A rejected initial-presentation command is retried by the native command authority and must
+/// not publish an initial-presentation completion event.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformWindowCommandOutcome {
+    Accepted,
+    Rejected,
+}
+
+/// One must-immediate native input callback installed into a platform backend.
+#[doc(hidden)]
+pub struct PlatformInputCallback {
+    cx: Option<AsyncApp>,
+    diagnostic_target: Option<NativeInputDiagnosticTarget>,
+    callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>,
+    allow_unleased_test_dispatch: bool,
+}
+
+impl PlatformInputCallback {
+    /// Creates a callback for a platform adapter or backend integration test.
+    #[doc(hidden)]
+    pub fn new(
+        cx: AsyncApp,
+        callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>,
+    ) -> Self {
+        Self {
+            cx: Some(cx),
+            diagnostic_target: None,
+            callback,
+            allow_unleased_test_dispatch: false,
+        }
+    }
+
+    pub(crate) fn new_for_window(
+        cx: AsyncApp,
+        window_id: WindowId,
+        callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>,
+    ) -> Self {
+        let diagnostic_target = Some(NativeInputDiagnosticTarget {
+            app: cx.app.clone(),
+            window_id,
+        });
+        Self {
+            cx: Some(cx),
+            diagnostic_target,
+            callback,
+            allow_unleased_test_dispatch: false,
+        }
+    }
+
+    /// Creates an isolated callback for backend state-machine tests that do not construct an app.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_unleased_for_test(
+        callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>,
+    ) -> Self {
+        Self {
+            cx: None,
+            diagnostic_target: None,
+            callback,
+            allow_unleased_test_dispatch: true,
+        }
+    }
+
+    fn begin_native_callback_lease(
+        &self,
+        generation: u64,
+    ) -> Option<crate::app::NativeCallbackLease> {
+        self.cx.as_ref()?.begin_platform_input_lease(generation)
+    }
+}
+
+/// A must-immediate native input callback that could not return a real handler result.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeInputInvariantViolation {
+    pub window_id: WindowId,
+    pub boundary: NativeInputBoundary,
+    pub slot_generation: Option<u64>,
+    pub failure: NativeInvariantFailure,
+}
+
+impl NativeInputInvariantViolation {
+    pub(crate) fn new(
+        window_id: WindowId,
+        boundary: NativeInputBoundary,
+        slot_generation: Option<u64>,
+        failure: NativeInvariantFailure,
+    ) -> Self {
+        Self {
+            window_id,
+            boundary,
+            slot_generation,
+            failure,
+        }
+    }
+}
+
+impl std::fmt::Display for NativeInputInvariantViolation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "must-immediate native input invariant failed: window={:?} boundary={:?} slot_generation={:?} failure={:?}",
+            self.window_id, self.boundary, self.slot_generation, self.failure
+        )
+    }
+}
+
+impl std::error::Error for NativeInputInvariantViolation {}
+
+#[derive(Clone)]
+struct NativeInputDiagnosticTarget {
+    app: Weak<AppCell>,
+    window_id: WindowId,
+}
+
+impl NativeInputDiagnosticTarget {
+    fn record_invariant(
+        &self,
+        boundary: NativeInputBoundary,
+        generation: u64,
+        failure: NativeInvariantFailure,
+    ) {
+        if let Some(app) = self.app.upgrade() {
+            app.record_native_input_slot_invariant(self.window_id, boundary, generation, failure);
+        }
+    }
+
+    fn panic_invariant(
+        &self,
+        boundary: NativeInputBoundary,
+        generation: u64,
+        failure: NativeInvariantFailure,
+    ) -> ! {
+        self.record_invariant(boundary, generation, failure);
+        std::panic::panic_any(NativeInputInvariantViolation::new(
+            self.window_id,
+            boundary,
+            Some(generation),
+            failure,
+        ))
+    }
+}
+
+#[derive(Default)]
+struct PlatformInputCallbackSlotState {
+    generation: u64,
+    checked_out_generation: Option<u64>,
+    callback: Option<PlatformInputCallback>,
+    diagnostic_target: Option<NativeInputDiagnosticTarget>,
+    terminal: bool,
+}
+
+/// A generation-aware slot for the must-immediate native input callback.
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct PlatformInputCallbackSlot {
+    state: Rc<RefCell<PlatformInputCallbackSlotState>>,
+}
+
+impl PlatformInputCallbackSlot {
+    /// Installs a callback and invalidates any callback currently checked out by a native stack.
+    pub fn set(&self, callback: PlatformInputCallback) {
+        let previous = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.generation = state
+                .generation
+                .checked_add(1)
+                .expect("platform input callback generation overflowed");
+            state.diagnostic_target = callback.diagnostic_target.clone();
+            state.callback.replace(callback)
+        };
+        drop(previous);
+    }
+
+    /// Dispatches one native input and returns the exact current handler result.
+    ///
+    /// A missing or retired callback is an invariant violation because no fixed propagation
+    /// result is equivalent to the current handler result.
+    pub fn dispatch(&self, input: PlatformInput) -> DispatchEventResult {
+        let mut checkout = PlatformInputCallbackCheckout::new(self.clone());
+        if checkout.callback_lease.is_none()
+            && !checkout.callback_mut().allow_unleased_test_dispatch
+        {
+            checkout.panic_invariant(NativeInvariantFailure::MissingLease);
+        }
+        (checkout.callback_mut().callback)(input)
+    }
+
+    /// Permanently retires this window's callback slot.
+    pub fn terminate(&self) {
+        let callback = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.terminal = true;
+            state.generation = state
+                .generation
+                .checked_add(1)
+                .expect("platform input callback generation overflowed");
+            state.callback.take()
+        };
+        drop(callback);
+    }
+}
+
+struct PlatformInputCallbackCheckout {
+    slot: PlatformInputCallbackSlot,
+    generation: u64,
+    callback: Option<PlatformInputCallback>,
+    callback_lease: Option<crate::app::NativeCallbackLease>,
+}
+
+impl PlatformInputCallbackCheckout {
+    fn new(slot: PlatformInputCallbackSlot) -> Self {
+        let (generation, callback) = {
+            let mut state = slot.state.borrow_mut();
+            if state.terminal {
+                let generation = state.generation;
+                let diagnostic_target = state.diagnostic_target.clone();
+                drop(state);
+                if let Some(target) = diagnostic_target {
+                    target.panic_invariant(
+                        NativeInputBoundary::PlatformInput,
+                        generation,
+                        NativeInvariantFailure::RetiredSlot,
+                    );
+                }
+                panic!(
+                    "retired platform input callback slot generation={generation} has no diagnostic target"
+                );
+            }
+            if state.callback.is_none() {
+                let generation = state.generation;
+                let diagnostic_target = state.diagnostic_target.clone();
+                drop(state);
+                if let Some(target) = diagnostic_target {
+                    target.panic_invariant(
+                        NativeInputBoundary::PlatformInput,
+                        generation,
+                        NativeInvariantFailure::MissingSlot,
+                    );
+                }
+                panic!(
+                    "unbound platform input callback slot generation={generation} has no diagnostic target"
+                );
+            }
+            if state.checked_out_generation.is_some() {
+                let generation = state.generation;
+                let diagnostic_target = state.diagnostic_target.clone();
+                drop(state);
+                if let Some(target) = diagnostic_target {
+                    target.panic_invariant(
+                        NativeInputBoundary::PlatformInput,
+                        generation,
+                        NativeInvariantFailure::SlotReentry,
+                    );
+                }
+                panic!(
+                    "unbound platform input callback slot generation={generation} re-entered without a diagnostic target"
+                );
+            }
+            let callback = state
+                .callback
+                .take()
+                .expect("checked platform input callback must remain installed");
+            let generation = state.generation;
+            state.checked_out_generation = Some(generation);
+            (generation, callback)
+        };
+        let callback_lease = callback.begin_native_callback_lease(generation);
+        Self {
+            slot,
+            generation,
+            callback: Some(callback),
+            callback_lease,
+        }
+    }
+
+    fn callback_mut(&mut self) -> &mut PlatformInputCallback {
+        self.callback
+            .as_mut()
+            .expect("checked-out platform input callback must remain available")
+    }
+
+    fn panic_invariant(&self, failure: NativeInvariantFailure) -> ! {
+        let target = self
+            .callback
+            .as_ref()
+            .and_then(|callback| callback.diagnostic_target.as_ref())
+            .expect("leased platform input callback must have a diagnostic target");
+        target.panic_invariant(NativeInputBoundary::PlatformInput, self.generation, failure)
+    }
+}
+
+impl Drop for PlatformInputCallbackCheckout {
+    fn drop(&mut self) {
+        let retired_callback = {
+            let mut state = self.slot.state.borrow_mut();
+            if state.checked_out_generation == Some(self.generation) {
+                state.checked_out_generation = None;
+                if state.generation == self.generation && state.callback.is_none() {
+                    state.callback = self.callback.take();
+                }
+            }
+            self.callback.take()
+        };
+        let callback_lease = self.callback_lease.take();
+        drop(retired_callback);
+        drop(callback_lease);
+    }
+}
+
+/// A cloneable backend dispatcher for [`PlatformWindowCommand`].
+///
+/// Backend implementations should capture weak native-window state so queued commands cannot
+/// extend native window lifetime.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PlatformWindowCommandDispatcher(
+    Rc<dyn Fn(PlatformWindowCommand) -> PlatformWindowCommandOutcome>,
+);
+
+impl PlatformWindowCommandDispatcher {
+    #[doc(hidden)]
+    pub fn new(
+        dispatch: impl Fn(PlatformWindowCommand) -> PlatformWindowCommandOutcome + 'static,
+    ) -> Self {
+        Self(Rc::new(dispatch))
+    }
+
+    pub(crate) fn dispatch(&self, command: PlatformWindowCommand) -> PlatformWindowCommandOutcome {
+        (self.0)(command)
+    }
+}
+
+impl Debug for PlatformWindowCommandDispatcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PlatformWindowCommandDispatcher")
+            .finish_non_exhaustive()
+    }
+}
+
 /// A type to describe the appearance of a window
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub enum WindowDecorations {
@@ -1112,6 +1476,7 @@ pub struct RequestFrameOptions {
 
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+    fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher;
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
     fn is_minimized(&self) -> bool {
@@ -1128,6 +1493,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    fn input_handler_slot_for_test(&self) -> Option<PlatformInputHandlerSlot> {
+        None
+    }
     fn prompt(
         &self,
         level: PromptLevel,
@@ -1135,7 +1505,6 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
-    fn activate(&self);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn accepts_pointer_input(&self) -> bool {
@@ -1200,7 +1569,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn is_fullscreen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
+    fn on_input(&self, callback: PlatformInputCallback);
+    fn on_modifiers_changed(&self, _callback: Box<dyn FnMut(ModifiersChangedEvent)>) {}
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
@@ -1269,9 +1639,6 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         self.window_bounds()
     }
     fn request_decorations(&self, _decorations: WindowDecorations) {}
-    fn show_window_menu(&self, _position: Point<Pixels>) {}
-    fn start_window_move(&self) {}
-    fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }
@@ -1851,6 +2218,179 @@ pub struct PlatformInputHandler {
     validity: Option<crate::geometry::SubtreeGeometryValidity>,
 }
 
+#[derive(Default)]
+struct PlatformInputHandlerSlotState {
+    generation: u64,
+    checked_out_generation: Option<u64>,
+    handler: Option<PlatformInputHandler>,
+    diagnostic_target: Option<NativeInputDiagnosticTarget>,
+    terminal: bool,
+}
+
+/// A generation-aware platform input-handler slot.
+///
+/// Native backends must invoke handlers through [`Self::with_handler`]. If focus, teardown, or a
+/// nested GPUI update replaces the handler while a callback is active, the checked-out handler is
+/// retired instead of overwriting the replacement when the callback returns.
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct PlatformInputHandlerSlot {
+    state: Rc<RefCell<PlatformInputHandlerSlotState>>,
+}
+
+impl PlatformInputHandlerSlot {
+    /// Replaces the current handler and invalidates any handler checked out by an active callback.
+    pub fn set(&self, handler: PlatformInputHandler) {
+        let previous = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.generation = state
+                .generation
+                .checked_add(1)
+                .expect("platform input-handler generation overflowed");
+            state.diagnostic_target = Some(handler.diagnostic_target());
+            state.handler.replace(handler)
+        };
+        drop(previous);
+    }
+
+    /// Takes the current handler and invalidates any handler checked out by an active callback.
+    pub fn take(&self) -> Option<PlatformInputHandler> {
+        let mut state = self.state.borrow_mut();
+        if state.terminal {
+            return None;
+        }
+        state.generation = state
+            .generation
+            .checked_add(1)
+            .expect("platform input-handler generation overflowed");
+        state.handler.take()
+    }
+
+    /// Runs one native callback against the current handler.
+    ///
+    /// Reentrant use of the same slot or entering after window retirement is an invariant
+    /// violation. `None` means the live window currently has no focused text-input handler;
+    /// backends retain their operation-specific absence semantics for that valid state.
+    pub fn with_handler<R>(
+        &self,
+        callback: impl FnOnce(&mut PlatformInputHandler) -> R,
+    ) -> Option<R> {
+        let mut checkout = PlatformInputHandlerCheckout::new(self.clone())?;
+        if checkout.callback_lease.is_none() {
+            checkout.panic_invariant(NativeInvariantFailure::MissingLease);
+        }
+        Some(callback(checkout.handler_mut()))
+    }
+
+    /// Permanently retires this window's handler slot.
+    pub fn terminate(&self) {
+        let handler = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.terminal = true;
+            state.generation = state
+                .generation
+                .checked_add(1)
+                .expect("platform input-handler generation overflowed");
+            state.handler.take()
+        };
+        drop(handler);
+    }
+}
+
+struct PlatformInputHandlerCheckout {
+    slot: PlatformInputHandlerSlot,
+    generation: u64,
+    handler: Option<PlatformInputHandler>,
+    callback_lease: Option<crate::app::NativeCallbackLease>,
+}
+
+impl PlatformInputHandlerCheckout {
+    fn new(slot: PlatformInputHandlerSlot) -> Option<Self> {
+        let (generation, handler) = {
+            let mut state = slot.state.borrow_mut();
+            if state.terminal {
+                let generation = state.generation;
+                let diagnostic_target = state.diagnostic_target.clone();
+                drop(state);
+                if let Some(target) = diagnostic_target {
+                    target.panic_invariant(
+                        NativeInputBoundary::InputHandler,
+                        generation,
+                        NativeInvariantFailure::RetiredSlot,
+                    );
+                }
+                panic!(
+                    "retired platform input-handler slot generation={generation} has no diagnostic target"
+                );
+            }
+            if state.checked_out_generation.is_some() {
+                let generation = state.generation;
+                let diagnostic_target = state.diagnostic_target.clone();
+                drop(state);
+                if let Some(target) = diagnostic_target {
+                    target.panic_invariant(
+                        NativeInputBoundary::InputHandler,
+                        generation,
+                        NativeInvariantFailure::SlotReentry,
+                    );
+                }
+                panic!(
+                    "unbound platform input-handler slot generation={generation} re-entered without a diagnostic target"
+                );
+            }
+            let handler = state.handler.take()?;
+            let generation = state.generation;
+            state.checked_out_generation = Some(generation);
+            (generation, handler)
+        };
+        let callback_lease = handler.begin_native_callback_lease(generation);
+        Some(Self {
+            slot,
+            generation,
+            handler: Some(handler),
+            callback_lease,
+        })
+    }
+
+    fn handler_mut(&mut self) -> &mut PlatformInputHandler {
+        self.handler
+            .as_mut()
+            .expect("checked-out platform input handler must remain available")
+    }
+
+    fn panic_invariant(&self, failure: NativeInvariantFailure) -> ! {
+        self.handler
+            .as_ref()
+            .expect("leased platform input handler must remain available")
+            .diagnostic_target()
+            .panic_invariant(NativeInputBoundary::InputHandler, self.generation, failure)
+    }
+}
+
+impl Drop for PlatformInputHandlerCheckout {
+    fn drop(&mut self) {
+        let retired_handler = {
+            let mut state = self.slot.state.borrow_mut();
+            if state.checked_out_generation == Some(self.generation) {
+                state.checked_out_generation = None;
+                if state.generation == self.generation && state.handler.is_none() {
+                    state.handler = self.handler.take();
+                }
+            }
+            self.handler.take()
+        };
+        let callback_lease = self.callback_lease.take();
+        drop(retired_handler);
+        drop(callback_lease);
+    }
+}
+
 #[expect(missing_docs)]
 #[cfg_attr(
     all(
@@ -1876,6 +2416,18 @@ impl PlatformInputHandler {
         }
     }
 
+    fn begin_native_callback_lease(
+        &self,
+        generation: u64,
+    ) -> Option<crate::app::NativeCallbackLease> {
+        self.cx.begin_input_handler_lease(generation)
+    }
+
+    fn diagnostic_target(&self) -> NativeInputDiagnosticTarget {
+        let (app, window_id) = self.cx.native_input_diagnostic_target();
+        NativeInputDiagnosticTarget { app, window_id }
+    }
+
     pub(crate) fn validity(&self) -> Option<crate::geometry::SubtreeGeometryValidity> {
         self.validity.clone()
     }
@@ -1899,30 +2451,38 @@ impl PlatformInputHandler {
 
     fn update_in_input_transaction<R>(
         &mut self,
+        operation: NativeInputHandlerOperation,
         callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
-    ) -> Result<R> {
+    ) -> std::result::Result<R, NativeInputInvariantViolation> {
         let Self { cx, handler, .. } = self;
-        cx.update(|window, app| {
+        cx.update_native_input_handler(operation, |window, app| {
             window
                 .with_input_transaction(app, |window, app| callback(handler.as_mut(), window, app))
         })
     }
 
+    fn native_callback<R>(
+        &mut self,
+        operation: NativeInputHandlerOperation,
+        callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
+    ) -> R {
+        self.update_in_input_transaction(operation, callback)
+            .unwrap_or_else(|violation| std::panic::panic_any(violation))
+    }
+
     pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.selected_text_range(ignore_disabled_input, window, cx)
-        })
-        .ok()
-        .flatten()
+        self.native_callback(
+            NativeInputHandlerOperation::SelectedTextRange,
+            |handler, window, cx| handler.selected_text_range(ignore_disabled_input, window, cx),
+        )
     }
 
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.marked_text_range(window, cx)
-        })
-        .ok()
-        .flatten()
+        self.native_callback(
+            NativeInputHandlerOperation::MarkedTextRange,
+            |handler, window, cx| handler.marked_text_range(window, cx),
+        )
     }
 
     #[cfg_attr(
@@ -1934,18 +2494,19 @@ impl PlatformInputHandler {
         range_utf16: Range<usize>,
         adjusted: &mut Option<Range<usize>>,
     ) -> Option<String> {
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.text_for_range(range_utf16, adjusted, window, cx)
-        })
-        .ok()
-        .flatten()
+        self.native_callback(
+            NativeInputHandlerOperation::TextForRange,
+            |handler, window, cx| handler.text_for_range(range_utf16, adjusted, window, cx),
+        )
     }
 
     pub fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.replace_text_in_range(replacement_range, text, window, cx);
-        })
-        .ok();
+        self.native_callback(
+            NativeInputHandlerOperation::ReplaceTextInRange,
+            |handler, window, cx| {
+                handler.replace_text_in_range(replacement_range, text, window, cx);
+            },
+        )
     }
 
     pub fn replace_and_mark_text_in_range(
@@ -1954,37 +2515,43 @@ impl PlatformInputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     ) {
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.replace_and_mark_text_in_range(
-                range_utf16,
-                new_text,
-                new_selected_range,
-                window,
-                cx,
-            )
-        })
-        .ok();
+        self.native_callback(
+            NativeInputHandlerOperation::ReplaceAndMarkTextInRange,
+            |handler, window, cx| {
+                handler.replace_and_mark_text_in_range(
+                    range_utf16,
+                    new_text,
+                    new_selected_range,
+                    window,
+                    cx,
+                )
+            },
+        )
     }
 
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn unmark_text(&mut self) {
-        self.update_in_input_transaction(|handler, window, cx| handler.unmark_text(window, cx))
-            .ok();
+        self.native_callback(
+            NativeInputHandlerOperation::UnmarkText,
+            |handler, window, cx| handler.unmark_text(window, cx),
+        )
     }
 
     pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
         let transform = self.transform;
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.bounds_for_range(range_utf16, window, cx)
-        })
-        .ok()
-        .flatten()
+        self.native_callback(
+            NativeInputHandlerOperation::BoundsForRange,
+            |handler, window, cx| handler.bounds_for_range(range_utf16, window, cx),
+        )
         .and_then(|bounds| transform.try_project_bounds(bounds).ok())
     }
 
     #[allow(dead_code)]
     pub fn apple_press_and_hold_enabled(&mut self) -> bool {
-        self.handler.apple_press_and_hold_enabled()
+        self.native_callback(
+            NativeInputHandlerOperation::ApplePressAndHoldEnabled,
+            |handler, _, _| handler.apple_press_and_hold_enabled(),
+        )
     }
 
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
@@ -2044,21 +2611,30 @@ impl PlatformInputHandler {
     }
 
     pub fn ime_candidate_bounds(&mut self) -> Option<Bounds<Pixels>> {
-        let marked_range = self.marked_text_range();
-        let selection = self.selected_text_range(true)?;
-        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
-            self.bounds_for_range(range)
-        })
+        let transform = self.transform;
+        self.native_callback(
+            NativeInputHandlerOperation::ImeCandidateBounds,
+            |handler, window, cx| {
+                let marked_range = handler.marked_text_range(window, cx);
+                let selection = handler.selected_text_range(true, window, cx)?;
+                Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+                    handler
+                        .bounds_for_range(range, window, cx)
+                        .and_then(|bounds| transform.try_project_bounds(bounds).ok())
+                })
+            },
+        )
     }
 
     #[allow(unused)]
     pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
-        let point = self.transform.try_inverse_project_point(point).ok()?;
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.character_index_for_point(point, window, cx)
-        })
-        .ok()
-        .flatten()
+        let point = self.transform.try_inverse_project_point(point).ok();
+        self.native_callback(
+            NativeInputHandlerOperation::CharacterIndexForPoint,
+            |handler, window, cx| {
+                point.and_then(|point| handler.character_index_for_point(point, window, cx))
+            },
+        )
     }
 
     #[allow(dead_code)]
@@ -2069,18 +2645,18 @@ impl PlatformInputHandler {
 
     #[allow(dead_code)]
     pub fn query_accepts_text_input(&mut self) -> bool {
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.accepts_text_input(window, cx)
-        })
-        .unwrap_or(true)
+        self.native_callback(
+            NativeInputHandlerOperation::AcceptsTextInput,
+            |handler, window, cx| handler.accepts_text_input(window, cx),
+        )
     }
 
     #[allow(dead_code)]
     pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
-        self.update_in_input_transaction(|handler, window, cx| {
-            handler.prefers_ime_for_printable_keys(window, cx)
-        })
-        .unwrap_or(false)
+        self.native_callback(
+            NativeInputHandlerOperation::PrefersImeForPrintableKeys,
+            |handler, window, cx| handler.prefers_ime_for_printable_keys(window, cx),
+        )
     }
 }
 

@@ -305,6 +305,7 @@ impl TestAppContext {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),
@@ -332,6 +333,7 @@ impl TestAppContext {
                     origin: Point::default(),
                     size: window_size,
                 })),
+                focus: false,
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),
@@ -347,6 +349,7 @@ impl TestAppContext {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
                     ..Default::default()
                 },
                 |_, cx| cx.new(|_| Empty),
@@ -375,6 +378,7 @@ impl TestAppContext {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| build_root_view(window, cx)),
@@ -451,11 +455,13 @@ impl TestAppContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
+        self.run_until_parked();
     }
 
     /// Simulates the platform minimizing a window and publishing coherent window facts.
     pub fn simulate_window_minimize(&self, window_handle: AnyWindowHandle) {
         self.test_window(window_handle).simulate_minimize();
+        self.run_until_parked();
     }
 
     /// Configures the next structured placement dispatch from a test window.
@@ -484,7 +490,9 @@ impl TestAppContext {
         window: AnyWindowHandle,
         domain: WindowMutationDomain,
     ) -> bool {
-        self.test_window(window).flush_window_mutation(domain)
+        let emitted = self.test_window(window).flush_window_mutation(domain);
+        self.run_until_parked();
+        emitted
     }
 
     /// Emits supplied backend facts as an observed terminal result for one mutation domain.
@@ -494,8 +502,11 @@ impl TestAppContext {
         domain: WindowMutationDomain,
         facts: WindowPlatformFacts,
     ) -> bool {
-        self.test_window(window)
-            .simulate_window_mutation_observation(domain, facts)
+        let emitted = self
+            .test_window(window)
+            .simulate_window_mutation_observation(domain, facts);
+        self.run_until_parked();
+        emitted
     }
 
     /// Emits supplied backend facts with an explicit asynchronous terminal result.
@@ -506,8 +517,27 @@ impl TestAppContext {
         terminal: PlatformWindowMutationTerminal,
         facts: WindowPlatformFacts,
     ) -> bool {
-        self.test_window(window)
-            .simulate_window_mutation_terminal(domain, terminal, facts)
+        let emitted = self
+            .test_window(window)
+            .simulate_window_mutation_terminal(domain, terminal, facts);
+        self.run_until_parked();
+        emitted
+    }
+
+    /// Emits an explicitly generation-bound terminal mutation result.
+    pub fn simulate_window_mutation_terminal_for_generation(
+        &self,
+        window: AnyWindowHandle,
+        domain: WindowMutationDomain,
+        generation: u64,
+        terminal: PlatformWindowMutationTerminal,
+        facts: WindowPlatformFacts,
+    ) -> bool {
+        let emitted = self
+            .test_window(window)
+            .simulate_window_mutation_terminal_for_generation(domain, generation, terminal, facts);
+        self.run_until_parked();
+        emitted
     }
 
     /// Activates accessibility for a test window and drains the resulting frame work.
@@ -576,6 +606,38 @@ impl TestAppContext {
     /// Simulates the system waking from sleep.
     pub fn simulate_system_wake(&self) {
         self.test_platform.simulate_system_wake();
+        self.run_until_parked();
+    }
+
+    /// Simulates the platform requesting that the application open URLs.
+    pub fn simulate_open_urls(&self, urls: impl IntoIterator<Item = impl Into<String>>) {
+        self.test_platform
+            .simulate_open_urls(urls.into_iter().map(Into::into).collect());
+        self.run_until_parked();
+    }
+
+    /// Simulates the platform reopening an already-running application.
+    pub fn simulate_reopen(&self) {
+        self.test_platform.simulate_reopen();
+        self.run_until_parked();
+    }
+
+    /// Simulates the platform opening the application menu.
+    pub fn simulate_will_open_app_menu(&self) {
+        self.test_platform.simulate_will_open_app_menu();
+        self.run_until_parked();
+    }
+
+    /// Simulates selecting an application menu action.
+    pub fn simulate_app_menu_action(&self, action: &dyn Action) {
+        self.test_platform.simulate_app_menu_action(action);
+        self.run_until_parked();
+    }
+
+    /// Simulates the platform synchronously validating an application menu action.
+    pub fn simulate_validate_app_menu_command(&self, action: &dyn Action) -> bool {
+        self.test_platform
+            .simulate_validate_app_menu_command(action)
     }
 
     /// Causes the given sources to be returned if the application queries for screen
@@ -765,6 +827,11 @@ impl TestAppContext {
         self.test_platform.set_platform_viewport_windows(supported);
     }
 
+    /// Makes the next TestPlatform window fail during `PlatformWindow::map_window`.
+    pub fn fail_next_window_map(&self, message: impl Into<String>) {
+        self.test_platform.fail_next_window_map(message);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
@@ -815,22 +882,21 @@ impl TestAppContext {
         text: &str,
         selected_range: Option<Range<usize>>,
     ) {
-        let mut input_handler = self
+        let input_handler_slot = self
             .update_window(window, |_, window, _| {
-                window.platform_window.take_input_handler()
+                window.platform_window.input_handler_slot_for_test()
             })
             .expect("test window should be available")
             .expect("focused element should install a platform input handler");
-        input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
-        let _ = self.update_window(window, |_, window, _| {
-            if let Some(current_input_handler) = window.platform_window.take_input_handler() {
-                window
-                    .platform_window
-                    .set_input_handler(current_input_handler);
-            } else {
-                window.platform_window.set_input_handler(input_handler);
-            }
-        });
+        input_handler_slot
+            .with_handler(|input_handler| {
+                input_handler.replace_and_mark_text_in_range(
+                    replacement_range,
+                    text,
+                    selected_range,
+                )
+            })
+            .expect("focused element should retain a live platform input handler");
         self.background_executor.run_until_parked();
     }
 

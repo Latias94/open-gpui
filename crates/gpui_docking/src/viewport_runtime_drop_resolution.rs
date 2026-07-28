@@ -8,12 +8,6 @@ pub(crate) struct DockViewportBackendRouteRequest {
     pub(crate) changed: bool,
 }
 
-pub(crate) struct DockViewportDropRouteSnapshotRefresh {
-    pub(crate) snapshot: DockViewportDropRouteSnapshot,
-    pub(crate) changed: bool,
-    pub(crate) window_effects: DockViewportWindowEffects,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct DockViewportResolvedDropRouteOutcome {
     resolution: DockViewportResolvedDropRoute,

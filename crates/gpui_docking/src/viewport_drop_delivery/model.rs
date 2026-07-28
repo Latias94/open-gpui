@@ -1,7 +1,9 @@
+#[cfg(test)]
+use crate::DockWorkspace;
 use crate::{
     DockActionApplyError, DockNodeId, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
-    DockViewportPointerCoordinateSpace, DockViewportTearOffRequest, DockWorkspace,
+    DockViewportPointerCoordinateSpace, DockViewportRouteProof, DockViewportTearOffRequest,
     drop_target::{DockDropTargetKey, DockResolvedDropTarget},
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
@@ -31,15 +33,21 @@ pub(crate) struct DockViewportResolvedDropRoute {
     route: DockViewportDropRoute,
     delivery: Option<DockDropDelivery>,
     preview_target: Option<DockViewportResolvedDropTargetSnapshot>,
+    drag_session: Option<DockRuntimeDragSession>,
 }
 
 impl DockViewportResolvedDropRoute {
     #[cfg(test)]
     pub(crate) fn new(route: DockViewportDropRoute, delivery: Option<DockDropDelivery>) -> Self {
+        let drag_session = delivery
+            .as_ref()
+            .and_then(DockDropDelivery::drag_session)
+            .cloned();
         Self {
             route,
             delivery,
             preview_target: None,
+            drag_session,
         }
     }
 
@@ -88,6 +96,7 @@ impl DockViewportResolvedDropRoute {
             route,
             delivery,
             preview_target,
+            drag_session: request.drag_session().cloned(),
         }
     }
 
@@ -97,6 +106,10 @@ impl DockViewportResolvedDropRoute {
 
     pub(crate) fn delivery(&self) -> Option<&DockDropDelivery> {
         self.delivery.as_ref()
+    }
+
+    pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
+        self.drag_session.as_ref()
     }
 
     #[cfg(test)]
@@ -131,6 +144,7 @@ impl PartialEq for DockViewportResolvedDropRoute {
         self.route == other.route
             && self.delivery == other.delivery
             && self.preview_target == other.preview_target
+            && self.drag_session == other.drag_session
     }
 }
 
@@ -190,11 +204,10 @@ pub(crate) struct DockDropWorkspaceCommit {
 /// Resolved target snapshot captured from a concrete host-scene frame.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportResolvedDropTargetSnapshot {
-    target_space: DockSpaceId,
-    target_window_id: Option<WindowId>,
+    route_proof: DockViewportRouteProof,
+    requires_current_route_facts: bool,
     frame: DockViewportHostSceneFrame,
     drop_guide_metrics: crate::DockDropGuideMetrics,
-    facts_generation: Option<u64>,
     host_position: Point<Pixels>,
     payload_size: Option<Size<Pixels>>,
     target_key: DockDropTargetKey,
@@ -234,22 +247,22 @@ impl DockDropDeliverySource {
 
 impl DockViewportResolvedDropTargetSnapshot {
     pub(crate) fn new(
-        target_space: DockSpaceId,
-        target_window_id: Option<WindowId>,
         frame: DockViewportHostSceneFrame,
         drop_guide_metrics: crate::DockDropGuideMetrics,
-        facts_generation: Option<u64>,
+        facts_generation: u64,
+        requires_current_route_facts: bool,
         host_position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
         target: DockResolvedDropTarget,
     ) -> Self {
         let target_key = target.target_key();
+        let route_proof =
+            DockViewportRouteProof::new(frame.registration_key().clone(), facts_generation);
         Self {
-            target_space,
-            target_window_id,
+            route_proof,
+            requires_current_route_facts,
             frame,
             drop_guide_metrics,
-            facts_generation,
             host_position,
             payload_size,
             target_key,
@@ -259,21 +272,19 @@ impl DockViewportResolvedDropTargetSnapshot {
     }
 
     pub(crate) fn new_preview_only(
-        target_space: DockSpaceId,
-        target_window_id: Option<WindowId>,
         frame: DockViewportHostSceneFrame,
         drop_guide_metrics: crate::DockDropGuideMetrics,
-        facts_generation: Option<u64>,
+        facts_generation: u64,
+        requires_current_route_facts: bool,
         host_position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
         target: DockResolvedDropTarget,
     ) -> Self {
         let mut snapshot = Self::new(
-            target_space,
-            target_window_id,
             frame,
             drop_guide_metrics,
             facts_generation,
+            requires_current_route_facts,
             host_position,
             payload_size,
             target,
@@ -283,7 +294,12 @@ impl DockViewportResolvedDropTargetSnapshot {
     }
 
     pub(crate) fn facts_generation(&self) -> Option<u64> {
-        self.facts_generation
+        self.requires_current_route_facts
+            .then_some(self.route_proof.facts_generation())
+    }
+
+    pub(crate) fn route_proof(&self) -> &DockViewportRouteProof {
+        &self.route_proof
     }
 
     pub(crate) fn frame(&self) -> &DockViewportHostSceneFrame {
@@ -307,11 +323,11 @@ impl DockViewportResolvedDropTargetSnapshot {
     }
 
     pub(crate) fn target_space(&self) -> &DockSpaceId {
-        &self.target_space
+        self.route_proof.space()
     }
 
     pub(crate) fn target_window_id(&self) -> Option<WindowId> {
-        self.target_window_id
+        Some(self.route_proof.window_id())
     }
 
     pub(crate) fn into_target(self) -> DockResolvedDropTarget {
@@ -366,14 +382,12 @@ impl DockDropDelivery {
         self.source.source_space()
     }
 
-    #[cfg(test)]
     pub(crate) fn source_node(&self) -> DockNodeId {
-        self.source.source_node()
+        self.source.source_node
     }
 
-    #[cfg(test)]
     pub(crate) fn payload(&self) -> &DockViewportDropPayload {
-        self.source.payload()
+        &self.source.payload
     }
 
     #[cfg(test)]
@@ -390,13 +404,18 @@ impl DockDropDelivery {
     ) -> Result<(), DockActionApplyError> {
         match &self.kind {
             DockDropDeliveryKind::Workspace(target) => {
+                let facts = crate::DockViewportWorkspaceRouteFacts::capture_for_payload(
+                    workspace,
+                    self.source.payload(),
+                    self.source.source_node(),
+                );
                 super::validate_delivery_workspace_target_inner(
                     adapter,
                     host_scenes,
-                    workspace,
                     self.source.source_node(),
                     self.source.payload(),
                     target.clone(),
+                    &facts,
                 )
                 .map(|_| ())
             }
@@ -408,7 +427,7 @@ impl DockDropDelivery {
         self,
         adapter: &DockViewportAdapter,
         host_scenes: &DockViewportHostSceneRegistry,
-        workspace: &DockWorkspace,
+        facts: &crate::DockViewportWorkspaceRouteFacts,
     ) -> Result<DockDropWorkspaceCommit, DockActionApplyError> {
         let Self { source, kind } = self;
         match kind {
@@ -419,13 +438,13 @@ impl DockDropDelivery {
                     payload,
                     drag_session,
                 } = source;
-                let target = super::resolve_delivery_workspace_target(
+                let target = super::resolve_delivery_workspace_target_with_facts(
                     adapter,
                     host_scenes,
-                    workspace,
                     source_node,
                     &payload,
                     target,
+                    facts,
                 )?;
                 Ok(DockDropWorkspaceCommit {
                     source_space,

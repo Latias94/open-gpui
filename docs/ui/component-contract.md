@@ -116,6 +116,41 @@ The concrete component owns the GPUI adapter. This layer may use:
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
 
+## Native Window Callback Boundary
+
+Official components interact with native windows through `Window` and application authorities, not
+through `PlatformWindow` callback tables or backend handles. The exhaustive callback taxonomy,
+typed ingress domains, barriers, reserved-window lifecycle, and frame rule live in
+[ADR 0029](../adr/0029-open-gpui-platform-window-mutation-capabilities.md#callback-delivery-and-reentrancy).
+
+Component and GPUI adapter code follows these additional rules:
+
+- Event listeners may return typed application or runtime effects, but they must release entity,
+  controller, Dock runtime, and other `RefCell` guards before an effect opens, closes, presents,
+  activates, mutates, or updates a sibling window.
+- Initial presentation, `Window` activation, native window menus, interactive move, and interactive
+  resize use the closed platform-command FIFO. A component must not call the backend directly,
+  schedule an arbitrary native closure, or introduce a generic callback outbox. The corresponding
+  direct `PlatformWindow` activation, menu, move, and resize methods do not exist.
+- A command may be requested during an application update, but the weak native dispatcher runs
+  only after the outer `AppRefMut`, subordinate borrows, and older ingress barriers are released.
+  Commands enqueued by a command append to FIFO and never recurse. Backend acceptance is a typed
+  terminal outcome rather than an implication of queue admission; only accepted initial
+  presentation publishes completion.
+- Input listeners preserve the exact synchronous `DispatchEventResult`. They must not use a fixed
+  propagation policy, delayed replay, or callback-local retry when a native operation pumps input.
+- Custom titlebar adapters publish their committed `WindowControlArea` through the window
+  authority. Native hit testing reads that immutable snapshot and returns `None` for a stale full
+  `WindowId`; it does not borrow the component tree from a native callback.
+- A component invalidation is not proof that a frame was accepted. Frame requests may coalesce only
+  under the accepted-or-reinvalidated rule, and close prevents any later presentation for the
+  retired window generation.
+- Diagnostics may expose typed callback kind, sequence, domain generation, and disposition, but
+  never user input, IME text, file paths, accessibility labels, or callback closures.
+
+Custom component adapters migrating direct window operations should follow
+[the v0.3 migration guide](migration-v0.3.md#native-window-callback-and-command-boundary).
+
 ## Ecosystem Adapter Helpers
 
 `open_gpui_ui_components` may expose adapter helpers that project headless ecosystem snapshots into

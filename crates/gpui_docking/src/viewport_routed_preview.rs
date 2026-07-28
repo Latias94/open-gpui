@@ -1,6 +1,6 @@
 use crate::{
     DockSpaceId, DockViewportIdentity, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropTargetSnapshot, drag::DockDragPayload,
+    DockViewportResolvedDropTargetSnapshot, DockViewportRouteProof, drag::DockDragPayload,
     drop_preview::DockDropRoutePreview, interaction::DockRuntimeDragSession,
 };
 use open_gpui::{AnyWindowHandle, Point, WindowId};
@@ -45,23 +45,21 @@ impl DockViewportRoutedDropPreviewReplacement {
 impl DockViewportRoutedDropPreviewState {
     pub(crate) fn preview_for(
         &self,
-        space: &DockSpaceId,
-        window_id: WindowId,
+        route_proof: &DockViewportRouteProof,
     ) -> Option<DockViewportRoutedDropPreview> {
         self.preview
             .as_ref()
-            .filter(|preview| preview.matches(space, window_id))
+            .filter(|preview| preview.matches(route_proof))
             .cloned()
     }
 
     pub(crate) fn route_preview_for(
         &self,
-        space: &DockSpaceId,
-        window_id: WindowId,
+        route_proof: &DockViewportRouteProof,
     ) -> Option<DockDropRoutePreview> {
         self.route_preview
             .as_ref()
-            .filter(|preview| preview.matches(space, window_id))
+            .filter(|preview| preview.matches(route_proof))
             .map(|preview| preview.preview.clone())
     }
 
@@ -155,35 +153,34 @@ impl DockViewportRoutedDropPreviewState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportRoutePreview {
-    identity: DockViewportIdentity,
+    route_proof: DockViewportRouteProof,
     preview: DockDropRoutePreview,
     drag_session_id: Option<u64>,
 }
 
 impl DockViewportRoutePreview {
     pub(crate) fn new(
-        space: DockSpaceId,
-        window_id: WindowId,
+        route_proof: DockViewportRouteProof,
         preview: DockDropRoutePreview,
         drag_session_id: Option<u64>,
     ) -> Self {
         Self {
-            identity: DockViewportIdentity::new(space, window_id),
+            route_proof,
             preview,
             drag_session_id,
         }
     }
 
-    fn matches(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
-        self.identity.matches(space, window_id)
+    fn matches(&self, route_proof: &DockViewportRouteProof) -> bool {
+        &self.route_proof == route_proof
     }
 
     fn space(&self) -> &DockSpaceId {
-        self.identity.space()
+        self.route_proof.space()
     }
 
     fn window_id(&self) -> WindowId {
-        self.identity.window_id()
+        self.route_proof.window_id()
     }
 
     fn drag_session_id(&self) -> Option<u64> {
@@ -193,35 +190,34 @@ impl DockViewportRoutePreview {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportRoutedDropPreview {
-    identity: DockViewportIdentity,
+    route_proof: DockViewportRouteProof,
     pub(crate) preview: crate::drop_preview::DockDropPreview,
     drag_session_id: Option<u64>,
 }
 
 impl DockViewportRoutedDropPreview {
     fn new(
-        space: DockSpaceId,
-        window_id: WindowId,
+        route_proof: DockViewportRouteProof,
         preview: crate::drop_preview::DockDropPreview,
         drag_session_id: Option<u64>,
     ) -> Self {
         Self {
-            identity: DockViewportIdentity::new(space, window_id),
+            route_proof,
             preview,
             drag_session_id,
         }
     }
 
-    pub(crate) fn matches(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
-        self.identity.matches(space, window_id)
+    pub(crate) fn matches(&self, route_proof: &DockViewportRouteProof) -> bool {
+        &self.route_proof == route_proof
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {
-        self.identity.space()
+        self.route_proof.space()
     }
 
     pub(crate) fn window_id(&self) -> WindowId {
-        self.identity.window_id()
+        self.route_proof.window_id()
     }
 
     pub(crate) fn drag_session_id(&self) -> Option<u64> {
@@ -235,7 +231,10 @@ pub(crate) fn routed_drop_preview_from_target(
     payload: &DockDragPayload,
 ) -> Option<DockViewportRoutedDropPreview> {
     let window_id = target.target_window_id()?;
-    let space = target.target_space().clone();
+    let route_proof = target.route_proof();
+    if route_proof.space() != target.target_space() || route_proof.window_id() != window_id {
+        return None;
+    }
     let mut preview = if target.is_preview_only() {
         crate::drop_preview::DockDropPreview::from_guide_target(
             target.target(),
@@ -249,8 +248,7 @@ pub(crate) fn routed_drop_preview_from_target(
     };
     preview.populate_payload_tabs(payload);
     Some(DockViewportRoutedDropPreview::new(
-        space,
-        window_id,
+        route_proof.clone(),
         preview,
         drag_session_id,
     ))
@@ -262,15 +260,17 @@ pub(crate) fn routed_rejected_drop_preview_from_target(
     payload: &DockDragPayload,
 ) -> Option<DockViewportRoutedDropPreview> {
     let window_id = target.target_window_id()?;
-    let space = target.target_space().clone();
+    let route_proof = target.route_proof();
+    if route_proof.space() != target.target_space() || route_proof.window_id() != window_id {
+        return None;
+    }
     let mut preview = crate::drop_preview::DockDropPreview::from_rejected_target(
         target.target(),
         target.drop_guide_metrics(),
     )?;
     preview.populate_payload_tabs(payload);
     Some(DockViewportRoutedDropPreview::new(
-        space,
-        window_id,
+        route_proof.clone(),
         preview,
         drag_session_id,
     ))
@@ -278,13 +278,12 @@ pub(crate) fn routed_rejected_drop_preview_from_target(
 
 pub(crate) fn routed_drop_route_preview_for_host(
     resolution: &DockViewportResolvedDropRoute,
-    space: DockSpaceId,
-    window_id: WindowId,
+    route_proof: DockViewportRouteProof,
     host_position: Point<open_gpui::Pixels>,
     drag_session_id: Option<u64>,
 ) -> Option<DockViewportRoutePreview> {
     DockDropRoutePreview::from_route(resolution.route(), host_position)
-        .map(|preview| DockViewportRoutePreview::new(space, window_id, preview, drag_session_id))
+        .map(|preview| DockViewportRoutePreview::new(route_proof, preview, drag_session_id))
 }
 
 pub(crate) fn push_unique_window(
@@ -335,19 +334,26 @@ pub(crate) fn route_selection_viewport_identity_from_resolution(
             if !source.records_routed_viewport_identity() {
                 return None;
             }
-            (target.space().clone(), target.window_id())
+            (
+                target.route_proof().space().clone(),
+                target.route_proof().window_id(),
+            )
         }
         crate::DockViewportDropRoute::Local {
-            window_id, source, ..
+            route_proof,
+            source,
+            ..
         } => {
             if !source.records_routed_viewport_identity() {
                 return None;
             }
             let target = resolution.routed_preview_target_snapshot()?;
-            if target.target_window_id() != Some(*window_id) {
+            if target.target_window_id() != Some(route_proof.window_id())
+                || target.target_space() != route_proof.space()
+            {
                 return None;
             }
-            (target.target_space().clone(), *window_id)
+            (route_proof.space().clone(), route_proof.window_id())
         }
         crate::DockViewportDropRoute::Rejected(_) => {
             let target = resolution.routed_preview_target_snapshot()?;

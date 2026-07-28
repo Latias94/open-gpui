@@ -1,8 +1,10 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, EntityId, EventEmitter, Focusable, ForegroundExecutor, Global, GpuiBorrow,
-    PromptButton, PromptLevel, Render, Reservation, Result, Subscription, Task, VisualContext,
-    Window, WindowHandle,
+    DispatchEventResult, Entity, EntityId, EventEmitter, Focusable, ForegroundExecutor, Global,
+    GpuiBorrow, ModifiersChangedEvent, NativeInputInvariantViolation, PlatformInput,
+    PlatformWindowMutationObservation, PromptButton, PromptLevel, Render, RequestFrameOptions,
+    Reservation, Result, Subscription, Task, VisualContext, Window, WindowControlArea,
+    WindowHandle, WindowId,
 };
 use anyhow::{Context as _, bail};
 use derive_more::{Deref, DerefMut};
@@ -30,6 +32,195 @@ impl AsyncApp {
         self.app
             .upgrade()
             .expect("app was released before async operation completed")
+    }
+
+    pub(crate) fn enqueue_window_mutation_observation(
+        &self,
+        window_id: WindowId,
+        observation: PlatformWindowMutationObservation,
+    ) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        app.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::WindowMutationObserved(observation),
+        );
+    }
+
+    fn enqueue_native_window_event(
+        &self,
+        window_id: WindowId,
+        event: super::native_event_ingress::NativeWindowEvent,
+    ) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        app.enqueue_native_window_event(window_id, event);
+    }
+
+    pub(crate) fn enqueue_window_resized(&self, window_id: WindowId) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::Resized,
+        );
+    }
+
+    pub(crate) fn enqueue_window_moved(&self, window_id: WindowId) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::Moved,
+        );
+    }
+
+    pub(crate) fn enqueue_window_state_changed(&self, window_id: WindowId) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::WindowStateChanged,
+        );
+    }
+
+    pub(crate) fn enqueue_window_active_changed(&self, window_id: WindowId, active: bool) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::ActiveChanged(active),
+        );
+    }
+
+    pub(crate) fn enqueue_window_modifiers_changed(
+        &self,
+        window_id: WindowId,
+        event: ModifiersChangedEvent,
+    ) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::ModifiersChanged(event),
+        );
+    }
+
+    pub(crate) fn enqueue_window_hover_changed(&self, window_id: WindowId, hovered: bool) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::HoverChanged(hovered),
+        );
+    }
+
+    pub(crate) fn enqueue_window_appearance_changed(&self, window_id: WindowId) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::AppearanceChanged,
+        );
+    }
+
+    pub(crate) fn enqueue_window_button_layout_changed(&self, window_id: WindowId) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::ButtonLayoutChanged,
+        );
+    }
+
+    pub(crate) fn enqueue_window_frame_requested(
+        &self,
+        window_id: WindowId,
+        options: RequestFrameOptions,
+    ) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::RequestFrame(options),
+        );
+    }
+
+    fn enqueue_system_tab_command(
+        &self,
+        window_id: WindowId,
+        command: super::native_event_ingress::NativeSystemTabCommand,
+    ) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::SystemTabCommand(command),
+        );
+    }
+
+    pub(crate) fn enqueue_move_tab_to_new_window(&self, window_id: WindowId) {
+        self.enqueue_system_tab_command(
+            window_id,
+            super::native_event_ingress::NativeSystemTabCommand::MoveToNewWindow,
+        );
+    }
+
+    pub(crate) fn enqueue_merge_all_windows(&self, window_id: WindowId) {
+        self.enqueue_system_tab_command(
+            window_id,
+            super::native_event_ingress::NativeSystemTabCommand::MergeAll,
+        );
+    }
+
+    pub(crate) fn enqueue_select_next_tab(&self, window_id: WindowId) {
+        self.enqueue_system_tab_command(
+            window_id,
+            super::native_event_ingress::NativeSystemTabCommand::SelectNext,
+        );
+    }
+
+    pub(crate) fn enqueue_select_previous_tab(&self, window_id: WindowId) {
+        self.enqueue_system_tab_command(
+            window_id,
+            super::native_event_ingress::NativeSystemTabCommand::SelectPrevious,
+        );
+    }
+
+    pub(crate) fn enqueue_toggle_tab_bar(&self, window_id: WindowId) {
+        self.enqueue_system_tab_command(
+            window_id,
+            super::native_event_ingress::NativeSystemTabCommand::ToggleBar,
+        );
+    }
+
+    pub(crate) fn enqueue_window_closed(&self, window_id: WindowId) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        app.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::Closed,
+        );
+    }
+
+    pub(crate) fn dispatch_window_should_close(&self, window_id: WindowId) -> bool {
+        let Some(app) = self.app.upgrade() else {
+            return true;
+        };
+        app.dispatch_window_should_close(window_id)
+    }
+
+    pub(crate) fn dispatch_native_window_input(
+        &self,
+        window_id: WindowId,
+        event: PlatformInput,
+    ) -> std::result::Result<DispatchEventResult, NativeInputInvariantViolation> {
+        let app = self
+            .app
+            .upgrade()
+            .expect("platform input callback lease must retain AppCell");
+        app.dispatch_native_window_input(window_id, event)
+    }
+
+    pub(crate) fn begin_platform_input_lease(
+        &self,
+        generation: u64,
+    ) -> Option<super::cell::NativeCallbackLease> {
+        self.app
+            .upgrade()
+            .map(|app| app.begin_platform_input_lease(generation))
+    }
+
+    pub(crate) fn native_window_control_area(
+        &self,
+        window_id: WindowId,
+    ) -> Option<WindowControlArea> {
+        self.app
+            .upgrade()
+            .and_then(|app| app.native_window_control_area(window_id))
     }
 }
 
@@ -299,6 +490,33 @@ impl AsyncWindowContext {
     pub fn update<R>(&mut self, update: impl FnOnce(&mut Window, &mut App) -> R) -> Result<R> {
         self.app
             .update_window(self.window, |_, window, cx| update(window, cx))
+    }
+
+    pub(crate) fn update_native_input_handler<R>(
+        &mut self,
+        operation: crate::NativeInputHandlerOperation,
+        update: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> std::result::Result<R, NativeInputInvariantViolation> {
+        let app = self
+            .app
+            .app
+            .upgrade()
+            .expect("input-handler callback lease must retain AppCell");
+        app.dispatch_native_input_handler(self.window.window_id(), operation, update)
+    }
+
+    pub(crate) fn begin_input_handler_lease(
+        &self,
+        generation: u64,
+    ) -> Option<super::cell::NativeCallbackLease> {
+        self.app
+            .app
+            .upgrade()
+            .map(|app| app.begin_input_handler_lease(generation))
+    }
+
+    pub(crate) fn native_input_diagnostic_target(&self) -> (Weak<AppCell>, WindowId) {
+        (self.app.app.clone(), self.window.window_id())
     }
 
     /// A convenience method for [`App::update_window`].

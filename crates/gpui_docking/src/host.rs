@@ -14,6 +14,7 @@ use crate::{
         DockSurfaceOwner, with_root_transaction,
     },
     transition_executor::DockTransitionExecutor,
+    viewport_registry::DockViewportRegistrationKey,
     visual_affordance_scene::DockVisualAffordanceScene,
     workspace::DockWorkspace,
     zoom_state::DockZoomState,
@@ -96,6 +97,7 @@ pub struct DockHost {
     visual_style_resolver: Option<DockVisualStyleResolver>,
     fallback_visual_style: Rc<DockVisualStyle>,
     bound_window_id: Option<WindowId>,
+    bound_viewport_registration: Option<DockViewportRegistrationKey>,
     window_binding_generation: u64,
     viewport_scene_publication: PrepaintPublicationId,
     raw_drag_pointer_capture: Option<PointerCaptureHandle>,
@@ -195,6 +197,7 @@ impl DockHost {
             visual_style_resolver,
             fallback_visual_style: Rc::new(DockVisualStyle::built_in()),
             bound_window_id: None,
+            bound_viewport_registration: None,
             window_binding_generation: 0,
             viewport_scene_publication: PrepaintPublicationId::new(),
             raw_drag_pointer_capture: None,
@@ -388,6 +391,10 @@ impl DockHost {
         })
     }
 
+    pub(crate) fn current_viewport_registration(&self) -> Option<DockViewportRegistrationKey> {
+        self.bound_viewport_registration.clone()
+    }
+
     fn is_current_window_binding(
         &self,
         binding: DockHostWindowBinding,
@@ -413,6 +420,30 @@ impl DockHost {
         })
     }
 
+    pub(crate) fn accepts_viewport_scene_candidate(
+        &self,
+        binding: DockHostWindowBinding,
+        registration: Option<&DockViewportRegistrationKey>,
+        window_id: WindowId,
+    ) -> bool {
+        self.is_current_window_binding(binding, window_id)
+            && self.bound_viewport_registration.as_ref() == registration
+    }
+
+    pub(crate) fn adopt_viewport_scene_registration(
+        &mut self,
+        binding: DockHostWindowBinding,
+        expected: Option<&DockViewportRegistrationKey>,
+        registration: DockViewportRegistrationKey,
+        window_id: WindowId,
+    ) -> bool {
+        if !self.accepts_viewport_scene_candidate(binding, expected, window_id) {
+            return false;
+        }
+        self.bound_viewport_registration = Some(registration);
+        true
+    }
+
     fn is_current_bound_window_id(&self, window_id: WindowId) -> bool {
         self.bound_window_id.is_none_or(|bound| bound == window_id)
     }
@@ -422,9 +453,6 @@ impl DockHost {
         registration: DockSurfaceActivationHostRegistration,
         cx: &mut App,
     ) {
-        let status = registration.status();
-        let space = registration.space().clone();
-        let window_id = registration.window().window_id();
         if let Some(owner) = self.surface_owner.as_ref().and_then(WeakEntity::upgrade) {
             let settlements = cx.update_entity(&owner, |owner, owner_cx| {
                 let settlements = owner.activation_mut().release_host(&registration);
@@ -433,13 +461,14 @@ impl DockHost {
             });
             Self::defer_activation_settlements(settlements, cx);
         }
-        if status == DockSurfaceActivationHostRegistrationStatus::Committed {
-            self.viewport_runtime
-                .unregister_host_for_space_with_app(&space, window_id, cx);
-        }
     }
 
-    fn release_window_bound_state(&mut self, window_id: WindowId, cx: &mut App) {
+    fn release_window_bound_state(
+        &mut self,
+        viewport_registration: Option<DockViewportRegistrationKey>,
+        window: &Window,
+        cx: &mut App,
+    ) {
         let registration = self.surface_activation_registration.take();
         let pending_command = self.interaction.take_pending_focus_command();
         self.pending_focus_completion = None;
@@ -451,14 +480,13 @@ impl DockHost {
 
         if let Some(registration) = registration {
             self.release_surface_activation_registration(registration, cx);
-        } else if self
-            .surface_owner
-            .as_ref()
-            .and_then(WeakEntity::upgrade)
-            .is_none()
-        {
-            self.viewport_runtime
-                .unregister_host_for_space_with_app(self.space(), window_id, cx);
+        }
+        if let Some(viewport_registration) = viewport_registration {
+            self.viewport_runtime.release_host_binding_from_window(
+                &viewport_registration,
+                window,
+                cx,
+            );
         }
 
         if let Some(command) = pending_command {
@@ -470,11 +498,17 @@ impl DockHost {
 
     fn ensure_window_binding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let window_id = window.window_handle().window_id();
-        if self.bound_window_id == Some(window_id) {
+        let viewport_registration = self
+            .viewport_runtime
+            .registration_key_for_space_window(self.space(), window_id);
+        if self.bound_window_id == Some(window_id)
+            && self.bound_viewport_registration == viewport_registration
+        {
             return;
         }
 
         let previous_window_id = self.bound_window_id;
+        let previous_viewport_registration = self.bound_viewport_registration.take();
         let previous_activation_subscription = self.viewport_activation_subscription.take();
         let previous_bounds_subscription = self.viewport_bounds_subscription.take();
         let previous_release_subscription = self.viewport_release_subscription.take();
@@ -483,10 +517,11 @@ impl DockHost {
 
         self.window_binding_generation = self.window_binding_generation.wrapping_add(1).max(1);
         self.bound_window_id = Some(window_id);
+        self.bound_viewport_registration = viewport_registration;
 
-        let Some(previous_window_id) = previous_window_id else {
+        if previous_window_id.is_none() {
             return;
-        };
+        }
 
         // Change the binding before dropping observers so a callback queued by the old window
         // cannot mutate state belonging to the new window.
@@ -495,7 +530,7 @@ impl DockHost {
         drop(previous_release_subscription);
         drop(previous_focus_completion);
         drop(previous_panel_focus_trackers);
-        self.release_window_bound_state(previous_window_id, cx);
+        self.release_window_bound_state(previous_viewport_registration, window, cx);
     }
 
     pub(crate) fn ensure_pointer_session(&mut self, window: &mut Window) -> PointerCaptureHandle {
@@ -640,11 +675,13 @@ impl DockHost {
                 if !host.accepts_window_callback(binding, window_id) {
                     return;
                 }
-                runtime.apply_platform_window_facts(
-                    window_id,
+                if runtime.apply_platform_window_facts_from_window(
                     crate::DockViewportWindowFacts::from_window(window, cx),
+                    window,
                     cx,
-                );
+                ) {
+                    window.refresh();
+                }
             }));
     }
 
@@ -665,9 +702,10 @@ impl DockHost {
                     return;
                 }
                 host.bound_window_id = None;
+                let viewport_registration = host.bound_viewport_registration.take();
                 host.window_binding_generation =
                     host.window_binding_generation.wrapping_add(1).max(1);
-                host.release_window_bound_state(window_id, cx);
+                host.release_window_bound_state(viewport_registration, window, cx);
             }));
     }
 

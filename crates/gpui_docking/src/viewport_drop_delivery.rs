@@ -2,11 +2,14 @@ mod current_facts;
 mod model;
 
 #[cfg(test)]
+pub(crate) use current_facts::resolve_workspace_target_for_route;
+#[cfg(test)]
 pub(crate) use current_facts::validate_delivery_workspace_target;
 #[cfg(test)]
 use current_facts::validate_delivery_workspace_target_inner;
 pub(crate) use current_facts::{
-    resolve_delivery_workspace_target, resolve_workspace_target_for_route,
+    DockViewportWorkspaceRouteFacts, resolve_delivery_workspace_target_with_facts,
+    resolve_workspace_target_for_route_with_facts,
 };
 pub(crate) use model::{
     DockDropDelivery, DockDropWorkspaceCommit, DockViewportResolvedDropRoute,
@@ -34,12 +37,40 @@ mod tests {
         geometry::{self, DockDropBoxKind, DockDropBoxSet},
         host_test_support::center_drop_position,
         interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
-        viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
+        viewport_drop_scene::{
+            DockViewportHostSceneDraft, DockViewportHostSceneRegistry,
+            DockViewportHostSceneSnapshot,
+        },
         viewport_registry::DockViewportWindowBoundsFrame,
         viewport_test_support::{bounds, handle, item, register_viewport, space},
     };
     use open_gpui::{Bounds, WindowBounds, WindowId, point, px, size};
     use slotmap::Key;
+
+    fn current_registration_host_scene(
+        adapter: &DockViewportAdapter,
+        space: DockSpaceId,
+        window_id: WindowId,
+        current_bounds: DockViewportWindowBoundsFrame,
+        host_bounds: Bounds<open_gpui::Pixels>,
+        host_position: open_gpui::Point<open_gpui::Pixels>,
+        drop_guide_metrics: crate::DockDropGuideMetrics,
+    ) -> DockViewportHostSceneSnapshot {
+        let registration_key = adapter
+            .registration_key(&space)
+            .filter(|key| key.window_id() == window_id)
+            .expect("test host scene must bind to the current viewport registration");
+        DockViewportHostSceneDraft::new(
+            space,
+            window_id,
+            current_bounds,
+            host_bounds,
+            host_position,
+            drop_guide_metrics,
+        )
+        .bind(registration_key)
+        .expect("matching current registration should bind test host scene")
+    }
 
     #[test]
     fn current_facts_delivery_mints_for_current_route_selection_sources() {
@@ -67,12 +98,13 @@ mod tests {
 
         let local_delivery = DockDropDelivery::from_route_request_with_resolved_target(
             &request,
-            DockViewportDropRoute::Local {
+            DockViewportDropRoute::local_for_test(
+                space("source"),
+                source_window.window_id(),
                 host_position,
-                window_id: source_window.window_id(),
-                facts_generation: 7,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+                7,
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             Some(resolved_target.clone()),
         );
         assert!(local_delivery.is_some());
@@ -125,12 +157,13 @@ mod tests {
 
         let delivery = DockDropDelivery::from_route_request(
             &request,
-            DockViewportDropRoute::Local {
-                host_position: local_position,
-                window_id: handle(1).window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+            DockViewportDropRoute::local_for_test(
+                source,
+                handle(1).window_id(),
+                local_position,
+                1,
+                DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
         );
         assert_eq!(delivery, None);
     }
@@ -151,12 +184,13 @@ mod tests {
 
         let delivery = DockDropDelivery::from_route_request_with_resolved_target(
             &request,
-            DockViewportDropRoute::Local {
-                host_position: point(px(20.0), px(40.0)),
-                window_id: handle(1).window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
-            },
+            DockViewportDropRoute::local_for_test(
+                request.source_space().clone(),
+                handle(1).window_id(),
+                point(px(20.0), px(40.0)),
+                1,
+                DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
+            ),
             None,
         );
         assert_eq!(
@@ -494,7 +528,7 @@ mod tests {
         let payload_classes =
             workspace.payload_dock_classes_for_viewport_payload(&payload, DockNodeId::null());
         let request = DockViewportDropRouteRequest::from_target_context(
-            source_space,
+            source_space.clone(),
             DockNodeId::null(),
             payload,
             point(px(124.0), px(124.0)),
@@ -505,12 +539,13 @@ mod tests {
         let target = resolve_workspace_target_for_route(
             &adapter,
             &host_scenes,
-            &DockViewportDropRoute::Local {
-                host_position: point(px(24.0), px(24.0)),
-                window_id: old_window.window_id(),
-                facts_generation: 1,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+            &DockViewportDropRoute::local_for_test(
+                source_space.clone(),
+                old_window.window_id(),
+                point(px(24.0), px(24.0)),
+                1,
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             &request,
             &workspace,
             &payload_classes,
@@ -520,6 +555,73 @@ mod tests {
             matches!(target, DockViewportWorkspaceRouteTarget::RouteUnavailable),
             "local route must not replace its frozen source window with the current source mapping"
         );
+    }
+
+    #[test]
+    fn local_route_rejects_recreated_registration_with_same_identity() {
+        let source_space = space("source");
+        let window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source_space.clone(), window);
+        adapter.update_snapshot(
+            &source_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+        let stale_proof = crate::DockViewportRouteProof::new(
+            adapter
+                .registration_key(&source_space)
+                .expect("registered viewport should have an exact key"),
+            adapter
+                .snapshot_facts_generation(&source_space, window.window_id())
+                .expect("registered viewport should have route facts"),
+        );
+
+        adapter.unregister_space(&source_space);
+        register_viewport(&mut adapter, source_space.clone(), window);
+        adapter.update_snapshot(
+            &source_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+        assert_ne!(
+            adapter.registration_key(&source_space).as_ref(),
+            Some(stale_proof.registration_key())
+        );
+
+        let workspace = DockWorkspace::new(source_space.clone(), DockGraph::new());
+        let payload = DockViewportDropPayload::Item(item("a"));
+        let payload_classes =
+            workspace.payload_dock_classes_for_viewport_payload(&payload, DockNodeId::null());
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source_space,
+            DockNodeId::null(),
+            payload,
+            point(px(124.0), px(124.0)),
+            None,
+            DockViewportTargetContext::new().with_trusted_hovered_window(window),
+        );
+        let target = resolve_workspace_target_for_route(
+            &adapter,
+            &DockViewportHostSceneRegistry::default(),
+            &DockViewportDropRoute::Local {
+                host_position: point(px(24.0), px(24.0)),
+                route_proof: stale_proof,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            },
+            &request,
+            &workspace,
+            &payload_classes,
+        );
+
+        assert!(matches!(
+            target,
+            DockViewportWorkspaceRouteTarget::RouteUnavailable
+        ));
     }
 
     #[test]
@@ -556,12 +658,14 @@ mod tests {
         let target = resolve_workspace_target_for_route(
             &adapter,
             &host_scenes,
-            &DockViewportDropRoute::Local {
-                host_position: point(px(24.0), px(24.0)),
-                window_id: window.window_id(),
+            &DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source_space)
+                    .expect("registered viewport should have an exact key"),
+                point(px(24.0), px(24.0)),
                 facts_generation,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             &request,
             &workspace,
             &payload_classes,
@@ -610,7 +714,8 @@ mod tests {
         let host_position = center_drop_position(bounds(0.0, 0.0, 360.0, 240.0));
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 source_space.clone(),
                 window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 360.0, 240.0)),
@@ -671,12 +776,14 @@ mod tests {
         let target = resolve_workspace_target_for_route(
             &adapter,
             &host_scenes,
-            &DockViewportDropRoute::Local {
+            &DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source_space)
+                    .expect("registered viewport should have an exact key"),
                 host_position,
-                window_id: window.window_id(),
                 facts_generation,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             &request,
             &workspace,
             &payload_classes,
@@ -721,7 +828,8 @@ mod tests {
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let host_position = center_drop_position(bounds(0.0, 0.0, 320.0, 240.0));
         let frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 source_space.clone(),
                 window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
@@ -775,12 +883,14 @@ mod tests {
         let target = resolve_workspace_target_for_route(
             &adapter,
             &host_scenes,
-            &DockViewportDropRoute::Local {
+            &DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source_space)
+                    .expect("registered viewport should have an exact key"),
                 host_position,
-                window_id: window.window_id(),
                 facts_generation,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             &request,
             &workspace,
             &payload_classes,
@@ -847,7 +957,8 @@ mod tests {
 
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 target_space.clone(),
                 target_window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
@@ -1004,7 +1115,8 @@ mod tests {
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let host_position = center_drop_position(bounds(0.0, 0.0, 320.0, 240.0));
         let frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 target_space.clone(),
                 target_window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
@@ -1028,11 +1140,10 @@ mod tests {
         let workspace = DockWorkspace::new(source_space.clone(), graph);
         let payload = DockViewportDropPayload::Item(item("current"));
         let stale_snapshot = DockViewportResolvedDropTargetSnapshot::new(
-            target_space.clone(),
-            Some(target_window.window_id()),
             frame,
             crate::DockDropGuideMetrics::default(),
-            Some(facts_generation),
+            facts_generation,
+            true,
             host_position,
             None,
             DockResolvedDropTarget {
@@ -1094,7 +1205,8 @@ mod tests {
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let host_position = center_drop_position(bounds(0.0, 0.0, 320.0, 240.0));
         let stale_frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 target_space.clone(),
                 target_window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
@@ -1119,11 +1231,10 @@ mod tests {
         let workspace = DockWorkspace::new(source_space.clone(), graph);
         let payload = DockViewportDropPayload::Item(item("target"));
         let stale_snapshot = DockViewportResolvedDropTargetSnapshot::new(
-            target_space.clone(),
-            Some(target_window.window_id()),
             stale_frame,
             crate::DockDropGuideMetrics::default(),
-            Some(facts_generation),
+            facts_generation,
+            true,
             host_position,
             None,
             DockResolvedDropTarget {
@@ -1191,7 +1302,8 @@ mod tests {
 
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 target_space.clone(),
                 target_window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 1000.0, 600.0)),
@@ -1301,7 +1413,8 @@ mod tests {
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let host_position = center_drop_position(bounds(0.0, 0.0, 320.0, 240.0));
         let frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 source_space.clone(),
                 window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
@@ -1310,19 +1423,15 @@ mod tests {
                 crate::DockDropGuideMetrics::default(),
             ))
             .frame;
-        assert!(
-            host_scenes
-                .push_frame_fact(
-                    &frame,
-                    DockHostDropSceneFact::Leaf(DockLeafDropTarget {
-                        root: tabs,
-                        target_tabs: tabs,
-                        bounds: bounds(0.0, 0.0, 320.0, 240.0),
-                        is_central: true,
-                    }),
-                )
-                .is_some()
-        );
+        let leaf_fact = DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+            root: tabs,
+            target_tabs: tabs,
+            bounds: bounds(0.0, 0.0, 320.0, 240.0),
+            is_central: true,
+        });
+        let frame = host_scenes
+            .push_frame_fact(&frame, leaf_fact.clone())
+            .expect("the rendered leaf must advance the current scene frame");
 
         let mut workspace = DockWorkspace::new(source_space.clone(), graph);
         workspace.register_panel(
@@ -1339,17 +1448,20 @@ mod tests {
             point(px(220.0), px(200.0)),
             None,
             DockViewportTargetContext::new().with_trusted_hovered_window(window),
-        );
+        )
+        .with_event_receiver_local_scene_proof(Some(frame.clone()));
 
         let target = resolve_workspace_target_for_route(
             &adapter,
             &host_scenes,
-            &DockViewportDropRoute::Local {
+            &DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source_space)
+                    .expect("registered viewport should have an exact key"),
                 host_position,
-                window_id: window.window_id(),
-                facts_generation: mismatched_facts_generation,
-                source: crate::DockViewportRouteSelectionSource::EventReceiverLocalScene,
-            },
+                mismatched_facts_generation,
+                crate::DockViewportRouteSelectionSource::EventReceiverLocalScene,
+            ),
             &request,
             &workspace,
             &payload_classes,
@@ -1359,6 +1471,29 @@ mod tests {
             panic!("event-receiver-local-scene route should resolve against current host scene");
         };
         assert_eq!(target.facts_generation(), None);
+
+        let current_frame = host_scenes
+            .push_frame_fact(&frame, leaf_fact)
+            .expect("a later rendered fact must advance the scene generation");
+        assert_ne!(frame, current_frame);
+        assert!(matches!(
+            resolve_workspace_target_for_route(
+                &adapter,
+                &host_scenes,
+                &DockViewportDropRoute::local_for_registration_test(
+                    adapter
+                        .registration_key(&source_space)
+                        .expect("registered viewport should have an exact key"),
+                    host_position,
+                    mismatched_facts_generation,
+                    crate::DockViewportRouteSelectionSource::EventReceiverLocalScene,
+                ),
+                &request,
+                &workspace,
+                &payload_classes,
+            ),
+            DockViewportWorkspaceRouteTarget::RouteUnavailable
+        ));
     }
 
     #[test]
@@ -1389,7 +1524,8 @@ mod tests {
         let host_position = point(px(754.9751), px(583.56213));
         let mut host_scenes = DockViewportHostSceneRegistry::default();
         let frame = host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(current_registration_host_scene(
+                &adapter,
                 target_space.clone(),
                 target_window.window_id(),
                 DockViewportWindowBoundsFrame::GlobalScreen(bounds(500.0, 220.0, 920.0, 672.0)),
@@ -1490,11 +1626,10 @@ mod tests {
             ))
             .frame;
         DockViewportResolvedDropTargetSnapshot::new(
-            target_space.clone(),
-            Some(target_window_id),
             frame,
             crate::DockDropGuideMetrics::default(),
-            Some(facts_generation),
+            facts_generation,
+            true,
             point(px(0.0), px(0.0)),
             None,
             DockResolvedDropTarget {

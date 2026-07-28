@@ -114,6 +114,10 @@ impl DockViewportFrameCoordinator {
             .discard_frame_for_viewport(space, window_id)
     }
 
+    pub(crate) fn discard_exact_frame(&mut self, frame: &DockViewportHostSceneFrame) -> bool {
+        self.host_scenes.discard_exact_frame(frame)
+    }
+
     pub(crate) fn unregister_window_scene(&mut self, window_id: WindowId) {
         self.host_scenes.unregister_window(window_id);
     }

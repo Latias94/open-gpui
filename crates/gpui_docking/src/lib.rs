@@ -381,8 +381,8 @@ pub(crate) use viewport_tear_off::DockViewportTearOffCancelReason;
 pub(crate) use viewport_tear_off::{
     DockViewportCommittedTearOffMove, DockViewportDropActionOutcome, DockViewportDropPayload,
     DockViewportDropRouteOutcome, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled,
-    DockViewportTearOffCompleted, DockViewportTearOffKey, DockViewportTearOffMachine,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
+    DockViewportTearOffCompleted, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffPending, DockViewportTearOffRequest,
 };
 pub(crate) use viewport_tear_off_move::*;
 #[cfg(test)]

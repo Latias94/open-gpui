@@ -4,6 +4,7 @@ use crate::Inspector;
 use crate::MouseButton;
 #[cfg(target_os = "macos")]
 use crate::PlatformPixelBuffer;
+use crate::app::PlatformWindowCommandSink;
 use crate::{
     Action, AnyElement, AnyEntity, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena,
     Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic, AvailableSpace,
@@ -14,18 +15,19 @@ use crate::{
     KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    PlatformWindowDispatch, PlatformWindowMutationCapabilities, PlatformWindowMutationObservation,
-    PlatformWindowMutationProfile, Point, PointerCancelEvent, PointerCancelReason,
-    PolychromeSprite, Primitive, PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad,
-    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
-    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
-    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowKind,
-    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowMutationSupport,
-    WindowOptions, WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
+    PlatformWindowCommand, PlatformWindowDispatch, PlatformWindowMutationCapabilities,
+    PlatformWindowMutationObservation, PlatformWindowMutationProfile, Point, PointerCancelEvent,
+    PointerCancelReason, PolychromeSprite, Primitive, PrimitiveTransform, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, RequestFrameOptions, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SubtreeClip, SubtreeClipError,
+    SubtreePresentation, SubtreeTransform, SubtreeTransformError, SystemWindowTab,
+    SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowKind, WindowMutationDispatch,
+    WindowMutationDomain, WindowMutationOutcome, WindowMutationSupport, WindowOptions,
+    WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
     WindowTextSystem,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
@@ -1325,7 +1327,10 @@ pub struct Window {
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
     removal_state: WindowRemovalState,
+    should_close_handler: WindowShouldCloseHandlerSlot,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
+    platform_command_sink: PlatformWindowCommandSink,
+    initial_presentation_command: Option<PlatformWindowCommand>,
     platform_facts: WindowPlatformFacts,
     window_kind: WindowKind,
     window_mutation_capabilities: PlatformWindowMutationCapabilities,
@@ -1401,6 +1406,7 @@ pub struct Window {
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+    last_frame_time: Cell<Option<Instant>>,
     #[cfg(feature = "input-latency-histogram")]
     input_latency_tracker: InputLatencyTracker,
     last_input_modality: InputModality,
@@ -1468,6 +1474,139 @@ enum FocusClaimTarget {
 
 type AnyFocusClaimCompletion = Box<dyn FnOnce(FocusClaimOutcome, &mut Window, &mut App) + 'static>;
 type SharedFocusClaimCompletion = Rc<RefCell<Option<AnyFocusClaimCompletion>>>;
+type WindowShouldCloseCallback = Box<dyn FnMut(&mut Window, &mut App) -> bool + 'static>;
+
+#[derive(Default)]
+struct WindowShouldCloseHandlerState {
+    generation: u64,
+    checked_out_generation: Option<u64>,
+    callback: Option<WindowShouldCloseCallback>,
+    terminal: bool,
+}
+
+#[derive(Clone, Default)]
+struct WindowShouldCloseHandlerSlot {
+    state: Rc<RefCell<WindowShouldCloseHandlerState>>,
+}
+
+impl WindowShouldCloseHandlerSlot {
+    fn set(&self, callback: WindowShouldCloseCallback) {
+        let replaced = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.generation = state
+                .generation
+                .checked_add(1)
+                .expect("window should-close handler generation overflow");
+            state.callback.replace(callback)
+        };
+        drop(replaced);
+    }
+
+    fn invoke(&self, window: &mut Window, cx: &mut App) -> bool {
+        let mut checkout = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal || state.checked_out_generation == Some(state.generation) {
+                return false;
+            }
+            let Some(callback) = state.callback.take() else {
+                return true;
+            };
+            let generation = state.generation;
+            state.checked_out_generation = Some(generation);
+            WindowShouldCloseHandlerCheckout {
+                slot: self.clone(),
+                generation,
+                callback: Some(callback),
+            }
+        };
+        (checkout.callback_mut())(window, cx)
+    }
+
+    fn terminate(&self) {
+        let callback = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.terminal = true;
+            state.generation = state
+                .generation
+                .checked_add(1)
+                .expect("window should-close handler generation overflow");
+            state.callback.take()
+        };
+        drop(callback);
+    }
+}
+
+struct WindowShouldCloseHandlerCheckout {
+    slot: WindowShouldCloseHandlerSlot,
+    generation: u64,
+    callback: Option<WindowShouldCloseCallback>,
+}
+
+impl WindowShouldCloseHandlerCheckout {
+    fn callback_mut(&mut self) -> &mut WindowShouldCloseCallback {
+        self.callback
+            .as_mut()
+            .expect("checked-out window should-close handler must remain available")
+    }
+}
+
+impl Drop for WindowShouldCloseHandlerCheckout {
+    fn drop(&mut self) {
+        let retired_callback = {
+            let mut state = self.slot.state.borrow_mut();
+            if state.checked_out_generation == Some(self.generation) {
+                state.checked_out_generation = None;
+                if !state.terminal
+                    && state.generation == self.generation
+                    && state.callback.is_none()
+                {
+                    state.callback = self.callback.take();
+                }
+            }
+            self.callback.take()
+        };
+        drop(retired_callback);
+    }
+}
+
+type WindowPanicPayload = Box<dyn Any + Send + 'static>;
+
+fn retain_first_window_cleanup_panic(
+    first: &mut Option<WindowPanicPayload>,
+    result: std::thread::Result<()>,
+    stage: &'static str,
+) {
+    let Err(payload) = result else {
+        return;
+    };
+    if first.is_none() {
+        *first = Some(payload);
+    } else {
+        log::error!("suppressed secondary panic while settling window removal stage `{stage}`");
+    }
+}
+
+fn finish_after_window_cleanup<R>(
+    primary: std::thread::Result<R>,
+    cleanup: std::thread::Result<()>,
+    stage: &'static str,
+) -> R {
+    match (primary, cleanup) {
+        (Ok(result), Ok(())) => result,
+        (Ok(_), Err(payload)) => std::panic::resume_unwind(payload),
+        (Err(payload), Ok(())) => std::panic::resume_unwind(payload),
+        (Err(primary), Err(_secondary)) => {
+            log::error!("suppressed secondary panic while settling `{stage}`");
+            std::panic::resume_unwind(primary)
+        }
+    }
+}
 
 #[derive(Clone)]
 struct PendingFocusCompletion {
@@ -1818,9 +1957,185 @@ impl Window {
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
         platform_window.set_background_appearance(window_background);
 
-        // The backend's synchronous creation facts, not an unobserved live request, seed every
-        // public getter cache before any asynchronous callbacks are installed. Creation-only
-        // configuration remains a committed fact even when the backend has no live observer.
+        let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        let invalidator = WindowInvalidator::new();
+        let needs_present = Rc::new(Cell::new(false));
+        let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
+        let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
+
+        let accessibility_force_disabled = cx.accessibility_force_disabled;
+        let a11y_active_state = Arc::new(AtomicU64::new(0));
+
+        #[cfg(not(target_family = "wasm"))]
+        if !accessibility_force_disabled {
+            let window_id = handle.window_id();
+            let accessibility_ingress = cx
+                .this
+                .upgrade()
+                .expect("window construction requires a live AppCell")
+                .native_accessibility_ingress();
+            platform_window.a11y_init(crate::A11yCallbacks {
+                activation: {
+                    let active_state = a11y_active_state.clone();
+                    let accessibility_ingress = accessibility_ingress.clone();
+                    Box::new(move || {
+                        accessibility_ingress.activated(window_id, &active_state);
+                        log::info!("Accessibility activated");
+                        // A complete tree cannot be produced synchronously here. The platform
+                        // adapter owns any placeholder until the sequenced refresh is delivered.
+                        None
+                    })
+                },
+                action: {
+                    let active_state = a11y_active_state.clone();
+                    let accessibility_ingress = accessibility_ingress.clone();
+                    Box::new(move |request| {
+                        accessibility_ingress.action(window_id, &active_state, request);
+                    })
+                },
+                deactivation: {
+                    let active_state = a11y_active_state.clone();
+                    Box::new(move || {
+                        accessibility_ingress.deactivated(window_id, &active_state);
+                        log::info!("Accessibility deactivated");
+                    })
+                },
+            });
+        }
+
+        platform_window.on_close(Box::new({
+            let window_id = handle.window_id();
+            let cx = cx.to_async();
+            move || {
+                cx.enqueue_window_closed(window_id);
+            }
+        }));
+        platform_window.on_should_close(Box::new({
+            let window_id = handle.window_id();
+            let cx = cx.to_async();
+            move || cx.dispatch_window_should_close(window_id)
+        }));
+        platform_window.on_request_frame(Box::new({
+            let cx = cx.to_async();
+            move |request_frame_options| {
+                cx.enqueue_window_frame_requested(handle.window_id(), request_frame_options);
+            }
+        }));
+        platform_window.on_resize(Box::new({
+            let cx = cx.to_async();
+            move |_, _| {
+                cx.enqueue_window_resized(handle.window_id());
+            }
+        }));
+        platform_window.on_moved(Box::new({
+            let cx = cx.to_async();
+            move || {
+                cx.enqueue_window_moved(handle.window_id());
+            }
+        }));
+        platform_window.on_window_state_change(Box::new({
+            let cx = cx.to_async();
+            move || {
+                cx.enqueue_window_state_changed(handle.window_id());
+            }
+        }));
+        platform_window.on_window_mutation_observation(Box::new({
+            let cx = cx.to_async();
+            move |facts| {
+                cx.enqueue_window_mutation_observation(handle.window_id(), facts);
+            }
+        }));
+        platform_window.on_appearance_changed(Box::new({
+            let cx = cx.to_async();
+            move || {
+                cx.enqueue_window_appearance_changed(handle.window_id());
+            }
+        }));
+        platform_window.on_button_layout_changed(Box::new({
+            let cx = cx.to_async();
+            move || {
+                cx.enqueue_window_button_layout_changed(handle.window_id());
+            }
+        }));
+        platform_window.on_active_status_change(Box::new({
+            let cx = cx.to_async();
+            move |active| {
+                cx.enqueue_window_active_changed(handle.window_id(), active);
+            }
+        }));
+        platform_window.on_modifiers_changed(Box::new({
+            let cx = cx.to_async();
+            move |event| {
+                cx.enqueue_window_modifiers_changed(handle.window_id(), event);
+            }
+        }));
+        platform_window.on_hover_status_change(Box::new({
+            let cx = cx.to_async();
+            move |active| {
+                cx.enqueue_window_hover_changed(handle.window_id(), active);
+            }
+        }));
+        platform_window.on_hit_test_window_control({
+            let cx = cx.to_async();
+            Box::new(move || cx.native_window_control_area(handle.window_id()))
+        });
+        platform_window.on_move_tab_to_new_window({
+            let cx = cx.to_async();
+            Box::new(move || {
+                cx.enqueue_move_tab_to_new_window(handle.window_id());
+            })
+        });
+        platform_window.on_merge_all_windows({
+            let cx = cx.to_async();
+            Box::new(move || {
+                cx.enqueue_merge_all_windows(handle.window_id());
+            })
+        });
+        platform_window.on_select_next_tab({
+            let cx = cx.to_async();
+            Box::new(move || {
+                cx.enqueue_select_next_tab(handle.window_id());
+            })
+        });
+        platform_window.on_select_previous_tab({
+            let cx = cx.to_async();
+            Box::new(move || {
+                cx.enqueue_select_previous_tab(handle.window_id());
+            })
+        });
+        platform_window.on_toggle_tab_bar({
+            let cx = cx.to_async();
+            Box::new(move || {
+                cx.enqueue_toggle_tab_bar(handle.window_id());
+            })
+        });
+        {
+            let window_id = handle.window_id();
+            let cx = cx.to_async();
+            platform_window.on_input(crate::PlatformInputCallback::new_for_window(
+                cx.clone(),
+                window_id,
+                Box::new(move |event| {
+                    cx.dispatch_native_window_input(window_id, event)
+                        .unwrap_or_else(|violation| std::panic::panic_any(violation))
+                }),
+            ));
+        }
+
+        if let Some(app_id) = app_id {
+            platform_window.set_app_id(&app_id);
+        }
+
+        let platform_command_sink = PlatformWindowCommandSink::new(
+            cx.this.clone(),
+            handle.window_id(),
+            platform_window.command_dispatcher(),
+        );
+        platform_window.map_window()?;
+
+        // Mapping may resolve the actual display, scale, bounds, and native state. These coherent
+        // post-map facts seed the root builder and first frame; presentation and activation still
+        // wait for the exact registry commit.
         let mut platform_facts = platform_window.platform_facts();
         platform_facts.focus_on_appearing = creation_focus_on_appearing_fact(
             platform_facts.focus_on_appearing,
@@ -1828,12 +2143,6 @@ impl Window {
             window_mutation_capabilities.focus_on_appearing,
         );
         platform_facts.background_appearance = platform_window.background_appearance();
-        let tab_bar_visible = platform_window.tab_bar_visible();
-        SystemWindowTabController::init_visible(cx, tab_bar_visible);
-        if let Some(tabs) = platform_window.tabbed_windows() {
-            SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
-        }
-
         let display_id = platform_facts.display_id;
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -1842,366 +2151,22 @@ impl Window {
         let content_size = platform_facts.content_size;
         let scale_factor = platform_facts.scale_factor;
         let appearance = platform_window.appearance();
-        let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
-        let invalidator = WindowInvalidator::new();
         let active = Rc::new(Cell::new(platform_facts.is_active));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
-        let needs_present = Rc::new(Cell::new(false));
-        let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
-        let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
-        let last_frame_time = Rc::new(Cell::new(None));
-
-        let accessibility_force_disabled = cx.accessibility_force_disabled;
-        let a11y_active_state = Arc::new(AtomicU64::new(0));
-
-        #[cfg(not(target_family = "wasm"))]
-        if !accessibility_force_disabled {
-            let (activation_sender, activation_receiver) = async_channel::unbounded::<()>();
-            let (deactivation_sender, deactivation_receiver) = async_channel::unbounded::<()>();
-            let (action_sender, action_receiver) =
-                async_channel::unbounded::<(u64, accesskit::ActionRequest)>();
-
-            platform_window.a11y_init(crate::A11yCallbacks {
-                activation: {
-                    let active_state = a11y_active_state.clone();
-                    Box::new(move || {
-                        log::info!("Accessibility activated");
-                        a11y::set_requested_active(&active_state, true);
-                        activation_sender.send_blocking(()).log_err();
-                        None
-                    })
-                },
-                action: {
-                    let active_state = a11y_active_state.clone();
-                    Box::new(move |request| {
-                        let generation = a11y::requested_generation(&active_state);
-                        action_sender.send_blocking((generation, request)).log_err();
-                    })
-                },
-                deactivation: {
-                    let active_state = a11y_active_state.clone();
-                    Box::new(move || {
-                        log::info!("Accessibility deactivated");
-                        a11y::set_requested_active(&active_state, false);
-                        deactivation_sender.send_blocking(()).log_err();
-                    })
-                },
-            });
-
-            // Accessibility can be activated at any time, so a complete tree cannot be
-            // produced synchronously here. Returning `None` lets the platform adapter own
-            // any temporary placeholder while this refresh produces the real full tree.
-            let mut async_cx = cx.to_async();
-            cx.foreground_executor()
-                .spawn(async move {
-                    while activation_receiver.recv().await.is_ok() {
-                        handle
-                            .update(&mut async_cx, |_, window, _| window.refresh())
-                            .log_err();
-                    }
-                })
-                .detach();
-
-            let mut async_cx = cx.to_async();
-            cx.foreground_executor()
-                .spawn(async move {
-                    while deactivation_receiver.recv().await.is_ok() {
-                        handle
-                            .update(&mut async_cx, |_, window, _| window.refresh())
-                            .log_err();
-                    }
-                })
-                .detach();
-
-            let mut async_cx = cx.to_async();
-            cx.foreground_executor()
-                .spawn(async move {
-                    while let Ok((activation_generation, request)) = action_receiver.recv().await {
-                        handle
-                            .update(&mut async_cx, |_, window, cx| {
-                                window.with_input_transaction(cx, |window, cx| {
-                                    window.handle_a11y_action(activation_generation, request, cx);
-                                });
-                            })
-                            .log_err();
-                    }
-                })
-                .detach();
-        }
-
-        platform_window.on_close(Box::new({
-            let window_id = handle.window_id();
-            let mut cx = cx.to_async();
-            move || {
-                let _ = handle.update(&mut cx, |_, window, cx| window.remove_window(cx));
-                let _ = cx.update(|cx| {
-                    SystemWindowTabController::remove_tab(cx, window_id);
-                });
-            }
-        }));
-        platform_window.on_request_frame(Box::new({
-            let mut cx = cx.to_async();
-            let invalidator = invalidator.clone();
-            let active = active.clone();
-            let needs_present = needs_present.clone();
-            let next_frame_callbacks = next_frame_callbacks.clone();
-            let input_rate_tracker = input_rate_tracker.clone();
-            move |request_frame_options| {
-                let thermal_state = handle
-                    .update(&mut cx, |_, _, cx| cx.thermal_state())
-                    .log_err();
-
-                let min_frame_interval = FrameThrottleFacts {
-                    force_render: request_frame_options.force_render,
-                    require_presentation: request_frame_options.require_presentation,
-                    has_next_frame_callbacks: !next_frame_callbacks.borrow().is_empty(),
-                    active: active.get(),
-                    thermal_state,
-                }
-                .min_frame_interval();
-                let now = Instant::now();
-                if frame_should_wait(now, last_frame_time.get(), min_frame_interval) {
-                    // Must still complete the frame on platforms that require it.
-                    // On Wayland, `surface.frame()` was already called to request the
-                    // next frame callback, so we must call `surface.commit()` (via
-                    // `complete_frame`) or the compositor won't send another callback.
-                    handle
-                        .update(&mut cx, |_, window, _| window.complete_frame())
-                        .log_err();
-                    return;
-                }
-                last_frame_time.set(Some(now));
-
-                let next_frame_callbacks = next_frame_callbacks.take();
-                if !next_frame_callbacks.is_empty() {
-                    handle
-                        .update(&mut cx, |_, window, cx| {
-                            for callback in next_frame_callbacks {
-                                callback(window, cx);
-                            }
-                        })
-                        .log_err();
-                }
-
-                // Keep presenting if input was recently arriving at a high rate (>= 60fps).
-                // Once high-rate input is detected, we sustain presentation for 1 second
-                // to prevent display underclocking during active input.
-                let needs_present = PresentFacts {
-                    require_presentation: request_frame_options.require_presentation,
-                    needs_present: needs_present.get(),
-                    active: active.get(),
-                    high_rate_input: input_rate_tracker.borrow_mut().is_high_rate(),
-                }
-                .needs_present();
-
-                if invalidator.is_dirty() || request_frame_options.force_render {
-                    measure("frame duration", || {
-                        handle
-                            .update(&mut cx, |_, window, cx| {
-                                if request_frame_options.force_render {
-                                    // Bypass cached view reuse so we don't replay stale
-                                    // atlas tile references after a GPU device recovery.
-                                    window.refresh();
-                                }
-                                let arena_clear_needed = window.draw(cx);
-                                window.present();
-                                arena_clear_needed.clear();
-                            })
-                            .log_err();
-                    })
-                } else if needs_present {
-                    handle
-                        .update(&mut cx, |_, window, _| window.present())
-                        .log_err();
-                }
-
-                handle
-                    .update(&mut cx, |_, window, _| {
-                        window.complete_frame();
-                    })
-                    .log_err();
-            }
-        }));
-        platform_window.on_resize(Box::new({
-            let mut cx = cx.to_async();
-            move |_, _| {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
-            }
-        }));
-        platform_window.on_moved(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
-            }
-        }));
-        platform_window.on_window_state_change(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
-            }
-        }));
-        platform_window.on_window_mutation_observation(Box::new({
-            let mut cx = cx.to_async();
-            move |facts| {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        window.window_mutation_observed(facts, cx);
-                    })
-                    .log_err();
-            }
-        }));
-        platform_window.on_appearance_changed(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
-                    .log_err();
-            }
-        }));
-        platform_window.on_button_layout_changed(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.button_layout_changed(cx))
-                    .log_err();
-            }
-        }));
-        platform_window.on_active_status_change(Box::new({
-            let mut cx = cx.to_async();
-            move |active| {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        window.active.set(active);
-                        if !active {
-                            window
-                                .cancel_pointer_session(PointerCancelReason::WindowDeactivated, cx);
-                        }
-                        window.modifiers = window.platform_window.modifiers();
-                        window.capslock = window.platform_window.capslock();
-                        window
-                            .activation_observers
-                            .clone()
-                            .retain(&(), |callback| callback(window, cx));
-
-                        window.bounds_changed(cx);
-                        window.refresh();
-
-                        SystemWindowTabController::update_last_active(cx, window.handle.id);
-                    })
-                    .log_err();
-            }
-        }));
-        platform_window.on_hover_status_change(Box::new({
-            let mut cx = cx.to_async();
-            move |active| {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        window.hovered.set(active);
-                        window.mouse_in_window = active;
-                        if !active {
-                            window.reset_cursor_style(cx);
-                        }
-                        window.refresh();
-                    })
-                    .log_err();
-            }
-        }));
-        platform_window.on_input({
-            let mut cx = cx.to_async();
-            Box::new(move |event| {
-                handle
-                    .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
-                    .log_err()
-                    .unwrap_or(DispatchEventResult::default())
-            })
-        });
-        platform_window.on_hit_test_window_control({
-            let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, window, _cx| {
-                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if hitbox.is_active() && window.mouse_hit_test.ids.contains(&hitbox.id)
-                            {
-                                return Some(*area);
-                            }
-                        }
-                        None
-                    })
-                    .log_err()
-                    .unwrap_or(None)
-            })
-        });
-        platform_window.on_move_tab_to_new_window({
-            let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::move_tab_to_new_window(cx, handle.window_id());
-                    })
-                    .log_err();
-            })
-        });
-        platform_window.on_merge_all_windows({
-            let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
-                    })
-                    .log_err();
-            })
-        });
-        platform_window.on_select_next_tab({
-            let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::select_next_tab(cx, handle.window_id());
-                    })
-                    .log_err();
-            })
-        });
-        platform_window.on_select_previous_tab({
-            let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::select_previous_tab(cx, handle.window_id())
-                    })
-                    .log_err();
-            })
-        });
-        platform_window.on_toggle_tab_bar({
-            let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        let tab_bar_visible = window.platform_window.tab_bar_visible();
-                        SystemWindowTabController::set_visible(cx, tab_bar_visible);
-                    })
-                    .log_err();
-            })
-        });
-
-        if let Some(app_id) = app_id {
-            platform_window.set_app_id(&app_id);
-        }
-
-        platform_window.map_window().unwrap();
 
         Ok(Window {
             handle,
             invalidator,
             removed: false,
             removal_state: WindowRemovalState::Open,
+            should_close_handler: WindowShouldCloseHandlerSlot::default(),
             platform_window,
+            platform_command_sink,
+            initial_presentation_command: Some(
+                PlatformWindowCommand::CompleteInitialPresentation {
+                    activate: show && focus,
+                },
+            ),
             platform_facts,
             window_kind,
             window_mutation_capabilities,
@@ -2270,6 +2235,7 @@ impl Window {
             hovered,
             needs_present,
             input_rate_tracker,
+            last_frame_time: Cell::new(None),
             #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
             last_input_modality: InputModality::Mouse,
@@ -2307,6 +2273,47 @@ impl Window {
                 handle.window_id(),
             ),
         })
+    }
+
+    pub(crate) fn creation_can_commit(&self) -> bool {
+        !self.removed && self.removal_state == WindowRemovalState::Open
+    }
+
+    pub(crate) fn take_initial_presentation_command(
+        &mut self,
+    ) -> Option<(PlatformWindowCommandSink, PlatformWindowCommand)> {
+        self.initial_presentation_command
+            .take()
+            .map(|command| (self.platform_command_sink.clone(), command))
+    }
+
+    pub(crate) fn initial_presentation_completed(&mut self, cx: &mut App) {
+        let previous_facts = self.platform_facts.clone();
+        self.refresh_platform_facts();
+        let tab_bar_visible = self.platform_window.tab_bar_visible();
+        SystemWindowTabController::init_visible(cx, tab_bar_visible);
+        let tabs = self.platform_window.tabbed_windows();
+        let tab_presentation_changed = tab_bar_visible
+            || tabs
+                .as_ref()
+                .is_some_and(|tabs| tabs.iter().any(|tab| tab.id == self.handle.window_id()));
+        if let Some(tabs) = tabs {
+            SystemWindowTabController::add_tab(cx, self.handle.window_id(), tabs);
+        }
+
+        let bounds_changed = self.platform_facts.bounds != previous_facts.bounds
+            || self.platform_facts.coordinate_space != previous_facts.coordinate_space
+            || self.platform_facts.window_bounds != previous_facts.window_bounds
+            || self.platform_facts.inner_window_bounds != previous_facts.inner_window_bounds
+            || self.platform_facts.content_size != previous_facts.content_size
+            || self.platform_facts.scale_factor != previous_facts.scale_factor
+            || self.platform_facts.display_id != previous_facts.display_id;
+        if self.platform_facts != previous_facts || tab_presentation_changed {
+            self.refresh();
+        }
+        if bounds_changed {
+            self.notify_bounds_observers(cx);
+        }
     }
 
     pub(crate) fn new_focus_listener(
@@ -2545,19 +2552,31 @@ impl Window {
         } else {
             WindowRemovalState::Removing
         };
-        self.invalidate_platform_window_mutations();
-        let deliveries = self.window_mutations.settle_all(
-            &self.window_mutation_authority,
-            WindowMutationOutcome::WindowClosed,
-            &self.platform_facts,
-        );
-        Self::deliver_window_mutation_ticket_deliveries(deliveries);
-        self.a11y.clear_announcements_for_window_close();
+        let preparation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.invalidate_platform_window_mutations();
+            let deliveries = self.window_mutations.settle_all(
+                &self.window_mutation_authority,
+                WindowMutationOutcome::WindowClosed,
+                &self.platform_facts,
+            );
+            let ticket_delivery =
+                Self::deliver_window_mutation_ticket_deliveries_panic_safe(deliveries);
+            self.a11y.clear_announcements_for_window_close();
+            if let Err(payload) = ticket_delivery {
+                std::panic::resume_unwind(payload);
+            }
+        }));
         if self.input_transaction_depth.get() > 0 {
+            if let Err(payload) = preparation {
+                std::panic::resume_unwind(payload);
+            }
             return;
         }
 
-        self.finish_remove_window(cx);
+        let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.finish_remove_window(cx)
+        }));
+        finish_after_window_cleanup(preparation, cleanup, "direct window removal");
     }
 
     fn finish_pending_window_removal(&mut self, cx: &mut App) {
@@ -2578,27 +2597,91 @@ impl Window {
         callback: impl FnOnce(&mut Window, &mut App) -> R,
     ) -> R {
         let transaction = InputTransactionGuard::enter(self.input_transaction_depth.clone());
-        let result = callback(self, cx);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(self, cx)));
         drop(transaction);
-        self.finish_pending_window_removal(cx);
-        result
+        let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.finish_pending_window_removal(cx)
+        }));
+        finish_after_window_cleanup(result, cleanup, "input transaction window removal")
     }
 
     fn finish_remove_window(&mut self, cx: &mut App) {
         self.removal_state = WindowRemovalState::Removing;
-        self.invalidate_platform_window_mutations();
-        let deliveries = self.window_mutations.settle_all(
-            &self.window_mutation_authority,
-            WindowMutationOutcome::WindowClosed,
-            &self.platform_facts,
+        self.should_close_handler.terminate();
+        let mut first_panic = None;
+
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.invalidate_platform_window_mutations();
+            })),
+            "platform mutation invalidation",
         );
-        Self::deliver_window_mutation_ticket_deliveries(deliveries);
-        self.cancel_pointer_session(PointerCancelReason::WindowClosed, cx);
-        self.close_bring_into_view_authority(cx);
+
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.window_mutations.settle_all(
+                &self.window_mutation_authority,
+                WindowMutationOutcome::WindowClosed,
+                &self.platform_facts,
+            )
+        })) {
+            Ok(deliveries) => {
+                for delivery in deliveries {
+                    retain_first_window_cleanup_panic(
+                        &mut first_panic,
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            delivery.deliver();
+                        })),
+                        "window mutation ticket delivery",
+                    );
+                }
+            }
+            Err(payload) => retain_first_window_cleanup_panic(
+                &mut first_panic,
+                Err(payload),
+                "window mutation settlement",
+            ),
+        }
+
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.cancel_pointer_session(PointerCancelReason::WindowClosed, cx);
+            })),
+            "pointer-session cancellation",
+        );
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.clear_pointer_session(cx);
+            })),
+            "pointer-session terminal cleanup",
+        );
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.a11y.clear_announcements_for_window_close();
+            })),
+            "accessibility announcement cleanup",
+        );
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.close_bring_into_view_authority(cx);
+            })),
+            "bring-into-view terminal cleanup",
+        );
         self.pending_focus_reveal_fence = None;
         self.pending_focus_completion = None;
         self.focus_claim_resolutions.clear();
         self.removed = true;
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    pub(crate) fn should_close(&mut self, cx: &mut App) -> bool {
+        self.should_close_handler.clone().invoke(self, cx)
     }
 
     fn invalidate_platform_window_mutations(&self) {
@@ -3478,7 +3561,8 @@ impl Window {
 
     /// Start a window resize operation (Wayland)
     pub fn start_window_resize(&self, edge: ResizeEdge) {
-        self.platform_window.start_window_resize(edge);
+        self.platform_command_sink
+            .enqueue(PlatformWindowCommand::StartWindowResize(edge));
     }
 
     /// Return the `WindowBounds` to indicate that how a window should be opened
@@ -3770,17 +3854,17 @@ impl Window {
     /// Commits a backend-provided coherent terminal observation without re-reading platform
     /// getters. Intermediate move and resize notifications deliberately use [`Self::bounds_changed`]
     /// instead, so they cannot settle a queued placement at an arbitrary window-manager step.
-    fn window_mutation_observed(
+    pub(crate) fn window_mutation_observed(
         &mut self,
         observation: PlatformWindowMutationObservation,
         cx: &mut App,
-    ) {
+    ) -> bool {
         if !self.window_mutations.is_current_generation(
             &self.window_mutation_authority,
             observation.domain,
             observation.generation,
         ) {
-            return;
+            return false;
         }
         self.commit_platform_facts(observation.facts);
         let deliveries = self.window_mutations.settle_from_terminal_facts(
@@ -3793,6 +3877,7 @@ impl Window {
         self.refresh();
         self.notify_bounds_observers(cx);
         Self::deliver_window_mutation_ticket_deliveries(deliveries);
+        true
     }
 
     fn notify_bounds_observers(&mut self, cx: &mut App) {
@@ -3804,6 +3889,23 @@ impl Window {
     fn deliver_window_mutation_ticket_deliveries(deliveries: Vec<WindowMutationTicketDelivery>) {
         for delivery in deliveries {
             delivery.deliver();
+        }
+    }
+
+    fn deliver_window_mutation_ticket_deliveries_panic_safe(
+        deliveries: Vec<WindowMutationTicketDelivery>,
+    ) -> std::thread::Result<()> {
+        let mut first_panic = None;
+        for delivery in deliveries {
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| delivery.deliver())),
+                "initial window mutation ticket delivery",
+            );
+        }
+        match first_panic {
+            Some(payload) => Err(payload),
+            None => Ok(()),
         }
     }
 
@@ -4169,6 +4271,30 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    pub(crate) fn native_active_status_changed(&mut self, active: bool, cx: &mut App) {
+        self.active.set(active);
+        if !active {
+            self.cancel_pointer_session(PointerCancelReason::WindowDeactivated, cx);
+        }
+        self.modifiers = self.platform_window.modifiers();
+        self.capslock = self.platform_window.capslock();
+        self.activation_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
+        self.bounds_changed(cx);
+        self.refresh();
+        SystemWindowTabController::update_last_active(cx, self.handle.id);
+    }
+
+    pub(crate) fn native_hover_status_changed(&mut self, hovered: bool, cx: &mut App) {
+        self.hovered.set(hovered);
+        self.mouse_in_window = hovered;
+        if !hovered {
+            self.reset_cursor_style(cx);
+        }
+        self.refresh();
+    }
+
     /// Returns the appearance of the current window.
     pub fn appearance(&self) -> WindowAppearance {
         self.appearance
@@ -4255,7 +4381,8 @@ impl Window {
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
-        self.platform_window.show_window_menu(position)
+        self.platform_command_sink
+            .enqueue(PlatformWindowCommand::ShowWindowMenu(position));
     }
 
     /// Handle window movement for Linux and macOS.
@@ -4263,7 +4390,8 @@ impl Window {
     ///
     /// Events may not be received during a move operation.
     pub fn start_window_move(&self) {
-        self.platform_window.start_window_move()
+        self.platform_command_sink
+            .enqueue(PlatformWindowCommand::StartWindowMove);
     }
 
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
@@ -4538,6 +4666,54 @@ impl Window {
         self.platform_window.completed_frame();
     }
 
+    pub(crate) fn native_frame_requested(
+        &mut self,
+        request_frame_options: RequestFrameOptions,
+        cx: &mut App,
+    ) {
+        let min_frame_interval = FrameThrottleFacts {
+            force_render: request_frame_options.force_render,
+            require_presentation: request_frame_options.require_presentation,
+            has_next_frame_callbacks: !self.next_frame_callbacks.borrow().is_empty(),
+            active: self.active.get(),
+            thermal_state: Some(cx.thermal_state()),
+        }
+        .min_frame_interval();
+        let now = Instant::now();
+        if frame_should_wait(now, self.last_frame_time.get(), min_frame_interval) {
+            self.complete_frame();
+            return;
+        }
+        self.last_frame_time.set(Some(now));
+
+        for callback in self.next_frame_callbacks.take() {
+            callback(self, cx);
+        }
+
+        let needs_present = PresentFacts {
+            require_presentation: request_frame_options.require_presentation,
+            needs_present: self.needs_present.get(),
+            active: self.active.get(),
+            high_rate_input: self.input_rate_tracker.borrow_mut().is_high_rate(),
+        }
+        .needs_present();
+
+        if self.invalidator.is_dirty() || request_frame_options.force_render {
+            measure("frame duration", || {
+                if request_frame_options.force_render {
+                    self.refresh();
+                }
+                let arena_clear_needed = self.draw(cx);
+                self.present();
+                arena_clear_needed.clear();
+            })
+        } else if needs_present {
+            self.present();
+        }
+
+        self.complete_frame();
+    }
+
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
@@ -4671,6 +4847,7 @@ impl Window {
         self.next_frame.clear();
         self.frame_focus_authority_sealed = false;
         self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
+        self.commit_native_window_control_area(cx);
         let current_committed_focus_path = self.rendered_frame.focus_path();
         let previous_committed_focus = previous_committed_focus_path.last().copied();
         let current_committed_focus = current_committed_focus_path.last().copied();
@@ -8478,6 +8655,7 @@ impl Window {
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
+            self.commit_native_window_control_area(cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
         }
@@ -8499,6 +8677,18 @@ impl Window {
         self.last_dispatch_event_result = Some(result);
         drop(dispatch_guard);
         result
+    }
+
+    fn commit_native_window_control_area(&self, cx: &App) {
+        let area = self
+            .rendered_frame
+            .window_control_hitboxes
+            .iter()
+            .find_map(|(area, hitbox)| {
+                (hitbox.is_active() && self.mouse_hit_test.ids.contains(&hitbox.id))
+                    .then_some(*area)
+            });
+        cx.set_native_window_control_area(self.handle.window_id(), area);
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
@@ -9103,7 +9293,8 @@ impl Window {
 
     /// Focus the current window and bring it to the foreground at the platform level.
     pub fn activate_window(&self) {
-        self.platform_window.activate();
+        self.platform_command_sink
+            .enqueue(PlatformWindowCommand::Activate);
     }
 
     /// Requests minimized placement through the placement authority.
@@ -9338,14 +9529,11 @@ impl Window {
     /// Register a callback that can interrupt the closing of the current window based the returned boolean.
     /// If the callback returns false, the window won't be closed.
     pub fn on_window_should_close(
-        &self,
-        cx: &App,
-        f: impl Fn(&mut Window, &mut App) -> bool + 'static,
+        &mut self,
+        _cx: &App,
+        f: impl FnMut(&mut Window, &mut App) -> bool + 'static,
     ) {
-        let mut cx = self.to_async(cx);
-        self.platform_window.on_should_close(Box::new(move || {
-            cx.update(|window, cx| f(window, cx)).unwrap_or(true)
-        }))
+        self.should_close_handler.set(Box::new(f));
     }
 
     /// Register an action listener on this node for the next frame. The type of action
@@ -9482,7 +9670,7 @@ impl Window {
         request_activation_generation: u64,
         request: accesskit::ActionRequest,
         cx: &mut App,
-    ) {
+    ) -> bool {
         if !self.a11y.accepts_action(
             request_activation_generation,
             request.target_tree,
@@ -9495,7 +9683,7 @@ impl Window {
                 request.target_tree,
                 request.target_node
             );
-            return;
+            return false;
         }
 
         // Take listeners out temporarily so the closures can borrow Window
@@ -9518,7 +9706,7 @@ impl Window {
                 listeners,
             );
             if matched {
-                return;
+                return true;
             }
         }
 
@@ -9541,7 +9729,7 @@ impl Window {
                     });
                     self.dispatch_event(mouse_down, cx);
                     if self.removal_state != WindowRemovalState::Open {
-                        return;
+                        return true;
                     }
                     self.dispatch_event(mouse_up, cx);
                 }
@@ -9593,6 +9781,7 @@ impl Window {
                 );
             }
         }
+        true
     }
 
     /// Toggles the inspector mode on this window.

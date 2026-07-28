@@ -42,6 +42,40 @@ mod runtime_suite {
     use crate::host_viewport_runtime_test_support::*;
 
     #[open_gpui::test]
+    fn route_fact_sampling_allows_runtime_reentry(cx: &mut TestAppContext) {
+        let source_space = DockSpaceId::from("source");
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+        let controller =
+            cx.new(|_| DockController::new(DockWorkspace::new(source_space.clone(), graph)));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source_space,
+            source_tabs,
+            DockViewportDropPayload::Item(item("a")),
+            point(px(10.0), px(10.0)),
+            None,
+            DockViewportTargetContext::new(),
+        );
+
+        let prepared = runtime
+            .borrow()
+            .prepare_payload_drop_route_resolution(&request, false);
+        let sampled = cx.update(|app| {
+            let runtime_reentry = runtime.borrow_mut();
+            drop(runtime_reentry);
+            prepared.sample(app)
+        });
+        let _ = runtime
+            .borrow_mut()
+            .finalize_payload_drop_route_resolution(sampled);
+    }
+
+    #[open_gpui::test]
     fn viewport_runtime_requires_backend_route_selection_for_drop(cx: &mut TestAppContext) {
         let source_space = DockSpaceId::from("source");
         let mut graph = DockGraph::new();
@@ -125,7 +159,7 @@ mod runtime_suite {
             cx.update(|app| runtime.resolve_payload_drop_delivery(&trusted_request, app));
         let DockViewportDropRoute::Local {
             host_position: route_host_position,
-            window_id,
+            route_proof,
             source,
             ..
         } = trusted_resolution.route()
@@ -133,7 +167,7 @@ mod runtime_suite {
             panic!("trusted hovered live-window facts should route locally");
         };
         assert_point_close(*route_host_position, host_position);
-        assert_eq!(*window_id, source_window.window_id());
+        assert_eq!(route_proof.window_id(), source_window.window_id());
         assert_eq!(
             *source,
             crate::DockViewportRouteSelectionSource::TrustedHoveredWindow
@@ -410,6 +444,7 @@ mod runtime_suite {
             item("a"),
             "Panel A".to_string(),
         );
+        let session = runtime.begin_payload_drag(&payload);
         let preview_request = DockViewportDropRouteRequest::from_target_context(
             source_space.clone(),
             source_tabs,
@@ -417,12 +452,23 @@ mod runtime_suite {
             release_position,
             None,
             DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
-        );
-        let resolution =
+        )
+        .with_drag_session(Some(session));
+        let mut resolution =
             cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
         cx.update(|app| {
             runtime.update_routed_drop_preview(&resolution, &payload, app);
         });
+        if runtime
+            .routed_drop_preview_for(&target_space, target_opened.window().window_id())
+            .is_none()
+        {
+            resolution =
+                cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
+            cx.update(|app| {
+                runtime.update_routed_drop_preview(&resolution, &payload, app);
+            });
+        }
         assert!(
             runtime
                 .routed_drop_preview_for(&target_space, target_opened.window().window_id())
@@ -461,15 +507,21 @@ mod runtime_suite {
             "empty target context must not use geometry or reuse preview state as route selection"
         );
 
+        let DockViewportDropRoute::Local {
+            host_position,
+            route_proof,
+            source,
+        } = stack_resolution.route()
+        else {
+            panic!(
+                "window-stack fallback must use the current stack instead of reusing the previewed target"
+            );
+        };
+        assert_point_close(*host_position, point(px(120.0), px(100.0)));
+        assert_eq!(route_proof.window_id(), source_opened.window().window_id());
         assert_eq!(
-            stack_resolution.route(),
-            &DockViewportDropRoute::Local {
-                host_position: point(px(120.0), px(100.0)),
-                window_id: source_opened.window().window_id(),
-                facts_generation: 1,
-                source: crate::DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
-            },
-            "window-stack fallback must use the current stack instead of reusing the previewed target"
+            *source,
+            crate::DockViewportRouteSelectionSource::FrontToBackWindowStackFallback
         );
         assert!(
             stack_resolution.routed_preview_target_snapshot().is_some(),
@@ -1415,9 +1467,10 @@ mod handle_suite {
     ) {
         let (runtime, target_window, request) = backend_route_resolution_fixture(cx);
 
-        let _initial =
-            cx.update(|app| runtime.resolve_payload_drop_delivery_outcome(&request, app));
-        let settled = cx.update(|app| runtime.resolve_payload_drop_delivery_outcome(&request, app));
+        let _initial = cx
+            .update(|app| runtime.resolve_payload_drop_delivery_for_request_outcome(&request, app));
+        let settled = cx
+            .update(|app| runtime.resolve_payload_drop_delivery_for_request_outcome(&request, app));
         assert!(
             !settled.changed(),
             "settled route selection should not report churn without new backend evidence"
@@ -1429,13 +1482,14 @@ mod handle_suite {
         cx.run_until_parked();
         cx.set_platform_focused_window_available(true);
 
-        let focused = cx.update(|app| runtime.resolve_payload_drop_delivery_outcome(&request, app));
+        let focused = cx
+            .update(|app| runtime.resolve_payload_drop_delivery_for_request_outcome(&request, app));
         assert!(
             focused.changed(),
             "backend focus sampled during route selection should be reported as runtime state change"
         );
-        let focused_again =
-            cx.update(|app| runtime.resolve_payload_drop_delivery_outcome(&request, app));
+        let focused_again = cx
+            .update(|app| runtime.resolve_payload_drop_delivery_for_request_outcome(&request, app));
         assert!(
             !focused_again.changed(),
             "re-sampling the same backend focus should not churn route selection state"
@@ -2053,7 +2107,7 @@ mod handle_suite {
             cx,
             &runtime,
             &resolution,
-            "Panel A",
+            &payload,
             source_space.clone(),
             source_opened.window().window_id(),
             target_center_host_position(),
@@ -2188,7 +2242,7 @@ mod handle_suite {
             cx,
             &runtime,
             &resolution,
-            "Panel A",
+            &payload,
             target_space.clone(),
             target_opened.window().window_id(),
             target_center_host_position(),
@@ -2581,7 +2635,7 @@ mod handle_suite {
             cx,
             &runtime,
             &resolution,
-            "Panel A",
+            &payload,
             target_space.clone(),
             target_opened.window().window_id(),
             target_center_host_position(),
@@ -2722,7 +2776,7 @@ mod handle_suite {
             cx,
             &runtime,
             &resolution,
-            "Panel A",
+            &payload,
             source_space.clone(),
             source_opened.window().window_id(),
             target_center_host_position(),
@@ -2912,7 +2966,7 @@ mod handle_suite {
             cx,
             &runtime,
             &resolution,
-            "Panel A",
+            &payload,
             source_space.clone(),
             source_opened.window().window_id(),
             target_center_host_position(),

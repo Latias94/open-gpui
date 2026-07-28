@@ -7,7 +7,7 @@ use crate::{
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext, EntityId, FocusClaimOutcome, Subscription, WeakEntity,
-    WindowId,
+    Window, WindowId,
 };
 use std::{
     cell::RefCell,
@@ -927,7 +927,8 @@ impl DockSurface {
     /// Issues a stable-item activation intent without retaining an outcome observer.
     ///
     /// The returned id identifies the intent. Dropping the internal observation subscription does
-    /// not cancel platform activation or focus work.
+    /// not cancel platform activation or focus work. Use [`Self::activate_panel_from_window`]
+    /// inside a window event callback.
     pub fn activate_panel(
         &self,
         item: impl Into<DockItemId>,
@@ -938,18 +939,63 @@ impl DockSurface {
         request_id
     }
 
+    /// Issues a stable-item activation intent from a window event callback.
+    ///
+    /// When the requested panel belongs to the current event-receiver window, activation is
+    /// deferred until GPUI returns that window and the callback's entities to the app.
+    pub fn activate_panel_from_window(
+        &self,
+        item: impl Into<DockItemId>,
+        window: &Window,
+        cx: &mut App,
+    ) -> DockSurfaceActivationRequestId {
+        let (request_id, subscription) =
+            self.activate_panel_with_completion_from_window(item, window, cx, |_, _cx| {});
+        drop(subscription);
+        request_id
+    }
+
     /// Activates a panel by stable item id and observes its exact terminal focus outcome.
     ///
     /// Selection is committed independently before focus is requested. The callback receives one
     /// of the typed terminal outcomes; dropping the returned subscription stops callback delivery
-    /// but leaves the activation intent in flight.
+    /// but leaves the activation intent in flight. Use
+    /// [`Self::activate_panel_with_completion_from_window`] inside a window event callback.
     pub fn activate_panel_with_completion(
         &self,
         item: impl Into<DockItemId>,
         cx: &mut App,
         callback: impl FnOnce(DockSurfaceActivationOutcome, &mut App) + 'static,
     ) -> (DockSurfaceActivationRequestId, Subscription) {
-        let item = item.into();
+        self.activate_panel_with_completion_impl(item.into(), None, cx, callback)
+    }
+
+    /// Activates a panel from a window event callback and observes its exact terminal outcome.
+    ///
+    /// Use this entry point when the target may be hosted by the current event-receiver window.
+    /// Other-window targets retain the synchronous app-level activation path.
+    pub fn activate_panel_with_completion_from_window(
+        &self,
+        item: impl Into<DockItemId>,
+        window: &Window,
+        cx: &mut App,
+        callback: impl FnOnce(DockSurfaceActivationOutcome, &mut App) + 'static,
+    ) -> (DockSurfaceActivationRequestId, Subscription) {
+        self.activate_panel_with_completion_impl(
+            item.into(),
+            Some(window.window_handle()),
+            cx,
+            callback,
+        )
+    }
+
+    fn activate_panel_with_completion_impl(
+        &self,
+        item: DockItemId,
+        current_window: Option<AnyWindowHandle>,
+        cx: &mut App,
+        callback: impl FnOnce(DockSurfaceActivationOutcome, &mut App) + 'static,
+    ) -> (DockSurfaceActivationRequestId, Subscription) {
         let controller = self.controller(cx);
         let space = cx.read_entity(&controller, |controller, _| {
             controller.graph().spaces().into_iter().find(|space| {
@@ -988,23 +1034,55 @@ impl DockSurface {
         if !target.binding().is_current(cx) {
             return (request_id, subscription);
         }
-        if target.host().upgrade().is_none() {
+        let Some(target_host) = target.host().upgrade() else {
             self.settle_activation(
                 target.binding(),
                 DockSurfaceActivationOutcome::Unavailable,
                 cx,
             );
             return (request_id, subscription);
-        }
+        };
+        let registration = cx.read_entity(&target_host, |host, _| {
+            host.viewport_runtime()
+                .registration_key_for_space_window(&space, target.window().window_id())
+        });
+        let Some(registration) = registration else {
+            self.settle_activation(
+                target.binding(),
+                DockSurfaceActivationOutcome::Unavailable,
+                cx,
+            );
+            return (request_id, subscription);
+        };
 
         let transaction = DockViewportActivationTransaction::surface_activation(
-            space,
+            registration,
             target.window(),
             DockViewportFocusRequest::panel(item),
             target.binding().clone(),
             target.host().clone(),
         );
-        let outcome = apply_viewport_activation_transaction(Some(transaction), cx);
+        if current_window == Some(target.window()) {
+            let surface = self.clone();
+            let binding = target.binding().clone();
+            cx.defer(move |cx| {
+                let outcome = apply_viewport_activation_transaction(Some(transaction), cx);
+                surface.settle_failed_activation_apply(&binding, outcome, cx);
+            });
+        } else {
+            let outcome = apply_viewport_activation_transaction(Some(transaction), cx);
+            self.settle_failed_activation_apply(target.binding(), outcome, cx);
+        }
+
+        (request_id, subscription)
+    }
+
+    fn settle_failed_activation_apply(
+        &self,
+        binding: &DockSurfaceActivationBinding,
+        outcome: DockViewportActivationApplyOutcome,
+        cx: &mut App,
+    ) {
         if matches!(
             outcome,
             DockViewportActivationApplyOutcome::NoTarget
@@ -1012,14 +1090,8 @@ impl DockSurface {
                 | DockViewportActivationApplyOutcome::WrongRootView
                 | DockViewportActivationApplyOutcome::SpaceMismatch
         ) {
-            self.settle_activation(
-                target.binding(),
-                DockSurfaceActivationOutcome::Unavailable,
-                cx,
-            );
+            self.settle_activation(binding, DockSurfaceActivationOutcome::Unavailable, cx);
         }
-
-        (request_id, subscription)
     }
 
     fn settle_activation(

@@ -27,12 +27,28 @@ pub enum DockViewportClosePolicy {
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportCloseCoordinator {
     window_close_plans: HashMap<WindowId, DockViewportClosePlanState>,
+    next_finalize_generation: u64,
+    space_finalize_generations: HashMap<DockSpaceId, u64>,
+    next_should_close_generation: u64,
+    window_should_close_generations: HashMap<WindowId, u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DockViewportClosePlanState {
     Pending(DockViewportMergeBackClosePlan),
     Discarded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportCloseFinalizeKey {
+    source_space: DockSpaceId,
+    generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportShouldCloseFinalizeKey {
+    window_id: WindowId,
+    generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,7 +200,68 @@ pub enum DockViewportCloseStatus {
 }
 
 impl DockViewportCloseCoordinator {
+    pub(crate) fn begin_should_close(
+        &mut self,
+        window_id: WindowId,
+    ) -> DockViewportShouldCloseFinalizeKey {
+        self.next_should_close_generation = self
+            .next_should_close_generation
+            .checked_add(1)
+            .expect("dock viewport should-close generation exhausted");
+        let generation = self.next_should_close_generation;
+        self.window_should_close_generations
+            .insert(window_id, generation);
+        DockViewportShouldCloseFinalizeKey {
+            window_id,
+            generation,
+        }
+    }
+
+    pub(crate) fn finish_should_close(&mut self, key: DockViewportShouldCloseFinalizeKey) -> bool {
+        if self.window_should_close_generations.get(&key.window_id) != Some(&key.generation) {
+            return false;
+        }
+        self.window_should_close_generations.remove(&key.window_id);
+        true
+    }
+
+    pub(crate) fn begin_finalize(
+        &mut self,
+        source_space: &DockSpaceId,
+    ) -> DockViewportCloseFinalizeKey {
+        let generation = self.next_finalize_generation();
+        self.space_finalize_generations
+            .insert(source_space.clone(), generation);
+        DockViewportCloseFinalizeKey {
+            source_space: source_space.clone(),
+            generation,
+        }
+    }
+
+    pub(crate) fn invalidate_finalize_for_space(&mut self, space: &DockSpaceId) {
+        let generation = self.next_finalize_generation();
+        self.space_finalize_generations
+            .insert(space.clone(), generation);
+    }
+
+    pub(crate) fn finish_finalize(&mut self, key: DockViewportCloseFinalizeKey) -> bool {
+        if self.space_finalize_generations.get(&key.source_space) != Some(&key.generation) {
+            return false;
+        }
+        self.space_finalize_generations.remove(&key.source_space);
+        true
+    }
+
+    fn next_finalize_generation(&mut self) -> u64 {
+        self.next_finalize_generation = self
+            .next_finalize_generation
+            .checked_add(1)
+            .expect("dock viewport close finalize generation space exhausted");
+        self.next_finalize_generation
+    }
+
     pub(crate) fn discard_window(&mut self, window_id: WindowId) -> DockViewportClosePlanEffect {
+        self.window_should_close_generations.remove(&window_id);
         match self.window_close_plans.get_mut(&window_id) {
             Some(state @ DockViewportClosePlanState::Pending(_)) => {
                 *state = DockViewportClosePlanState::Discarded;
@@ -195,6 +272,7 @@ impl DockViewportCloseCoordinator {
     }
 
     pub(crate) fn cancel_window(&mut self, window_id: WindowId) -> DockViewportClosePlanEffect {
+        self.window_should_close_generations.remove(&window_id);
         if self.window_close_plans.remove(&window_id).is_some() {
             DockViewportClosePlanEffect::Cleared
         } else {
@@ -206,66 +284,20 @@ impl DockViewportCloseCoordinator {
         &mut self,
         window_id: WindowId,
     ) -> Option<DockViewportClosePlanState> {
+        self.window_should_close_generations.remove(&window_id);
         self.window_close_plans.remove(&window_id)
     }
 
-    pub(crate) fn apply_should_close_plan(
+    pub(crate) fn replace_window_close_plan(
         &mut self,
-        mut outcome: DockViewportShouldCloseOutcome,
-        close_policy: DockViewportClosePolicy,
-        focus_item: Option<DockItemId>,
-        controller: &Entity<DockController>,
-        cx: &App,
-    ) -> DockViewportShouldCloseOutcome {
-        if !matches!(outcome.status, DockViewportShouldCloseStatus::Allowed) {
-            return outcome;
-        }
-
-        let Some(space) = outcome.space.as_ref() else {
-            return outcome;
-        };
-
-        let merge_target = match Self::validated_merge_target(space, &close_policy, controller, cx)
-        {
-            Some(target) => target,
-            None => {
-                outcome.status = DockViewportShouldCloseStatus::Vetoed;
-                self.window_close_plans.remove(&outcome.window_id);
-                return outcome;
-            }
-        };
-
-        if let DockViewportClosePolicy::MergeBack { target_space } = close_policy {
-            self.window_close_plans.insert(
-                outcome.window_id,
-                DockViewportClosePlanState::Pending(
-                    DockViewportMergeBackClosePlan::new(space.clone(), target_space, focus_item)
-                        .with_target(merge_target),
-                ),
-            );
+        window_id: WindowId,
+        plan: Option<DockViewportMergeBackClosePlan>,
+    ) {
+        if let Some(plan) = plan {
+            self.window_close_plans
+                .insert(window_id, DockViewportClosePlanState::Pending(plan));
         } else {
-            self.window_close_plans.remove(&outcome.window_id);
-        }
-        outcome
-    }
-
-    fn validated_merge_target(
-        space: &DockSpaceId,
-        close_policy: &DockViewportClosePolicy,
-        controller: &Entity<DockController>,
-        cx: &App,
-    ) -> Option<DockMergeBackTarget> {
-        let controller = controller.read(cx);
-        let workspace = controller.workspace();
-        match close_policy {
-            DockViewportClosePolicy::RetainLayout => workspace
-                .validate_close_space(space)
-                .is_ok()
-                .then_some(DockMergeBackTarget::SpaceOnly),
-            DockViewportClosePolicy::MergeBack { target_space } => {
-                workspace.resolve_merge_target(space, target_space).ok()
-            }
-            DockViewportClosePolicy::Prevent => None,
+            self.window_close_plans.remove(&window_id);
         }
     }
 }
@@ -426,8 +458,6 @@ mod tests {
         DockViewportOpenStatus,
         viewport_test_support::{handle, register_viewport, space},
     };
-    use open_gpui::{AppContext as _, TestAppContext};
-
     #[test]
     fn unregistering_by_window_id_clears_close_callback_mapping() {
         let mut adapter = DockViewportAdapter::new();
@@ -668,46 +698,32 @@ mod tests {
         );
     }
 
-    #[open_gpui::test]
-    fn merge_back_should_close_replaces_stale_plan_state(cx: &mut TestAppContext) {
+    #[test]
+    fn should_close_finalize_generation_is_newest_wins() {
         let mut coordinator = DockViewportCloseCoordinator::default();
-        let mut graph = DockGraph::new();
-        let source = space("source");
-        let target = space("target");
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![crate::DockItemId::from("a")],
-            selected: Some(crate::DockItemId::from("a")),
-        });
-        graph.set_root(source.clone(), tabs);
-        let controller = cx.new(|_| {
-            let mut workspace = crate::DockWorkspace::new(source.clone(), graph);
-            workspace.policy_mut().set_allow_platform_viewports(true);
-            DockController::new(workspace)
-        });
+        let window_id = WindowId::from(1);
+        let first = coordinator.begin_should_close(window_id);
+        let second = coordinator.begin_should_close(window_id);
 
+        assert!(!coordinator.finish_should_close(first));
+        assert!(coordinator.finish_should_close(second));
+    }
+
+    #[test]
+    fn replacing_should_close_plan_discards_previous_state() {
+        let mut coordinator = DockViewportCloseCoordinator::default();
+        let window_id = WindowId::from(1);
+        let plan = DockViewportMergeBackClosePlan::new(space("source"), space("target"), None);
         coordinator
             .window_close_plans
-            .insert(WindowId::from(1), DockViewportClosePlanState::Discarded);
-        let outcome = cx.update(|app| {
-            coordinator.apply_should_close_plan(
-                DockViewportShouldCloseOutcome {
-                    space: Some(source.clone()),
-                    window_id: WindowId::from(1),
-                    status: DockViewportShouldCloseStatus::Allowed,
-                },
-                DockViewportClosePolicy::MergeBack {
-                    target_space: target,
-                },
-                None,
-                &controller,
-                app,
-            )
-        });
-
-        assert_eq!(outcome.status, DockViewportShouldCloseStatus::Allowed);
+            .insert(window_id, DockViewportClosePlanState::Discarded);
+        coordinator.replace_window_close_plan(window_id, Some(plan));
         assert!(matches!(
-            coordinator.window_close_plans.get(&WindowId::from(1)),
+            coordinator.window_close_plans.get(&window_id),
             Some(DockViewportClosePlanState::Pending(_))
         ));
+
+        coordinator.replace_window_close_plan(window_id, None);
+        assert_eq!(coordinator.window_close_plans.get(&window_id), None);
     }
 }

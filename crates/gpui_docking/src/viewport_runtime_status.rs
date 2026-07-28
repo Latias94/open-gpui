@@ -1029,11 +1029,11 @@ impl DockViewportRouteTarget {
         match route {
             DockViewportDropRoute::Local {
                 host_position,
-                window_id,
+                route_proof,
                 ..
             } => Self::Local {
-                space: request.source_space().clone(),
-                window_id: *window_id,
+                space: route_proof.space().clone(),
+                window_id: route_proof.window_id(),
                 host_position: *host_position,
             },
             DockViewportDropRoute::KnownViewport { target, .. } => Self::KnownViewport {
@@ -1570,12 +1570,13 @@ mod tests {
 
         status.record_route(
             &request,
-            &DockViewportDropRoute::Local {
+            &DockViewportDropRoute::local_for_test(
+                request.source_space().clone(),
+                handle(7).window_id(),
                 host_position,
-                window_id: handle(7).window_id(),
-                facts_generation: 1,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+                1,
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             None,
         );
 
@@ -1797,12 +1798,13 @@ mod tests {
 
         status.record_route(
             &request,
-            &DockViewportDropRoute::Local {
+            &DockViewportDropRoute::local_for_test(
+                request.source_space().clone(),
+                handle(7).window_id(),
                 host_position,
-                window_id: handle(7).window_id(),
-                facts_generation: 1,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+                1,
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             None,
         );
 
@@ -1946,7 +1948,7 @@ mod tests {
         request: DockViewportTearOffRequest,
     ) -> DockViewportTearOffOpenOutcome {
         let mut tear_off = crate::DockViewportTearOffMachine::default();
-        match tear_off.begin(request, space("detached"), None, None) {
+        match tear_off.begin(request, space("detached"), None, None, None) {
             crate::DockViewportTearOffBeginOutcome::Pending(pending) => {
                 DockViewportTearOffOpenOutcome::Duplicate(pending)
             }

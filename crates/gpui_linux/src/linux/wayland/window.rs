@@ -2,7 +2,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     ffi::c_void,
     ptr::NonNull,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -28,27 +28,32 @@ use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
-use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
+use crate::linux::{
+    Globals, Output, WaylandClientStatePtr, get_window,
+    should_close_callback::ShouldCloseCallbackSlot,
+};
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
-    size,
+    NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    input: Option<Box<dyn FnMut(open_gpui::PlatformInput) -> open_gpui::DispatchEventResult>>,
+    input: PlatformInputCallbackSlot,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     window_state_change: Option<Box<dyn FnMut()>>,
-    should_close: Option<Box<dyn FnMut() -> bool>>,
+    should_close: ShouldCloseCallbackSlot,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
     button_layout_changed: Option<Box<dyn FnMut()>>,
@@ -235,7 +240,7 @@ pub struct WaylandWindowState {
     renderer: WgpuRenderer,
     bounds: Bounds<Pixels>,
     scale: f32,
-    input_handler: Option<PlatformInputHandler>,
+    input_handler: PlatformInputHandlerSlot,
     decorations: WindowDecorations,
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
@@ -256,6 +261,9 @@ pub struct WaylandWindowState {
     client_inset: Option<Pixels>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
     creation: WaylandWindowCreationProjection,
+    initially_shown: bool,
+    initial_map_committed: bool,
+    initial_presentation_completed: bool,
 }
 
 pub enum WaylandSurfaceState {
@@ -337,10 +345,6 @@ impl WaylandSurfaceState {
                 xdg_dialog.set_modal();
                 xdg_dialog
             });
-
-            if let Some(parent) = parent.as_ref() {
-                parent.add_child(surface.id());
-            }
 
             dialog
         } else {
@@ -458,6 +462,115 @@ pub struct WaylandWindowStatePtr {
     callbacks: Rc<RefCell<Callbacks>>,
 }
 
+struct WaylandWindowCommandTarget {
+    owner: Weak<()>,
+    state: Weak<RefCell<WaylandWindowState>>,
+}
+
+impl WaylandWindowCommandTarget {
+    fn new(window: &WaylandWindow) -> Self {
+        Self {
+            owner: Rc::downgrade(&window.1),
+            state: Rc::downgrade(&window.0.state),
+        }
+    }
+
+    fn dispatch(&self, command: PlatformWindowCommand) -> PlatformWindowCommandOutcome {
+        let Some(_owner) = self.owner.upgrade() else {
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        let Some(state) = self.state.upgrade() else {
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        let mut state = state.borrow_mut();
+
+        match command {
+            PlatformWindowCommand::CompleteInitialPresentation { activate } => {
+                if state.initial_presentation_completed {
+                    return PlatformWindowCommandOutcome::Accepted;
+                }
+                state.initial_presentation_completed = true;
+                if state.initial_map_committed && activate {
+                    let _ = activate_wayland_window(&state);
+                }
+                PlatformWindowCommandOutcome::Accepted
+            }
+            PlatformWindowCommand::Activate => {
+                wayland_command_outcome(activate_wayland_window(&state))
+            }
+            PlatformWindowCommand::ShowWindowMenu(position) => {
+                wayland_command_outcome(show_wayland_window_menu(&state, position))
+            }
+            PlatformWindowCommand::StartWindowMove => {
+                wayland_command_outcome(start_wayland_window_move(&state))
+            }
+            PlatformWindowCommand::StartWindowResize(edge) => {
+                wayland_command_outcome(start_wayland_window_resize(&state, edge))
+            }
+        }
+    }
+}
+
+fn wayland_command_outcome(accepted: bool) -> PlatformWindowCommandOutcome {
+    if accepted {
+        PlatformWindowCommandOutcome::Accepted
+    } else {
+        PlatformWindowCommandOutcome::Rejected
+    }
+}
+
+fn activate_wayland_window(state: &WaylandWindowState) -> bool {
+    // Try to request an activation token. Even though the activation is likely going to be
+    // rejected, KWin and Mutter can use the app_id to indicate that attention was requested.
+    if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone()) {
+        state.client.set_pending_activation(state.surface.id());
+        let token = activation.get_activation_token(&state.globals.qh, ());
+        let serial = state.client.get_serial(SerialKind::MousePress);
+        token.set_app_id(app_id);
+        token.set_serial(serial, &state.globals.seat);
+        token.set_surface(&state.surface);
+        token.commit();
+        true
+    } else {
+        false
+    }
+}
+
+fn show_wayland_window_menu(state: &WaylandWindowState, position: Point<Pixels>) -> bool {
+    let serial = state.client.get_serial(SerialKind::MousePress);
+    let Some(toplevel) = state.surface_state.toplevel() else {
+        return false;
+    };
+    toplevel.show_window_menu(
+        &state.globals.seat,
+        serial,
+        f32::from(position.x) as i32,
+        f32::from(position.y) as i32,
+    );
+    true
+}
+
+fn start_wayland_window_move(state: &WaylandWindowState) -> bool {
+    let serial = state.client.get_serial(SerialKind::MousePress);
+    let Some(toplevel) = state.surface_state.toplevel() else {
+        return false;
+    };
+    toplevel._move(&state.globals.seat, serial);
+    true
+}
+
+fn start_wayland_window_resize(state: &WaylandWindowState, edge: ResizeEdge) -> bool {
+    let Some(toplevel) = state.surface_state.toplevel() else {
+        return false;
+    };
+    toplevel.resize(
+        &state.globals.seat,
+        state.client.get_serial(SerialKind::MousePress),
+        edge.to_xdg(),
+    );
+    true
+}
+
 impl WaylandWindowState {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -473,6 +586,7 @@ impl WaylandWindowState {
         creation: WaylandWindowCreationProjection,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
+        let initially_shown = options.show;
         let renderer = {
             let raw_window = RawWindow {
                 window: surface.id().as_ptr().cast::<c_void>(),
@@ -522,7 +636,7 @@ impl WaylandWindowState {
             renderer,
             bounds: creation.bounds,
             scale: 1.0,
-            input_handler: None,
+            input_handler: PlatformInputHandlerSlot::default(),
             decorations: WindowDecorations::Client,
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
@@ -544,6 +658,9 @@ impl WaylandWindowState {
             client_inset: None,
             accesskit_adapter: None,
             creation,
+            initially_shown,
+            initial_map_committed: false,
+            initial_presentation_completed: false,
         })
     }
 
@@ -591,7 +708,7 @@ impl WaylandWindowState {
     }
 }
 
-pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
+pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr, Rc<()>);
 pub enum ImeInput {
     InsertText(String),
     SetMarkedText(String),
@@ -601,6 +718,7 @@ pub enum ImeInput {
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
+        self.0.terminate_callback_slots();
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
         if let Some(parent) = state.parent.as_ref() {
@@ -669,6 +787,7 @@ impl WaylandWindow {
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let creation = WaylandWindowCreationProjection::new(params.window_bounds, &params.kind);
+        let is_dialog = params.kind == WindowKind::Dialog;
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let surface_state = WaylandSurfaceState::new(
             &surface,
@@ -688,32 +807,52 @@ impl WaylandWindow {
             .as_ref()
             .map(|viewporter| viewporter.get_viewport(&surface, &globals.qh, ()));
 
-        let this = Self(WaylandWindowStatePtr {
-            state: Rc::new(RefCell::new(WaylandWindowState::new(
-                handle,
-                surface.clone(),
-                surface_state,
-                appearance,
-                viewport,
-                client,
-                globals,
-                gpu_context,
-                compositor_gpu,
-                params,
-                creation,
-                parent,
-            )?)),
-            callbacks: Rc::new(RefCell::new(Callbacks::default())),
-        });
+        let this = Self(
+            WaylandWindowStatePtr {
+                state: Rc::new(RefCell::new(WaylandWindowState::new(
+                    handle,
+                    surface.clone(),
+                    surface_state,
+                    appearance,
+                    viewport,
+                    client,
+                    globals,
+                    gpu_context,
+                    compositor_gpu,
+                    params,
+                    creation,
+                    parent.clone(),
+                )?)),
+                callbacks: Rc::new(RefCell::new(Callbacks::default())),
+            },
+            Rc::new(()),
+        );
 
-        // Kick things off
-        surface.commit();
+        if is_dialog && let Some(parent) = parent {
+            parent.add_child(surface.id());
+        }
 
         Ok((this, surface.id()))
     }
 }
 
 impl WaylandWindowStatePtr {
+    fn terminate_callback_slots(&self) {
+        let (input_callback, should_close) = {
+            let callbacks = self.callbacks.borrow();
+            (callbacks.input.clone(), callbacks.should_close.clone())
+        };
+        let input_handler = self.state.borrow().input_handler.clone();
+        input_callback.terminate();
+        input_handler.terminate();
+        should_close.terminate();
+    }
+
+    fn should_close(&self) -> bool {
+        let should_close = self.callbacks.borrow().should_close.clone();
+        should_close.invoke()
+    }
+
     pub fn handle(&self) -> AnyWindowHandle {
         self.state.borrow().handle
     }
@@ -756,25 +895,31 @@ impl WaylandWindowStatePtr {
         state.force_render_after_recovery = false;
         drop(state);
 
-        let mut cb = self.callbacks.borrow_mut();
-        if let Some(fun) = cb.request_frame.as_mut() {
-            fun(RequestFrameOptions {
+        let callback = self.callbacks.borrow_mut().request_frame.take();
+        if let Some(mut callback) = callback {
+            // Native callbacks may re-enter GPUI, so keep callback-table borrows outside the call.
+            callback(RequestFrameOptions {
                 force_render,
                 ..Default::default()
             });
+            let mut callbacks = self.callbacks.borrow_mut();
+            if callbacks.request_frame.is_none() {
+                callbacks.request_frame = Some(callback);
+            }
+            drop(callbacks);
             self.update_ime_enabled();
         }
     }
 
     fn update_ime_enabled(&self) {
-        let mut state = self.state.borrow_mut();
-        let client = state.client.clone();
-        let ime_enabled = state
-            .input_handler
-            .as_mut()
-            .map(|input_handler| input_handler.query_accepts_text_input())
-            .unwrap_or(true);
-        drop(state);
+        let (client, input_handler) = {
+            let state = self.state.borrow();
+            (state.client.clone(), state.input_handler.clone())
+        };
+        let ime_enabled = input_handler
+            .with_handler(|input_handler| input_handler.query_accepts_text_input())
+            .and_then(NativeInputHandlerOutcome::into_delivered)
+            .unwrap_or(false);
         if Some(ime_enabled) == client.ime_enabled() {
             return;
         }
@@ -976,20 +1121,7 @@ impl WaylandWindowStatePtr {
 
                 false
             }
-            xdg_toplevel::Event::Close => {
-                let mut cb = self.callbacks.borrow_mut();
-                if let Some(mut should_close) = cb.should_close.take() {
-                    let result = (should_close)();
-                    cb.should_close = Some(should_close);
-                    if result {
-                        drop(cb);
-                        self.close();
-                    }
-                    result
-                } else {
-                    true
-                }
-            }
+            xdg_toplevel::Event::Close => self.should_close(),
             xdg_toplevel::Event::WmCapabilities { capabilities } => {
                 let mut window_controls = WindowControls {
                     maximize: false,
@@ -1119,38 +1251,32 @@ impl WaylandWindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        let mut state = self.state.borrow_mut();
-        if let Some(mut input_handler) = state.input_handler.take() {
-            drop(state);
-            match ime {
-                ImeInput::InsertText(text) => {
-                    input_handler.replace_text_in_range(None, &text);
-                }
-                ImeInput::SetMarkedText(text) => {
-                    input_handler.replace_and_mark_text_in_range(None, &text, None);
-                }
-                ImeInput::UnmarkText => {
-                    input_handler.unmark_text();
-                }
-                ImeInput::DeleteText => {
-                    if let Some(marked) = input_handler.marked_text_range() {
-                        input_handler.replace_text_in_range(Some(marked), "");
-                    }
-                }
+        let input_handler = self.state.borrow().input_handler.clone();
+        let _ = input_handler.with_handler(|input_handler| match ime {
+            ImeInput::InsertText(text) => input_handler.replace_text_in_range(None, &text),
+            ImeInput::SetMarkedText(text) => {
+                input_handler.replace_and_mark_text_in_range(None, &text, None)
             }
-            self.state.borrow_mut().input_handler = Some(input_handler);
-        }
+            ImeInput::UnmarkText => input_handler.unmark_text(),
+            ImeInput::DeleteText => match input_handler.marked_text_range() {
+                NativeInputHandlerOutcome::Delivered(Some(marked)) => {
+                    input_handler.replace_text_in_range(Some(marked), "")
+                }
+                NativeInputHandlerOutcome::Delivered(None) => {
+                    NativeInputHandlerOutcome::Delivered(())
+                }
+                NativeInputHandlerOutcome::StaleWindow => NativeInputHandlerOutcome::StaleWindow,
+                NativeInputHandlerOutcome::Quitting => NativeInputHandlerOutcome::Quitting,
+            },
+        });
     }
 
     pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
-        let mut state = self.state.borrow_mut();
-        let mut bounds: Option<Bounds<Pixels>> = None;
-        if let Some(mut input_handler) = state.input_handler.take() {
-            drop(state);
-            bounds = input_handler.ime_candidate_bounds();
-            self.state.borrow_mut().input_handler = Some(input_handler);
-        }
-        bounds
+        let input_handler = self.state.borrow().input_handler.clone();
+        input_handler
+            .with_handler(|input_handler| input_handler.ime_candidate_bounds())
+            .and_then(NativeInputHandlerOutcome::into_delivered)
+            .flatten()
     }
 
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
@@ -1196,6 +1322,7 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn close(&self) {
+        self.terminate_callback_slots();
         let state = self.state.borrow();
         let client = state.client.get_client();
         #[allow(clippy::mutable_key_type)]
@@ -1211,8 +1338,8 @@ impl WaylandWindowStatePtr {
                 child.close();
             }
         }
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(fun) = callbacks.close.take() {
+        let callback = self.callbacks.borrow_mut().close.take();
+        if let Some(fun) = callback {
             fun()
         }
     }
@@ -1221,24 +1348,20 @@ impl WaylandWindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        let callback = self.callbacks.borrow_mut().input.take();
-        if let Some(mut fun) = callback {
-            let result = fun(input.clone());
-            self.callbacks.borrow_mut().input = Some(fun);
-            if !result.propagate {
-                return;
-            }
+        let input_callback = self.callbacks.borrow().input.clone();
+        if input_callback
+            .dispatch(input.clone())
+            .is_some_and(|result| !result.propagate)
+        {
+            return;
         }
         if let PlatformInput::KeyDown(event) = input
             && event.keystroke.modifiers.is_subset_of(&Modifiers::shift())
             && let Some(key_char) = &event.keystroke.key_char
         {
-            let mut state = self.state.borrow_mut();
-            if let Some(mut input_handler) = state.input_handler.take() {
-                drop(state);
-                input_handler.replace_text_in_range(None, key_char);
-                self.state.borrow_mut().input_handler = Some(input_handler);
-            }
+            let input_handler = self.state.borrow().input_handler.clone();
+            let _ = input_handler
+                .with_handler(|input_handler| input_handler.replace_text_in_range(None, key_char));
         }
     }
 
@@ -1325,8 +1448,24 @@ impl rwh::HasDisplayHandle for WaylandWindow {
 }
 
 impl PlatformWindow for WaylandWindow {
+    fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
+        let target = WaylandWindowCommandTarget::new(self);
+        PlatformWindowCommandDispatcher::new(move |command| target.dispatch(command))
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.borrow().bounds
+    }
+
+    fn map_window(&mut self) -> anyhow::Result<()> {
+        let mut state = self.borrow_mut();
+        if !state.initially_shown || state.initial_map_committed {
+            return Ok(());
+        }
+
+        state.surface.commit();
+        state.initial_map_committed = true;
+        Ok(())
     }
 
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
@@ -1447,11 +1586,13 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.borrow_mut().input_handler = Some(input_handler);
+        let input_handler_slot = self.borrow().input_handler.clone();
+        input_handler_slot.set(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.borrow_mut().input_handler.take()
+        let input_handler_slot = self.borrow().input_handler.clone();
+        input_handler_slot.take()
     }
 
     fn prompt(
@@ -1462,23 +1603,6 @@ impl PlatformWindow for WaylandWindow {
         _answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
         None
-    }
-
-    fn activate(&self) {
-        // Try to request an activation token. Even though the activation is likely going to be rejected,
-        // KWin and Mutter can use the app_id to visually indicate we're requesting attention.
-        let state = self.borrow();
-        if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone())
-        {
-            state.client.set_pending_activation(state.surface.id());
-            let token = activation.get_activation_token(&state.globals.qh, ());
-            // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
-            let serial = state.client.get_serial(SerialKind::MousePress);
-            token.set_app_id(app_id);
-            token.set_serial(serial, &state.globals.seat);
-            token.set_surface(&state.surface);
-            token.commit();
-        }
     }
 
     fn is_active(&self) -> bool {
@@ -1536,8 +1660,9 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> open_gpui::DispatchEventResult>) {
-        self.0.callbacks.borrow_mut().input = Some(callback);
+    fn on_input(&self, callback: PlatformInputCallback) {
+        let input = self.0.callbacks.borrow().input.clone();
+        input.set(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
@@ -1561,7 +1686,8 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.callbacks.borrow_mut().should_close = Some(callback);
+        let should_close = self.0.callbacks.borrow().should_close.clone();
+        should_close.set(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
@@ -1581,6 +1707,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+        if !state.initial_map_committed {
+            return;
+        }
 
         if state.renderer.device_lost() {
             let raw_window = RawWindow {
@@ -1613,6 +1742,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
+        if !state.initial_map_committed {
+            return;
+        }
 
         // Work around a bug in old versions of wlroots where committing without a buffer attached
         // can cause invalid synchronization that leads to graphical corruption.
@@ -1626,38 +1758,6 @@ impl PlatformWindow for WaylandWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let state = self.borrow();
         state.renderer.sprite_atlas().clone()
-    }
-
-    fn show_window_menu(&self, position: Point<Pixels>) {
-        let state = self.borrow();
-        let serial = state.client.get_serial(SerialKind::MousePress);
-        if let Some(toplevel) = state.surface_state.toplevel() {
-            toplevel.show_window_menu(
-                &state.globals.seat,
-                serial,
-                f32::from(position.x) as i32,
-                f32::from(position.y) as i32,
-            );
-        }
-    }
-
-    fn start_window_move(&self) {
-        let state = self.borrow();
-        let serial = state.client.get_serial(SerialKind::MousePress);
-        if let Some(toplevel) = state.surface_state.toplevel() {
-            toplevel._move(&state.globals.seat, serial);
-        }
-    }
-
-    fn start_window_resize(&self, edge: open_gpui::ResizeEdge) {
-        let state = self.borrow();
-        if let Some(toplevel) = state.surface_state.toplevel() {
-            toplevel.resize(
-                &state.globals.seat,
-                state.client.get_serial(SerialKind::MousePress),
-                edge.to_xdg(),
-            )
-        }
     }
 
     fn window_decorations(&self) -> Decorations {
@@ -2078,5 +2178,70 @@ mod creation_projection_tests {
             assert!(adjusted.renderer_transparent);
             assert!(!adjusted.blur_enabled);
         }
+    }
+}
+
+#[cfg(test)]
+mod should_close_callback_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn replacement_installed_during_wayland_should_close_survives_old_callback_return() {
+        let should_close = Callbacks::default().should_close;
+        let slot_holder = Rc::new(RefCell::new(Some(should_close.clone())));
+        let slot_holder_weak = Rc::downgrade(&slot_holder);
+        let replacement_calls = Rc::new(Cell::new(0));
+
+        should_close.set(Box::new({
+            let replacement_calls = replacement_calls.clone();
+            move || {
+                let replacement_slot = slot_holder_weak
+                    .upgrade()
+                    .expect("test slot holder must remain alive")
+                    .borrow()
+                    .clone()
+                    .expect("test slot must remain installed");
+                let replacement_calls = replacement_calls.clone();
+                replacement_slot.set(Box::new(move || {
+                    replacement_calls.set(replacement_calls.get() + 1);
+                    false
+                }));
+
+                assert!(!replacement_slot.invoke());
+                true
+            }
+        }));
+
+        assert!(should_close.invoke());
+        assert!(!should_close.invoke());
+        assert_eq!(replacement_calls.get(), 2);
+    }
+
+    #[test]
+    fn close_during_wayland_should_close_permanently_retires_checked_out_callback() {
+        let should_close = Callbacks::default().should_close;
+        let slot_holder = Rc::new(RefCell::new(Some(should_close.clone())));
+        let slot_holder_weak = Rc::downgrade(&slot_holder);
+        let calls = Rc::new(Cell::new(0));
+
+        should_close.set(Box::new({
+            let calls = calls.clone();
+            move || {
+                calls.set(calls.get() + 1);
+                slot_holder_weak
+                    .upgrade()
+                    .expect("test slot holder must remain alive")
+                    .borrow()
+                    .as_ref()
+                    .expect("test slot must remain installed")
+                    .terminate();
+                true
+            }
+        }));
+
+        assert!(should_close.invoke());
+        assert!(!should_close.invoke());
+        assert_eq!(calls.get(), 1);
     }
 }

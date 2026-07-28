@@ -421,7 +421,7 @@ mod tests {
         workspace.policy_mut().set_allow_platform_viewports(true);
         let request = request(source_space.clone(), tabs, item("a"));
         let mut machine = DockViewportTearOffMachine::default();
-        let pending = match machine.begin(request, target_space.clone(), None, None) {
+        let pending = match machine.begin(request, target_space.clone(), None, None, None) {
             DockViewportTearOffBeginOutcome::Pending(pending) => pending,
             DockViewportTearOffBeginOutcome::Duplicate(_) => {
                 panic!("fresh tear-off request should not be duplicate")

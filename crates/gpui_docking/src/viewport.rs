@@ -5,7 +5,8 @@ use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
 use crate::{
     DockSpaceId,
     viewport_registry::{
-        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRegistry,
+        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRegistrationKey,
+        DockViewportRegistry,
     },
 };
 use open_gpui::{AnyWindowHandle, WindowId};
@@ -127,6 +128,21 @@ impl DockViewportAdapter {
     /// Returns the logical dock space rendered by a window id.
     pub(crate) fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
         self.registry.space_for_window_id(window_id)
+    }
+
+    pub(crate) fn registration_key(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<DockViewportRegistrationKey> {
+        self.registry.registration_key(space)
+    }
+
+    pub(crate) fn last_registration_generation(&self, space: &DockSpaceId) -> Option<u64> {
+        self.registry.last_registration_generation(space)
+    }
+
+    pub(crate) fn is_current_registration(&self, key: &DockViewportRegistrationKey) -> bool {
+        self.registry.is_current_registration(key)
     }
 
     /// Returns known dock spaces in stable lexical order.

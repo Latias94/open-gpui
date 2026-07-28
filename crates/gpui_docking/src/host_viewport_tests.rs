@@ -15,7 +15,9 @@ use open_gpui::{
 };
 
 #[open_gpui::test]
-fn viewport_runtime_handle_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
+fn synchronous_first_draw_defers_registration_to_open_commit_and_reuses_window(
+    cx: &mut TestAppContext,
+) {
     let primary_space = DockSpaceId::from("primary");
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
@@ -54,6 +56,11 @@ fn viewport_runtime_handle_opens_and_reuses_controller_backed_window(cx: &mut Te
             .window_for_space(&secondary_space),
         Some(opened.window())
     );
+    let registration = runtime
+        .registration_key_for_space_window(&secondary_space, opened.window().window_id())
+        .expect("open commit should own the exact first-frame window registration");
+    assert_eq!(registration.space(), &secondary_space);
+    assert_eq!(registration.window_id(), opened.window().window_id());
 
     let opened_window = opened
         .window()

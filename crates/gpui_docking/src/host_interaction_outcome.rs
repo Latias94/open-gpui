@@ -1,8 +1,11 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockHost, DockViewportActivationTransaction,
-    DockViewportDropRouteOutcome, viewport_activation::apply_viewport_activation_transaction,
+    DockViewportDropRouteOutcome,
+    viewport_activation::{
+        apply_viewport_activation_transaction, apply_viewport_activation_transaction_from_window,
+    },
 };
-use open_gpui::Context;
+use open_gpui::{Context, Window};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockHostInteractionOutcome {
@@ -35,10 +38,39 @@ impl DockHostInteractionOutcome {
     }
 
     pub(crate) fn finish(self, cx: &mut Context<DockHost>) -> bool {
+        self.finish_with_activation(cx, |activation, cx| {
+            apply_viewport_activation_transaction(activation, cx).changed()
+        })
+    }
+
+    pub(crate) fn finish_from_window(
+        self,
+        current_host: &mut DockHost,
+        current_window: &mut Window,
+        cx: &mut Context<DockHost>,
+    ) -> bool {
+        self.finish_with_activation(cx, |activation, cx| {
+            apply_viewport_activation_transaction_from_window(
+                activation,
+                current_host,
+                current_window,
+                cx,
+            )
+            .changed()
+        })
+    }
+
+    fn finish_with_activation(
+        self,
+        cx: &mut Context<DockHost>,
+        apply_activation: impl FnOnce(
+            Option<DockViewportActivationTransaction>,
+            &mut Context<DockHost>,
+        ) -> bool,
+    ) -> bool {
         let changed = self.changed();
         let should_notify = self.should_notify();
-        let activation_changed =
-            apply_viewport_activation_transaction(self.activation_transaction(), cx).changed();
+        let activation_changed = apply_activation(self.activation_transaction(), cx);
         if should_notify && !activation_changed {
             cx.notify();
         }

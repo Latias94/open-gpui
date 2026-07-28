@@ -31,6 +31,7 @@ pub(crate) struct TestPlatform {
     platform_viewport_windows: RefCell<bool>,
     pointer_input_mutation_supported: RefCell<bool>,
     window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
+    next_window_map_error: RefCell<Option<String>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -45,7 +46,12 @@ pub(crate) struct TestPlatform {
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     quit_requested: RefCell<bool>,
+    open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
+    reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
     system_wake_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    will_open_app_menu_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    app_menu_action_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action)>>>,
+    validate_app_menu_command_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action) -> bool>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
 }
@@ -145,9 +151,15 @@ impl TestPlatform {
             platform_viewport_windows: RefCell::new(true),
             pointer_input_mutation_supported: RefCell::new(true),
             window_mutation_capabilities_override: RefCell::new(None),
+            next_window_map_error: RefCell::new(None),
             expect_restart: Default::default(),
             quit_requested: Default::default(),
+            open_urls_callback: Default::default(),
+            reopen_callback: Default::default(),
             system_wake_callback: Default::default(),
+            will_open_app_menu_callback: Default::default(),
+            app_menu_action_callback: Default::default(),
+            validate_app_menu_command_callback: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
@@ -173,6 +185,12 @@ impl TestPlatform {
 
     pub(crate) fn set_platform_viewport_windows(&self, supported: bool) {
         *self.platform_viewport_windows.borrow_mut() = supported;
+    }
+
+    pub(crate) fn fail_next_window_map(&self, message: impl Into<String>) {
+        self.next_window_map_error
+            .borrow_mut()
+            .replace(message.into());
     }
 
     pub(crate) fn simulate_new_path_selection(
@@ -373,11 +391,59 @@ impl TestPlatform {
     }
 
     pub(crate) fn simulate_system_wake(&self) {
-        let Some(mut callback) = self.system_wake_callback.take() else {
-            return;
-        };
+        let mut callback = self
+            .system_wake_callback
+            .take()
+            .expect("system wake callback must be installed during App initialization");
         callback();
         self.system_wake_callback.replace(Some(callback));
+    }
+
+    pub(crate) fn simulate_open_urls(&self, urls: Vec<String>) {
+        let mut callback = self
+            .open_urls_callback
+            .take()
+            .expect("open URLs callback must be installed during App initialization");
+        callback(urls);
+        self.open_urls_callback.replace(Some(callback));
+    }
+
+    pub(crate) fn simulate_reopen(&self) {
+        let mut callback = self
+            .reopen_callback
+            .take()
+            .expect("reopen callback must be installed during App initialization");
+        callback();
+        self.reopen_callback.replace(Some(callback));
+    }
+
+    pub(crate) fn simulate_will_open_app_menu(&self) {
+        let mut callback = self
+            .will_open_app_menu_callback
+            .take()
+            .expect("will-open menu callback must be installed during App initialization");
+        callback();
+        self.will_open_app_menu_callback.replace(Some(callback));
+    }
+
+    pub(crate) fn simulate_app_menu_action(&self, action: &dyn crate::Action) {
+        let mut callback = self
+            .app_menu_action_callback
+            .take()
+            .expect("application menu callback must be installed during App initialization");
+        callback(action);
+        self.app_menu_action_callback.replace(Some(callback));
+    }
+
+    pub(crate) fn simulate_validate_app_menu_command(&self, action: &dyn crate::Action) -> bool {
+        let mut callback = self
+            .validate_app_menu_command_callback
+            .take()
+            .expect("menu validation callback must be installed during App initialization");
+        let available = callback(action);
+        self.validate_app_menu_command_callback
+            .replace(Some(callback));
+        available
     }
 
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
@@ -411,7 +477,10 @@ impl Platform for TestPlatform {
     fn on_thermal_state_change(&self, _: Box<dyn FnMut()>) {}
 
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
-        self.system_wake_callback.replace(Some(callback));
+        assert!(
+            self.system_wake_callback.replace(Some(callback)).is_none(),
+            "system wake callback must be installed exactly once"
+        );
     }
 
     fn thermal_state(&self) -> ThermalState {
@@ -571,6 +640,7 @@ impl Platform for TestPlatform {
             self.weak.clone(),
             self.active_display.clone(),
             renderer,
+            self.next_window_map_error.borrow_mut().take(),
         );
         Ok(Box::new(window))
     }
@@ -583,8 +653,11 @@ impl Platform for TestPlatform {
         *self.opened_url.borrow_mut() = Some(url.to_string())
     }
 
-    fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {
-        unimplemented!()
+    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
+        assert!(
+            self.open_urls_callback.replace(Some(callback)).is_none(),
+            "open URLs callback must be installed exactly once"
+        );
     }
 
     fn prompt_for_paths(
@@ -619,8 +692,11 @@ impl Platform for TestPlatform {
 
     fn on_quit(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
+    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
+        assert!(
+            self.reopen_callback.replace(Some(callback)).is_none(),
+            "reopen callback must be installed exactly once"
+        );
     }
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
@@ -628,11 +704,32 @@ impl Platform for TestPlatform {
 
     fn add_recent_document(&self, _paths: &Path) {}
 
-    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn crate::Action)>) {
+        assert!(
+            self.app_menu_action_callback
+                .replace(Some(callback))
+                .is_none(),
+            "application menu callback must be installed exactly once"
+        );
+    }
 
-    fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
+        assert!(
+            self.will_open_app_menu_callback
+                .replace(Some(callback))
+                .is_none(),
+            "will-open menu callback must be installed exactly once"
+        );
+    }
 
-    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {
+        assert!(
+            self.validate_app_menu_command_callback
+                .replace(Some(callback))
+                .is_none(),
+            "menu validation callback must be installed exactly once"
+        );
+    }
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()

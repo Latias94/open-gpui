@@ -82,6 +82,8 @@ pub(crate) struct DockViewportPlatformSignals {
     drag_last_hovered_window: Option<WindowId>,
     /// Window that delivered the GPUI drag/drop event.
     event_receiver_window: Option<WindowId>,
+    /// Window whose active callback already owns the GPUI window update transaction.
+    frame_sampling_exclusion_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: DockViewportFrontToBackWindowStack,
     /// Window bounds are reported in a shared desktop coordinate space.
@@ -111,6 +113,7 @@ impl DockViewportPlatformSignals {
             trusted_hovered_signal,
             drag_last_hovered_window: None,
             event_receiver_window: None,
+            frame_sampling_exclusion_window: None,
             window_stack,
             global_window_bounds: capabilities.global_window_bounds,
             platform_viewport_windows: capabilities.platform_viewport_windows,
@@ -195,7 +198,19 @@ impl DockViewportPlatformSignals {
 
     /// Adds the GPUI event receiver window signal.
     pub(crate) fn with_event_receiver_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
-        self.event_receiver_window = Some(window.into().window_id());
+        let window_id = window.into().window_id();
+        self.event_receiver_window = Some(window_id);
+        self.frame_sampling_exclusion_window = Some(window_id);
+        self
+    }
+
+    /// Excludes the currently borrowed callback window from synchronous frame sampling without
+    /// promoting that window to event-receiver route authority.
+    pub(crate) fn with_frame_sampling_exclusion_window(
+        mut self,
+        window: impl Into<AnyWindowHandle>,
+    ) -> Self {
+        self.frame_sampling_exclusion_window = Some(window.into().window_id());
         self
     }
 
@@ -214,6 +229,10 @@ impl DockViewportPlatformSignals {
 
     pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
         self.event_receiver_window
+    }
+
+    pub(crate) fn frame_sampling_exclusion_window(&self) -> Option<WindowId> {
+        self.frame_sampling_exclusion_window
     }
 
     pub(crate) fn allows_focus_stamp_fallback(&self) -> bool {
@@ -249,6 +268,7 @@ impl DockViewportPlatformSignals {
             trusted_hovered_signal: window_signals.trusted_hovered_signal,
             drag_last_hovered_window: window_signals.drag_last_hovered_window,
             event_receiver_window: None,
+            frame_sampling_exclusion_window: None,
             window_stack: window_signals.window_stack,
             global_window_bounds: true,
             platform_viewport_windows: true,
@@ -419,5 +439,19 @@ mod tests {
             &[focused.window_id()]
         );
         assert!(!signals.allows_focus_stamp_fallback());
+    }
+
+    #[test]
+    fn frame_sampling_exclusion_does_not_create_event_receiver_authority() {
+        let source = handle(7);
+        let signals =
+            DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new())
+                .with_frame_sampling_exclusion_window(source);
+
+        assert_eq!(signals.event_receiver_window(), None);
+        assert_eq!(
+            signals.frame_sampling_exclusion_window(),
+            Some(source.window_id())
+        );
     }
 }

@@ -71,20 +71,15 @@ impl DockHost {
             tear_off_geometry,
         )
         .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof);
-        let resolution_outcome = runtime.resolve_payload_drop_delivery_outcome(&request, cx);
-        let route_resolution_changed = resolution_outcome.changed();
-        let resolution = resolution_outcome.resolution();
-        let routed_preview_changed = runtime.update_host_routed_drop_preview(
-            resolution,
+        let changed = runtime.resolve_and_update_host_routed_drop_preview(
+            &request,
             payload,
             self.space().clone(),
             window.window_handle().window_id(),
             position,
             cx,
         );
-        DockHostInteractionOutcome::from_session_changed(
-            route_resolution_changed || routed_preview_changed,
-        )
+        DockHostInteractionOutcome::from_session_changed(changed)
     }
 
     pub(crate) fn commit_runtime_routed_payload_drop_interaction(
@@ -135,7 +130,8 @@ fn viewport_drop_route_request_from_host(
         DockPayloadDropReleaseOrigin::HoveredHost => {
             DockViewportPlatformSignals::from_event_receiver_window(window, cx)
         }
-        DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
+        DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx)
+            .with_frame_sampling_exclusion_window(window.window_handle()),
     };
     let event_receiver_window = Some(window.window_handle().window_id());
     let trusted_hovered_window = platform_signals.target_context().trusted_hovered_window();

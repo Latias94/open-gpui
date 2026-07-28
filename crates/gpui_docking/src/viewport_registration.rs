@@ -1,5 +1,6 @@
 use crate::{
     DockSpaceId, DockViewportAdapter, DockViewportUnregisterOutcome, DockViewportUnregisterReason,
+    viewport_registry::DockViewportRegistrationKey,
 };
 use open_gpui::AnyWindowHandle;
 
@@ -10,6 +11,8 @@ pub(crate) struct DockViewportRegisterOutcome {
     space: DockSpaceId,
     /// GPUI window now rendering the logical dock space.
     window: AnyWindowHandle,
+    /// Exact registration generation issued for this binding.
+    registration_key: DockViewportRegistrationKey,
     /// Runtime mappings removed to preserve one-to-one space/window ownership.
     replaced: Vec<DockViewportUnregisterOutcome>,
 }
@@ -22,6 +25,10 @@ impl DockViewportRegisterOutcome {
 
     pub(crate) fn window(&self) -> AnyWindowHandle {
         self.window
+    }
+
+    pub(crate) fn registration_key(&self) -> &DockViewportRegistrationKey {
+        &self.registration_key
     }
 
     pub(crate) fn replaced(&self) -> &[DockViewportUnregisterOutcome] {
@@ -51,10 +58,15 @@ impl DockViewportAdapter {
                 reason: DockViewportUnregisterReason::Replaced,
             })
             .collect();
+        let registration_key = self
+            .registry
+            .registration_key(&space)
+            .expect("a successful viewport registration must issue an exact key");
 
         DockViewportRegisterOutcome {
             space,
             window,
+            registration_key,
             replaced,
         }
     }

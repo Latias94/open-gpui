@@ -1,7 +1,7 @@
 use crate::{
-    DockActionApplyError, DockEdgeDockSizing, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
-    DockViewportRouteSelectionSource, DockWorkspace, DropZone,
+    DockActionApplyError, DockEdgeDockSizing, DockGraph, DockPolicy, DockPolicyError, DockSpaceId,
+    DockViewportAdapter, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteRequest, DockViewportRouteProof, DockWorkspace, DropZone,
     drop_target::{DockDropResolution, DockResolvedDropTarget, validate_resolved_drop_target},
     viewport_drop_scene::{
         DockViewportFrameResolution, DockViewportHostSceneFrame, DockViewportHostSceneRegistry,
@@ -9,9 +9,53 @@ use crate::{
     workspace_drop_target::DockWorkspaceResolvedDropTarget,
     workspace_move_validation::{DockPayloadDockClasses, dock_target_validator},
 };
-use open_gpui::{Pixels, Point, Size, WindowId};
+use open_gpui::{Pixels, Point, Size};
 
 use super::model::{DockViewportResolvedDropTargetSnapshot, DockViewportWorkspaceRouteTarget};
+
+/// Immutable controller facts needed to resolve one viewport route.
+///
+/// The runtime samples these facts before it mutably borrows its own state, so route resolution
+/// cannot hold a runtime borrow across an entity read.
+#[derive(Debug, Clone)]
+pub(crate) struct DockViewportWorkspaceRouteFacts {
+    policy: DockPolicy,
+    graph: DockGraph,
+    payload_classes: DockPayloadDockClasses,
+}
+
+impl DockViewportWorkspaceRouteFacts {
+    pub(crate) fn capture(
+        workspace: &DockWorkspace,
+        request: &DockViewportDropRouteRequest,
+    ) -> Self {
+        Self {
+            policy: workspace.policy().clone(),
+            graph: workspace.graph().clone(),
+            payload_classes: workspace.payload_dock_classes_for_viewport_payload(
+                request.payload(),
+                request.source_node(),
+            ),
+        }
+    }
+
+    pub(crate) fn capture_for_payload(
+        workspace: &DockWorkspace,
+        payload: &DockViewportDropPayload,
+        source_node: crate::DockNodeId,
+    ) -> Self {
+        Self {
+            policy: workspace.policy().clone(),
+            graph: workspace.graph().clone(),
+            payload_classes: workspace
+                .payload_dock_classes_for_viewport_payload(payload, source_node),
+        }
+    }
+
+    pub(crate) fn policy(&self) -> &DockPolicy {
+        &self.policy
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum DockMissingHostTargetBehavior {
@@ -28,48 +72,18 @@ impl DockMissingHostTargetBehavior {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum DockViewportRouteFactsSource {
-    CurrentRouteFacts,
-    EventReceiverLocalScene,
-}
-
-impl DockViewportRouteFactsSource {
-    fn for_local_route_selection_source(source: DockViewportRouteSelectionSource) -> Self {
-        match source {
-            DockViewportRouteSelectionSource::EventReceiverLocalScene => {
-                Self::EventReceiverLocalScene
-            }
-            DockViewportRouteSelectionSource::TrustedHoveredWindow
-            | DockViewportRouteSelectionSource::FrontToBackWindowStackFallback
-            | DockViewportRouteSelectionSource::FocusStampWindowStackFallback
-            | DockViewportRouteSelectionSource::DragLastHoveredViewportFallback => {
-                Self::CurrentRouteFacts
-            }
-        }
-    }
-
-    fn requires_current_route_facts(self) -> bool {
-        matches!(self, Self::CurrentRouteFacts)
-    }
-
-    fn facts_generation_for_snapshot(self, facts_generation: u64) -> Option<u64> {
-        self.requires_current_route_facts()
-            .then_some(facts_generation)
-    }
-}
-
 #[derive(Clone, Copy)]
 struct DockExistingViewportRouteTarget<'a> {
-    space: &'a DockSpaceId,
-    window_id: WindowId,
+    route_proof: &'a DockViewportRouteProof,
     host_position: Point<Pixels>,
-    facts_generation: u64,
     missing_host_target: DockMissingHostTargetBehavior,
-    route_facts_source: DockViewportRouteFactsSource,
+    requires_current_route_facts: bool,
+    requires_exact_scene_frame: bool,
+    expected_scene_frame: Option<&'a DockViewportHostSceneFrame>,
 }
 
 /// Resolves the workspace target selected by a viewport route.
+#[cfg(test)]
 pub(crate) fn resolve_workspace_target_for_route(
     adapter: &DockViewportAdapter,
     host_scenes: &DockViewportHostSceneRegistry,
@@ -78,44 +92,61 @@ pub(crate) fn resolve_workspace_target_for_route(
     workspace: &DockWorkspace,
     payload_classes: &DockPayloadDockClasses,
 ) -> DockViewportWorkspaceRouteTarget {
+    let facts = DockViewportWorkspaceRouteFacts {
+        policy: workspace.policy().clone(),
+        graph: workspace.graph().clone(),
+        payload_classes: payload_classes.clone(),
+    };
+    resolve_workspace_target_for_route_with_facts(adapter, host_scenes, route, request, &facts)
+}
+
+/// Resolves a workspace target using controller facts sampled before a runtime mutation.
+pub(crate) fn resolve_workspace_target_for_route_with_facts(
+    adapter: &DockViewportAdapter,
+    host_scenes: &DockViewportHostSceneRegistry,
+    route: &DockViewportDropRoute,
+    request: &DockViewportDropRouteRequest,
+    facts: &DockViewportWorkspaceRouteFacts,
+) -> DockViewportWorkspaceRouteTarget {
     match route {
         DockViewportDropRoute::Local {
             host_position,
-            window_id,
-            facts_generation,
+            route_proof,
             source,
             ..
-        } => resolve_existing_viewport_workspace_target(
-            adapter,
-            host_scenes,
-            request,
-            workspace,
-            payload_classes,
-            DockExistingViewportRouteTarget {
-                space: request.source_space(),
-                window_id: *window_id,
-                host_position: *host_position,
-                facts_generation: *facts_generation,
-                missing_host_target: DockMissingHostTargetBehavior::PreserveRoute,
-                route_facts_source: DockViewportRouteFactsSource::for_local_route_selection_source(
-                    *source,
-                ),
-            },
-        ),
+        } => {
+            if route_proof.space() != request.source_space() {
+                return DockViewportWorkspaceRouteTarget::RouteUnavailable;
+            }
+            resolve_existing_viewport_workspace_target(
+                adapter,
+                host_scenes,
+                request,
+                facts,
+                DockExistingViewportRouteTarget {
+                    route_proof,
+                    host_position: *host_position,
+                    missing_host_target: DockMissingHostTargetBehavior::PreserveRoute,
+                    requires_current_route_facts: source.requires_current_route_facts(),
+                    requires_exact_scene_frame: *source
+                        == crate::DockViewportRouteSelectionSource::EventReceiverLocalScene,
+                    expected_scene_frame: request.event_receiver_local_scene_proof(),
+                },
+            )
+        }
         DockViewportDropRoute::KnownViewport { target, .. } => {
             resolve_existing_viewport_workspace_target(
                 adapter,
                 host_scenes,
                 request,
-                workspace,
-                payload_classes,
+                facts,
                 DockExistingViewportRouteTarget {
-                    space: target.space(),
-                    window_id: target.window_id(),
+                    route_proof: target.route_proof(),
                     host_position: target.host_position(),
-                    facts_generation: target.facts_generation(),
                     missing_host_target: DockMissingHostTargetBehavior::MarkRouteUnavailable,
-                    route_facts_source: DockViewportRouteFactsSource::CurrentRouteFacts,
+                    requires_current_route_facts: true,
+                    requires_exact_scene_frame: false,
+                    expected_scene_frame: None,
                 },
             )
         }
@@ -129,33 +160,40 @@ fn resolve_existing_viewport_workspace_target(
     adapter: &DockViewportAdapter,
     host_scenes: &DockViewportHostSceneRegistry,
     request: &DockViewportDropRouteRequest,
-    workspace: &DockWorkspace,
-    payload_classes: &DockPayloadDockClasses,
+    facts: &DockViewportWorkspaceRouteFacts,
     target: DockExistingViewportRouteTarget<'_>,
 ) -> DockViewportWorkspaceRouteTarget {
+    if !adapter.is_current_registration(target.route_proof.registration_key()) {
+        return DockViewportWorkspaceRouteTarget::RouteUnavailable;
+    }
+    let target_space = target.route_proof.space();
+    let target_window_id = target.route_proof.window_id();
     let current_facts_generation =
-        adapter.snapshot_facts_generation(target.space, target.window_id);
-    if target.route_facts_source.requires_current_route_facts()
-        && current_facts_generation != Some(target.facts_generation)
+        adapter.snapshot_facts_generation(target_space, target_window_id);
+    if target.requires_current_route_facts
+        && current_facts_generation != Some(target.route_proof.facts_generation())
     {
         return DockViewportWorkspaceRouteTarget::RouteUnavailable;
     }
+    if target.requires_exact_scene_frame && target.expected_scene_frame.is_none() {
+        return DockViewportWorkspaceRouteTarget::RouteUnavailable;
+    }
 
-    let policy = workspace.policy();
-    let target_validator = dock_target_validator(target.space, payload_classes, policy);
-    let graph = workspace.graph().clone();
-    let target_space = target.space.clone();
+    let policy = &facts.policy;
+    let target_validator = dock_target_validator(target_space, &facts.payload_classes, policy);
+    let graph = facts.graph.clone();
+    let target_space_for_edge_plan = target_space.clone();
     let edge_plan_resolver =
         move |target_node: crate::DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
-            graph.edge_dock_plan_with_sizing(&target_space, target_node, zone, sizing)
+            graph.edge_dock_plan_with_sizing(&target_space_for_edge_plan, target_node, zone, sizing)
         };
     let payload_size = request_payload_size(request);
     let excluded_nodes = request
         .payload()
-        .excluded_nodes_for_drop_scene(workspace.graph(), request.source_node());
+        .excluded_nodes_for_drop_scene(&facts.graph, request.source_node());
     let Some(resolved_frame) = host_scenes.resolve_frame_for_window(
-        target.space,
-        Some(target.window_id),
+        target_space,
+        Some(target_window_id),
         target.host_position,
         payload_size,
         excluded_nodes,
@@ -165,17 +203,23 @@ fn resolve_existing_viewport_workspace_target(
     ) else {
         return target.missing_host_target.into_route_target();
     };
+    if target.requires_exact_scene_frame
+        && target.expected_scene_frame != Some(&resolved_frame.frame)
+    {
+        return DockViewportWorkspaceRouteTarget::RouteUnavailable;
+    }
+    if resolved_frame.frame.registration_key() != target.route_proof.registration_key() {
+        return DockViewportWorkspaceRouteTarget::RouteUnavailable;
+    }
 
-    let facts_generation = target
-        .route_facts_source
-        .facts_generation_for_snapshot(target.facts_generation);
+    let facts_generation = target.route_proof.facts_generation();
+    let requires_current_route_facts = target.requires_current_route_facts;
     match resolved_frame.resolution {
         DockViewportFrameResolution::Drop(resolution) => match resolved_target_snapshot(
-            target.space.clone(),
-            Some(target.window_id),
             resolved_frame.frame,
             resolved_frame.drop_guide_metrics,
             facts_generation,
+            requires_current_route_facts,
             target.host_position,
             payload_size,
             resolution,
@@ -190,11 +234,10 @@ fn resolve_existing_viewport_workspace_target(
         DockViewportFrameResolution::GuideOnly(guide_target) => {
             DockViewportWorkspaceRouteTarget::PreviewOnly(
                 DockViewportResolvedDropTargetSnapshot::new_preview_only(
-                    target.space.clone(),
-                    Some(target.window_id),
                     resolved_frame.frame,
                     resolved_frame.drop_guide_metrics,
                     facts_generation,
+                    requires_current_route_facts,
                     target.host_position,
                     payload_size,
                     guide_target,
@@ -211,22 +254,21 @@ fn request_payload_size(request: &DockViewportDropRouteRequest) -> Option<Size<P
         .or_else(|| Some(geometry.source_bounds().size))
 }
 
-/// Resolves a delivery target against current viewport and workspace facts.
-pub(crate) fn resolve_delivery_workspace_target(
+pub(crate) fn resolve_delivery_workspace_target_with_facts(
     adapter: &DockViewportAdapter,
     host_scenes: &DockViewportHostSceneRegistry,
-    workspace: &DockWorkspace,
     source_node: crate::DockNodeId,
     payload: &DockViewportDropPayload,
     target: DockViewportResolvedDropTargetSnapshot,
+    facts: &DockViewportWorkspaceRouteFacts,
 ) -> Result<DockWorkspaceResolvedDropTarget, DockActionApplyError> {
     validate_delivery_workspace_target_inner(
         adapter,
         host_scenes,
-        workspace,
         source_node,
         payload,
         target,
+        facts,
     )
 }
 
@@ -240,13 +282,15 @@ pub(crate) fn validate_delivery_workspace_target(
     payload: &DockViewportDropPayload,
     target: &DockViewportResolvedDropTargetSnapshot,
 ) -> Result<(), DockActionApplyError> {
+    let facts =
+        DockViewportWorkspaceRouteFacts::capture_for_payload(workspace, payload, source_node);
     validate_delivery_workspace_target_inner(
         adapter,
         host_scenes,
-        workspace,
         source_node,
         payload,
         target.clone(),
+        &facts,
     )
     .map(|_| ())
 }
@@ -254,10 +298,10 @@ pub(crate) fn validate_delivery_workspace_target(
 pub(super) fn validate_delivery_workspace_target_inner(
     adapter: &DockViewportAdapter,
     host_scenes: &DockViewportHostSceneRegistry,
-    workspace: &DockWorkspace,
     source_node: crate::DockNodeId,
     payload: &DockViewportDropPayload,
     target: DockViewportResolvedDropTargetSnapshot,
+    facts: &DockViewportWorkspaceRouteFacts,
 ) -> Result<DockWorkspaceResolvedDropTarget, DockActionApplyError> {
     let facts_current = target_facts_generation_is_current(adapter, &target);
     if !facts_current {
@@ -265,40 +309,34 @@ pub(super) fn validate_delivery_workspace_target_inner(
     }
     if !current_resolved_target_key_matches_snapshot(
         host_scenes,
-        workspace,
         source_node,
         payload,
         &target,
+        facts,
     ) {
         return Err(DockActionApplyError::DropTargetUnavailable);
     }
     let target_space = target.target_space().clone();
-    validate_resolved_target_snapshot(
-        workspace,
-        &target_space,
-        target.into_target(),
-        payload,
-        source_node,
-    )
+    validate_resolved_target_snapshot(&target_space, target.into_target(), facts)
 }
 
 fn current_resolved_target_key_matches_snapshot(
     host_scenes: &DockViewportHostSceneRegistry,
-    workspace: &DockWorkspace,
     source_node: crate::DockNodeId,
     payload: &DockViewportDropPayload,
     target: &DockViewportResolvedDropTargetSnapshot,
+    facts: &DockViewportWorkspaceRouteFacts,
 ) -> bool {
-    let policy = workspace.policy();
-    let payload_classes = workspace.payload_dock_classes_for_viewport_payload(payload, source_node);
-    let target_validator = dock_target_validator(target.target_space(), &payload_classes, policy);
-    let graph = workspace.graph().clone();
+    let policy = &facts.policy;
+    let target_validator =
+        dock_target_validator(target.target_space(), &facts.payload_classes, policy);
+    let graph = facts.graph.clone();
     let target_space = target.target_space().clone();
     let edge_plan_resolver =
         move |target_node: crate::DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
             graph.edge_dock_plan_with_sizing(&target_space, target_node, zone, sizing)
         };
-    let excluded_nodes = payload.excluded_nodes_for_drop_scene(workspace.graph(), source_node);
+    let excluded_nodes = payload.excluded_nodes_for_drop_scene(&facts.graph, source_node);
     let Some(resolved_frame) = host_scenes.resolve_frame_for_window(
         target.target_space(),
         target.target_window_id(),
@@ -326,11 +364,10 @@ fn current_resolved_target_key_matches_snapshot(
 }
 
 fn resolved_target_snapshot(
-    target_space: DockSpaceId,
-    target_window_id: Option<WindowId>,
     frame: DockViewportHostSceneFrame,
     drop_guide_metrics: crate::DockDropGuideMetrics,
-    facts_generation: Option<u64>,
+    facts_generation: u64,
+    requires_current_route_facts: bool,
     host_position: open_gpui::Point<Pixels>,
     payload_size: Option<Size<Pixels>>,
     resolution: DockDropResolution,
@@ -338,11 +375,10 @@ fn resolved_target_snapshot(
     match resolution {
         DockDropResolution::Valid(target) => {
             DockResolvedViewportTarget::Valid(DockViewportResolvedDropTargetSnapshot::new(
-                target_space,
-                target_window_id,
                 frame,
                 drop_guide_metrics,
                 facts_generation,
+                requires_current_route_facts,
                 host_position,
                 payload_size,
                 target,
@@ -350,11 +386,10 @@ fn resolved_target_snapshot(
         }
         DockDropResolution::Rejected(rejection) => DockResolvedViewportTarget::Rejected {
             target: DockViewportResolvedDropTargetSnapshot::new(
-                target_space,
-                target_window_id,
                 frame,
                 drop_guide_metrics,
                 facts_generation,
+                requires_current_route_facts,
                 host_position,
                 payload_size,
                 rejection.target,
@@ -373,16 +408,13 @@ enum DockResolvedViewportTarget {
 }
 
 fn validate_resolved_target_snapshot(
-    workspace: &DockWorkspace,
     target_space: &DockSpaceId,
     target: DockResolvedDropTarget,
-    payload: &DockViewportDropPayload,
-    source_node: crate::DockNodeId,
+    facts: &DockViewportWorkspaceRouteFacts,
 ) -> Result<DockWorkspaceResolvedDropTarget, DockActionApplyError> {
-    let policy = workspace.policy().clone();
-    let payload_classes = workspace.payload_dock_classes_for_viewport_payload(payload, source_node);
-    let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
-    match validate_resolved_drop_target(target, &policy, Some(&target_validator)) {
+    let target_validator =
+        dock_target_validator(target_space, &facts.payload_classes, &facts.policy);
+    match validate_resolved_drop_target(target, &facts.policy, Some(&target_validator)) {
         DockDropResolution::Valid(target) => Ok(DockWorkspaceResolvedDropTarget::new(
             target_space.clone(),
             target,
@@ -397,6 +429,9 @@ fn target_facts_generation_is_current(
     adapter: &DockViewportAdapter,
     target: &DockViewportResolvedDropTargetSnapshot,
 ) -> bool {
+    if !adapter.is_current_registration(target.route_proof().registration_key()) {
+        return false;
+    }
     let (Some(window_id), Some(facts_generation)) =
         (target.target_window_id(), target.facts_generation())
     else {

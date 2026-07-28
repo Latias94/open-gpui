@@ -1,4 +1,6 @@
-use crate::{Action, App, Platform, SharedString};
+use std::rc::Rc;
+
+use crate::{Action, AppCell, Platform, SharedString};
 
 /// A menu of the application, either a main menu or a submenu
 pub struct Menu {
@@ -328,31 +330,31 @@ pub enum OsAction {
     Redo,
 }
 
-pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
+pub(crate) fn init_app_menus(platform: &dyn Platform, app: &Rc<AppCell>) {
     platform.on_will_open_app_menu(Box::new({
-        let cx = cx.to_async();
+        let app = Rc::downgrade(app);
         move || {
-            if let Some(app) = cx.app.upgrade() {
-                app.borrow_mut().update(|cx| cx.clear_pending_keystrokes());
+            if let Some(app) = app.upgrade() {
+                app.enqueue_will_open_app_menu();
             }
         }
     }));
 
     platform.on_validate_app_menu_command(Box::new({
-        let cx = cx.to_async();
+        let app = Rc::downgrade(app);
         move |action| {
-            cx.app
-                .upgrade()
-                .map(|app| app.borrow_mut().update(|cx| cx.is_action_available(action)))
+            app.upgrade()
+                .map(|app| app.validate_app_menu_action(action))
                 .unwrap_or(false)
         }
     }));
 
     platform.on_app_menu_action(Box::new({
-        let cx = cx.to_async();
+        let app = Rc::downgrade(app);
         move |action| {
-            if let Some(app) = cx.app.upgrade() {
-                app.borrow_mut().update(|cx| cx.dispatch_action(action));
+            let action = action.boxed_clone();
+            if let Some(app) = app.upgrade() {
+                app.enqueue_app_menu_action(action);
             }
         }
     }));

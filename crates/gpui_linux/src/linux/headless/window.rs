@@ -15,10 +15,11 @@ use uuid::Uuid;
 use open_gpui::{
     AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
     AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels,
-    DispatchEventResult, DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
-    RequestFrameOptions, Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowParams, px,
+    DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
+    PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, Scene, Size, TileId, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, px,
 };
 
 #[derive(Debug)]
@@ -52,7 +53,8 @@ struct HeadlessWindowState {
     bounds: Bounds<Pixels>,
     window_bounds: WindowBounds,
     display: Rc<dyn PlatformDisplay>,
-    input_handler: Option<PlatformInputHandler>,
+    input_callback: PlatformInputCallbackSlot,
+    input_handler: PlatformInputHandlerSlot,
     title: Option<String>,
     cursor_style: CursorStyle,
     accepts_pointer_input: bool,
@@ -60,6 +62,17 @@ struct HeadlessWindowState {
 }
 
 pub(crate) struct HeadlessWindow(Rc<RefCell<HeadlessWindowState>>);
+
+impl Drop for HeadlessWindow {
+    fn drop(&mut self) {
+        let (input_callback, input_handler) = {
+            let state = self.0.borrow();
+            (state.input_callback.clone(), state.input_handler.clone())
+        };
+        input_callback.terminate();
+        input_handler.terminate();
+    }
+}
 
 impl raw_window_handle::HasWindowHandle for HeadlessWindow {
     fn window_handle(
@@ -84,7 +97,8 @@ impl HeadlessWindow {
             bounds: window_bounds.get_bounds(),
             window_bounds,
             display,
-            input_handler: None,
+            input_callback: PlatformInputCallbackSlot::default(),
+            input_handler: PlatformInputHandlerSlot::default(),
             title: None,
             cursor_style: CursorStyle::Arrow,
             accepts_pointer_input: params.accepts_pointer_input,
@@ -94,6 +108,18 @@ impl HeadlessWindow {
 }
 
 impl PlatformWindow for HeadlessWindow {
+    fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
+        PlatformWindowCommandDispatcher::new(|command| match command {
+            PlatformWindowCommand::CompleteInitialPresentation { .. } => {
+                PlatformWindowCommandOutcome::Accepted
+            }
+            PlatformWindowCommand::Activate
+            | PlatformWindowCommand::ShowWindowMenu(_)
+            | PlatformWindowCommand::StartWindowMove
+            | PlatformWindowCommand::StartWindowResize(_) => PlatformWindowCommandOutcome::Rejected,
+        })
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().bounds
     }
@@ -139,11 +165,13 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.borrow_mut().input_handler = Some(input_handler);
+        let input_handler_slot = self.0.borrow().input_handler.clone();
+        input_handler_slot.set(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.0.borrow_mut().input_handler.take()
+        let input_handler_slot = self.0.borrow().input_handler.clone();
+        input_handler_slot.take()
     }
 
     fn prompt(
@@ -155,8 +183,6 @@ impl PlatformWindow for HeadlessWindow {
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         None
     }
-
-    fn activate(&self) {}
 
     fn is_active(&self) -> bool {
         false
@@ -190,7 +216,10 @@ impl PlatformWindow for HeadlessWindow {
 
     fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
 
-    fn on_input(&self, _callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {}
+    fn on_input(&self, callback: PlatformInputCallback) {
+        let input = self.0.borrow().input_callback.clone();
+        input.set(callback);
+    }
 
     fn on_active_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
 

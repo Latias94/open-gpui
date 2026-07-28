@@ -5,7 +5,7 @@ use std::{
     rc::{Rc, Weak},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -30,9 +30,51 @@ use windows::{
 use crate::*;
 use open_gpui::*;
 
+pub(crate) type RegisteredWindows = RwLock<SmallVec<[RegisteredWindow; 4]>>;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RegisteredWindow {
+    hwnd: SafeHwnd,
+    generation: usize,
+}
+
+impl RegisteredWindow {
+    pub(crate) fn new(hwnd: HWND, generation: usize) -> Self {
+        Self {
+            hwnd: hwnd.into(),
+            generation,
+        }
+    }
+
+    pub(crate) fn as_raw(self) -> HWND {
+        self.hwnd.as_raw()
+    }
+
+    pub(crate) fn generation(self) -> usize {
+        self.generation
+    }
+
+    pub(crate) fn matches(self, other: Self) -> bool {
+        self.hwnd.as_raw() == other.hwnd.as_raw() && self.generation == other.generation
+    }
+}
+
+static NEXT_NATIVE_WINDOW_GENERATION: AtomicUsize = AtomicUsize::new(1);
+
+fn next_native_window_generation() -> usize {
+    let generation = NEXT_NATIVE_WINDOW_GENERATION.fetch_add(1, Ordering::Relaxed);
+    assert_ne!(
+        generation, 0,
+        "native window generation exhausted process-wide uniqueness"
+    );
+    generation
+}
+
 pub struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
-    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    raw_window_handles: Arc<RegisteredWindows>,
+    recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
+    vsync_owner_live: Arc<RwLock<bool>>,
     // The below members will never change throughout the entire lifecycle of the app.
     headless: bool,
     icon: HICON,
@@ -47,11 +89,13 @@ pub struct WindowsPlatform {
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
+    #[cfg(test)]
+    lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
 
 struct WindowsPlatformInner {
     state: WindowsPlatformState,
-    raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: PriorityQueueReceiver<RunnableVariant>,
@@ -65,6 +109,119 @@ pub(crate) struct WindowsPlatformState {
     /// Shared with each window so `WM_SETCURSOR` can read it directly.
     pub(crate) cursor_visible: Arc<AtomicBool>,
     directx_devices: RefCell<Option<DirectXDevices>>,
+}
+
+struct WindowsPlatformConstructionGuard {
+    hwnd: Option<HWND>,
+    ole_initialized: bool,
+}
+
+impl WindowsPlatformConstructionGuard {
+    fn initialize() -> Result<Self> {
+        unsafe {
+            OleInitialize(None).context("unable to initialize Windows OLE")?;
+        }
+        Ok(Self {
+            hwnd: None,
+            ole_initialized: true,
+        })
+    }
+
+    fn own_hwnd(&mut self, hwnd: HWND) {
+        self.hwnd = Some(hwnd);
+    }
+
+    fn commit(mut self) {
+        self.hwnd = None;
+        self.ole_initialized = false;
+    }
+}
+
+impl Drop for WindowsPlatformConstructionGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(hwnd) = self.hwnd.take()
+                && IsWindow(Some(hwnd)).as_bool()
+            {
+                DestroyWindow(hwnd)
+                    .context("rolling back partially constructed platform window")
+                    .log_err();
+            }
+            if self.ole_initialized {
+                OleUninitialize();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct NativeWindowLifecycleTestProbe {
+    fail_after_drag_drop_registration: Cell<bool>,
+    fail_next_destroy: Cell<bool>,
+    fail_next_initial_presentation: Cell<bool>,
+    last_created_hwnd: Cell<Option<HWND>>,
+    hidden_before_map: Cell<Option<bool>>,
+    initial_presentation_hook: RefCell<Option<Box<dyn FnOnce(HWND)>>>,
+}
+
+#[cfg(test)]
+impl NativeWindowLifecycleTestProbe {
+    pub(crate) fn fail_next_after_drag_drop_registration(&self) {
+        self.fail_after_drag_drop_registration.set(true);
+    }
+
+    pub(crate) fn take_fail_after_drag_drop_registration(&self) -> bool {
+        self.fail_after_drag_drop_registration.replace(false)
+    }
+
+    pub(crate) fn fail_next_destroy(&self) {
+        self.fail_next_destroy.set(true);
+    }
+
+    pub(crate) fn take_fail_next_destroy(&self) -> bool {
+        self.fail_next_destroy.replace(false)
+    }
+
+    pub(crate) fn fail_next_initial_presentation(&self) {
+        self.fail_next_initial_presentation.set(true);
+    }
+
+    pub(crate) fn take_fail_next_initial_presentation(&self) -> bool {
+        self.fail_next_initial_presentation.replace(false)
+    }
+
+    pub(crate) fn install_initial_presentation_hook(&self, hook: impl FnOnce(HWND) + 'static) {
+        let mut installed = self.initial_presentation_hook.borrow_mut();
+        assert!(
+            installed.is_none(),
+            "initial-presentation test hook is already installed"
+        );
+        *installed = Some(Box::new(hook));
+    }
+
+    pub(crate) fn run_initial_presentation_hook(&self, hwnd: HWND) {
+        let hook = self.initial_presentation_hook.borrow_mut().take();
+        if let Some(hook) = hook {
+            hook(hwnd);
+        }
+    }
+
+    pub(crate) fn record_created_hwnd(&self, hwnd: HWND) {
+        self.last_created_hwnd.set(Some(hwnd));
+    }
+
+    pub(crate) fn last_created_hwnd(&self) -> Option<HWND> {
+        self.last_created_hwnd.get()
+    }
+
+    pub(crate) fn record_hidden_before_map(&self, hidden: bool) {
+        self.hidden_before_map.set(Some(hidden));
+    }
+
+    pub(crate) fn hidden_before_map(&self) -> Option<bool> {
+        self.hidden_before_map.get()
+    }
 }
 
 #[derive(Default)]
@@ -95,9 +252,7 @@ impl WindowsPlatformState {
 
 impl WindowsPlatform {
     pub fn new(headless: bool) -> Result<Self> {
-        unsafe {
-            OleInitialize(None).context("unable to initialize Windows OLE")?;
-        }
+        let mut construction_guard = WindowsPlatformConstructionGuard::initialize()?;
         let (directx_devices, text_system, direct_write_text_system) = if !headless {
             let devices = DirectXDevices::new().context("Creating DirectX devices")?;
             let dw_text_system = Arc::new(
@@ -124,15 +279,17 @@ impl WindowsPlatform {
             rand::random::<u32>() as usize
         };
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
+        let recovered_directx_devices = Arc::new(RwLock::new(None));
+        let vsync_owner_live = Arc::new(RwLock::new(true));
 
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {
             inner: None,
-            raw_window_handles: Arc::downgrade(&raw_window_handles),
             validation_number,
             main_sender: Some(main_sender),
             main_receiver: Some(main_receiver),
             directx_devices,
+            recovered_directx_devices: recovered_directx_devices.clone(),
             dispatcher: None,
         };
         let result = unsafe {
@@ -151,15 +308,24 @@ impl WindowsPlatform {
                 Some(&raw const context as *const _),
             )
         };
+        let handle = match result {
+            Ok(handle) => handle,
+            Err(create_error) => {
+                if let Some(Err(inner_error)) = context.inner.take() {
+                    return Err(inner_error);
+                }
+                return Err(create_error.into());
+            }
+        };
+        construction_guard.own_hwnd(handle);
         let inner = context
             .inner
             .take()
-            .context("CreateWindowExW did not run correctly")??;
+            .context("CreateWindowExW did not initialize the platform window")??;
         let dispatcher = context
             .dispatcher
             .take()
             .context("CreateWindowExW did not run correctly")?;
-        let handle = result?;
 
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
@@ -180,10 +346,12 @@ impl WindowsPlatform {
             HICON::default()
         };
 
-        Ok(Self {
+        let platform = Self {
             inner,
             handle,
             raw_window_handles,
+            recovered_directx_devices,
+            vsync_owner_live,
             headless,
             icon,
             background_executor,
@@ -194,15 +362,22 @@ impl WindowsPlatform {
             disable_direct_composition,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
-        })
+            #[cfg(test)]
+            lifecycle_test_probe: Rc::default(),
+        };
+        construction_guard.commit();
+        Ok(platform)
     }
 
     pub(crate) fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
-        self.raw_window_handles
+        let registered = self
+            .raw_window_handles
             .read()
             .iter()
             .find(|entry| entry.as_raw() == hwnd)
-            .and_then(|hwnd| window_from_hwnd(hwnd.as_raw()))
+            .copied()?;
+        let window = window_from_hwnd(hwnd)?;
+        window.registration.matches(registered).then_some(window)
     }
 
     fn generate_creation_info(&self) -> WindowCreationInfo {
@@ -213,11 +388,16 @@ impl WindowsPlatform {
             cursor_visible: self.inner.state.cursor_visible.clone(),
             drop_target_helper: self.drop_target_helper.clone().unwrap(),
             validation_number: self.inner.validation_number,
+            native_window_generation: next_native_window_generation(),
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
+            raw_window_handles: Arc::downgrade(&self.raw_window_handles),
+            recovered_directx_devices: self.recovered_directx_devices.clone(),
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
             invalidate_devices: self.invalidate_devices.clone(),
+            #[cfg(test)]
+            lifecycle_test_probe: self.lifecycle_test_probe.clone(),
         }
     }
 
@@ -295,6 +475,8 @@ impl WindowsPlatform {
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(direct_write_text_system);
         let invalidate_devices = self.invalidate_devices.clone();
+        let recovered_directx_devices = self.recovered_directx_devices.clone();
+        let vsync_owner_live = self.vsync_owner_live.clone();
 
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
@@ -302,6 +484,9 @@ impl WindowsPlatform {
                 let vsync_provider = VSyncProvider::new();
                 loop {
                     vsync_provider.wait_for_vsync();
+                    if !*vsync_owner_live.read() {
+                        break;
+                    }
                     if check_device_lost(&directx_device.device)
                         || invalidate_devices.fetch_and(false, Ordering::Acquire)
                     {
@@ -311,6 +496,8 @@ impl WindowsPlatform {
                             validation_number,
                             &all_windows,
                             &text_system,
+                            &recovered_directx_devices,
+                            &vsync_owner_live,
                         ) {
                             log::error!(
                                 "Failed to recover DirectX device after device lost: {err:?}"
@@ -321,11 +508,21 @@ impl WindowsPlatform {
                     let Some(all_windows) = all_windows.upgrade() else {
                         break;
                     };
-                    for hwnd in all_windows.read().iter() {
-                        unsafe {
-                            let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
-                        }
-                    }
+                    let registered_windows = all_windows.read().clone();
+                    dispatch_registered_window_snapshot(
+                        &all_windows,
+                        registered_windows,
+                        |registered_window| {
+                            with_live_vsync_owner(&vsync_owner_live, || unsafe {
+                                let _ = RedrawWindow(
+                                    Some(registered_window.as_raw()),
+                                    None,
+                                    None,
+                                    RDW_INVALIDATE,
+                                );
+                            });
+                        },
+                    );
                 }
             })
             .unwrap();
@@ -582,8 +779,7 @@ impl Platform for WindowsPlatform {
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
         let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
-        let handle = window.get_raw_handle();
-        self.raw_window_handles.write().push(handle.into());
+        self.raw_window_handles.write().push(window.0.registration);
 
         Ok(Box::new(window))
     }
@@ -906,7 +1102,7 @@ impl WindowsPlatformInner {
         let state = WindowsPlatformState::new(context.directx_devices.take());
         Ok(Rc::new(Self {
             state,
-            raw_window_handles: context.raw_window_handles.clone(),
+            recovered_directx_devices: context.recovered_directx_devices.clone(),
             dispatcher: context
                 .dispatcher
                 .as_ref()
@@ -941,8 +1137,7 @@ impl WindowsPlatformInner {
         lparam: LPARAM,
     ) -> LRESULT {
         let handled = match msg {
-            WM_GPUI_CLOSE_ONE_WINDOW
-            | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
+            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
@@ -962,31 +1157,12 @@ impl WindowsPlatformInner {
             return None;
         }
         match message {
-            WM_GPUI_CLOSE_ONE_WINDOW => {
-                self.close_one_window(HWND(lparam.0 as _));
-                Some(0)
-            }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(),
             _ => unreachable!(),
         }
-    }
-
-    fn close_one_window(&self, target_window: HWND) -> bool {
-        let Some(all_windows) = self.raw_window_handles.upgrade() else {
-            log::error!("Failed to upgrade raw window handles");
-            return false;
-        };
-        let mut lock = all_windows.write();
-        let index = lock
-            .iter()
-            .position(|handle| handle.as_raw() == target_window)
-            .unwrap();
-        lock.remove(index);
-
-        lock.is_empty()
     }
 
     #[inline]
@@ -1090,11 +1266,10 @@ impl WindowsPlatformInner {
         Some(1)
     }
 
-    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
-        let directx_devices = lparam.0 as *const DirectXDevices;
-        let directx_devices = unsafe { &*directx_devices };
+    fn handle_device_lost(&self) -> Option<isize> {
+        let directx_devices = self.recovered_directx_devices.read().clone()?;
         self.state.directx_devices.borrow_mut().take();
-        *self.state.directx_devices.borrow_mut() = Some(directx_devices.clone());
+        *self.state.directx_devices.borrow_mut() = Some(directx_devices);
 
         Some(0)
     }
@@ -1102,6 +1277,27 @@ impl WindowsPlatformInner {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
+        *self.vsync_owner_live.write() = false;
+        let registered_windows = {
+            let mut registered_windows = self.raw_window_handles.write();
+            std::mem::take(&mut *registered_windows)
+        };
+        for registered_window in registered_windows {
+            let hwnd = registered_window.as_raw();
+            if let Some(window) = window_from_hwnd(hwnd)
+                && window.registration.matches(registered_window)
+            {
+                window.destroy_native_window();
+            } else if unsafe { IsWindow(Some(hwnd)).as_bool() } {
+                unsafe {
+                    RevokeDragDrop(hwnd).log_err();
+                    DestroyWindow(hwnd)
+                        .context("destroying orphaned native window during platform teardown")
+                        .log_err();
+                }
+            }
+        }
+
         unsafe {
             if let Some(notification) = self.suspend_resume_notification.borrow_mut().take() {
                 // SAFETY: notification was returned by RegisterSuspendResumeNotification.
@@ -1122,22 +1318,27 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) cursor_visible: Arc<AtomicBool>,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
+    pub(crate) native_window_generation: usize,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
+    pub(crate) raw_window_handles: std::sync::Weak<RegisteredWindows>,
+    pub(crate) recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub(crate) invalidate_devices: Arc<AtomicBool>,
+    #[cfg(test)]
+    pub(crate) lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
 
 struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
-    raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
     main_sender: Option<PriorityQueueSender<RunnableVariant>>,
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
+    recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
 }
 
@@ -1339,8 +1540,10 @@ fn handle_gpu_device_lost(
     directx_devices: &mut DirectXDevices,
     platform_window: HWND,
     validation_number: usize,
-    all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    all_windows: &std::sync::Weak<RegisteredWindows>,
     text_system: &std::sync::Weak<DirectWriteTextSystem>,
+    recovered_directx_devices: &RwLock<Option<DirectXDevices>>,
+    vsync_owner_live: &RwLock<bool>,
 ) -> Result<()> {
     // Here we wait a bit to ensure the system has time to recover from the device lost state.
     // If we don't wait, the final drawing result will be blank.
@@ -1350,44 +1553,85 @@ fn handle_gpu_device_lost(
         DirectXDevices::new().context("Failed to recreate new DirectX devices after device lost")
     })?;
     log::info!("DirectX devices successfully recreated.");
+    *recovered_directx_devices.write() = Some(directx_devices.clone());
 
-    let lparam = LPARAM(directx_devices as *const _ as _);
-    unsafe {
-        SendMessageW(
-            platform_window,
+    with_live_vsync_owner(vsync_owner_live, || unsafe {
+        PostMessageW(
+            Some(platform_window),
             WM_GPUI_GPU_DEVICE_LOST,
-            Some(WPARAM(validation_number)),
-            Some(lparam),
-        );
-    }
+            WPARAM(validation_number),
+            LPARAM::default(),
+        )
+        .log_err();
+    });
 
     if let Some(text_system) = text_system.upgrade() {
         text_system.handle_gpu_lost(&directx_devices)?;
     }
     if let Some(all_windows) = all_windows.upgrade() {
-        for window in all_windows.read().iter() {
-            unsafe {
-                SendMessageW(
-                    window.as_raw(),
-                    WM_GPUI_GPU_DEVICE_LOST,
-                    Some(WPARAM(validation_number)),
-                    Some(lparam),
-                );
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        for window in all_windows.read().iter() {
-            unsafe {
-                SendMessageW(
-                    window.as_raw(),
+        let registered_windows = all_windows.read().clone();
+        let registered_windows =
+            dispatch_registered_window_snapshot(&all_windows, registered_windows, |window| {
+                with_live_vsync_owner(vsync_owner_live, || unsafe {
+                    PostMessageW(
+                        Some(window.as_raw()),
+                        WM_GPUI_GPU_DEVICE_LOST,
+                        WPARAM(window.generation()),
+                        LPARAM::default(),
+                    )
+                    .log_err();
+                });
+            });
+        dispatch_registered_window_snapshot(&all_windows, registered_windows, |window| {
+            with_live_vsync_owner(vsync_owner_live, || unsafe {
+                PostMessageW(
+                    Some(window.as_raw()),
                     WM_GPUI_FORCE_UPDATE_WINDOW,
-                    Some(WPARAM(validation_number)),
-                    None,
-                );
-            }
-        }
+                    WPARAM(window.generation()),
+                    LPARAM::default(),
+                )
+                .log_err();
+            });
+        });
     }
     Ok(())
+}
+
+fn with_live_vsync_owner<R>(
+    vsync_owner_live: &RwLock<bool>,
+    dispatch: impl FnOnce() -> R,
+) -> Option<R> {
+    let owner_live = vsync_owner_live.read();
+    (*owner_live).then(dispatch)
+}
+
+fn dispatch_registered_window_snapshot(
+    registered_windows: &RegisteredWindows,
+    snapshot: impl IntoIterator<Item = RegisteredWindow>,
+    mut dispatch: impl FnMut(RegisteredWindow),
+) -> SmallVec<[RegisteredWindow; 4]> {
+    let mut survivors = SmallVec::new();
+    for registered_window in snapshot {
+        if !registered_window_is_current(registered_windows, registered_window) {
+            continue;
+        }
+        dispatch(registered_window);
+        if registered_window_is_current(registered_windows, registered_window) {
+            survivors.push(registered_window);
+        }
+    }
+    survivors
+}
+
+fn registered_window_is_current(
+    registered_windows: &RegisteredWindows,
+    candidate: RegisteredWindow,
+) -> bool {
+    registered_windows
+        .read()
+        .iter()
+        .copied()
+        .any(|registered| registered.matches(candidate))
 }
 
 fn validate_credential_blob_size(size: usize) -> Result<()> {
@@ -1474,6 +1718,10 @@ unsafe extern "system" fn window_procedure(
 }
 
 #[cfg(test)]
+#[path = "native_test_support.rs"]
+mod native_test_support;
+
+#[cfg(test)]
 mod tests {
     use crate::{read_from_clipboard, write_to_clipboard};
     use open_gpui::{
@@ -1483,9 +1731,13 @@ mod tests {
         WindowMutationRequest, WindowMutationSupport, WindowOptions, WindowPlacementRequest,
         WindowPlacementState, WindowPlatformFacts, px, size,
     };
-    use std::rc::Rc;
+    use std::{
+        rc::Rc,
+        sync::{Arc, mpsc},
+        time::Duration,
+    };
     use windows::Win32::{
-        Foundation::RECT,
+        Foundation::{HWND, RECT},
         UI::WindowsAndMessaging::{
             GetWindowRect, IsWindowVisible, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
             SetWindowPos, ShowWindow,
@@ -1564,6 +1816,65 @@ mod tests {
         assert!(!message.contains(secret_url));
         assert!(!message.contains(username));
         assert!(!message.contains("secret-password"));
+    }
+
+    #[test]
+    fn registered_window_dispatch_releases_registry_lock_and_observes_concurrent_removal() {
+        let registered_window = super::RegisteredWindow::new(HWND::default(), 7);
+        let mut entries: smallvec::SmallVec<[super::RegisteredWindow; 4]> =
+            smallvec::SmallVec::new();
+        entries.push(registered_window);
+        let registered_windows = Arc::new(parking_lot::RwLock::new(entries));
+        let snapshot = registered_windows.read().clone();
+        let (begin_removal_tx, begin_removal_rx) = mpsc::channel();
+        let (removal_complete_tx, removal_complete_rx) = mpsc::channel();
+        let remover_windows = registered_windows.clone();
+        let remover = std::thread::spawn(move || {
+            begin_removal_rx
+                .recv()
+                .expect("dispatch should request concurrent removal");
+            remover_windows
+                .write()
+                .retain(|registered| !registered.matches(registered_window));
+            removal_complete_tx
+                .send(())
+                .expect("dispatch should wait for concurrent removal");
+        });
+
+        let survivors =
+            super::dispatch_registered_window_snapshot(&registered_windows, snapshot, |_| {
+                begin_removal_tx
+                    .send(())
+                    .expect("remover should remain available");
+                removal_complete_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("dispatch must not hold the registry read lock");
+            });
+
+        remover.join().expect("concurrent remover should finish");
+        assert!(survivors.is_empty());
+        assert!(registered_windows.read().is_empty());
+    }
+
+    #[test]
+    fn vsync_owner_gate_rejects_dispatch_after_teardown_begins() {
+        let owner_live = parking_lot::RwLock::new(true);
+        let dispatches = std::sync::atomic::AtomicUsize::new(0);
+
+        assert!(
+            super::with_live_vsync_owner(&owner_live, || {
+                dispatches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            })
+            .is_some()
+        );
+        *owner_live.write() = false;
+        assert!(
+            super::with_live_vsync_owner(&owner_live, || {
+                dispatches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            })
+            .is_none()
+        );
+        assert_eq!(dispatches.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
     #[test]

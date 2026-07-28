@@ -255,7 +255,6 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
     target_visual.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     cx.set_platform_hovered_window(None);
-    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -268,13 +267,13 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
         "panel A should render in the target window after cross-window drop"
     );
     assert!(
-        selector_for(
-            &source_visual,
-            &source_host,
-            DockDebugRegion::Panel { item: item("a") }
-        )
-        .is_none(),
-        "panel A should leave the source window after cross-window drop"
+        !cx.windows().contains(&source_window.into()),
+        "the vacated source viewport should close after the cross-window drop"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "the vacated source space should no longer own a runtime window"
     );
 
     cx.read_entity(&controller, |controller, _| {

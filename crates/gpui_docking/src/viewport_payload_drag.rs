@@ -132,10 +132,6 @@ impl DockViewportPayloadDragState {
         })
     }
 
-    pub(crate) fn active_session_id(&self) -> Option<u64> {
-        self.active.as_ref().map(|drag| drag.session().id())
-    }
-
     pub(crate) fn active_session(&self) -> Option<&DockRuntimeDragSession> {
         self.active
             .as_ref()

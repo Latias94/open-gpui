@@ -5,6 +5,50 @@ use open_gpui::{
 };
 use std::collections::{BTreeMap, HashMap};
 
+/// Stable token for one exact logical-space-to-window registration.
+///
+/// Route-facts generations describe coordinate freshness and may advance many times while a
+/// registration stays alive. This separate generation prevents delayed runtime effects from
+/// finalizing against a replacement that happens to reuse the same space or window id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportRegistrationKey {
+    space: DockSpaceId,
+    window_id: WindowId,
+    generation: u64,
+}
+
+impl DockViewportRegistrationKey {
+    fn new(space: DockSpaceId, window_id: WindowId, generation: u64) -> Self {
+        Self {
+            space,
+            window_id,
+            generation,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(space: DockSpaceId, window_id: WindowId) -> Self {
+        Self::new(space, window_id, 0)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_generation(
+        space: DockSpaceId,
+        window_id: WindowId,
+        generation: u64,
+    ) -> Self {
+        Self::new(space, window_id, generation)
+    }
+
+    pub(crate) fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    pub(crate) fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+}
+
 /// State of a registered platform viewport from the routing model's perspective.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportLifecycleState {
@@ -314,13 +358,19 @@ pub(crate) struct DockViewportSnapshot {
     pub(crate) host_geometry: Option<DockViewportHostGeometry>,
     /// Last known platform input mask.
     pub(crate) input_mask: DockViewportInputMask,
+    registration_generation: u64,
     platform_requests: DockViewportPlatformRequests,
     lifecycle: DockViewportLifecycleMachine,
 }
 
 impl DockViewportSnapshot {
     /// Creates a snapshot for a newly registered viewport window.
+    #[cfg(test)]
     pub(crate) fn new(window: AnyWindowHandle) -> Self {
+        Self::with_registration_generation(window, 0)
+    }
+
+    fn with_registration_generation(window: AnyWindowHandle, registration_generation: u64) -> Self {
         Self {
             window,
             display_id: None,
@@ -328,9 +378,18 @@ impl DockViewportSnapshot {
             current_bounds: None,
             host_geometry: None,
             input_mask: DockViewportInputMask::Minimized,
+            registration_generation,
             platform_requests: DockViewportPlatformRequests::default(),
             lifecycle: DockViewportLifecycleMachine::default(),
         }
+    }
+
+    pub(crate) fn registration_key(&self, space: &DockSpaceId) -> DockViewportRegistrationKey {
+        DockViewportRegistrationKey::new(
+            space.clone(),
+            self.window.window_id(),
+            self.registration_generation,
+        )
     }
 
     fn identity(&self, space: &DockSpaceId) -> DockViewportIdentity {
@@ -573,10 +632,21 @@ impl DockViewportSnapshot {
 }
 
 /// Internal one-to-one mapping between logical dock spaces and GPUI windows.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct DockViewportRegistry {
     viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
     windows: HashMap<WindowId, DockSpaceId>,
+    last_registration_generation_by_space: BTreeMap<DockSpaceId, u64>,
+}
+
+impl Default for DockViewportRegistry {
+    fn default() -> Self {
+        Self {
+            viewports: BTreeMap::new(),
+            windows: HashMap::new(),
+            last_registration_generation_by_space: BTreeMap::new(),
+        }
+    }
 }
 
 impl DockViewportRegistry {
@@ -622,9 +692,20 @@ impl DockViewportRegistry {
             replaced.push((previous_space, previous));
         }
 
+        let registration_generation = self
+            .last_registration_generation_by_space
+            .get(&space)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .expect("dock viewport registration generation space exhausted");
         self.windows.insert(window_id, space.clone());
-        self.viewports
-            .insert(space, DockViewportSnapshot::new(window));
+        self.last_registration_generation_by_space
+            .insert(space.clone(), registration_generation);
+        self.viewports.insert(
+            space,
+            DockViewportSnapshot::with_registration_generation(window, registration_generation),
+        );
         replaced
     }
 
@@ -674,6 +755,31 @@ impl DockViewportRegistry {
             .then_some(space)
     }
 
+    pub(crate) fn registration_key(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<DockViewportRegistrationKey> {
+        self.viewports
+            .get(space)
+            .map(|snapshot| snapshot.registration_key(space))
+    }
+
+    pub(crate) fn last_registration_generation(&self, space: &DockSpaceId) -> Option<u64> {
+        self.last_registration_generation_by_space
+            .get(space)
+            .copied()
+    }
+
+    pub(crate) fn is_current_registration(&self, key: &DockViewportRegistrationKey) -> bool {
+        self.viewports.get(key.space()).is_some_and(|snapshot| {
+            snapshot.registration_generation == key.generation
+                && snapshot.window.window_id() == key.window_id()
+        }) && self
+            .windows
+            .get(&key.window_id())
+            .is_some_and(|space| space == key.space())
+    }
+
     pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
         self.viewports.keys().cloned().collect()
     }
@@ -717,6 +823,73 @@ mod tests {
             snapshot.route_unavailable_reason(),
             Some(DockViewportRouteUnavailableReason::RegisteredNotReady)
         );
+    }
+
+    #[test]
+    fn registration_generation_rejects_recreated_binding_with_same_identity() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let window = handle(1);
+
+        registry.register(main.clone(), window);
+        let first = registry
+            .registration_key(&main)
+            .expect("first binding should have a registration key");
+        assert!(registry.is_current_registration(&first));
+
+        registry.unregister_space(&main);
+        registry.register(main.clone(), window);
+        let replacement = registry
+            .registration_key(&main)
+            .expect("replacement binding should have a registration key");
+
+        assert_ne!(replacement, first);
+        assert!(!registry.is_current_registration(&first));
+        assert!(registry.is_current_registration(&replacement));
+    }
+
+    #[test]
+    fn registration_generations_are_scoped_to_each_space_lineage() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let secondary = space("secondary");
+
+        registry.register(main.clone(), handle(1));
+        registry.register(secondary.clone(), handle(2));
+
+        assert_eq!(
+            registry
+                .registration_key(&main)
+                .expect("main binding should have a registration key")
+                .generation,
+            1
+        );
+        assert_eq!(
+            registry
+                .registration_key(&secondary)
+                .expect("secondary binding should have a registration key")
+                .generation,
+            1
+        );
+    }
+
+    #[test]
+    fn idempotent_registration_preserves_registration_generation() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let window = handle(1);
+
+        registry.register(main.clone(), window);
+        let first = registry
+            .registration_key(&main)
+            .expect("binding should have a registration key");
+        assert!(
+            registry
+                .register_with_replacements(main.clone(), window)
+                .is_empty()
+        );
+
+        assert_eq!(registry.registration_key(&main), Some(first));
     }
 
     #[test]

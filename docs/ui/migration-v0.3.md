@@ -410,6 +410,71 @@ per-window kind/capability profiles and queued requests as structured payloads r
 debug strings. See
 [ADR 0029](../adr/0029-open-gpui-platform-window-mutation-capabilities.md).
 
+## Native Window Callback And Command Boundary
+
+Native window callbacks no longer own ad hoc `AsyncApp::update_window(...).log_err()` retry or
+drop behavior. GPUI classifies every callback before wiring it: asynchronous facts and events enter
+the typed `AppCell` ingress, synchronous queries read committed snapshots or conservatively prevent
+native action, and `on_input` returns the exact handler-derived native disposition immediately.
+The canonical callback-by-callback table and all coalescing, FIFO, barrier, stale, and terminal
+rules are in
+[ADR 0029](../adr/0029-open-gpui-platform-window-mutation-capabilities.md#callback-delivery-and-reentrancy).
+
+For custom platform backends:
+
+- Continue storing and invoking the `PlatformWindow` callbacks supplied by GPUI. Do not call back
+  into `App` through a backend-specific side channel.
+- Implement `command_dispatcher()` with a weak reference to native window state. Dispatch only
+  `PlatformWindowCommand::{CompleteInitialPresentation, Activate, ShowWindowMenu,
+  StartWindowMove, StartWindowResize}` and return `PlatformWindowCommandOutcome::Rejected`
+  without side effects after that native state is gone. Return `Accepted` only when the backend
+  accepted the requested operation.
+- Keep `map_window` synchronous and unable to pump `on_input`. A backend may keep the native target
+  hidden, or perform only a backend-proven non-activating map/commit whose callbacks cannot enter
+  the hybrid input path. Any show, focus, or activation work that can pump input belongs to
+  `CompleteInitialPresentation`. Rejection must preserve pending show/placement intent where the
+  backend owns it. GPUI performs one bounded retry, for two diagnosed attempts total, and publishes
+  initial-presentation completion only after acceptance.
+- Treat `on_input` as an idle-only synchronous contract. Every `PlatformInput` variant must return
+  the current `DispatchEventResult`; a default result, delayed replay, or callback-local retry is
+  a correctness bug even if one operating-system message currently ignores the result.
+- Keep `on_hit_test_window_control` read-only. It returns the committed window-control snapshot and
+  must not traverse the live element tree.
+- When `on_should_close` returns `false`, leave the native window alive. GPUI may have queued an
+  ordered close intent because the application was busy; its later ordered delivery owns removal.
+- Permit callbacks during native construction. GPUI has already reserved the full generational
+  `WindowId`; callbacks wait for commit and are discarded against that exact ID after rollback.
+- Do not consume native paint invalidation without either handing GPUI an accepted frame request
+  with a guaranteed wake or explicitly re-invalidating and scheduling another callback. Merge
+  repeated requests by OR-ing `force_render` and `require_presentation`.
+
+For application, Dock, and component code, replace direct pump-sensitive backend calls with the
+existing `Window` methods. They enqueue the closed command set and dispatch only after the outer
+application borrow and older callback barriers are released. Operations that hold an entity,
+controller, or viewport-runtime guard should first compute typed effects, drop the guard, and then
+apply those effects through the current `&mut App`. Do not migrate such code to a
+`Box<dyn FnOnce>`, arbitrary task queue, or asynchronous open-window outbox.
+Direct `PlatformWindow` activation, window-menu, move, and resize methods have been removed. Use
+the corresponding `Window` methods so every pump-sensitive operation crosses the same post-borrow
+FIFO.
+
+The observable ordering rules are intentionally strict:
+
+- `AppCell` allocates one application-wide native-event sequence before any borrow attempt,
+  inline-delivery decision, or coalescing.
+- Fact domains coalesce only at the adjacent queue tail for the same full `WindowId` and relevant
+  generation. Close, pointer cancellation, accessibility actions, system-tab commands, and
+  mutation terminals remain FIFO and non-droppable.
+- A drain handles at most 64 events before yielding and scheduling another foreground wake.
+- A close barrier settles retained mutation tickets and retires the full ID before a reused slot
+  can receive callbacks.
+- Platform-command FIFO sequencing is separate for diagnostics, but dispatch waits for older
+  ingress barriers. Commands enqueued by a command append rather than recurse, and each backend
+  attempt terminates as accepted or rejected.
+
+The component-side constraints are also recorded in the
+[Open GPUI Component Contract](component-contract.md#native-window-callback-boundary).
+
 ## Deterministic Collection Typeahead
 
 Collection typeahead now uses one crate-private, instance-owned session with GPUI executor time.

@@ -287,6 +287,10 @@ impl DockViewportDropRouteRequest {
         self.platform_signals.event_receiver_window()
     }
 
+    pub(crate) fn frame_sampling_exclusion_window(&self) -> Option<WindowId> {
+        self.platform_signals.frame_sampling_exclusion_window()
+    }
+
     pub(crate) fn allows_focus_stamp_fallback(&self) -> bool {
         self.platform_signals.allows_focus_stamp_fallback()
     }

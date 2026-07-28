@@ -189,7 +189,9 @@ impl DockHost {
             .is_some_and(|session| self.finish_payload_drag_session(session, window, cx));
         let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
         let local_preview_cleared = self.clear_drop_preview_interaction();
-        let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+        let routed_preview_cleared = self
+            .viewport_runtime()
+            .clear_routed_drop_preview_from_window(window, cx);
         outside_poll_cleared
             || session_changed
             || anchor_cleared
@@ -277,7 +279,8 @@ impl DockHost {
             DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
                 self.finish_payload_drag_session(&drag_session, window, cx);
                 self.clear_drop_preview_interaction();
-                self.viewport_runtime().clear_routed_drop_preview(cx);
+                self.viewport_runtime()
+                    .clear_routed_drop_preview_from_window(window, cx);
                 true
             }
             DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
@@ -295,9 +298,8 @@ impl DockHost {
     ) -> bool {
         let drag_session = release.drag_session().cloned();
         self.interaction_mut().cancel_outside_release_poll();
-        let changed = self
-            .commit_payload_drop_interaction(release, window, cx)
-            .finish(cx);
+        let outcome = self.commit_payload_drop_interaction(release, window, cx);
+        let changed = outcome.finish_from_window(self, window, cx);
         let session_changed = drag_session
             .as_ref()
             .is_some_and(|session| self.finish_payload_drag_session(session, window, cx));
@@ -330,7 +332,9 @@ impl DockHost {
             let outside_poll_started =
                 self.schedule_outside_release_poll_from_host(payload, window, cx);
             let local_preview_cleared = self.clear_drop_preview_interaction();
-            let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+            let routed_preview_cleared = self
+                .viewport_runtime()
+                .clear_routed_drop_preview_from_window(window, cx);
             return crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
                 outside_poll_started || local_preview_cleared || routed_preview_cleared,
             )
@@ -462,7 +466,9 @@ impl DockHost {
             let outside_poll_cleared = self.interaction_mut().cancel_outside_release_poll();
             let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
             let local_preview_cleared = self.clear_drop_preview_interaction();
-            let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+            let routed_preview_cleared = self
+                .viewport_runtime()
+                .clear_routed_drop_preview_from_window(window, cx);
             session_cleared
                 || outside_poll_cleared
                 || anchor_cleared

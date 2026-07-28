@@ -3,6 +3,7 @@ use open_gpui_core_util::post_inc;
 use std::{
     cell::{Cell, RefCell},
     fmt::Debug,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     rc::Rc,
 };
 
@@ -121,16 +122,19 @@ where
             return;
         };
 
-        subscribers.retain(|_, subscriber| {
-            if !subscriber.active.get() {
-                return true;
-            }
-            if subscriber.dropped.get() {
-                return false;
-            }
-            let keep = f(&mut subscriber.callback);
-            keep && !subscriber.dropped.get()
-        });
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            subscribers.retain(|_, subscriber| {
+                if !subscriber.active.get() {
+                    return true;
+                }
+                if subscriber.dropped.get() {
+                    return false;
+                }
+                let keep = f(&mut subscriber.callback);
+                keep && !subscriber.dropped.get()
+            });
+        }));
+        subscribers.retain(|_, subscriber| !subscriber.dropped.get());
         let mut lock = self.0.borrow_mut();
 
         // Add any new subscribers that were added while invoking the callback.
@@ -140,6 +144,11 @@ where
 
         if !subscribers.is_empty() {
             lock.subscribers.insert(emitter.clone(), Some(subscribers));
+        }
+        drop(lock);
+
+        if let Err(payload) = result {
+            resume_unwind(payload);
         }
     }
 }
@@ -203,6 +212,56 @@ impl std::fmt::Debug for Subscription {
 mod tests {
     use super::*;
     use crate::{Global, TestApp};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn panicking_callback_does_not_discard_emitter_subscribers() {
+        let subscribers = SubscriberSet::<(), Box<dyn FnMut()>>::new();
+        let panic_once = Rc::new(Cell::new(true));
+        let first_count = Rc::new(Cell::new(0));
+        let second_count = Rc::new(Cell::new(0));
+        let (first, activate_first) = subscribers.insert(
+            (),
+            Box::new({
+                let panic_once = panic_once.clone();
+                let first_count = first_count.clone();
+                move || {
+                    first_count.set(first_count.get() + 1);
+                    if panic_once.replace(false) {
+                        panic!("injected subscriber panic");
+                    }
+                }
+            }),
+        );
+        let (second, activate_second) = subscribers.insert(
+            (),
+            Box::new({
+                let second_count = second_count.clone();
+                move || second_count.set(second_count.get() + 1)
+            }),
+        );
+        activate_first();
+        activate_second();
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            subscribers.retain(&(), |callback| {
+                callback();
+                true
+            });
+        }));
+        assert!(result.is_err());
+        assert_eq!(first_count.get(), 1);
+        assert_eq!(second_count.get(), 0);
+
+        subscribers.retain(&(), |callback| {
+            callback();
+            true
+        });
+        assert_eq!(first_count.get(), 2);
+        assert_eq!(second_count.get(), 1);
+
+        drop((first, second));
+    }
 
     #[test]
     fn test_unsubscribe_during_callback_with_insert() {

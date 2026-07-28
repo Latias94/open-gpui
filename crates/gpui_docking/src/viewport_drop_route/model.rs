@@ -1,8 +1,8 @@
 use crate::{
-    DockActionApplyError, DockPolicy, DockPolicyError, DockViewportRouteSelectionSource,
-    DockViewportTargetContext, DockViewportTargetHit,
+    DockActionApplyError, DockPolicy, DockPolicyError, DockViewportRouteProof,
+    DockViewportRouteSelectionSource, DockViewportTargetContext, DockViewportTargetHit,
 };
-use open_gpui::{Pixels, Point, WindowId};
+use open_gpui::{Pixels, Point};
 
 /// Runtime route for a rendered drag release before workspace mutation.
 #[derive(Debug, Clone, PartialEq)]
@@ -11,10 +11,8 @@ pub(crate) enum DockViewportDropRoute {
     Local {
         /// Local host position for the release.
         host_position: Point<Pixels>,
-        /// GPUI window that rendered the local source viewport.
-        window_id: WindowId,
-        /// Route-facts generation that was current for the local source viewport.
-        facts_generation: u64,
+        /// Exact viewport registration and route-facts generation that selected this target.
+        route_proof: DockViewportRouteProof,
         /// Source that selected the local source viewport.
         source: DockViewportRouteSelectionSource,
     },
@@ -125,6 +123,48 @@ impl DockViewportDropRouteResolution {
 }
 
 impl DockViewportDropRoute {
+    #[cfg(test)]
+    pub(crate) fn local_for_registration_test(
+        registration_key: crate::viewport_registry::DockViewportRegistrationKey,
+        host_position: Point<Pixels>,
+        facts_generation: u64,
+        source: DockViewportRouteSelectionSource,
+    ) -> Self {
+        Self::Local {
+            host_position,
+            route_proof: DockViewportRouteProof::new(registration_key, facts_generation),
+            source,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn local_for_test(
+        space: impl Into<crate::DockSpaceId>,
+        window_id: open_gpui::WindowId,
+        host_position: Point<Pixels>,
+        facts_generation: u64,
+        source: DockViewportRouteSelectionSource,
+    ) -> Self {
+        Self::Local {
+            host_position,
+            route_proof: DockViewportRouteProof::for_test_registration_generation(
+                space.into(),
+                window_id,
+                1,
+                facts_generation,
+            ),
+            source,
+        }
+    }
+
+    pub(crate) fn route_proof(&self) -> Option<&DockViewportRouteProof> {
+        match self {
+            Self::Local { route_proof, .. } => Some(route_proof),
+            Self::KnownViewport { target, .. } => Some(target.route_proof()),
+            Self::TearOff | Self::Unavailable | Self::Rejected(_) => None,
+        }
+    }
+
     pub(crate) fn delivery_error(&self) -> DockActionApplyError {
         match self {
             Self::Rejected(error) => DockActionApplyError::Policy(error.clone()),

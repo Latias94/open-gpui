@@ -711,12 +711,22 @@ pub(crate) fn cache_known_viewport_preview(
     drag_session: Option<DockRuntimeDragSession>,
     payload_title: &str,
 ) -> crate::DockViewportResolvedDropRoute {
-    let drag_payload = DockDragPayload::new_item(
-        source_space.clone(),
-        source_node,
-        item("__test__"),
-        payload_title.to_string(),
-    );
+    let drag_payload = match &payload {
+        DockViewportDropPayload::Item(item) => DockDragPayload::new_item(
+            source_space.clone(),
+            source_node,
+            item.clone(),
+            payload_title.to_string(),
+        ),
+        DockViewportDropPayload::Tabs => {
+            DockDragPayload::new_tabs(source_space.clone(), source_node, payload_title.to_string())
+        }
+        DockViewportDropPayload::Floating(floating) => DockDragPayload::new_floating(
+            source_space.clone(),
+            *floating,
+            payload_title.to_string(),
+        ),
+    };
     cache_known_viewport_preview_with_payload(
         cx,
         runtime,
@@ -741,6 +751,8 @@ pub(crate) fn cache_known_viewport_preview_with_payload(
     drag_session: Option<DockRuntimeDragSession>,
     drag_payload: &DockDragPayload,
 ) -> crate::DockViewportResolvedDropRoute {
+    let drag_session =
+        Some(drag_session.unwrap_or_else(|| runtime.begin_payload_drag(drag_payload)));
     let request = DockViewportDropRouteRequest::from_target_context(
         source_space,
         source_node,
@@ -750,7 +762,8 @@ pub(crate) fn cache_known_viewport_preview_with_payload(
         DockViewportTargetContext::new().with_trusted_hovered_window(hovered_window),
     )
     .with_drag_session(drag_session);
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+    let (mut resolution, mut preview_changed) = cx
+        .update(|app| runtime.resolve_and_update_routed_drop_preview(&request, drag_payload, app));
     assert!(
         matches!(
             resolution.route(),
@@ -759,17 +772,28 @@ pub(crate) fn cache_known_viewport_preview_with_payload(
         "preview setup should resolve a known viewport route, got {:?}",
         resolution.route()
     );
-    let preview_changed =
-        cx.update(|app| runtime.update_routed_drop_preview(&resolution, drag_payload, app));
     let preview_target = resolution
         .routed_preview_target_snapshot()
         .expect("known viewport preview should carry a routed preview target");
-    let target_space = preview_target.target_space();
+    let target_space = preview_target.target_space().clone();
     let target_window_id = preview_target
         .target_window_id()
         .expect("known viewport preview should target a window");
-    let preview = runtime.routed_drop_preview_for(target_space, target_window_id);
-    let _ = (preview_changed, preview);
+    if runtime
+        .routed_drop_preview_for(&target_space, target_window_id)
+        .is_none()
+    {
+        let (settled_resolution, settled_changed) = cx.update(|app| {
+            runtime.resolve_and_update_routed_drop_preview(&request, drag_payload, app)
+        });
+        resolution = settled_resolution;
+        preview_changed |= settled_changed;
+    }
+    let preview = runtime.routed_drop_preview_for(&target_space, target_window_id);
+    assert!(
+        preview.is_some(),
+        "known viewport preview must remain current after caching (changed: {preview_changed}, resolution: {resolution:#?})"
+    );
     resolution
 }
 
@@ -777,22 +801,16 @@ pub(crate) fn cache_host_route_preview(
     cx: &mut TestAppContext,
     runtime: &DockViewportRuntimeHandle,
     resolution: &crate::DockViewportResolvedDropRoute,
-    payload_title: &str,
+    payload: &DockDragPayload,
     host_space: DockSpaceId,
     host_window_id: open_gpui::WindowId,
     host_position: open_gpui::Point<open_gpui::Pixels>,
 ) {
-    let payload = DockDragPayload::new_item(
-        DockSpaceId::from("__test__"),
-        Default::default(),
-        item("__test__"),
-        payload_title.to_string(),
-    );
     cache_host_route_preview_with_payload(
         cx,
         runtime,
         resolution,
-        &payload,
+        payload,
         host_space,
         host_window_id,
         host_position,

@@ -876,22 +876,26 @@ impl X11Client {
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
-                let mut state = self.0.borrow_mut();
+                let atoms = self.0.borrow().atoms;
 
-                if atom == state.atoms.WM_DELETE_WINDOW && window.should_close() {
-                    // window "x" button clicked by user
-                    // Rest of the close logic is handled in drop_window()
-                    drop(state);
-                    window.close();
-                    state = self.0.borrow_mut();
-                } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
+                if event.type_ == atoms.WM_PROTOCOLS && atom == atoms.WM_DELETE_WINDOW {
+                    if window.should_close() {
+                        // Window "x" button clicked by user. The rest of the close logic is
+                        // handled in drop_window().
+                        window.close();
+                    }
+                    return Some(());
+                }
+                if event.type_ == atoms.WM_PROTOCOLS && atom == atoms._NET_WM_SYNC_REQUEST {
                     window.state.borrow_mut().last_sync_counter =
                         Some(x11rb::protocol::sync::Int64 {
                             lo: arg2,
                             hi: arg3 as i32,
-                        })
+                        });
+                    return Some(());
                 }
 
+                let mut state = self.0.borrow_mut();
                 if event.type_ == state.atoms.XdndEnter {
                     state.xdnd_state.other_window = atom;
                     if (arg1 & 0x1) == 0x1 {

@@ -15,7 +15,8 @@ mod runtime_suite {
         DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
         DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
         DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
-        DockViewportWindowActivation, DockViewportWindowFacts, DockWorkspace, SplitAxis,
+        DockViewportWindowActivation, DockViewportWindowCloseEffect, DockViewportWindowFacts,
+        DockWorkspace, SplitAxis,
         drag::{DockDragPayload, DockDragTearOffGeometry},
         drop_runtime::DockHostDropSceneFact,
         drop_target::DockLeafDropTarget,
@@ -39,6 +40,32 @@ mod runtime_suite {
     };
 
     use crate::host_viewport_runtime_test_support::*;
+
+    fn prepare_tear_off_drop_delivery(
+        runtime: &mut DockViewportRuntime,
+        request: DockViewportTearOffRequest,
+        cx: &mut TestAppContext,
+    ) -> Result<crate::viewport_runtime::DockViewportPreparedTearOffDrop, DockActionApplyError>
+    {
+        let controller = runtime.controller_entity();
+        let graph_spaces = cx.read_entity(&controller, |controller, _| controller.graph().spaces());
+        let probe = runtime.prepare_tear_off_drop_delivery(request, &graph_spaces)?;
+        cx.update(|app| probe.sample(app))
+    }
+
+    fn prepare_tear_off_drop_delivery_with_handle(
+        runtime: &DockViewportRuntimeHandle,
+        request: DockViewportTearOffRequest,
+        cx: &mut TestAppContext,
+    ) -> Result<crate::viewport_runtime::DockViewportPreparedTearOffDrop, DockActionApplyError>
+    {
+        let controller = runtime.borrow().controller_entity();
+        let graph_spaces = cx.read_entity(&controller, |controller, _| controller.graph().spaces());
+        let probe = runtime
+            .borrow_mut()
+            .prepare_tear_off_drop_delivery(request, &graph_spaces)?;
+        cx.update(|app| probe.sample(app))
+    }
 
     #[open_gpui::test]
     fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
@@ -394,10 +421,13 @@ mod runtime_suite {
         let mut runtime = DockViewportRuntime::new(controller.clone());
 
         let request = tear_off_request(primary_space.clone(), source_tabs, item("a"));
-        let key = request.key();
-        runtime.begin_tear_off_request_with_focus(request, detached_space.clone(), None);
+        let DockViewportTearOffBeginOutcome::Pending(pending) =
+            runtime.begin_tear_off_request_with_focus(request, detached_space.clone(), None)
+        else {
+            panic!("pending tear-off request should begin");
+        };
         let cancelled = runtime
-            .cancel_tear_off_request(&key, DockViewportTearOffCancelReason::Cancelled)
+            .cancel_tear_off_pending(&pending, DockViewportTearOffCancelReason::Cancelled)
             .expect("pending tear-off request should cancel");
 
         assert_eq!(
@@ -776,7 +806,8 @@ mod runtime_suite {
 
         let registration = runtime
             .borrow_mut()
-            .register_opened_viewport_with_cleanup(target_space.clone(), source_opened.window());
+            .register_opened_viewport_with_cleanup(target_space.clone(), source_opened.window())
+            .expect("unreserved replacement registration should succeed");
         let effects = registration.window_effects();
 
         assert_eq!(registration.outcome.space(), &target_space);
@@ -802,7 +833,11 @@ mod runtime_suite {
                     reason: crate::DockViewportUnregisterReason::Replaced,
                 })
         );
-        assert_eq!(effects.close_now(), &[target_opened.window()]);
+        assert_eq!(effects.close_now().len(), 1);
+        assert_eq!(
+            effects.close_now().first().map(|effect| effect.window()),
+            Some(target_opened.window())
+        );
         assert!(effects.refresh().is_empty());
         assert_eq!(
             runtime.borrow().adapter().window_for_space(&source_space),
@@ -897,7 +932,7 @@ mod runtime_suite {
             None,
         );
 
-        let result = cx.update(|app| runtime.prepare_tear_off_drop_delivery(request, app));
+        let result = prepare_tear_off_drop_delivery(&mut runtime, request, cx);
         assert!(matches!(
             result,
             Err(DockActionApplyError::DropDragSessionMissing)
@@ -943,7 +978,7 @@ mod runtime_suite {
         )
         .with_drag_session(Some(stale_session.clone()));
 
-        let result = cx.update(|app| runtime.prepare_tear_off_drop_delivery(request, app));
+        let result = prepare_tear_off_drop_delivery(&mut runtime, request, cx);
         assert!(matches!(
             result,
             Err(DockActionApplyError::DropDragSessionStale { session })
@@ -991,7 +1026,7 @@ mod runtime_suite {
         )
         .with_drag_session(Some(session));
 
-        let result = cx.update(|app| runtime.prepare_tear_off_drop_delivery(request, app));
+        let result = prepare_tear_off_drop_delivery(&mut runtime, request, cx);
         assert_eq!(
             result.expect_err("tear-off without authoritative placement must be rejected"),
             DockActionApplyError::TearOffViewportPlacementUnavailable
@@ -1050,8 +1085,7 @@ mod runtime_suite {
         .with_tear_off_geometry(Some(geometry))
         .with_drag_session(Some(session));
 
-        let err = cx
-            .update(|app| runtime.prepare_tear_off_drop_delivery(request, app))
+        let err = prepare_tear_off_drop_delivery(&mut runtime, request, cx)
             .expect_err("dock class policy should reject prepared tear-off");
         assert_eq!(
             err,
@@ -1112,12 +1146,7 @@ mod runtime_suite {
         .with_tear_off_geometry(Some(geometry))
         .with_drag_session(Some(session));
 
-        let prepared = cx
-            .update(|app| {
-                runtime
-                    .borrow_mut()
-                    .prepare_tear_off_drop_delivery(request, app)
-            })
+        let prepared = prepare_tear_off_drop_delivery_with_handle(&runtime, request, cx)
             .expect("active drag session should prepare tear-off delivery");
         assert_eq!(
             prepared.focus_item(),
@@ -1174,12 +1203,7 @@ mod runtime_suite {
         .with_tear_off_geometry(Some(geometry))
         .with_drag_session(Some(session));
 
-        let prepared = cx
-            .update(|app| {
-                runtime
-                    .borrow_mut()
-                    .prepare_tear_off_drop_delivery(request, app)
-            })
+        let prepared = prepare_tear_off_drop_delivery_with_handle(&runtime, request, cx)
             .expect("active drag session should prepare tear-off delivery");
         assert_eq!(
             prepared.focus_item(),
@@ -1744,9 +1768,8 @@ mod handle_suite {
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
         let request = tear_off_request(primary_space.clone(), source_tabs, item("a"));
         let pending = cx.update(|app| {
-            let DockViewportTearOffBeginOutcome::Pending(pending) = runtime
-                .borrow_mut()
-                .begin_tear_off_request(request, detached_space.clone(), app)
+            let DockViewportTearOffBeginOutcome::Pending(pending) =
+                runtime.begin_tear_off_request_for_test(request, detached_space.clone(), app)
             else {
                 panic!("fresh tear-off request should create pending state");
             };
@@ -1756,10 +1779,7 @@ mod handle_suite {
         assert!(
             runtime
                 .borrow_mut()
-                .cancel_tear_off_request(
-                    &pending.request().key(),
-                    DockViewportTearOffCancelReason::Cancelled,
-                )
+                .cancel_tear_off_pending(&pending, DockViewportTearOffCancelReason::Cancelled,)
                 .is_some()
         );
         assert_eq!(runtime.borrow().pending_tear_off_len(), 0);
@@ -1785,8 +1805,8 @@ mod handle_suite {
         assert!(
             error
                 .to_string()
-                .contains("dock drop target is not currently available"),
-            "cancelled pending tear-off should report unavailable target, got {error}"
+                .contains("did not own the target reservation"),
+            "cancelled pending tear-off should report its expired reservation, got {error}"
         );
         cx.run_until_parked();
         cx.update(|app| app.refresh_windows());

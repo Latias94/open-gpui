@@ -1,8 +1,11 @@
 use crate::{
     DockHost, DockSpaceId, DockViewportFocusCommand, DockViewportFocusCommandSource,
     DockViewportFocusRequest, surface::DockSurfaceActivationBinding,
+    viewport_registry::DockViewportRegistrationKey,
 };
-use open_gpui::{AnyWindowHandle, App, PlatformFocusedWindow, WeakEntity, WindowId};
+use open_gpui::{
+    AnyWindowHandle, App, Context, PlatformFocusedWindow, WeakEntity, Window, WindowId,
+};
 use std::{cell::Cell, rc::Rc};
 
 /// Platform activation policy for a runtime viewport activation transaction.
@@ -44,12 +47,13 @@ impl DockViewportActivationBackendFocusObservation {
 /// Runtime viewport activation transaction selected by drop, tear-off, or close recovery.
 ///
 /// Creating this value records intent only. Platform activation and host focus are applied only by
-/// [`apply_viewport_activation_transaction`], after the viewport registration and graph mutation
-/// are complete.
+/// [`apply_viewport_activation_transaction`] or
+/// [`apply_viewport_activation_transaction_from_window`], after the viewport registration and
+/// graph mutation are complete.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportActivationTransaction {
-    /// Logical dock space to activate.
-    space: DockSpaceId,
+    /// Exact logical-space-to-window registration that owns this activation.
+    registration: DockViewportRegistrationKey,
     /// GPUI window rendering the logical dock space.
     window: AnyWindowHandle,
     /// Whether applying this target should request platform window activation.
@@ -67,58 +71,102 @@ pub(crate) struct DockViewportActivationTransaction {
 }
 
 impl DockViewportActivationTransaction {
-    pub(crate) fn new(
-        space: impl Into<DockSpaceId>,
+    pub(crate) fn registered(
+        registration: DockViewportRegistrationKey,
         window: impl Into<AnyWindowHandle>,
         focus_request: DockViewportFocusRequest,
     ) -> Self {
-        Self {
-            space: space.into(),
-            window: window.into(),
-            window_activation: DockViewportWindowActivation::Request,
-            focus_source: DockViewportFocusCommandSource::ViewportActivation,
+        Self::with_policy(
+            registration,
+            window.into(),
+            DockViewportWindowActivation::Request,
+            DockViewportFocusCommandSource::ViewportActivation,
             focus_request,
-            target_host: None,
-            surface_activation: None,
-        }
+            None,
+            None,
+        )
     }
 
     pub(crate) fn close_recovery(
-        space: impl Into<DockSpaceId>,
+        registration: DockViewportRegistrationKey,
         window: impl Into<AnyWindowHandle>,
         focus_request: DockViewportFocusRequest,
     ) -> Self {
-        Self {
-            space: space.into(),
-            window: window.into(),
-            window_activation: DockViewportWindowActivation::DoNotRequest,
-            focus_source: DockViewportFocusCommandSource::CloseRecovery,
+        Self::with_policy(
+            registration,
+            window.into(),
+            DockViewportWindowActivation::DoNotRequest,
+            DockViewportFocusCommandSource::CloseRecovery,
             focus_request,
-            target_host: None,
-            surface_activation: None,
-        }
+            None,
+            None,
+        )
     }
 
     pub(crate) fn surface_activation(
-        space: impl Into<DockSpaceId>,
+        registration: DockViewportRegistrationKey,
         window: impl Into<AnyWindowHandle>,
         focus_request: DockViewportFocusRequest,
         binding: DockSurfaceActivationBinding,
         target_host: WeakEntity<DockHost>,
     ) -> Self {
-        Self {
-            space: space.into(),
-            window: window.into(),
-            window_activation: DockViewportWindowActivation::Request,
-            focus_source: DockViewportFocusCommandSource::ViewportActivation,
+        Self::with_policy(
+            registration,
+            window.into(),
+            DockViewportWindowActivation::Request,
+            DockViewportFocusCommandSource::ViewportActivation,
             focus_request,
-            target_host: Some(target_host),
-            surface_activation: Some(binding),
+            Some(target_host),
+            Some(binding),
+        )
+    }
+
+    fn with_policy(
+        registration: DockViewportRegistrationKey,
+        window: AnyWindowHandle,
+        window_activation: DockViewportWindowActivation,
+        focus_source: DockViewportFocusCommandSource,
+        focus_request: DockViewportFocusRequest,
+        target_host: Option<WeakEntity<DockHost>>,
+        surface_activation: Option<DockSurfaceActivationBinding>,
+    ) -> Self {
+        debug_assert_eq!(
+            registration.window_id(),
+            window.window_id(),
+            "viewport activation registration must belong to its target window"
+        );
+        Self {
+            registration,
+            window,
+            window_activation,
+            focus_source,
+            focus_request,
+            target_host,
+            surface_activation,
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new(
+        space: impl Into<DockSpaceId>,
+        window: impl Into<AnyWindowHandle>,
+        focus_request: DockViewportFocusRequest,
+    ) -> Self {
+        let space = space.into();
+        let window = window.into();
+        Self::registered(
+            DockViewportRegistrationKey::for_test(space, window.window_id()),
+            window,
+            focus_request,
+        )
+    }
+
     pub(crate) fn space(&self) -> &DockSpaceId {
-        &self.space
+        self.registration.space()
+    }
+
+    pub(crate) fn registration_key(&self) -> &DockViewportRegistrationKey {
+        &self.registration
     }
 
     pub(crate) fn window(&self) -> AnyWindowHandle {
@@ -153,11 +201,11 @@ impl DockViewportActivationTransaction {
     }
 
     pub(crate) fn window_id(&self) -> WindowId {
-        self.window.window_id()
+        self.registration.window_id()
     }
 
     pub(crate) fn matches_window(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
-        self.space() == space && self.window_id() == window_id
+        self.registration.space() == space && self.registration.window_id() == window_id
     }
 }
 
@@ -273,11 +321,22 @@ fn apply_activation_to_host(
 ) {
     if host.space() != transaction.space()
         || window.window_handle() != transaction.window()
+        || transaction.window_id() != transaction.window().window_id()
         || transaction
             .target_host()
             .is_some_and(|target| target.entity_id() != cx.entity().entity_id())
     {
         outcome.set(DockViewportActivationApplyOutcome::SpaceMismatch);
+        return;
+    }
+    let registration_is_current = |host: &DockHost| {
+        host.viewport_runtime()
+            .registration_key_for_space_window(transaction.space(), transaction.window_id())
+            .as_ref()
+            == Some(transaction.registration_key())
+    };
+    if !registration_is_current(host) {
+        outcome.set(DockViewportActivationApplyOutcome::NoTarget);
         return;
     }
     // Validate a surface activation before touching backend-focus state. A queued callback from
@@ -299,11 +358,19 @@ fn apply_activation_to_host(
         .apply_activation_backend_focus(transaction, backend_focus);
     host.viewport_runtime()
         .settle_backend_focus_cancellation_in_context(cx);
+    if !registration_is_current(host) {
+        outcome.set(DockViewportActivationApplyOutcome::NoTarget);
+        return;
+    }
     let focus_changed = if backend_focus.target_focused() {
         host.request_viewport_focus_command_in_context(focus_command.clone(), cx)
     } else {
         false
     };
+    if !registration_is_current(host) {
+        outcome.set(DockViewportActivationApplyOutcome::NoTarget);
+        return;
+    }
     let window_activation_requested = should_activate_window && !backend_focus.target_focused();
     if window_activation_requested {
         window.activate_window();
@@ -321,6 +388,58 @@ fn apply_activation_to_host(
     }
 }
 
+fn focus_command_for_transaction(
+    transaction: &DockViewportActivationTransaction,
+) -> DockViewportFocusCommand {
+    match transaction.surface_activation_binding() {
+        Some(binding) => DockViewportFocusCommand::surface_activation(
+            transaction.focus_request().clone(),
+            binding.clone(),
+        ),
+        None => DockViewportFocusCommand::new(
+            transaction.focus_source(),
+            transaction.focus_request().clone(),
+        ),
+    }
+}
+
+/// Applies an activation without re-entering a host window already owned by its event callback.
+///
+/// Only the exact current host/window target uses the borrowed values. Every other target keeps
+/// the generic window lookup path, including its normal unavailable-window outcome.
+pub(crate) fn apply_viewport_activation_transaction_from_window(
+    transaction: Option<DockViewportActivationTransaction>,
+    current_host: &mut DockHost,
+    current_window: &mut Window,
+    cx: &mut Context<DockHost>,
+) -> DockViewportActivationApplyOutcome {
+    let Some(transaction) = transaction else {
+        return DockViewportActivationApplyOutcome::NoTarget;
+    };
+    let current_window_handle = current_window.window_handle();
+    let targets_current_host = transaction.window() == current_window_handle
+        && transaction.matches_window(current_host.space(), current_window_handle.window_id())
+        && transaction
+            .target_host()
+            .is_none_or(|target| target.entity_id() == cx.entity().entity_id());
+    if !targets_current_host {
+        return apply_viewport_activation_transaction(Some(transaction), cx);
+    }
+
+    let focus_command = focus_command_for_transaction(&transaction);
+    let outcome = Cell::new(DockViewportActivationApplyOutcome::WindowUnavailable);
+    apply_activation_to_host(
+        &transaction,
+        &focus_command,
+        transaction.requests_window_activation(),
+        current_host,
+        current_window,
+        cx,
+        &outcome,
+    );
+    outcome.get()
+}
+
 /// Applies a viewport activation transaction to the matching runtime host window.
 ///
 /// Returns a structured outcome so lifecycle code can distinguish no-op from stale transactions.
@@ -332,16 +451,7 @@ pub(crate) fn apply_viewport_activation_transaction(
         return DockViewportActivationApplyOutcome::NoTarget;
     };
 
-    let focus_command = match transaction.surface_activation_binding() {
-        Some(binding) => DockViewportFocusCommand::surface_activation(
-            transaction.focus_request().clone(),
-            binding.clone(),
-        ),
-        None => DockViewportFocusCommand::new(
-            transaction.focus_source(),
-            transaction.focus_request().clone(),
-        ),
-    };
+    let focus_command = focus_command_for_transaction(&transaction);
     let window_activation = transaction.window_activation();
     let outcome = Rc::new(Cell::new(
         DockViewportActivationApplyOutcome::WindowUnavailable,
@@ -403,7 +513,19 @@ mod tests {
         DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusRequest,
         host_test_support::{open_host, space, tabs_graph},
     };
-    use open_gpui::{AppContext as _, TestAppContext, px, size};
+    use open_gpui::{AppContext as _, Entity, TestAppContext, px, size};
+
+    fn current_registration(
+        cx: &TestAppContext,
+        host: &Entity<DockHost>,
+        window_id: WindowId,
+    ) -> DockViewportRegistrationKey {
+        cx.read_entity(host, |host, _| {
+            host.viewport_runtime()
+                .registration_key_for_space_window(host.space(), window_id)
+        })
+        .expect("open host should have an exact viewport registration")
+    }
 
     fn unchanged_backend_focus_apply() -> DockViewportActivationBackendFocusApply {
         DockViewportActivationBackendFocusApply::default()
@@ -439,6 +561,106 @@ mod tests {
     }
 
     #[open_gpui::test]
+    fn current_window_activation_applies_without_reborrowing_the_window(cx: &mut TestAppContext) {
+        let (graph, _) = tabs_graph(&["a"]);
+        let (window, host, _visual) = open_host(
+            cx,
+            graph,
+            &[("a", "Panel A", "A")],
+            size(px(320.0), px(240.0)),
+        );
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+
+        let outcome = window
+            .update(cx, |host, window, cx| {
+                apply_viewport_activation_transaction_from_window(
+                    Some(activation),
+                    host,
+                    window,
+                    cx,
+                )
+            })
+            .expect("current viewport window should remain available");
+
+        assert_ne!(
+            outcome,
+            DockViewportActivationApplyOutcome::WindowUnavailable,
+            "the event receiver already owns the current window, so activation must not reborrow it"
+        );
+        assert!(
+            matches!(outcome, DockViewportActivationApplyOutcome::Applied { .. }),
+            "the exact current host/window activation should be applied"
+        );
+    }
+
+    #[open_gpui::test]
+    fn activation_rejects_replaced_registration_with_same_space_and_window(
+        cx: &mut TestAppContext,
+    ) {
+        let (graph, _) = tabs_graph(&["a"]);
+        let (window, host, _visual) = open_host(
+            cx,
+            graph,
+            &[("a", "Panel A", "A")],
+            size(px(320.0), px(240.0)),
+        );
+        let window: AnyWindowHandle = window.into();
+        let runtime = cx.read_entity(&host, |host, _| host.viewport_runtime().clone());
+        let first_registration = current_registration(cx, &host, window.window_id());
+        let first = DockViewportActivationTransaction::registered(
+            first_registration.clone(),
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+
+        let second_registration = {
+            let mut runtime = runtime.borrow_mut();
+            runtime.unregister_adapter_window_for_test(window.window_id());
+            runtime
+                .register_opened_viewport_with_cleanup(space(), window)
+                .expect("replacement registration should succeed")
+                .outcome
+                .registration_key()
+                .clone()
+        };
+        assert_ne!(first_registration, second_registration);
+        let second = DockViewportActivationTransaction::registered(
+            second_registration,
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+
+        let first_outcome =
+            cx.update(|app| apply_viewport_activation_transaction(Some(first), app));
+        let after_first = cx.read_entity(&host, |host, _| {
+            (
+                host.pending_focus_command().is_some(),
+                host.viewport_runtime().pending_activation().is_some(),
+            )
+        });
+        let second_outcome =
+            cx.update(|app| apply_viewport_activation_transaction(Some(second), app));
+
+        assert_eq!(first_outcome, DockViewportActivationApplyOutcome::NoTarget);
+        assert_eq!(
+            after_first,
+            (false, false),
+            "a stale registration lease must not mutate host or backend-focus state"
+        );
+        assert!(
+            matches!(
+                second_outcome,
+                DockViewportActivationApplyOutcome::Applied { .. }
+            ),
+            "the replacement registration lease should remain activatable"
+        );
+    }
+
+    #[open_gpui::test]
     fn activation_request_waits_for_backend_focus_before_restore(cx: &mut TestAppContext) {
         let (graph, _) = tabs_graph(&["a"]);
         let (window, host, _visual) = open_host(
@@ -447,8 +669,8 @@ mod tests {
             &[("a", "Panel A", "A")],
             size(px(320.0), px(240.0)),
         );
-        let activation = DockViewportActivationTransaction::new(
-            space(),
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -495,8 +717,8 @@ mod tests {
             size(px(320.0), px(240.0)),
         );
         cx.set_platform_focused_window_available(false);
-        let activation = DockViewportActivationTransaction::new(
-            space(),
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -525,7 +747,7 @@ mod tests {
         );
         assert_eq!(pending_request, None);
         let pending_activation = pending_activation.expect("pending activation should remain");
-        assert_eq!(pending_activation.space, space());
+        assert_eq!(pending_activation.space(), &space());
         assert_eq!(pending_activation.window_id(), window.window_id());
         assert_eq!(
             pending_activation.focus_request().clone(),
@@ -545,8 +767,8 @@ mod tests {
             &[("a", "Panel A", "A")],
             size(px(320.0), px(240.0)),
         );
-        let activation = DockViewportActivationTransaction::new(
-            space(),
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -594,8 +816,8 @@ mod tests {
                 DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("a"))
             ));
         });
-        let activation = DockViewportActivationTransaction::new(
-            space(),
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -630,8 +852,8 @@ mod tests {
             &[("a", "Panel A", "A")],
             size(px(320.0), px(240.0)),
         );
-        let activation = DockViewportActivationTransaction::new(
-            space(),
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -718,8 +940,8 @@ mod tests {
                 DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("a"))
             ));
         });
-        let activation = DockViewportActivationTransaction::new(
-            space(),
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -780,8 +1002,8 @@ mod tests {
             ));
         });
         visual.deactivate_window();
-        let activation = DockViewportActivationTransaction::new(
-            space(),
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -828,7 +1050,7 @@ mod tests {
         visual.deactivate_window();
         cx.set_platform_focused_window_available(false);
         let activation = DockViewportActivationTransaction::close_recovery(
-            space(),
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
@@ -876,7 +1098,7 @@ mod tests {
         );
         visual.deactivate_window();
         let activation = DockViewportActivationTransaction::close_recovery(
-            space(),
+            current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );

@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     ops::Range,
+    panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     sync::Arc,
 };
@@ -9,11 +10,13 @@ use crate::{
     AnyDrag, AnyView, App, AppContext as _, Bounds, Context, DispatchPhase, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, HitboxBehavior, InputHandler, InteractiveElement,
     InteractiveText, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput, Point,
-    PointerCancelEvent, PointerCancelReason, PointerCaptureError, PointerCaptureHandle,
-    PromptLevel, PromptResponse, Render, StatefulInteractiveElement, StyleRefinement, Styled,
-    StyledText, SubtreePresentation, SubtreePresentationExt, TestAppContext, UTF16Selection,
-    VisualContext, Window, WindowMouseEvent, canvas, deferred, div, point, px, size,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NativeBoundaryDiagnosticCursor,
+    NativeBoundaryDisposition, NativeBoundaryKind, NativeBoundaryTarget, NativePlatformCommandKind,
+    ParentElement, Pixels, PlatformInput, Point, PointerCancelEvent, PointerCancelReason,
+    PointerCaptureError, PointerCaptureHandle, PromptLevel, PromptResponse, Render,
+    StatefulInteractiveElement, StyleRefinement, Styled, StyledText, SubtreePresentation,
+    SubtreePresentationExt, TestAppContext, UTF16Selection, VisualContext, Window,
+    WindowMouseEvent, canvas, deferred, div, point, px, size,
 };
 
 crate::actions!(pointer_session_actions, [RemoveWindowWithPointer]);
@@ -350,6 +353,8 @@ struct TextInputWindowRemovalProbe {
 struct MarkedTextWindowRemovalProbe {
     focus: FocusHandle,
     lifecycle: Rc<RefCell<Vec<&'static str>>>,
+    remove_on_marked_text: bool,
+    activate_on_marked_text: bool,
 }
 
 struct SwitchingMarkedTextProbe {
@@ -444,6 +449,7 @@ impl InputHandler for SwitchingMarkedTextInputHandler {
 struct WindowRemovalInputHandler {
     lifecycle: Rc<RefCell<Vec<&'static str>>>,
     remove_on_marked_text: bool,
+    activate_on_marked_text: bool,
 }
 
 impl InputHandler for WindowRemovalInputHandler {
@@ -493,6 +499,9 @@ impl InputHandler for WindowRemovalInputHandler {
         cx: &mut App,
     ) {
         self.lifecycle.borrow_mut().push("marked-input");
+        if self.activate_on_marked_text {
+            window.activate_window();
+        }
         if self.remove_on_marked_text {
             window.remove_window(cx);
             self.lifecycle.borrow_mut().push("marked-input-returned");
@@ -622,6 +631,7 @@ impl Render for TextInputWindowRemovalProbe {
         let input_handler = WindowRemovalInputHandler {
             lifecycle: self.lifecycle.clone(),
             remove_on_marked_text: false,
+            activate_on_marked_text: false,
         };
         div()
             .id("text-input-window-removal-probe")
@@ -661,7 +671,8 @@ impl Render for MarkedTextWindowRemovalProbe {
         let input_focus = self.focus.clone();
         let input_handler = WindowRemovalInputHandler {
             lifecycle: self.lifecycle.clone(),
-            remove_on_marked_text: true,
+            remove_on_marked_text: self.remove_on_marked_text,
+            activate_on_marked_text: self.activate_on_marked_text,
         };
 
         div()
@@ -1930,6 +1941,131 @@ fn simulated_marked_text_preserves_the_platform_input_handler_without_redraw(
 }
 
 #[open_gpui::test]
+fn platform_input_handler_root_barrier_drains_queued_window_command(cx: &mut TestAppContext) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let (view, mut cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |_, cx| MarkedTextWindowRemovalProbe {
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_marked_text: false,
+            activate_on_marked_text: true,
+        }
+    });
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let window_id = cx.window_handle().window_id();
+    let diagnostic_cursor = cx.update(|_, app| {
+        app.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    let input_handler_slot = cx
+        .update(|window, _| window.platform_window.input_handler_slot_for_test())
+        .expect("test platform should expose its input-handler slot");
+
+    input_handler_slot
+        .with_handler(|input_handler| {
+            input_handler.replace_and_mark_text_in_range(None, "activate", None)
+        })
+        .expect("focused probe should install a platform input handler");
+
+    assert_eq!(lifecycle.borrow().as_slice(), &["marked-input"]);
+    let diagnostic_delta = cx.update(|_, app| app.native_boundary_diagnostics(diagnostic_cursor));
+    let activation = diagnostic_delta
+        .terminal
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.target == NativeBoundaryTarget::Window(window_id)
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
+        })
+        .expect("the root input-handler barrier must deliver its queued activate command");
+    assert_eq!(
+        activation.disposition,
+        NativeBoundaryDisposition::Delivered { input_result: None }
+    );
+}
+
+#[open_gpui::test]
+fn retired_platform_input_handler_slot_records_one_typed_terminal_diagnostic(
+    cx: &mut TestAppContext,
+) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let (view, mut cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |_, cx| MarkedTextWindowRemovalProbe {
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_marked_text: false,
+            activate_on_marked_text: false,
+        }
+    });
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let window_id = cx.window_handle().window_id();
+    let input_handler_slot = cx
+        .update(|window, _| window.platform_window.input_handler_slot_for_test())
+        .expect("test platform should expose its input-handler slot");
+    let diagnostic_cursor = cx
+        .app
+        .native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+        .cursor;
+
+    cx.update(|window, app| window.remove_window(app));
+    assert!(cx.windows().is_empty());
+    let panic = catch_unwind(AssertUnwindSafe(|| input_handler_slot.with_handler(|_| ())))
+        .expect_err("entering a retired platform input-handler slot must panic");
+    let violation = panic
+        .downcast_ref::<crate::NativeInputInvariantViolation>()
+        .expect("retired slot panic must preserve the typed invariant violation");
+    assert_eq!(violation.window_id, window_id);
+    assert_eq!(violation.boundary, crate::NativeInputBoundary::InputHandler);
+    assert_eq!(
+        violation.failure,
+        crate::NativeInvariantFailure::RetiredSlot
+    );
+
+    let diagnostic_delta = cx.app.native_boundary_diagnostics(diagnostic_cursor);
+    let retired_diagnostics = diagnostic_delta
+        .terminal
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.target == NativeBoundaryTarget::Window(window_id)
+                && diagnostic.kind
+                    == NativeBoundaryKind::Callback(
+                        crate::NativeCallbackKind::PlatformInputHandlerSlot,
+                    )
+                && diagnostic.disposition
+                    == NativeBoundaryDisposition::InvariantFailure(
+                        crate::NativeInvariantFailure::RetiredSlot,
+                    )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        retired_diagnostics.len(),
+        1,
+        "one retired input-handler slot entry must publish exactly one terminal diagnostic"
+    );
+    assert!(matches!(
+        retired_diagnostics[0].domain_generation,
+        Some(crate::NativeBoundaryGeneration::InputSlot {
+            boundary: crate::NativeInputBoundary::InputHandler,
+            generation,
+        }) if Some(generation) == violation.slot_generation
+    ));
+}
+
+#[open_gpui::test]
 fn simulated_marked_text_preserves_handler_installed_during_callback(cx: &mut TestAppContext) {
     let lifecycle = Rc::new(RefCell::new(Vec::new()));
     let (view, mut cx) = cx.add_window_view({
@@ -1966,6 +2102,8 @@ fn simulated_marked_text_returns_after_callback_removes_window(cx: &mut TestAppC
         move |_, cx| MarkedTextWindowRemovalProbe {
             focus: cx.focus_handle(),
             lifecycle,
+            remove_on_marked_text: true,
+            activate_on_marked_text: false,
         }
     });
     cx.update(|window, _| window.activate_window());
@@ -2138,11 +2276,12 @@ fn platform_ime_insert_text_close_waits_for_callback_and_notifies_once(cx: &mut 
         window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
         assert!(window.has_active_pointer_session(cx));
     });
-    let mut input_handler = cx
-        .update(|window, _| window.platform_window.take_input_handler())
+    let input_handler_slot = cx
+        .update(|window, _| window.platform_window.input_handler_slot_for_test())
+        .expect("test platform should expose its input-handler slot");
+    input_handler_slot
+        .with_handler(|input_handler| input_handler.replace_text_in_range(None, "ime"))
         .expect("focused probe should install a platform input handler");
-
-    input_handler.replace_text_in_range(None, "ime");
 
     assert_eq!(
         lifecycle.borrow().as_slice(),

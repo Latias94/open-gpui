@@ -166,8 +166,7 @@ impl DockViewportAdapter {
         if target.space() == request.source_space() {
             return DockViewportDropRoutePlan::route(DockViewportDropRoute::Local {
                 host_position: target.host_position(),
-                window_id: target.window_id(),
-                facts_generation: target.facts_generation(),
+                route_proof: target.route_proof().clone(),
                 source: route_selection_source,
             });
         }
@@ -189,7 +188,7 @@ impl DockViewportAdapter {
             DockEventReceiverLocalSceneRouteContextMode::HitTestedScene,
         )?;
         let receiver_hit = hits.iter().find(|hit| {
-            hit.window_id() == route_context.receiver_window
+            hit.window_id() == route_context.route_proof.window_id()
                 && hit.space() == request.source_space()
         })?;
         Some(DockViewportRouteSelection::event_receiver_local_scene(
@@ -281,10 +280,12 @@ impl DockViewportAdapter {
         if snapshot.window.window_id() != receiver_window {
             return None;
         }
-        if let Some(proof) = proof
-            && !proof.matches_viewport(request.source_space(), receiver_window)
-        {
-            return None;
+        if let Some(proof) = proof {
+            if !proof.matches_viewport(request.source_space(), receiver_window)
+                || proof.registration_key() != &snapshot.registration_key(request.source_space())
+            {
+                return None;
+            }
         }
         let facts_generation = match self
             .snapshot_facts_generation(request.source_space(), receiver_window)
@@ -313,8 +314,10 @@ impl DockViewportAdapter {
             return None;
         }
         Some(DockEventReceiverLocalSceneRouteContext {
-            receiver_window,
-            facts_generation,
+            route_proof: crate::DockViewportRouteProof::new(
+                snapshot.registration_key(request.source_space()),
+                facts_generation,
+            ),
             host_geometry: host_geometry.clone(),
             global_screen_bounds: snapshot.global_screen_bounds(),
         })
@@ -330,18 +333,16 @@ impl DockViewportAdapter {
             if &target.target_space == request.source_space() {
                 return DockViewportDropRoute::Local {
                     host_position: target.host_position,
-                    window_id: target.target_window.window_id(),
-                    facts_generation: target.facts_generation,
+                    route_proof: target.route_proof,
                     source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
                 };
             }
 
             return DockViewportDropRoute::KnownViewport {
-                target: crate::DockViewportTargetHit::with_facts_generation(
-                    target.target_space,
+                target: crate::DockViewportTargetHit::with_route_proof(
                     target.target_window,
                     target.host_position,
-                    target.facts_generation,
+                    target.route_proof,
                 ),
                 source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
             };
@@ -363,11 +364,12 @@ impl DockViewportAdapter {
         let target_window = self.window_for_space(&target_space)?;
         let host_position = self.window_to_host(&target_space, request.release_position())?;
         let facts_generation = self.snapshot_facts_generation(&target_space, receiver_window)?;
+        let registration_key = self.registration_key(&target_space)?;
         Some(DockTrustedHoveredWindowLocalDropTarget {
             target_space,
             target_window,
             host_position,
-            facts_generation,
+            route_proof: crate::DockViewportRouteProof::new(registration_key, facts_generation),
         })
     }
 
@@ -388,10 +390,12 @@ impl DockViewportAdapter {
             else {
                 return DockViewportDropRoute::Unavailable;
             };
+            let Some(registration_key) = self.registration_key(request.source_space()) else {
+                return DockViewportDropRoute::Unavailable;
+            };
             return DockViewportDropRoute::Local {
                 host_position,
-                window_id: hovered_window,
-                facts_generation,
+                route_proof: crate::DockViewportRouteProof::new(registration_key, facts_generation),
                 source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
             };
         }

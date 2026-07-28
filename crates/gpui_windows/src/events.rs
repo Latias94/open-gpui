@@ -20,7 +20,6 @@ use windows::{
 use crate::*;
 use open_gpui::*;
 
-pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
 pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
@@ -157,6 +156,18 @@ impl WindowsPointerCaptureState {
         self.pressed_buttons & mouse_button_mask(button) != 0
     }
 
+    fn pressed_button(self) -> Option<MouseButton> {
+        [
+            MouseButton::Left,
+            MouseButton::Right,
+            MouseButton::Middle,
+            MouseButton::Navigate(NavigationDirection::Back),
+            MouseButton::Navigate(NavigationDirection::Forward),
+        ]
+        .into_iter()
+        .find(|button| self.is_button_pressed(*button))
+    }
+
     fn transition(self, input: WindowsPointerCaptureInput) -> (Self, WindowsPointerCaptureEffect) {
         match input {
             WindowsPointerCaptureInput::ButtonDown {
@@ -243,38 +254,62 @@ impl WindowsInputDispatchState {
     }
 }
 
+struct WindowsInputDispatchGuard<'a> {
+    state: &'a Cell<WindowsInputDispatchState>,
+    active: bool,
+}
+
+impl<'a> WindowsInputDispatchGuard<'a> {
+    fn begin(state: &'a Cell<WindowsInputDispatchState>) -> Self {
+        assert_eq!(
+            state.get(),
+            WindowsInputDispatchState::Idle,
+            "Windows input re-entered before the active callback finalized"
+        );
+        state.set(WindowsInputDispatchState::Dispatching {
+            pending_terminal_cancel: None,
+        });
+        Self {
+            state,
+            active: true,
+        }
+    }
+
+    fn finish(mut self) -> Option<PointerCancelReason> {
+        let (_, pending_terminal_cancel) = self.state.get().take_pending_terminal_cancel();
+        self.state.set(WindowsInputDispatchState::Idle);
+        self.active = false;
+        pending_terminal_cancel
+    }
+}
+
+impl Drop for WindowsInputDispatchGuard<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.state.set(WindowsInputDispatchState::Idle);
+        }
+    }
+}
+
 fn dispatch_windows_input(
     callbacks: &Callbacks,
     dispatch_state: &Cell<WindowsInputDispatchState>,
     input: PlatformInput,
-) -> Option<DispatchEventResult> {
-    if dispatch_state.get() != WindowsInputDispatchState::Idle {
-        return None;
-    }
-
-    let mut callback = callbacks.input.take()?;
-    dispatch_state.set(WindowsInputDispatchState::Dispatching {
-        pending_terminal_cancel: None,
-    });
-
-    let result = callback(input);
+) -> DispatchEventResult {
+    let dispatch_guard = WindowsInputDispatchGuard::begin(dispatch_state);
+    let result = callbacks.input.dispatch(input);
     // Capture notifications can re-enter while the callback is owned here. Deliver their
     // terminal event only after the outer core dispatch returns.
-    loop {
-        let (next_dispatch_state, pending_terminal_cancel) =
-            dispatch_state.get().take_pending_terminal_cancel();
-        dispatch_state.set(next_dispatch_state);
-        let Some(reason) = pending_terminal_cancel else {
-            break;
-        };
-        callback(PlatformInput::PointerCanceled(PointerCancelEvent {
-            reason,
-        }));
+    let pending_terminal_cancel = dispatch_guard.finish();
+    if let Some(reason) = pending_terminal_cancel {
+        dispatch_windows_input(
+            callbacks,
+            dispatch_state,
+            PlatformInput::PointerCanceled(PointerCancelEvent { reason }),
+        );
     }
 
-    dispatch_state.set(WindowsInputDispatchState::Idle);
-    callbacks.input.set(Some(callback));
-    Some(result)
+    result
 }
 
 fn dispatch_windows_pointer_cancel(
@@ -285,7 +320,7 @@ fn dispatch_windows_pointer_cancel(
     let current_dispatch_state = dispatch_state.get();
     match current_dispatch_state {
         WindowsInputDispatchState::Idle => {
-            let _ = dispatch_windows_input(
+            dispatch_windows_input(
                 callbacks,
                 dispatch_state,
                 PlatformInput::PointerCanceled(PointerCancelEvent { reason }),
@@ -321,6 +356,20 @@ struct WindowsNonClientPointerBoundary<'a> {
 }
 
 impl WindowsClientPointerBoundary<'_> {
+    fn clear_pointer_capture(&self, reason: PointerCancelReason) -> WindowsPointerCancelOutcome {
+        self.pressed_caption_button.take();
+        let release_native_capture = self.pointer_capture.get().owns_native_capture;
+        let (next_capture, effect) = self
+            .pointer_capture
+            .get()
+            .transition(WindowsPointerCaptureInput::Cancel(reason));
+        self.pointer_capture.set(next_capture);
+        WindowsPointerCancelOutcome {
+            canceled: matches!(effect, WindowsPointerCaptureEffect::Cancel(_)),
+            release_native_capture,
+        }
+    }
+
     fn handle_button_message(
         &self,
         message: WindowsClientMouseButtonMessage,
@@ -382,13 +431,8 @@ impl WindowsClientPointerBoundary<'_> {
             self.callbacks,
             self.dispatch_state,
             message.platform_input(position, modifiers, click_count),
-        )
-        .map_or(
-            Some(1),
-            |result| {
-                if result.propagate { Some(1) } else { Some(0) }
-            },
         );
+        let result = if result.propagate { Some(1) } else { Some(0) };
 
         if capture_effect == WindowsPointerCaptureEffect::Release {
             apply_capture_effect(capture_effect);
@@ -397,21 +441,12 @@ impl WindowsClientPointerBoundary<'_> {
     }
 
     fn handle_pointer_cancel(&self, reason: PointerCancelReason) -> WindowsPointerCancelOutcome {
-        self.pressed_caption_button.take();
-        let release_native_capture = self.pointer_capture.get().owns_native_capture;
-        let (next_capture, effect) = self
-            .pointer_capture
-            .get()
-            .transition(WindowsPointerCaptureInput::Cancel(reason));
-        self.pointer_capture.set(next_capture);
-        let WindowsPointerCaptureEffect::Cancel(reason) = effect else {
-            return WindowsPointerCancelOutcome::default();
-        };
-        dispatch_windows_pointer_cancel(self.callbacks, self.dispatch_state, reason);
-        WindowsPointerCancelOutcome {
-            canceled: true,
-            release_native_capture,
+        let outcome = self.clear_pointer_capture(reason);
+        if !outcome.canceled {
+            return outcome;
         }
+        dispatch_windows_pointer_cancel(self.callbacks, self.dispatch_state, reason);
+        outcome
     }
 }
 
@@ -483,10 +518,14 @@ impl WindowsNonClientPointerBoundary<'_> {
     fn handle_pointer_cancel(&self, reason: PointerCancelReason) -> WindowsPointerCancelOutcome {
         self.pointer.handle_pointer_cancel(reason)
     }
+
+    fn clear_pointer_capture(&self, reason: PointerCancelReason) -> WindowsPointerCancelOutcome {
+        self.pointer.clear_pointer_capture(reason)
+    }
 }
 
 impl WindowsWindowInner {
-    pub(crate) fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
+    pub(crate) fn dispatch_input(&self, input: PlatformInput) -> DispatchEventResult {
         dispatch_windows_input(&self.state.callbacks, &self.state.input_dispatch, input)
     }
 
@@ -523,6 +562,19 @@ impl WindowsWindowInner {
         }
     }
 
+    pub(crate) fn settle_pointer_capture_before_native_teardown(&self) {
+        self.state.pressed_caption_button.take();
+        self.state
+            .pointer_capture
+            .set(WindowsPointerCaptureState::default());
+        self.state
+            .input_dispatch
+            .set(WindowsInputDispatchState::Idle);
+        if unsafe { GetCapture() } == self.hwnd {
+            unsafe { ReleaseCapture().log_err() };
+        }
+    }
+
     pub(crate) fn handle_msg(
         self: &Rc<Self>,
         handle: HWND,
@@ -536,7 +588,7 @@ impl WindowsWindowInner {
                 unsafe { SetActiveWindow(handle).ok() };
                 None
             }
-            WM_ACTIVATE => self.handle_activate_msg(wparam),
+            WM_ACTIVATE => self.handle_activate_msg(handle, wparam),
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
@@ -550,9 +602,9 @@ impl WindowsWindowInner {
             WM_NCHITTEST => self.handle_hit_test_msg(handle, lparam),
             WM_PAINT => self.handle_paint_msg(handle),
             WM_CLOSE => self.handle_close_msg(),
-            WM_DESTROY => self.handle_destroy_msg(handle),
+            WM_DESTROY => self.handle_destroy_msg(),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
-            WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
+            WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(handle),
             WM_CAPTURECHANGED => self.handle_pointer_capture_lost_msg(),
             WM_CANCELMODE => self.handle_cancel_mode_msg(handle),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
@@ -592,8 +644,13 @@ impl WindowsWindowInner {
             WM_SETTINGCHANGE => self.handle_system_settings_changed(handle, wparam, lparam),
             WM_INPUTLANGCHANGE => self.handle_input_language_changed(),
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
-            WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_FORCE_UPDATE_WINDOW if self.accepts_generation_bound_message(wparam.0) => {
+                self.draw_window(handle, true)
+            }
+            WM_GPUI_GPU_DEVICE_LOST if self.accepts_generation_bound_message(wparam.0) => {
+                self.handle_device_lost()
+            }
+            WM_GPUI_FORCE_UPDATE_WINDOW | WM_GPUI_GPU_DEVICE_LOST => Some(0),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
@@ -658,9 +715,16 @@ impl WindowsWindowInner {
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
-            self.state
-                .restore_from_minimized
-                .set(self.state.callbacks.request_frame.take());
+            let saved_request_frame = self.state.restore_from_minimized.take();
+            if let Some(saved_request_frame) = saved_request_frame {
+                self.state
+                    .restore_from_minimized
+                    .set(Some(saved_request_frame));
+            } else {
+                self.state
+                    .restore_from_minimized
+                    .set(self.state.callbacks.request_frame.take());
+            }
             if let Some(mut callback) = self.state.callbacks.window_state_change.take() {
                 callback();
                 self.state.callbacks.window_state_change.set(Some(callback));
@@ -752,39 +816,23 @@ impl WindowsWindowInner {
     }
 
     fn handle_close_msg(&self) -> Option<isize> {
-        let mut callback = self.state.callbacks.should_close.take()?;
-        let should_close = callback();
-        self.state.callbacks.should_close.set(Some(callback));
+        let should_close = self.state.callbacks.should_close.invoke();
         if should_close { None } else { Some(0) }
     }
 
-    fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
+    fn handle_destroy_msg(&self) -> Option<isize> {
+        self.mark_native_window_destroying();
         let callback = { self.state.callbacks.close.take() };
-        // Re-enable parent window if this was a modal dialog
-        if let Some(parent_hwnd) = self.parent_hwnd {
-            unsafe {
-                let _ = EnableWindow(parent_hwnd, true);
-                let _ = SetForegroundWindow(parent_hwnd);
-            }
-        }
+        self.release_modal_parent();
 
         if let Some(callback) = callback {
             callback();
-        }
-        unsafe {
-            PostMessageW(
-                Some(self.platform_window_handle),
-                WM_GPUI_CLOSE_ONE_WINDOW,
-                WPARAM(self.validation_number),
-                LPARAM(handle.0 as isize),
-            )
-            .log_err();
         }
         Some(0)
     }
 
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
-        self.start_tracking_mouse(handle, TME_LEAVE);
+        let hover_started = self.start_tracking_mouse(handle, TME_LEAVE);
         self.restore_cursor_after_hide();
 
         let scale_factor = self.state.scale_factor.get();
@@ -808,15 +856,35 @@ impl WindowsWindowInner {
             pressed_button,
             modifiers: current_modifiers(),
         });
-        let Some(result) = self.dispatch_input(input) else {
-            return Some(1);
-        };
+        let result = self.dispatch_input(input);
+        if hover_started {
+            self.publish_hovered_status_change(true);
+        }
         let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
     }
 
-    fn handle_mouse_leave_msg(&self) -> Option<isize> {
+    fn handle_mouse_leave_msg(&self, handle: HWND) -> Option<isize> {
+        if !self.state.hovered.get() {
+            return Some(1);
+        }
+        let mut cursor_position = POINT::default();
+        unsafe {
+            GetCursorPos(&mut cursor_position)
+                .and_then(|_| ScreenToClient(handle, &mut cursor_position).ok())
+                .log_err();
+        }
+        let input_result = self.dispatch_input(PlatformInput::MouseExited(MouseExitEvent {
+            position: logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                self.state.scale_factor.get(),
+            ),
+            pressed_button: self.state.pointer_capture.get().pressed_button(),
+            modifiers: current_modifiers(),
+        }));
+
         self.state.hovered.set(false);
         // The next window's `WM_SETCURSOR` picks its own cursor, so we just clear
         // the flag for tight `is_cursor_visible()` semantics.
@@ -829,14 +897,18 @@ impl WindowsWindowInner {
                 .set(Some(callback));
         }
 
-        Some(0)
+        if input_result.propagate {
+            Some(1)
+        } else {
+            Some(0)
+        }
     }
 
     fn handle_syskeyup_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let input = handle_key_event(wparam, lparam, &self.state, |keystroke, _| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         })?;
-        self.dispatch_input(input)?;
+        self.dispatch_input(input);
 
         // Always return 0 to indicate that the message was handled, so we could properly handle `ModifiersChanged` event.
         Some(0)
@@ -860,9 +932,7 @@ impl WindowsWindowInner {
             return Some(1);
         };
 
-        let Some(result) = self.dispatch_input(input) else {
-            return Some(1);
-        };
+        let result = self.dispatch_input(input);
         let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
@@ -875,9 +945,7 @@ impl WindowsWindowInner {
             return Some(1);
         };
 
-        let Some(result) = self.dispatch_input(input) else {
-            return Some(1);
-        };
+        let result = self.dispatch_input(input);
         let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
@@ -885,9 +953,7 @@ impl WindowsWindowInner {
 
     fn handle_char_msg(&self, wparam: WPARAM) -> Option<isize> {
         let input = self.parse_char_message(wparam)?;
-        self.with_input_handler(|input_handler| {
-            input_handler.replace_text_in_range(None, &input);
-        });
+        self.with_input_handler(|input_handler| input_handler.replace_text_in_range(None, &input))?;
 
         Some(0)
     }
@@ -979,9 +1045,7 @@ impl WindowsWindowInner {
             modifiers,
             touch_phase: TouchPhase::Moved,
         });
-        let Some(result) = self.dispatch_input(input) else {
-            return Some(1);
-        };
+        let result = self.dispatch_input(input);
         let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
@@ -1016,9 +1080,7 @@ impl WindowsWindowInner {
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
         });
-        let Some(result) = self.dispatch_input(event) else {
-            return Some(1);
-        };
+        let result = self.dispatch_input(event);
         let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
@@ -1109,16 +1171,14 @@ impl WindowsWindowInner {
         if lparam == 0 {
             // Japanese IME may send this message with lparam = 0, which indicates that
             // there is no composition string.
-            self.with_input_handler(|input_handler| {
-                input_handler.replace_text_in_range(None, "");
-            })?;
+            self.with_input_handler(|input_handler| input_handler.replace_text_in_range(None, ""))?;
             Some(0)
         } else {
             if lparam & GCS_RESULTSTR.0 > 0 {
                 let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
                 self.with_input_handler(|input_handler| {
                     input_handler
-                        .replace_text_in_range(None, &String::from_utf16_lossy(&comp_result));
+                        .replace_text_in_range(None, &String::from_utf16_lossy(&comp_result))
                 })?;
             }
             if lparam & GCS_COMPSTR.0 > 0 {
@@ -1138,7 +1198,7 @@ impl WindowsWindowInner {
                         None,
                         &String::from_utf16_lossy(&comp_string),
                         caret_pos,
-                    );
+                    )
                 })?;
             }
             if lparam & (GCS_RESULTSTR.0 | GCS_COMPSTR.0) > 0 {
@@ -1173,7 +1233,7 @@ impl WindowsWindowInner {
         }
     }
 
-    fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
+    fn handle_activate_msg(self: &Rc<Self>, handle: HWND, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
 
         let events = self
@@ -1186,16 +1246,23 @@ impl WindowsWindowInner {
             events.raise();
         }
 
-        let this = self.clone();
+        if let Some(mut callback) = self.state.callbacks.active_status_change.take() {
+            callback(activated);
+            self.state
+                .callbacks
+                .active_status_change
+                .set(Some(callback));
+        }
 
         if !activated {
-            this.state.cursor_visible.store(true, Ordering::Relaxed);
-            let outcome = this
+            self.state.cursor_visible.store(true, Ordering::Relaxed);
+            // ActiveChanged is the cross-platform pointer-cancellation authority. Windows only
+            // clears its native bookkeeping and releases capture here; dispatching another GPUI
+            // PointerCanceled event would terminate the same session twice.
+            let outcome = self
                 .non_client_pointer_boundary()
-                .handle_pointer_cancel(PointerCancelReason::WindowDeactivated);
-            if outcome.release_native_capture
-                && unsafe { GetCapture() } == this.platform_window_handle
-            {
+                .clear_pointer_capture(PointerCancelReason::WindowDeactivated);
+            if outcome.release_native_capture && unsafe { GetCapture() } == handle {
                 unsafe { ReleaseCapture().log_err() };
             }
         }
@@ -1205,23 +1272,18 @@ impl WindowsWindowInner {
         // (especially the Alt key) because Windows doesn't always send key-up events to
         // windows that have lost focus.
         if activated {
-            this.state.last_reported_modifiers.set(None);
-            this.state.last_reported_capslock.set(None);
+            self.state.last_reported_modifiers.set(None);
+            self.state.last_reported_capslock.set(None);
 
-            let _ = this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+            let event = ModifiersChangedEvent {
                 modifiers: current_modifiers(),
                 capslock: current_capslock(),
-            }));
+            };
+            if let Some(mut callback) = self.state.callbacks.modifiers_changed.take() {
+                callback(event);
+                self.state.callbacks.modifiers_changed.set(Some(callback));
+            }
         }
-
-        self.executor
-            .spawn(async move {
-                if let Some(mut func) = this.state.callbacks.active_status_change.take() {
-                    func(activated);
-                    this.state.callbacks.active_status_change.set(Some(func));
-                }
-            })
-            .detach();
 
         None
     }
@@ -1396,7 +1458,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_nc_mouse_move_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        self.start_tracking_mouse(handle, TME_LEAVE | TME_NONCLIENT);
+        let hover_started = self.start_tracking_mouse(handle, TME_LEAVE | TME_NONCLIENT);
         self.restore_cursor_after_hide();
 
         let scale_factor = self.state.scale_factor.get();
@@ -1411,7 +1473,10 @@ impl WindowsWindowInner {
             pressed_button: None,
             modifiers: current_modifiers(),
         });
-        let handled = !self.dispatch_input(input)?.propagate;
+        let handled = !self.dispatch_input(input).propagate;
+        if hover_started {
+            self.publish_hovered_status_change(true);
+        }
 
         if handled { Some(0) } else { None }
     }
@@ -1582,9 +1647,8 @@ impl WindowsWindowInner {
         None
     }
 
-    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
-        let devices = lparam.0 as *const DirectXDevices;
-        let devices = unsafe { &*devices };
+    fn handle_device_lost(&self) -> Option<isize> {
+        let devices = self.recovered_directx_devices.read().clone()?;
         if let Err(err) = self
             .state
             .renderer
@@ -1678,7 +1742,7 @@ impl WindowsWindowInner {
         }
     }
 
-    fn start_tracking_mouse(&self, handle: HWND, flags: TRACKMOUSEEVENT_FLAGS) {
+    fn start_tracking_mouse(&self, handle: HWND, flags: TRACKMOUSEEVENT_FLAGS) -> bool {
         if !self.state.hovered.get() {
             self.state.hovered.set(true);
             unsafe {
@@ -1690,13 +1754,19 @@ impl WindowsWindowInner {
                 })
                 .log_err()
             };
-            if let Some(mut callback) = self.state.callbacks.hovered_status_change.take() {
-                callback(true);
-                self.state
-                    .callbacks
-                    .hovered_status_change
-                    .set(Some(callback));
-            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn publish_hovered_status_change(&self, hovered: bool) {
+        if let Some(mut callback) = self.state.callbacks.hovered_status_change.take() {
+            callback(hovered);
+            self.state
+                .callbacks
+                .hovered_status_change
+                .set(Some(callback));
         }
     }
 
@@ -1704,22 +1774,18 @@ impl WindowsWindowInner {
     where
         F: FnOnce(&mut PlatformInputHandler) -> R,
     {
-        let mut input_handler = self.state.input_handler.take()?;
-        let result = f(&mut input_handler);
-        self.state.input_handler.set(Some(input_handler));
-        Some(result)
+        self.state.input_handler.with_handler(f)
     }
 
     fn with_input_handler_and_scale_factor<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
     {
-        let mut input_handler = self.state.input_handler.take()?;
         let scale_factor = self.state.scale_factor.get();
-
-        let result = f(&mut input_handler, scale_factor);
-        self.state.input_handler.set(Some(input_handler));
-        result
+        self.state
+            .input_handler
+            .with_handler(|input_handler| f(input_handler, scale_factor))
+            .flatten()
     }
 }
 
@@ -2142,7 +2208,7 @@ mod tests {
 
         let observed = Rc::new(RefCell::new(Vec::new()));
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new({
+        callbacks.set_test_input(Box::new({
             let observed = observed.clone();
             move |input| {
                 match input {
@@ -2214,7 +2280,7 @@ mod tests {
     fn native_capture_loss_boundary_dispatches_one_terminal_cancel() {
         let observed = Rc::new(RefCell::new(Vec::new()));
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new({
+        callbacks.set_test_input(Box::new({
             let observed = observed.clone();
             move |input| {
                 if let PlatformInput::PointerCanceled(event) = input {
@@ -2258,7 +2324,7 @@ mod tests {
     fn non_client_button_session_cancels_once_without_acquiring_native_capture() {
         let observed = Rc::new(RefCell::new(Vec::new()));
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new({
+        callbacks.set_test_input(Box::new({
             let observed = observed.clone();
             move |input| {
                 match input {
@@ -2312,7 +2378,7 @@ mod tests {
     #[test]
     fn non_client_button_session_never_changes_native_capture() {
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        callbacks.set_test_input(Box::new(|_| DispatchEventResult::default()));
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
         let dispatch_state = Cell::new(WindowsInputDispatchState::default());
         let pressed_caption_button = Cell::new(None);
@@ -2344,7 +2410,7 @@ mod tests {
     #[test]
     fn client_owned_capture_releases_when_final_up_arrives_non_client() {
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        callbacks.set_test_input(Box::new(|_| DispatchEventResult::default()));
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
         let dispatch_state = Cell::new(WindowsInputDispatchState::default());
         let pressed_caption_button = Cell::new(None);
@@ -2384,7 +2450,7 @@ mod tests {
     #[test]
     fn non_left_up_does_not_terminate_left_caption_session() {
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        callbacks.set_test_input(Box::new(|_| DispatchEventResult::default()));
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
         let dispatch_state = Cell::new(WindowsInputDispatchState::default());
         let pressed_caption_button = Cell::new(None);
@@ -2437,7 +2503,7 @@ mod tests {
     #[test]
     fn non_client_caption_down_then_client_left_up_terminates_without_native_release() {
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        callbacks.set_test_input(Box::new(|_| DispatchEventResult::default()));
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
         let dispatch_state = Cell::new(WindowsInputDispatchState::default());
         let pressed_caption_button = Cell::new(None);
@@ -2487,7 +2553,7 @@ mod tests {
     #[test]
     fn canceled_non_client_caption_button_cannot_commit_on_later_up() {
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        callbacks.set_test_input(Box::new(|_| DispatchEventResult::default()));
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
         let dispatch_state = Cell::new(WindowsInputDispatchState::default());
         let pressed_caption_button = Cell::new(None);
@@ -2537,7 +2603,7 @@ mod tests {
     #[test]
     fn consumed_non_client_caption_button_up_clears_pending_action() {
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new(|input| DispatchEventResult {
+        callbacks.set_test_input(Box::new(|input| DispatchEventResult {
             propagate: !matches!(input, PlatformInput::MouseUp(_)),
             default_prevented: false,
         }));
@@ -2580,7 +2646,7 @@ mod tests {
         let pointer_capture = Rc::new(Cell::new(WindowsPointerCaptureState::default()));
         let pressed_caption_button = Rc::new(Cell::new(None));
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new({
+        callbacks.set_test_input(Box::new({
             let pointer_capture = pointer_capture.clone();
             let pressed_caption_button = pressed_caption_button.clone();
             move |input| {
@@ -2627,7 +2693,7 @@ mod tests {
         let pointer_capture = Rc::new(Cell::new(WindowsPointerCaptureState::default()));
         let pressed_caption_button = Rc::new(Cell::new(None));
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new({
+        callbacks.set_test_input(Box::new({
             let pointer_capture = pointer_capture.clone();
             let pressed_caption_button = pressed_caption_button.clone();
             move |input| {
@@ -2680,7 +2746,7 @@ mod tests {
     fn window_deactivation_cancels_non_client_caption_session_exactly_once() {
         let observed = Rc::new(RefCell::new(Vec::new()));
         let callbacks = Callbacks::default();
-        callbacks.set_input(Box::new({
+        callbacks.set_test_input(Box::new({
             let observed = observed.clone();
             move |input| {
                 if let PlatformInput::PointerCanceled(event) = input {

@@ -91,7 +91,9 @@ mod tests {
         DockViewportTargetHit, DockViewportWindowFacts,
         interaction::DockPayloadDropReleaseOrigin,
         viewport_drop_scene::DockViewportHostSceneFrame,
-        viewport_registry::{DockViewportInputMask, DockViewportWindowBoundsFrame},
+        viewport_registry::{
+            DockViewportInputMask, DockViewportRegistrationKey, DockViewportWindowBoundsFrame,
+        },
         viewport_test_support::{bounds, handle, item, register_viewport, space},
     };
     use open_gpui::{
@@ -109,11 +111,10 @@ mod tests {
     }
 
     fn scene_proof(
-        space: &DockSpaceId,
-        window: AnyWindowHandle,
+        registration_key: DockViewportRegistrationKey,
         generation: u64,
     ) -> DockViewportHostSceneFrame {
-        DockViewportHostSceneFrame::new_for_test(space.clone(), window.window_id(), generation)
+        DockViewportHostSceneFrame::new_for_test(registration_key, generation)
     }
 
     fn rounded_host_geometry(
@@ -191,12 +192,14 @@ mod tests {
                 &DockPolicy::default(),
                 DockViewportTargetContext::new().with_trusted_hovered_window(window),
             ),
-            DockViewportDropRoute::Local {
-                host_position: point(px(5.0), px(5.0)),
-                window_id: window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            }
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&main)
+                    .expect("registered viewport should have an exact key"),
+                point(px(5.0), px(5.0)),
+                1,
+                DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            )
         );
     }
 
@@ -228,12 +231,14 @@ mod tests {
         );
         assert_eq!(
             inside,
-            DockViewportDropRoute::Local {
-                host_position: point(px(50.0), px(20.0)),
-                window_id: window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            }
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&main)
+                    .expect("registered viewport should have an exact key"),
+                point(px(50.0), px(20.0)),
+                1,
+                DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            )
         );
 
         let clipped = adapter.resolve_payload_drop_route_with_context(
@@ -287,12 +292,14 @@ mod tests {
         );
         assert_eq!(
             route(point(px(150.0), px(150.0))),
-            DockViewportDropRoute::Local {
-                host_position: point(px(50.0), px(50.0)),
-                window_id: window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            }
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&main)
+                    .expect("registered viewport should have an exact key"),
+                point(px(50.0), px(50.0)),
+                1,
+                DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            )
         );
     }
 
@@ -503,7 +510,7 @@ mod tests {
             bounds(10.0, 20.0, 300.0, 200.0),
         );
         let request = DockViewportDropRouteRequest::from_platform_signals(
-            source,
+            source.clone(),
             DockNodeId::null(),
             DockViewportDropPayload::Item(item("a")),
             point(px(430.0), px(50.0)),
@@ -693,7 +700,7 @@ mod tests {
             bounds(10.0, 20.0, 300.0, 200.0),
         );
         let request = DockViewportDropRouteRequest::from_platform_signals(
-            source,
+            source.clone(),
             DockNodeId::null(),
             DockViewportDropPayload::Item(item("a")),
             point(px(130.0), px(250.0)),
@@ -773,8 +780,9 @@ mod tests {
             ),
         )
         .with_event_receiver_local_scene_proof(Some(scene_proof(
-            &source,
-            source_window,
+            adapter
+                .registration_key(&source)
+                .expect("registered viewport should have an exact key"),
             1,
         )));
 
@@ -782,12 +790,14 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::Local {
-                host_position: point(px(20.0), px(30.0)),
-                window_id: source_window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::EventReceiverLocalScene,
-            },
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source)
+                    .expect("registered viewport should have an exact key"),
+                point(px(20.0), px(30.0)),
+                1,
+                DockViewportRouteSelectionSource::EventReceiverLocalScene,
+            ),
             "explicit event-receiver scene proof may produce a same-window candidate; workspace delivery still requires the current local target snapshot"
         );
     }
@@ -819,8 +829,9 @@ mod tests {
             signals.clone(),
         )
         .with_event_receiver_local_scene_proof(Some(scene_proof(
-            &source,
-            source_window,
+            adapter
+                .registration_key(&source)
+                .expect("registered viewport should have an exact key"),
             1,
         )));
 
@@ -828,12 +839,14 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::Local {
-                host_position: point(px(20.0), px(30.0)),
-                window_id: source_window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::EventReceiverLocalScene,
-            },
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source)
+                    .expect("registered viewport should have an exact key"),
+                point(px(20.0), px(30.0)),
+                1,
+                DockViewportRouteSelectionSource::EventReceiverLocalScene,
+            ),
             "local-coordinate backends may use explicit event-receiver scene proof for same-window drops"
         );
 
@@ -850,6 +863,64 @@ mod tests {
                 .resolve_payload_drop_route(&request_without_scene_proof, &DockPolicy::default()),
             DockViewportDropRoute::Unavailable,
             "event-receiver local coordinates without scene proof must not become a route"
+        );
+    }
+
+    #[test]
+    fn event_receiver_local_scene_proof_rejects_replaced_registration_generation() {
+        let source = space("source");
+        let source_window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source.clone(), source_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let replaced_key = adapter
+            .registration_key(&source)
+            .expect("the first registration must have an exact key");
+        let stale_scene_proof = scene_proof(replaced_key.clone(), 1);
+
+        adapter
+            .unregister_space(&source)
+            .expect("the first registration should be removable");
+        register_viewport(&mut adapter, source.clone(), source_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        assert_ne!(
+            adapter
+                .registration_key(&source)
+                .expect("the replacement registration must have an exact key"),
+            replaced_key,
+            "replacing the same space/window binding must issue a new generation"
+        );
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source.clone(),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            signals_with_receiver(
+                DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+                source_window,
+            )
+            .with_global_window_bounds(false),
+        )
+        .with_event_receiver_local_scene_proof(Some(stale_scene_proof));
+
+        assert_eq!(
+            adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
+            DockViewportDropRoute::Unavailable,
+            "a G1 scene frame must not prove a G2 registration even when space and WindowId are unchanged"
         );
     }
 
@@ -880,19 +951,22 @@ mod tests {
             .with_global_window_bounds(false),
         )
         .with_event_receiver_local_scene_proof(Some(scene_proof(
-            &source,
-            source_window,
+            adapter
+                .registration_key(&source)
+                .expect("registered viewport should have an exact key"),
             1,
         )));
 
         assert_eq!(
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
-            DockViewportDropRoute::Local {
-                host_position: point(px(20.0), px(30.0)),
-                window_id: source_window.window_id(),
-                facts_generation: 2,
-                source: DockViewportRouteSelectionSource::EventReceiverLocalScene,
-            },
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source)
+                    .expect("registered viewport should have an exact key"),
+                point(px(20.0), px(30.0)),
+                2,
+                DockViewportRouteSelectionSource::EventReceiverLocalScene,
+            ),
             "same-window scene proof should keep host-local routing alive while adapter route facts wait for the next render"
         );
     }
@@ -923,7 +997,10 @@ mod tests {
             )
             .with_global_window_bounds(false),
         )
-        .with_event_receiver_local_scene_proof(Some(scene_proof(&source, other_window, 1)));
+        .with_event_receiver_local_scene_proof(Some(scene_proof(
+            DockViewportRegistrationKey::for_test(source.clone(), other_window.window_id()),
+            1,
+        )));
 
         assert_eq!(
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
@@ -959,8 +1036,9 @@ mod tests {
             DockPayloadDropReleaseOrigin::SourceOnly,
         )
         .with_event_receiver_local_scene_proof(Some(scene_proof(
-            &source,
-            source_window,
+            adapter
+                .registration_key(&source)
+                .expect("registered viewport should have an exact key"),
             1,
         )));
 
@@ -999,19 +1077,22 @@ mod tests {
             .with_global_window_bounds(false),
         )
         .with_event_receiver_local_scene_proof(Some(scene_proof(
-            &source,
-            source_window,
+            adapter
+                .registration_key(&source)
+                .expect("registered viewport should have an exact key"),
             1,
         )));
 
         assert_eq!(
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
-            DockViewportDropRoute::Local {
-                host_position: point(px(20.0), px(30.0)),
-                window_id: source_window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::EventReceiverLocalScene,
-            },
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source)
+                    .expect("registered viewport should have an exact key"),
+                point(px(20.0), px(30.0)),
+                1,
+                DockViewportRouteSelectionSource::EventReceiverLocalScene,
+            ),
             "native no-input is an input mask, not stale route facts, when a matching scene proof exists"
         );
     }
@@ -1043,8 +1124,9 @@ mod tests {
             .with_global_window_bounds(false),
         )
         .with_event_receiver_local_scene_proof(Some(scene_proof(
-            &source,
-            source_window,
+            adapter
+                .registration_key(&source)
+                .expect("registered viewport should have an exact key"),
             1,
         )));
 
@@ -1870,12 +1952,14 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::Local {
-                host_position: point(px(20.0), px(40.0)),
-                window_id: source_window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
-            },
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source)
+                    .expect("registered viewport should have an exact key"),
+                point(px(20.0), px(40.0)),
+                1,
+                DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
+            ),
             "no-input hovered signal falls back to the route-ready source viewport when that is the underlay"
         );
     }
@@ -2028,7 +2112,7 @@ mod tests {
             bounds(10.0, 20.0, 300.0, 200.0),
         );
         let request = DockViewportDropRouteRequest::from_platform_signals(
-            source,
+            source.clone(),
             DockNodeId::null(),
             DockViewportDropPayload::Item(item("a")),
             point(px(30.0), px(50.0)),
@@ -2044,12 +2128,14 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::Local {
-                host_position: point(px(20.0), px(30.0)),
-                window_id: source_window.window_id(),
-                facts_generation: 1,
-                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            }
+            DockViewportDropRoute::local_for_registration_test(
+                adapter
+                    .registration_key(&source)
+                    .expect("registered viewport should have an exact key"),
+                point(px(20.0), px(30.0)),
+                1,
+                DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            )
         );
     }
 

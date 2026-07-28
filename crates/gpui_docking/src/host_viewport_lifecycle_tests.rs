@@ -27,7 +27,7 @@ mod runtime_suite {
             DockViewportActivationBackendFocusRecordEffect,
             DockViewportActivationPendingBackendFocusEffect, apply_viewport_activation_transaction,
         },
-        viewport_drop_scene::DockViewportHostSceneSnapshot,
+        viewport_drop_scene::DockViewportHostSceneDraft,
         viewport_registry::{
             DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportStaleReason,
         },
@@ -40,6 +40,18 @@ mod runtime_suite {
     };
 
     use crate::host_viewport_runtime_test_support::*;
+
+    fn registered_activation(
+        runtime: &DockViewportRuntimeHandle,
+        space: &DockSpaceId,
+        window: AnyWindowHandle,
+        focus_request: DockViewportFocusRequest,
+    ) -> crate::DockViewportActivationTransaction {
+        let registration = runtime
+            .registration_key_for_space_window(space, window.window_id())
+            .expect("runtime viewport should have an exact registration");
+        crate::DockViewportActivationTransaction::registered(registration, window, focus_request)
+    }
 
     #[open_gpui::test]
     fn viewport_runtime_render_registered_viewport_records_window_binding(cx: &mut TestAppContext) {
@@ -71,6 +83,40 @@ mod runtime_suite {
         assert_eq!(
             runtime.borrow().adapter().window_for_space(&zeta_space),
             Some(zeta_window)
+        );
+    }
+
+    #[open_gpui::test]
+    fn first_render_defers_registration_until_the_open_attempt_commits(cx: &mut TestAppContext) {
+        let space = DockSpaceId::from("secondary");
+        let fixture = DockViewportRuntimeFixture::builder(space.clone())
+            .space(space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let window = handle(91);
+        let open_attempt = runtime
+            .borrow_mut()
+            .begin_window_open_attempt(window.window_id())
+            .expect("unowned first-frame window should begin an open attempt");
+
+        assert!(
+            !runtime
+                .borrow_mut()
+                .register_rendered_host_viewport(space.clone(), window),
+            "the synchronous render hook must not claim an Opening window"
+        );
+        assert_eq!(runtime.borrow().adapter().window_for_space(&space), None);
+
+        let registration = runtime
+            .borrow_mut()
+            .register_opened_viewport_from_attempt_with_cleanup(space.clone(), window, open_attempt)
+            .expect("the exact opening generation should register")
+            .expect("the exact opening generation should still be current");
+        assert_eq!(registration.outcome.space(), &space);
+        assert_eq!(registration.outcome.window(), window);
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&space),
+            Some(window)
         );
     }
 
@@ -131,11 +177,7 @@ mod runtime_suite {
             None,
             platform_signals,
         );
-        let resolution = cx.update(|app| {
-            runtime
-                .borrow_mut()
-                .resolve_payload_drop_delivery(&request, app)
-        });
+        let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
 
         assert!(
             matches!(
@@ -321,13 +363,12 @@ mod runtime_suite {
             .build(cx);
         let runtime = fixture.runtime.clone();
         let opened = fixture.open_unfocused_viewport(cx, &main_space);
-        assert!(
-            runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),)
-        );
+        assert!(runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &main_space,
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),));
         cx.set_platform_focused_window_available(false);
 
         assert!(
@@ -757,13 +798,12 @@ mod runtime_suite {
             .borrow_mut()
             .handle_window_closed(main.window().window_id());
         assert_eq!(closed.status(), DockViewportCloseStatus::Closed);
-        assert!(
-            runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-                detached_space.clone(),
-                detached.window(),
-                DockViewportFocusRequest::panel("c"),
-            ),)
-        );
+        assert!(runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &detached_space,
+            detached.window(),
+            DockViewportFocusRequest::panel("c"),
+        ),));
 
         focus_backend_window_for_test(detached.window(), cx);
         let command = cx.update(|app| {
@@ -793,13 +833,12 @@ mod runtime_suite {
             .build(cx);
         let runtime = fixture.runtime.clone();
         let main = fixture.open_unfocused_viewport(cx, &main_space);
-        assert!(
-            runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                main.window(),
-                DockViewportFocusRequest::panel("a"),
-            ))
-        );
+        assert!(runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &main_space,
+            main.window(),
+            DockViewportFocusRequest::panel("a"),
+        )));
 
         focus_backend_window_for_test(main.window(), cx);
         let command = cx.update(|app| {
@@ -890,13 +929,12 @@ mod runtime_suite {
         let runtime = fixture.runtime.clone();
         let opened = fixture.open_unfocused_viewport(cx, &main_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
-        assert!(
-            runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),)
-        );
+        assert!(runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &main_space,
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),));
         opened
             .window()
             .update(cx, |_, window, _| window.activate_window())
@@ -933,13 +971,12 @@ mod runtime_suite {
         let runtime = fixture.runtime.clone();
         let opened = fixture.open_unfocused_viewport(cx, &main_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
-        assert!(
-            runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),)
-        );
+        assert!(runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &main_space,
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),));
         cx.set_platform_focused_window_available(false);
 
         let command = cx.update(|app| {
@@ -968,13 +1005,12 @@ mod runtime_suite {
         let runtime = fixture.runtime.clone();
         let main = fixture.open_unfocused_viewport(cx, &main_space);
         let detached = fixture.open_unfocused_viewport(cx, &detached_space);
-        assert!(
-            runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-                detached_space.clone(),
-                detached.window(),
-                DockViewportFocusRequest::panel("c"),
-            ))
-        );
+        assert!(runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &detached_space,
+            detached.window(),
+            DockViewportFocusRequest::panel("c"),
+        )));
 
         focus_backend_window_for_test(main.window(), cx);
         assert!(
@@ -1026,8 +1062,9 @@ mod runtime_suite {
                 DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("a"))
             ));
         });
-        runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-            main_space.clone(),
+        runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &main_space,
             opened.window(),
             DockViewportFocusRequest::panel("a"),
         ));
@@ -1059,13 +1096,12 @@ mod runtime_suite {
         let opened = fixture.open_unfocused_viewport(cx, &main_space);
 
         runtime.record_panel_focus(main_space.clone(), item("a"));
-        assert!(
-            runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),)
-        );
+        assert!(runtime.record_pending_activation(registered_activation(
+            &runtime,
+            &main_space,
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),));
 
         cx.set_platform_mouse_button_is_pressed(open_gpui::MouseButton::Left, Some(true));
         opened
@@ -1152,9 +1188,9 @@ mod runtime_suite {
         let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
         workspace.policy_mut().set_allow_platform_viewports(true);
         let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let runtime = DockViewportRuntimeHandle::new(controller);
         let outcome = cx.update(|app| {
-            runtime.begin_tear_off_request(
+            runtime.begin_tear_off_request_for_test(
                 DockViewportTearOffRequest::new(
                     primary_space,
                     floating,
@@ -1174,6 +1210,214 @@ mod runtime_suite {
             pending.focus_item(),
             None,
             "floating payload focus must not be inferred from selected tabs"
+        );
+    }
+
+    #[open_gpui::test]
+    fn tear_off_target_claim_rejects_competitor_before_graph_move(cx: &mut TestAppContext) {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("target");
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .allow_platform_viewports(true)
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
+        let source_window = handle(1);
+        let opening_window = handle(2);
+        let competing_window = handle(3);
+        runtime.register_opened_viewport(source_space.clone(), source_window);
+
+        let outcome = runtime.begin_tear_off_request_with_focus(
+            DockViewportTearOffRequest::new(
+                source_space.clone(),
+                source_tabs,
+                DockViewportDropPayload::Item(item("a")),
+                point(px(900.0), px(900.0)),
+                None,
+            ),
+            target_space.clone(),
+            None,
+        );
+        let DockViewportTearOffBeginOutcome::Pending(pending) = outcome else {
+            panic!("fresh tear-off should reserve its target");
+        };
+        assert!(runtime.bind_tear_off_target_window(&pending, opening_window));
+        let open_attempt = runtime
+            .begin_window_open_attempt(opening_window.window_id())
+            .expect("fresh tear-off window should own one open attempt");
+
+        let target_claim = runtime
+            .prepare_tear_off_target_claim(&pending, opening_window, open_attempt)
+            .expect("vacant reserved target should prepare its exact claim");
+        let sampled_claim = cx.update(|app| target_claim.sample(app));
+
+        let competing_key =
+            runtime.replace_adapter_registration_for_test(target_space.clone(), competing_window);
+        let error = runtime
+            .finalize_tear_off_target_claim(sampled_claim)
+            .expect_err("a target registration issued during sample must win the CAS");
+
+        assert_eq!(error, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            runtime.registration_key_for_space_window(&target_space, competing_window.window_id()),
+            Some(competing_key),
+            "the stale tear-off must not replace the competing target registration"
+        );
+        assert_eq!(
+            runtime.adapter().window_for_space(&source_space),
+            Some(source_window),
+            "failed target settlement must not apply stale source-vacate cleanup"
+        );
+        cx.read_entity(&fixture.controller, |controller, _| {
+            assert_eq!(
+                controller.graph().collect_items_in_space(&source_space),
+                vec![item("a")],
+                "target claim failure must happen before the graph leaves its source"
+            );
+            assert_eq!(controller.graph().root(&target_space), None);
+        });
+    }
+
+    #[open_gpui::test]
+    fn tear_off_graph_failure_rolls_back_preclaimed_target_exactly(cx: &mut TestAppContext) {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("target");
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
+        let source_window = handle(21);
+        let opening_window = handle(22);
+        runtime.register_opened_viewport(source_space.clone(), source_window);
+
+        let outcome = runtime.begin_tear_off_request_with_focus(
+            DockViewportTearOffRequest::new(
+                source_space.clone(),
+                source_tabs,
+                DockViewportDropPayload::Item(item("a")),
+                point(px(900.0), px(900.0)),
+                None,
+            ),
+            target_space.clone(),
+            None,
+        );
+        let DockViewportTearOffBeginOutcome::Pending(pending) = outcome else {
+            panic!("fresh tear-off should reserve its target");
+        };
+        assert!(runtime.bind_tear_off_target_window(&pending, opening_window));
+        let open_attempt = runtime
+            .begin_window_open_attempt(opening_window.window_id())
+            .expect("fresh tear-off window should own one open attempt");
+        let prepared_claim = runtime
+            .prepare_tear_off_target_claim(&pending, opening_window, open_attempt)
+            .expect("vacant reserved target should prepare its exact claim");
+        let applied_claim = cx.update(|app| prepared_claim.sample(app));
+        let claimed = runtime
+            .finalize_tear_off_target_claim(applied_claim)
+            .expect("current target claim should register before graph mutation");
+        assert_eq!(
+            runtime.adapter().window_for_space(&target_space),
+            Some(opening_window)
+        );
+
+        fixture.controller.update(cx, |controller, cx| {
+            controller.workspace_mut().set_graph(DockGraph::new());
+            cx.notify();
+        });
+        let move_apply = runtime
+            .prepare_tear_off_move_apply(&pending)
+            .expect("current pending tear-off should enter graph apply");
+        let applied_move = cx.update(|app| move_apply.apply(app));
+        runtime
+            .finalize_tear_off_move_apply(applied_move)
+            .expect_err("source removal should make the graph move fail");
+
+        let rolled_back = runtime.rollback_tear_off_target_claim(claimed);
+        assert_eq!(
+            runtime.adapter().window_for_space(&target_space),
+            None,
+            "failed graph mutation must remove only its preclaimed target registration"
+        );
+        let close = runtime.retire_claimed_window_open_attempt_for_close(
+            rolled_back.open_attempt(),
+            rolled_back.window(),
+        );
+        assert!(
+            close.is_some(),
+            "rollback must retire the exact claimed open-attempt generation"
+        );
+    }
+
+    #[open_gpui::test]
+    fn tear_off_does_not_return_completed_after_surface_publish_supersedes_registration(
+        cx: &mut TestAppContext,
+    ) {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("target");
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .allow_platform_viewports(true)
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let runtime = DockViewportRuntimeHandle::new(fixture.controller.clone());
+        let source_window = handle(11);
+        let opening_window = handle(12);
+        let replacement_window = handle(13);
+        runtime
+            .borrow_mut()
+            .register_opened_viewport(source_space.clone(), source_window);
+        let pending = cx.update(|app| {
+            let outcome = runtime.begin_tear_off_request_for_test(
+                DockViewportTearOffRequest::new(
+                    source_space.clone(),
+                    source_tabs,
+                    DockViewportDropPayload::Item(item("a")),
+                    point(px(900.0), px(900.0)),
+                    None,
+                ),
+                target_space.clone(),
+                app,
+            );
+            let DockViewportTearOffBeginOutcome::Pending(pending) = outcome else {
+                panic!("fresh tear-off should reserve its target");
+            };
+            pending
+        });
+        let published = std::rc::Rc::new(std::cell::Cell::new(false));
+        runtime.install_surface_commit_sink({
+            let runtime = runtime.downgrade_runtime_for_test();
+            let target_space = target_space.clone();
+            let published = published.clone();
+            move |_, _, _| {
+                if !published.replace(true)
+                    && let Some(runtime) = runtime.upgrade()
+                {
+                    runtime.borrow_mut().replace_adapter_registration_for_test(
+                        target_space.clone(),
+                        replacement_window,
+                    );
+                }
+            }
+        });
+
+        let error = cx
+            .update(|app| {
+                runtime.complete_opened_tear_off_viewport_for_test(pending, opening_window, app)
+            })
+            .expect_err("post-publish replacement must supersede the stale completed result");
+
+        assert!(
+            error
+                .to_string()
+                .contains("registration changed during surface publication"),
+            "the stale completion should report its issued registration was superseded: {error}"
+        );
+        assert_eq!(
+            runtime.window_id_for_space(&target_space),
+            Some(replacement_window.window_id()),
+            "the post-publish G2 registration must remain current"
         );
     }
 
@@ -1499,6 +1743,9 @@ mod runtime_suite {
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
         let controller = cx.new(|_| DockController::new(workspace));
+        let policy = cx.read_entity(&controller, |controller, _| {
+            controller.workspace().policy().clone()
+        });
 
         let target_window = handle(122);
         let mut adapter = DockViewportAdapter::new();
@@ -1558,8 +1805,8 @@ mod runtime_suite {
             target_window.window_id(),
             leaf_host_scene_fact(target_root, replacement_tabs),
         ));
-        let current_target = cx
-            .update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+        let current_target = runtime
+            .resolve_host_scene_target(&target_space, host_position, &policy)
             .expect("new frame should still resolve a valid host-scene target");
         assert!(
             matches!(
@@ -1763,6 +2010,9 @@ mod runtime_suite {
             .space(target_space.clone(), ["b"])
             .build_controller(cx);
         let target_tabs = fixture.tabs(&target_space);
+        let policy = cx.read_entity(&fixture.controller, |controller, _| {
+            controller.workspace().policy().clone()
+        });
         let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
         let target_window = handle(31);
         let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
@@ -1784,7 +2034,8 @@ mod runtime_suite {
         ));
         assert!(runtime.viewport_route_ready(&target_space));
         assert!(
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            runtime
+                .resolve_host_scene_target(&target_space, host_position, &policy)
                 .is_some(),
             "fresh viewport facts should allow host scene target resolution"
         );
@@ -1802,7 +2053,8 @@ mod runtime_suite {
             "stale window facts should not delete the last rendered scene"
         );
         assert!(
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            runtime
+                .resolve_host_scene_target(&target_space, host_position, &policy)
                 .is_none(),
             "stale window facts must block direct host scene target resolution"
         );
@@ -1820,7 +2072,8 @@ mod runtime_suite {
             leaf_host_scene_fact(target_tabs, target_tabs),
         ));
         assert!(
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            runtime
+                .resolve_host_scene_target(&target_space, host_position, &policy)
                 .is_some(),
             "the next rendered host-scene frame should restore resolution"
         );
@@ -2181,8 +2434,13 @@ mod runtime_suite {
         focus_backend_window_for_test(decoy_opened.window(), cx);
         assert!(cx.update(|app| runtime.reconcile_backend_window_focus(app)));
         focus_backend_window_for_test(target_opened.window(), cx);
-        let activation = crate::DockViewportActivationTransaction::new(
-            target_space.clone(),
+        let activation = crate::DockViewportActivationTransaction::registered(
+            runtime
+                .registration_key_for_space_window(
+                    &target_space,
+                    target_opened.window().window_id(),
+                )
+                .expect("target viewport should have an exact registration"),
             target_opened.window(),
             DockViewportFocusRequest::panel(item("b")),
         );
@@ -2557,7 +2815,7 @@ mod handle_suite {
             DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession,
         },
         viewport_activation::apply_viewport_activation_transaction,
-        viewport_drop_scene::DockViewportHostSceneSnapshot,
+        viewport_drop_scene::DockViewportHostSceneDraft,
         viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
     };
     use open_gpui::{
@@ -2567,6 +2825,125 @@ mod handle_suite {
     use slotmap::Key;
 
     use crate::host_viewport_runtime_test_support::*;
+
+    #[open_gpui::test]
+    fn ordinary_open_applies_replacement_cleanup_when_surface_publish_supersedes_registration(
+        cx: &mut TestAppContext,
+    ) {
+        let space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(space.clone(), tabs);
+
+        let mut workspace = DockWorkspace::new(space.clone(), graph);
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let replaced = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .expect("initial viewport should open");
+
+        assert!(
+            cx.update(|app| {
+                runtime
+                    .handle_window_should_close_with_app(replaced.window().window_id(), app)
+                    .allows_close()
+            }),
+            "the retained viewport should enter close-pending before replacement"
+        );
+
+        let latest_window: open_gpui::AnyWindowHandle = cx
+            .open_window(size(px(360.0), px(220.0)), |_, cx| {
+                TestPanel::new("latest", cx)
+            })
+            .into();
+        let published = std::rc::Rc::new(std::cell::Cell::new(false));
+        let issued_window = std::rc::Rc::new(std::cell::Cell::new(None));
+        runtime.install_surface_commit_sink({
+            let weak_runtime = runtime.downgrade_runtime_for_test();
+            let space = space.clone();
+            let published = published.clone();
+            let issued_window = issued_window.clone();
+            move |_, _, _| {
+                if published.replace(true) {
+                    return;
+                }
+                let runtime = weak_runtime
+                    .upgrade()
+                    .expect("runtime should remain live during surface publication");
+                let issued = {
+                    runtime
+                        .borrow()
+                        .adapter()
+                        .window_for_space(&space)
+                        .expect("ordinary open should publish after registering its new window")
+                };
+                issued_window.set(Some(issued));
+                runtime
+                    .borrow_mut()
+                    .replace_adapter_registration_for_test(space.clone(), latest_window);
+            }
+        });
+
+        let error = cx
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(
+                    space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .expect_err("surface publication should supersede the issued registration");
+        let issued = issued_window
+            .get()
+            .expect("the surface sink should observe the newly issued window");
+
+        assert!(
+            published.get(),
+            "ordinary open should publish its topology commit"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("opened viewport registration changed during surface publication"),
+            "the stale open should report publication supersession: {error}"
+        );
+        assert_eq!(
+            runtime.window_id_for_space(&space),
+            Some(latest_window.window_id()),
+            "the reentrant G2 registration must remain current"
+        );
+
+        cx.run_until_parked();
+        cx.update(|app| app.refresh_windows());
+
+        assert!(
+            replaced.window().update(cx, |_, _, _| ()).is_err(),
+            "the G0 replacement cleanup must still close its retired window"
+        );
+        assert!(
+            issued.update(cx, |_, _, _| ()).is_err(),
+            "the superseded G1 open must retire its just-opened window"
+        );
+        assert!(
+            latest_window.update(cx, |_, _, _| ()).is_ok(),
+            "the reentrant G2 registration must keep its window live"
+        );
+        assert_eq!(
+            runtime.window_id_for_space(&space),
+            Some(latest_window.window_id()),
+            "deferred cleanup must not disturb the latest registration"
+        );
+    }
 
     #[open_gpui::test]
     fn viewport_runtime_handle_tracks_payload_drag_session(cx: &mut TestAppContext) {
@@ -2931,7 +3308,11 @@ mod handle_suite {
 
         let preparation = source_window
             .update(cx, |_, window, cx| {
-                let snapshot = DockViewportHostSceneSnapshot::new_with_facts(
+                let expected_registration = runtime.registration_key_for_space_window(
+                    &source_space,
+                    window.window_handle().window_id(),
+                );
+                let draft = DockViewportHostSceneDraft::new_with_facts(
                     source_space.clone(),
                     window.window_handle().window_id(),
                     DockViewportWindowFacts::from_window(window, cx).current_bounds,
@@ -2940,11 +3321,20 @@ mod handle_suite {
                     crate::DockDropGuideMetrics::default(),
                     Vec::new(),
                 );
-                runtime.commit_rendered_viewport_host_scene_snapshot(snapshot, window, cx, false)
+                let preparation = runtime
+                    .prepare_rendered_viewport_host_scene_draft(
+                        draft,
+                        expected_registration.as_ref(),
+                        window,
+                        cx,
+                    )
+                    .expect("current rendered scene must prepare");
+                let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
+                runtime.publish_rendered_viewport_host_scene_commit(commit, cx)
             })
             .expect("source render commit should run");
         assert!(
-            preparation.changed,
+            preparation,
             "render commit sync should report runtime changes when it clears stale routed previews"
         );
 

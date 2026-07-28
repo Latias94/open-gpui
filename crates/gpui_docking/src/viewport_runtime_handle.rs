@@ -9,31 +9,40 @@ use crate::{
     DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportPlatformFocusRestoreGate, DockViewportPlatformSyncDispatch,
-    DockViewportPlatformSyncRejectedReason, DockViewportPlatformSyncRequest,
-    DockViewportResolvedDropRoute, DockViewportResolvedDropRouteOutcome,
-    DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntime,
-    DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
-    DockViewportTearOffRequest, DockViewportWindowFacts, DockVisualAffordanceDebugSummary,
-    apply_viewport_window_effects, close_window_quietly,
+    DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
+    DockViewportPlatformSyncDispatch, DockViewportPlatformSyncRejectedReason,
+    DockViewportPlatformSyncRequest, DockViewportResolvedDropRoute,
+    DockViewportResolvedDropRouteOutcome, DockViewportRestoreReadiness,
+    DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeStatus,
+    DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
+    DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOpenAttemptKey,
+    DockVisualAffordanceDebugSummary, apply_viewport_window_effects,
+    apply_viewport_window_effects_excluding, close_window_quietly,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
-    refresh_runtime_update, refresh_viewport_window_effects, refresh_windows,
+    refresh_runtime_update, refresh_runtime_update_excluding,
+    refresh_viewport_window_effects_excluding, refresh_windows,
     viewport_activation::{
         DockViewportActivationApplyOutcome, apply_viewport_activation_transaction,
     },
+    viewport_coordinates::{
+        DockViewportFrameObservation, DockViewportFrameSample, DockViewportFrameSampleRequest,
+    },
     viewport_drop_scene::{
-        DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
-        DockViewportHostSceneSnapshot,
+        DockViewportHostSceneDraft, DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
     },
     viewport_platform_sync::{
         DockViewportPlatformSyncDispatchResult, resolve_render_passthrough_pointer_input_request,
         sync_pointer_input_window, sync_reused_viewport_window_with_request_gate,
         unavailable_reused_viewport_window_sync,
     },
-    viewport_runtime::{DockViewportPreparedTearOffBegin, DockViewportPreparedTearOffDrop},
+    viewport_registry::DockViewportRegistrationKey,
+    viewport_runtime::{
+        DockViewportClaimedTearOffTarget, DockViewportPreparedTearOffBegin,
+        DockViewportPreparedTearOffDrop,
+    },
     viewport_window_lifecycle::DockViewportReusableWindow,
 };
 #[cfg(test)]
@@ -76,24 +85,98 @@ pub struct DockViewportRuntimeHandle {
         Rc<RefCell<HashMap<DockViewportPlatformMutationKey, DockViewportPendingPlatformMutation>>>,
     terminal_platform_mutations:
         Rc<RefCell<HashMap<DockViewportPlatformMutationKey, DockViewportTerminalPlatformMutation>>>,
+    open_reservations: DockViewportOpenReservations,
     surface_commit_sink: DockViewportRuntimeCommitSink,
     active_surface_transaction: Rc<Cell<Option<DockSurfaceTransactionId>>>,
     surface_owner: Rc<RefCell<Option<WeakEntity<DockSurfaceOwner>>>>,
+    #[cfg(test)]
+    window_close_apply_test_hook: DockViewportWindowCloseApplyTestHook,
+}
+
+#[cfg(test)]
+type DockViewportWindowCloseApplyCallback = Box<dyn FnOnce(&mut App)>;
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct DockViewportWindowCloseApplyTestHook(
+    Rc<RefCell<Option<DockViewportWindowCloseApplyCallback>>>,
+);
+
+#[cfg(test)]
+impl std::fmt::Debug for DockViewportWindowCloseApplyTestHook {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DockViewportWindowCloseApplyTestHook")
+            .field("installed", &self.0.borrow().is_some())
+            .finish()
+    }
 }
 
 type DockViewportPlatformMutationKey = (WindowId, WindowMutationDomain);
 type DockViewportPlatformMutationSubscriptionKey = (WindowId, WindowMutationDomain, u64);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct DockViewportPendingPlatformMutation {
     generation: u64,
     request: WindowMutationRequest,
+    registration: Option<DockViewportRegistrationKey>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct DockViewportTerminalPlatformMutation {
     request: WindowMutationRequest,
     facts: WindowPlatformFacts,
+    registration: Option<DockViewportRegistrationKey>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DockViewportOpenReservations {
+    state: Rc<RefCell<DockViewportOpenReservationState>>,
+}
+
+#[derive(Debug, Default)]
+struct DockViewportOpenReservationState {
+    next_generation: u64,
+    active: HashMap<DockSpaceId, u64>,
+}
+
+#[derive(Debug)]
+struct DockViewportOpenReservation {
+    state: Rc<RefCell<DockViewportOpenReservationState>>,
+    space: DockSpaceId,
+    generation: u64,
+}
+
+impl DockViewportOpenReservations {
+    fn try_reserve(
+        &self,
+        space: DockSpaceId,
+    ) -> std::result::Result<DockViewportOpenReservation, ()> {
+        let mut state = self.state.borrow_mut();
+        if state.active.contains_key(&space) {
+            return Err(());
+        }
+        let generation = state.next_generation;
+        state.next_generation = state
+            .next_generation
+            .checked_add(1)
+            .expect("dock viewport open reservation generation space exhausted");
+        state.active.insert(space.clone(), generation);
+        Ok(DockViewportOpenReservation {
+            state: self.state.clone(),
+            space,
+            generation,
+        })
+    }
+}
+
+impl Drop for DockViewportOpenReservation {
+    fn drop(&mut self) {
+        let mut state = self.state.borrow_mut();
+        if state.active.get(&self.space) == Some(&self.generation) {
+            state.active.remove(&self.space);
+        }
+    }
 }
 
 fn immediate_terminal_window_mutation(
@@ -252,6 +335,7 @@ fn clear_dockhost_drop_previews(
     changed
 }
 
+#[cfg(test)]
 fn refresh_runtime_update_with_commit(
     runtime: &DockViewportRuntimeHandle,
     update: DockViewportRuntimeUpdate,
@@ -261,6 +345,7 @@ fn refresh_runtime_update_with_commit(
     refresh_runtime_update(update, cx)
 }
 
+#[cfg(test)]
 fn apply_runtime_update(
     runtime: &DockViewportRuntimeHandle,
     update: DockViewportRuntimeUpdate,
@@ -277,16 +362,55 @@ fn apply_runtime_update_from_window(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    let reconciled =
-        runtime.reconcile_viewport_frame_except_window(window.window_handle().window_id(), cx);
-    let changed = refresh_runtime_update_with_commit(runtime, update, cx);
+    let current_window = window.window_handle().window_id();
+    let reconciled = runtime.reconcile_viewport_frame_except_window(current_window, cx);
+    runtime.publish_surface_commit(&update, cx);
+    let changed = refresh_runtime_update_excluding(update, Some(current_window), cx);
     changed || reconciled
+}
+
+fn apply_viewport_window_effects_from_window_context(
+    runtime: &Rc<RefCell<DockViewportRuntime>>,
+    effects: DockViewportWindowEffects,
+    current_window: Option<&mut Window>,
+    cx: &mut App,
+) {
+    let current_window_id = current_window
+        .as_ref()
+        .map(|window| window.window_handle().window_id());
+    let refresh_current = current_window_id.is_some_and(|window_id| {
+        effects
+            .refresh()
+            .iter()
+            .any(|window| window.window_id() == window_id)
+    });
+    apply_viewport_window_effects_excluding(runtime, effects, current_window_id, cx);
+    if refresh_current && let Some(window) = current_window {
+        window.refresh();
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct DockViewportRenderedHostScenePreparation {
-    pub(crate) changed: bool,
+    changed: bool,
+    draft: DockViewportHostSceneDraft,
+    expected_registration: Option<DockViewportRegistrationKey>,
+    window: AnyWindowHandle,
+    window_facts: DockViewportWindowFacts,
+}
+
+impl DockViewportRenderedHostScenePreparation {
+    pub(crate) fn changed(&self) -> bool {
+        self.changed
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct DockViewportRenderedHostSceneCommit {
+    changed: bool,
     pub(crate) frame: Option<DockViewportHostSceneFrame>,
+    registration_update: DockViewportRuntimeUpdate,
+    route_preview_update: DockViewportRuntimeUpdate,
 }
 
 fn apply_close_recovery_activation_for_runtime(
@@ -294,12 +418,14 @@ fn apply_close_recovery_activation_for_runtime(
     outcome: &DockViewportCloseOutcome,
     cx: &mut App,
 ) -> DockViewportActivationApplyOutcome {
+    let prepared = runtime.borrow().prepare_close_recovery_window(outcome);
+    let applied = prepared.map(|prepared| prepared.sample(cx));
     let recovery = runtime
         .borrow_mut()
-        .activation_transaction_after_close_with_cleanup(outcome, cx);
+        .finalize_close_recovery_activation(outcome, applied);
     let recovery_effects = recovery.window_effects();
     let _ = clear_dockhost_drop_previews(recovery_effects.refresh().iter().cloned(), cx);
-    apply_viewport_window_effects(recovery_effects.clone(), cx);
+    apply_viewport_window_effects(runtime, recovery_effects.clone(), cx);
     apply_viewport_activation_transaction(recovery.activation, cx)
 }
 
@@ -318,16 +444,87 @@ fn install_should_close_hook(
     cx: &mut App,
 ) -> Result<()> {
     window.update(cx, move |_, window, cx| {
-        let window_id = window.window_handle().window_id();
-        window.on_window_should_close(cx, move |_, cx| {
-            runtime
-                .handle_window_should_close_with_app(window_id, cx)
-                .allows_close()
-        });
+        install_should_close_hook_from_window(runtime, window, cx);
     })
 }
 
+fn install_should_close_hook_from_window(
+    runtime: DockViewportRuntimeHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let window_id = window.window_handle().window_id();
+    window.on_window_should_close(cx, move |_, cx| {
+        runtime
+            .handle_window_should_close_with_app(window_id, cx)
+            .allows_close()
+    });
+}
+
 impl DockViewportRuntimeHandle {
+    fn retire_window_open_attempt_for_close(
+        &self,
+        open_attempt: DockViewportWindowOpenAttemptKey,
+        window: AnyWindowHandle,
+        cx: &mut App,
+    ) -> bool {
+        let close = self
+            .runtime
+            .borrow_mut()
+            .retire_window_open_attempt_for_close(open_attempt, window);
+        let Some(close) = close else {
+            return false;
+        };
+        apply_viewport_window_effects(
+            &self.runtime,
+            DockViewportWindowEffects::close_now_only(close),
+            cx,
+        );
+        true
+    }
+
+    fn retire_claimed_window_open_attempt_for_close(
+        &self,
+        open_attempt: DockViewportWindowOpenAttemptKey,
+        window: AnyWindowHandle,
+        cx: &mut App,
+    ) -> bool {
+        let close = self
+            .runtime
+            .borrow_mut()
+            .retire_claimed_window_open_attempt_for_close(open_attempt, window);
+        let Some(close) = close else {
+            return false;
+        };
+        apply_viewport_window_effects(
+            &self.runtime,
+            DockViewportWindowEffects::close_now_only(close),
+            cx,
+        );
+        true
+    }
+
+    fn rollback_claimed_tear_off_target(
+        &self,
+        claimed: DockViewportClaimedTearOffTarget,
+        excluded_window: Option<WindowId>,
+        cx: &mut App,
+    ) {
+        let rolled_back = self
+            .runtime
+            .borrow_mut()
+            .rollback_tear_off_target_claim(claimed);
+        let window = rolled_back.window();
+        let open_attempt = rolled_back.open_attempt();
+        apply_viewport_window_effects_excluding(
+            &self.runtime,
+            rolled_back.into_window_effects(),
+            excluded_window,
+            cx,
+        );
+        let _ = self.retire_claimed_window_open_attempt_for_close(open_attempt, window, cx);
+    }
+
     /// Runs runtime work inside the current surface transaction, or opens one when this handle
     /// belongs to a facade-owned surface.
     ///
@@ -420,10 +617,39 @@ impl DockViewportRuntimeHandle {
             platform_mutation_observation_subscriptions: Rc::new(RefCell::new(HashMap::new())),
             pending_platform_mutations: Rc::new(RefCell::new(HashMap::new())),
             terminal_platform_mutations: Rc::new(RefCell::new(HashMap::new())),
+            open_reservations: DockViewportOpenReservations::default(),
             surface_commit_sink: DockViewportRuntimeCommitSink::default(),
             active_surface_transaction: Rc::new(Cell::new(None)),
             surface_owner: Rc::new(RefCell::new(None)),
+            #[cfg(test)]
+            window_close_apply_test_hook: DockViewportWindowCloseApplyTestHook::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_window_close_apply_hook_for_test(
+        &self,
+        hook: impl FnOnce(&mut App) + 'static,
+    ) {
+        let mut installed = self.window_close_apply_test_hook.0.borrow_mut();
+        assert!(
+            installed.is_none(),
+            "dock viewport window-close apply test hook is already installed"
+        );
+        *installed = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(super) fn run_window_close_apply_hook_for_test(&self, cx: &mut App) {
+        let hook = self.window_close_apply_test_hook.0.borrow_mut().take();
+        if let Some(hook) = hook {
+            hook(cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn downgrade_runtime_for_test(&self) -> std::rc::Weak<RefCell<DockViewportRuntime>> {
+        Rc::downgrade(&self.runtime)
     }
 
     pub(crate) fn install_surface_owner(&self, owner: WeakEntity<DockSurfaceOwner>) {
@@ -483,17 +709,6 @@ impl DockViewportRuntimeHandle {
         }
     }
 
-    fn publish_viewport_topology_commit(
-        &self,
-        changed: bool,
-        surface_transaction: Option<DockSurfaceTransactionId>,
-        cx: &mut App,
-    ) {
-        let mut update = DockViewportRuntimeUpdate::default();
-        update.mark_viewport_topology(changed, surface_transaction);
-        self.publish_surface_commit(&update, cx);
-    }
-
     pub(crate) fn visual_style_resolver(&self) -> Option<crate::DockVisualStyleResolver> {
         self.runtime.borrow().visual_style_resolver()
     }
@@ -524,24 +739,28 @@ impl DockViewportRuntimeHandle {
         let status = self
             .runtime_status()
             .with_platform_capabilities(cx.viewport_capabilities());
-        let capabilities = {
+        let viewport_windows = {
             let runtime = self.runtime.borrow();
             status
                 .viewport_lifecycle
                 .iter()
                 .filter_map(|record| {
                     let window = runtime.adapter().window_for_space(&record.space)?;
-                    let profile = cx.window_mutation_profile(window)?;
-                    Some(
-                        crate::DockViewportWindowMutationCapabilityRecord::from_profile(
-                            record.space.clone(),
-                            record.window_id,
-                            profile,
-                        ),
-                    )
+                    Some((record.space.clone(), record.window_id, window))
                 })
                 .collect::<Vec<_>>()
         };
+        let capabilities: Vec<_> = viewport_windows
+            .into_iter()
+            .filter_map(|(space, window_id, window)| {
+                let profile = cx.window_mutation_profile(window)?;
+                Some(
+                    crate::DockViewportWindowMutationCapabilityRecord::from_profile(
+                        space, window_id, profile,
+                    ),
+                )
+            })
+            .collect();
         status.with_window_mutation_capabilities(capabilities)
     }
 
@@ -549,9 +768,19 @@ impl DockViewportRuntimeHandle {
         &self,
         result: DockViewportPlatformSyncDispatchResult,
         facts: &WindowPlatformFacts,
-    ) {
+        expected_registration: Option<&DockViewportRegistrationKey>,
+    ) -> bool {
         let (record, tickets) = result.into_parts();
         let window_id = record.window_id;
+        if expected_registration.is_some_and(|registration| {
+            !self
+                .runtime
+                .borrow()
+                .adapter()
+                .is_current_registration(registration)
+        }) {
+            return false;
+        }
         let immediate_terminals = record
             .dispatches
             .iter()
@@ -564,18 +793,25 @@ impl DockViewportRuntimeHandle {
                 DockViewportTerminalPlatformMutation {
                     request,
                     facts: facts.clone(),
+                    registration: expected_registration.cloned(),
                 },
             );
         }
         for ticket in tickets {
-            self.observe_platform_mutation_ticket(window_id, ticket);
+            self.observe_platform_mutation_ticket(
+                window_id,
+                ticket,
+                expected_registration.cloned(),
+            );
         }
+        true
     }
 
     fn observe_platform_mutation_ticket(
         &self,
         window_id: WindowId,
         ticket: open_gpui::WindowMutationTicket,
+        registration: Option<DockViewportRegistrationKey>,
     ) {
         let domain = ticket.domain();
         let generation = ticket.generation();
@@ -590,6 +826,7 @@ impl DockViewportRuntimeHandle {
             DockViewportPendingPlatformMutation {
                 generation,
                 request,
+                registration: registration.clone(),
             },
         );
 
@@ -599,19 +836,31 @@ impl DockViewportRuntimeHandle {
         let platform_mutation_observation_subscriptions =
             self.platform_mutation_observation_subscriptions.clone();
         let subscription = ticket.subscribe(move |observation| {
+            let registration_is_current = registration.as_ref().is_none_or(|registration| {
+                runtime.upgrade().is_some_and(|runtime| {
+                    runtime
+                        .borrow()
+                        .adapter()
+                        .is_current_registration(registration)
+                })
+            });
             let remove_pending = pending_platform_mutations
                 .borrow()
                 .get(&mutation_key)
-                .is_some_and(|pending| pending.generation == generation);
+                .is_some_and(|pending| {
+                    pending.generation == generation && pending.registration == registration
+                });
             if remove_pending {
                 pending_platform_mutations
                     .borrow_mut()
                     .remove(&mutation_key);
-                if matches!(
-                    observation.outcome,
-                    open_gpui::WindowMutationOutcome::Exact
-                        | open_gpui::WindowMutationOutcome::Superseded
-                ) {
+                if !registration_is_current
+                    || matches!(
+                        observation.outcome,
+                        open_gpui::WindowMutationOutcome::Exact
+                            | open_gpui::WindowMutationOutcome::Superseded
+                    )
+                {
                     terminal_platform_mutations
                         .borrow_mut()
                         .remove(&mutation_key);
@@ -621,6 +870,7 @@ impl DockViewportRuntimeHandle {
                         DockViewportTerminalPlatformMutation {
                             request: observation.request,
                             facts: observation.facts.clone(),
+                            registration: registration.clone(),
                         },
                     );
                 }
@@ -631,6 +881,9 @@ impl DockViewportRuntimeHandle {
             let Some(runtime) = runtime.upgrade() else {
                 return;
             };
+            if !registration_is_current {
+                return;
+            }
             runtime
                 .borrow_mut()
                 .record_platform_observation(window_id, observation.into());
@@ -646,10 +899,12 @@ impl DockViewportRuntimeHandle {
         &self,
         window_id: WindowId,
         domain: WindowMutationDomain,
+        expected_registration: Option<&DockViewportRegistrationKey>,
     ) -> Option<WindowMutationRequest> {
         self.pending_platform_mutations
             .borrow()
             .get(&(window_id, domain))
+            .filter(|pending| pending.registration.as_ref() == expected_registration)
             .map(|pending| pending.request)
     }
 
@@ -658,6 +913,7 @@ impl DockViewportRuntimeHandle {
         window_id: WindowId,
         request: WindowMutationRequest,
         facts: &WindowPlatformFacts,
+        expected_registration: Option<&DockViewportRegistrationKey>,
     ) -> bool {
         let key = (window_id, request.domain());
         let blocked = self
@@ -665,7 +921,8 @@ impl DockViewportRuntimeHandle {
             .borrow()
             .get(&key)
             .is_some_and(|terminal| {
-                terminal.request == request
+                terminal.registration.as_ref() == expected_registration
+                    && terminal.request == request
                     && relevant_window_mutation_facts_match(request, &terminal.facts, facts)
             });
         if !blocked {
@@ -711,9 +968,13 @@ impl DockViewportRuntimeHandle {
         mouse_down: bool,
         cx: &mut App,
     ) -> Option<crate::DockViewportFocusCommand> {
-        self.runtime
-            .borrow_mut()
-            .focus_command_for_confirmed_backend_window_focus(space, window_id, mouse_down, cx)
+        self.confirmed_backend_window_focus_outcome(
+            space,
+            window_id,
+            DockViewportPlatformFocusRestoreGate::from_mouse_down(mouse_down),
+            cx,
+        )
+        .into_focus_command()
     }
 
     pub(crate) fn confirmed_backend_window_focus_outcome(
@@ -723,6 +984,15 @@ impl DockViewportRuntimeHandle {
         platform_focus_restore_gate: DockViewportPlatformFocusRestoreGate,
         cx: &mut App,
     ) -> crate::DockViewportConfirmedBackendFocusOutcome {
+        let backend_focus = cx.focused_window();
+        let controller = self.runtime.borrow().controller_entity();
+        let platform_focus_restore_policy =
+            DockViewportPlatformFocusRestorePolicy::from_platform_focus_sets_dock_focus(
+                controller
+                    .read(cx)
+                    .policy()
+                    .platform_focus_sets_dock_focus(),
+            );
         let outcome = self
             .runtime
             .borrow_mut()
@@ -730,14 +1000,19 @@ impl DockViewportRuntimeHandle {
                 space,
                 window_id,
                 platform_focus_restore_gate,
-                cx,
+                backend_focus,
+                platform_focus_restore_policy,
             );
         self.settle_backend_focus_cancellation(cx);
         outcome
     }
 
     pub(crate) fn reconcile_backend_window_focus(&self, cx: &mut App) -> bool {
-        let changed = self.runtime.borrow_mut().reconcile_backend_window_focus(cx);
+        let backend_focus = cx.focused_window();
+        let changed = self
+            .runtime
+            .borrow_mut()
+            .record_confirmed_backend_focus_signal(backend_focus);
         self.settle_backend_focus_cancellation(cx);
         changed
     }
@@ -796,18 +1071,39 @@ impl DockViewportRuntimeHandle {
             .recorded_panel_focus_matches(space, item)
     }
 
+    pub(crate) fn registration_key_for_space_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockViewportRegistrationKey> {
+        self.runtime
+            .borrow()
+            .registration_key_for_space_window(space, window_id)
+    }
+
+    fn is_current_registration(&self, registration: &DockViewportRegistrationKey) -> bool {
+        self.runtime
+            .borrow()
+            .adapter()
+            .is_current_registration(registration)
+    }
+
+    pub(crate) fn release_host_binding_from_window(
+        &self,
+        registration: &DockViewportRegistrationKey,
+        window: &Window,
+        cx: &mut App,
+    ) -> bool {
+        let update = self.runtime.borrow_mut().release_host_binding(registration);
+        refresh_runtime_update_excluding(update, Some(window.window_handle().window_id()), cx)
+    }
+
     pub(crate) fn apply_close_recovery_activation(
         &self,
         outcome: &DockViewportCloseOutcome,
         cx: &mut App,
     ) -> DockViewportActivationApplyOutcome {
-        let activation = apply_close_recovery_activation_for_runtime(&self.runtime, outcome, cx);
-        self.publish_viewport_topology_commit(
-            viewport_close_removed_runtime_mapping(outcome),
-            None,
-            cx,
-        );
-        activation
+        apply_close_recovery_activation_for_runtime(&self.runtime, outcome, cx)
     }
 
     #[cfg(test)]
@@ -830,6 +1126,7 @@ impl DockViewportRuntimeHandle {
         refresh_runtime_update(update, cx)
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_platform_window_facts(
         &self,
         window_id: WindowId,
@@ -843,6 +1140,21 @@ impl DockViewportRuntimeHandle {
         refresh_runtime_update_with_commit(self, update, cx)
     }
 
+    pub(crate) fn apply_platform_window_facts_from_window(
+        &self,
+        window_facts: DockViewportWindowFacts,
+        window: &Window,
+        cx: &mut App,
+    ) -> bool {
+        let current_window = window.window_handle().window_id();
+        let update = self
+            .runtime
+            .borrow_mut()
+            .apply_platform_window_facts(current_window, window_facts);
+        self.publish_surface_commit(&update, cx);
+        refresh_runtime_update_excluding(update, Some(current_window), cx)
+    }
+
     #[cfg(test)]
     pub(crate) fn begin_payload_drag(&self, payload: &DockDragPayload) -> DockRuntimeDragSession {
         self.runtime.borrow_mut().begin_payload_drag(payload)
@@ -854,7 +1166,8 @@ impl DockViewportRuntimeHandle {
         payload: &DockDragPayload,
         cx: &mut App,
     ) -> DockRuntimeDragSession {
-        let focus_item = self.runtime.borrow().drag_focus_item(payload, cx);
+        let prepared = { self.runtime.borrow().prepare_drag_focus_item(payload) };
+        let focus_item = prepared.and_then(|prepared| prepared.sample(cx));
         let session = self
             .runtime
             .borrow_mut()
@@ -870,7 +1183,8 @@ impl DockViewportRuntimeHandle {
         window: &mut Window,
         cx: &mut App,
     ) -> DockRuntimeDragSession {
-        let focus_item = self.runtime.borrow().drag_focus_item(payload, cx);
+        let prepared = { self.runtime.borrow().prepare_drag_focus_item(payload) };
+        let focus_item = prepared.and_then(|prepared| prepared.sample(cx));
         let session = self
             .runtime
             .borrow_mut()
@@ -1057,6 +1371,27 @@ impl DockViewportRuntimeHandle {
         self.open_viewport_unchecked_policy(space, options, cx)
     }
 
+    /// Opens or reuses a viewport while the caller owns a live GPUI window update.
+    ///
+    /// Callers in render or event-listener contexts must use this entry point so reusing that same
+    /// viewport does not try to borrow the current window again through [`AnyWindowHandle`].
+    pub fn open_viewport_from_window(
+        &self,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        current_window: &mut Window,
+        cx: &mut App,
+    ) -> Result<DockViewportOpenOutcome> {
+        self.ensure_platform_viewports_allowed(cx)?;
+        self.open_viewport_unchecked_policy_for_surface_transaction(
+            space,
+            options,
+            None,
+            Some(current_window),
+            cx,
+        )
+    }
+
     /// Opens or reuses a controller-backed viewport window after the caller has handled policy.
     ///
     /// The handle installs a should-close hook that consults the shared runtime at close time, so
@@ -1067,7 +1402,7 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
-        self.open_viewport_unchecked_policy_for_surface_transaction(space, options, None, cx)
+        self.open_viewport_unchecked_policy_for_surface_transaction(space, options, None, None, cx)
     }
 
     pub(crate) fn open_viewport_unchecked_policy_in_transaction(
@@ -1082,6 +1417,7 @@ impl DockViewportRuntimeHandle {
             space,
             options,
             Some(surface_transaction),
+            None,
             cx,
         )
     }
@@ -1091,67 +1427,165 @@ impl DockViewportRuntimeHandle {
         space: impl Into<DockSpaceId>,
         options: WindowOptions,
         surface_transaction: Option<DockSurfaceTransactionId>,
+        mut current_window: Option<&mut Window>,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
         self.ensure_platform_viewport_windows_supported(cx)?;
         self.ensure_window_closed_observer(cx);
 
         let space = space.into();
+        let _open_reservation =
+            self.open_reservations
+                .try_reserve(space.clone())
+                .map_err(|()| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        format!(
+                            "viewport open is already in progress for dock space `{}`",
+                            space.as_str()
+                        ),
+                    )
+                })?;
+        let live_window = current_window.as_ref().map(|window| window.window_handle());
+        let reusable_probe = self
+            .runtime
+            .borrow()
+            .prepare_reusable_window_for_space(&space, live_window);
+        let reusable_observation = reusable_probe.sample(cx);
         let reusable_outcome = self
             .runtime
             .borrow_mut()
-            .reusable_window_for_space_with_cleanup(&space, cx);
+            .finalize_reusable_window(reusable_observation);
         let reusable_topology_changed = reusable_outcome.topology_changed();
         let (reusable, reusable_effects) = reusable_outcome.into_parts();
         let status = match reusable {
-            DockViewportReusableWindow::Reused(window) => {
+            DockViewportReusableWindow::Reused {
+                registration,
+                window,
+            } => {
                 let existing_kind = match cx.window_mutation_profile(window) {
                     Some(profile) => profile.kind.clone(),
                     None => {
-                        self.runtime.borrow_mut().record_platform_dispatch(
-                            unavailable_reused_viewport_window_sync(window.window_id()),
-                        );
+                        if self.is_current_registration(&registration) {
+                            self.runtime.borrow_mut().record_platform_dispatch(
+                                unavailable_reused_viewport_window_sync(window.window_id()),
+                            );
+                        }
                         return Err(std::io::Error::other(
                             "reused viewport window has no registered mutation profile",
                         )
                         .into());
                     }
                 };
-                if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
-                    self.runtime.borrow_mut().record_platform_dispatch(
-                        unavailable_reused_viewport_window_sync(window.window_id()),
+                let reuses_current_window = current_window.as_ref().is_some_and(|current_window| {
+                    current_window.window_handle().window_id() == window.window_id()
+                });
+                if reuses_current_window {
+                    install_should_close_hook_from_window(
+                        self.clone(),
+                        current_window
+                            .as_deref_mut()
+                            .expect("current viewport window was checked above"),
+                        cx,
                     );
+                } else if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
+                    if self.is_current_registration(&registration) {
+                        self.runtime.borrow_mut().record_platform_dispatch(
+                            unavailable_reused_viewport_window_sync(window.window_id()),
+                        );
+                    }
                     return Err(error);
+                }
+                if !self.is_current_registration(&registration) {
+                    return Err(std::io::Error::other(
+                        "reused viewport registration changed while installing close handling",
+                    )
+                    .into());
                 }
                 let platform_requests = self.runtime.borrow().platform_requests_for_space(&space);
                 let runtime = self.clone();
                 let window_id = window.window_id();
-                let (sync_result, platform_facts) = match window.update(cx, |_, window, _| {
+                let sync_window = |window: &mut Window| {
                     let sync_result = sync_reused_viewport_window_with_request_gate(
                         window,
                         &existing_kind,
                         options,
                         platform_requests,
                         |request, facts| {
-                            runtime.pending_platform_mutation_request(window_id, request.domain())
-                                != Some(request)
-                                && !runtime
-                                    .platform_mutation_retry_is_blocked(window_id, request, facts)
+                            runtime.is_current_registration(&registration)
+                                && runtime.pending_platform_mutation_request(
+                                    window_id,
+                                    request.domain(),
+                                    Some(&registration),
+                                ) != Some(request)
+                                && !runtime.platform_mutation_retry_is_blocked(
+                                    window_id,
+                                    request,
+                                    facts,
+                                    Some(&registration),
+                                )
                         },
                     );
                     (sync_result, window.platform_facts().clone())
-                }) {
-                    Ok(sync_result) => sync_result,
-                    Err(error) => {
-                        self.runtime.borrow_mut().record_platform_dispatch(
-                            unavailable_reused_viewport_window_sync(window.window_id()),
-                        );
-                        return Err(error);
+                };
+                let (sync_result, platform_facts) = if reuses_current_window {
+                    sync_window(
+                        current_window
+                            .as_deref_mut()
+                            .expect("current viewport window was checked above"),
+                    )
+                } else {
+                    match window.update(cx, |_, window, _| sync_window(window)) {
+                        Ok(sync_result) => sync_result,
+                        Err(error) => {
+                            if self.is_current_registration(&registration) {
+                                self.runtime.borrow_mut().record_platform_dispatch(
+                                    unavailable_reused_viewport_window_sync(window.window_id()),
+                                );
+                            }
+                            return Err(error);
+                        }
                     }
                 };
-                self.record_platform_dispatch_result(sync_result, &platform_facts);
-                self.reconcile_viewport_frame(cx);
-                refresh_windows(vec![window], cx);
+                self.record_platform_dispatch_result(
+                    sync_result,
+                    &platform_facts,
+                    Some(&registration),
+                )
+                .then_some(())
+                .ok_or_else(|| {
+                    std::io::Error::other(
+                        "reused viewport registration changed during platform synchronization",
+                    )
+                })?;
+                if let Some(current_window_id) = current_window
+                    .as_ref()
+                    .map(|current_window| current_window.window_handle().window_id())
+                {
+                    self.reconcile_viewport_frame_except_window(current_window_id, cx);
+                } else {
+                    self.reconcile_viewport_frame(cx);
+                }
+                if !self.is_current_registration(&registration) {
+                    return Err(std::io::Error::other(
+                        "reused viewport registration changed during frame reconciliation",
+                    )
+                    .into());
+                }
+                if reuses_current_window {
+                    current_window
+                        .as_deref_mut()
+                        .expect("current viewport window was checked above")
+                        .refresh();
+                } else {
+                    refresh_windows(vec![window], cx);
+                }
+                if !self.is_current_registration(&registration) {
+                    return Err(std::io::Error::other(
+                        "reused viewport registration changed during refresh",
+                    )
+                    .into());
+                }
                 return Ok(DockViewportOpenOutcome::new(
                     space,
                     window,
@@ -1161,7 +1595,12 @@ impl DockViewportRuntimeHandle {
             DockViewportReusableWindow::Stale => DockViewportOpenStatus::Replaced,
             DockViewportReusableWindow::Missing => DockViewportOpenStatus::Opened,
         };
-        apply_viewport_window_effects(reusable_effects, cx);
+        apply_viewport_window_effects_from_window_context(
+            &self.runtime,
+            reusable_effects,
+            current_window.as_deref_mut(),
+            cx,
+        );
         let mut stale_cleanup_update = DockViewportRuntimeUpdate::default();
         stale_cleanup_update.mark_viewport_topology(reusable_topology_changed, surface_transaction);
         self.publish_surface_commit(&stale_cleanup_update, cx);
@@ -1169,24 +1608,49 @@ impl DockViewportRuntimeHandle {
         let controller = self.runtime.borrow().controller_entity();
         let host_space = space.clone();
         let host_runtime = self.clone();
+        let open_attempt_runtime = host_runtime.clone();
+        let open_attempt_slot = Rc::new(Cell::new(None));
+        let open_attempt_slot_for_builder = open_attempt_slot.clone();
         let surface_owner = self.surface_owner();
-        let window = cx
-            .open_window(options, move |_, cx| {
-                cx.new(move |cx| match surface_owner {
-                    Some(surface_owner) => DockHost::from_surface_owner(
-                        controller,
-                        host_space,
-                        host_runtime,
-                        &surface_owner,
-                        cx,
-                    ),
-                    None => DockHost::from_controller(controller, host_space, host_runtime, cx),
-                })
-            })?
-            .into();
+        let open_result = cx.open_window(options, move |window, cx| {
+            let open_attempt = open_attempt_runtime
+                .runtime
+                .borrow_mut()
+                .begin_window_open_attempt(window.window_handle().window_id());
+            open_attempt_slot_for_builder.set(open_attempt);
+            cx.new(move |cx| match surface_owner {
+                Some(surface_owner) => DockHost::from_surface_owner(
+                    controller,
+                    host_space,
+                    host_runtime,
+                    &surface_owner,
+                    cx,
+                ),
+                None => DockHost::from_controller(controller, host_space, host_runtime, cx),
+            })
+        });
+        let window = match open_result {
+            Ok(window) => window.into(),
+            Err(error) => {
+                if let Some(open_attempt) = open_attempt_slot.take() {
+                    let _ = self
+                        .runtime
+                        .borrow_mut()
+                        .abort_window_open_attempt(open_attempt);
+                }
+                return Err(error);
+            }
+        };
+        let Some(open_attempt) = open_attempt_slot.take() else {
+            close_window_quietly(window, cx);
+            return Err(std::io::Error::other(
+                "opened viewport window id is already owned by another runtime generation",
+            )
+            .into());
+        };
 
         if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
-            close_window_quietly(window, cx);
+            let _ = self.retire_window_open_attempt_for_close(open_attempt, window, cx);
             return Err(error);
         }
 
@@ -1194,19 +1658,67 @@ impl DockViewportRuntimeHandle {
             Some(surface_transaction) => self
                 .runtime
                 .borrow_mut()
-                .register_opened_viewport_with_cleanup_in_transaction(
+                .register_opened_viewport_from_attempt_with_cleanup_in_transaction(
                     space.clone(),
                     window,
+                    open_attempt,
                     surface_transaction,
                 ),
             None => self
                 .runtime
                 .borrow_mut()
-                .register_opened_viewport_with_cleanup(space.clone(), window),
+                .register_opened_viewport_from_attempt_with_cleanup(
+                    space.clone(),
+                    window,
+                    open_attempt,
+                ),
         };
+        let registration = match registration {
+            Ok(Some(registration)) => registration,
+            Ok(None) => {
+                let _ = self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+                return Err(std::io::Error::other(
+                    "viewport open attempt was superseded before registration",
+                )
+                .into());
+            }
+            Err(error) => {
+                let _ = self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+                return Err(error.into());
+            }
+        };
+        let registration_key = registration.outcome.registration_key().clone();
         self.publish_surface_commit(registration.runtime_update(), cx);
-        apply_viewport_window_effects(registration.window_effects(), cx);
+        let registration_current_after_publication =
+            self.is_current_registration(&registration_key);
+        apply_viewport_window_effects_from_window_context(
+            &self.runtime,
+            registration.window_effects(),
+            current_window.as_deref_mut(),
+            cx,
+        );
+        if !registration_current_after_publication {
+            let _ = self.retire_claimed_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(std::io::Error::other(
+                "opened viewport registration changed during surface publication",
+            )
+            .into());
+        }
+        if !self.is_current_registration(&registration_key) {
+            let _ = self.retire_claimed_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(std::io::Error::other(
+                "opened viewport registration changed while applying window effects",
+            )
+            .into());
+        }
         refresh_windows(vec![window], cx);
+        if !self.is_current_registration(&registration_key) {
+            let _ = self.retire_claimed_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(std::io::Error::other(
+                "opened viewport registration changed during refresh",
+            )
+            .into());
+        }
 
         Ok(DockViewportOpenOutcome::new(space, window, status))
     }
@@ -1216,35 +1728,60 @@ impl DockViewportRuntimeHandle {
         space: DockSpaceId,
         options: WindowOptions,
         cx: &mut App,
-    ) -> Result<AnyWindowHandle> {
+    ) -> Result<(AnyWindowHandle, DockViewportWindowOpenAttemptKey)> {
         self.ensure_platform_viewports_allowed(cx)?;
         self.ensure_platform_viewport_windows_supported(cx)?;
         self.ensure_window_closed_observer(cx);
 
         let controller = self.runtime.borrow().controller_entity();
         let host_runtime = self.clone();
+        let open_attempt_runtime = host_runtime.clone();
+        let open_attempt_slot = Rc::new(Cell::new(None));
+        let open_attempt_slot_for_builder = open_attempt_slot.clone();
         let surface_owner = self.surface_owner();
-        let window = cx
-            .open_window(options, move |_, cx| {
-                cx.new(move |cx| match surface_owner {
-                    Some(surface_owner) => DockHost::from_surface_owner(
-                        controller,
-                        space,
-                        host_runtime,
-                        &surface_owner,
-                        cx,
-                    ),
-                    None => DockHost::from_controller(controller, space, host_runtime, cx),
-                })
-            })?
-            .into();
+        let open_result = cx.open_window(options, move |window, cx| {
+            let open_attempt = open_attempt_runtime
+                .runtime
+                .borrow_mut()
+                .begin_window_open_attempt(window.window_handle().window_id());
+            open_attempt_slot_for_builder.set(open_attempt);
+            cx.new(move |cx| match surface_owner {
+                Some(surface_owner) => DockHost::from_surface_owner(
+                    controller,
+                    space,
+                    host_runtime,
+                    &surface_owner,
+                    cx,
+                ),
+                None => DockHost::from_controller(controller, space, host_runtime, cx),
+            })
+        });
+        let window = match open_result {
+            Ok(window) => window.into(),
+            Err(error) => {
+                if let Some(open_attempt) = open_attempt_slot.take() {
+                    let _ = self
+                        .runtime
+                        .borrow_mut()
+                        .abort_window_open_attempt(open_attempt);
+                }
+                return Err(error);
+            }
+        };
+        let Some(open_attempt) = open_attempt_slot.take() else {
+            close_window_quietly(window, cx);
+            return Err(std::io::Error::other(
+                "opened tear-off window id is already owned by another runtime generation",
+            )
+            .into());
+        };
 
         if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
-            close_window_quietly(window, cx);
+            self.retire_window_open_attempt_for_close(open_attempt, window, cx);
             return Err(error);
         }
 
-        Ok(window)
+        Ok((window, open_attempt))
     }
 
     /// Opens a controller-backed viewport window and completes a tear-off transaction.
@@ -1257,16 +1794,19 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
         let target_space = target_space.into();
-        let prepared = self
-            .runtime
-            .borrow_mut()
-            .prepare_tear_off_drop_route_for_test(request, target_space, options, cx)?;
-        self.open_prepared_tear_off_viewport(prepared, cx)
+        let probe = self.runtime.borrow().prepare_tear_off_drop_route_for_test(
+            request,
+            target_space,
+            options,
+        );
+        let prepared = probe.sample(cx)?;
+        self.open_prepared_tear_off_viewport(prepared, None, cx)
     }
 
     fn open_prepared_tear_off_viewport(
         &self,
         prepared: DockViewportPreparedTearOffDrop,
+        excluded_window: Option<WindowId>,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
         if self.is_viewport_open(prepared.target_space()) {
@@ -1288,6 +1828,7 @@ impl DockViewportRuntimeHandle {
                 .complete_opened_tear_off_viewport(
                     prepared_window.pending,
                     prepared_window.options,
+                    excluded_window,
                     cx,
                 ),
             DockViewportPreparedTearOffBegin::Duplicate(pending) => {
@@ -1295,6 +1836,14 @@ impl DockViewportRuntimeHandle {
                 self.runtime.borrow_mut().record_tear_off_outcome(&outcome);
                 Ok(outcome)
             }
+            DockViewportPreparedTearOffBegin::Unavailable(pending) => Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "tear-off target space {} is already registered or reserved",
+                    pending.target_space()
+                ),
+            )
+            .into()),
         }
     }
 
@@ -1302,39 +1851,60 @@ impl DockViewportRuntimeHandle {
         &self,
         pending: DockViewportTearOffPending,
         options: WindowOptions,
+        excluded_window: Option<WindowId>,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        let window = match self.open_unregistered_viewport_window(
+        let (window, open_attempt) = match self.open_unregistered_viewport_window(
             pending.target_space().clone(),
             options,
             cx,
         ) {
             Ok(window) => window,
             Err(error) => {
-                self.runtime.borrow_mut().cancel_tear_off_request(
-                    &pending.request().key(),
-                    DockViewportTearOffCancelReason::Cancelled,
-                );
+                self.runtime
+                    .borrow_mut()
+                    .cancel_tear_off_pending(&pending, DockViewportTearOffCancelReason::Cancelled);
                 return Err(error);
             }
         };
+        if !self
+            .runtime
+            .borrow_mut()
+            .bind_tear_off_target_window(&pending, window)
+        {
+            self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+            let _ = self
+                .runtime
+                .borrow_mut()
+                .cancel_tear_off_pending(&pending, DockViewportTearOffCancelReason::Cancelled);
+            return Err(std::io::Error::other(
+                "tear-off target reservation changed while opening its viewport",
+            )
+            .into());
+        }
 
-        self.finish_opened_tear_off_viewport(pending, window, cx)
+        self.finish_opened_tear_off_viewport(pending, window, open_attempt, excluded_window, cx)
     }
 
     fn finish_opened_tear_off_viewport(
         &self,
         pending: DockViewportTearOffPending,
         window: AnyWindowHandle,
+        open_attempt: DockViewportWindowOpenAttemptKey,
+        excluded_window: Option<WindowId>,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        let key = pending.request().key();
-        if let Some(cancelled) = self
+        let source_check = self
+            .runtime
+            .borrow()
+            .prepare_tear_off_source_check(&pending);
+        let source_observation = source_check.sample(cx);
+        let cancelled = self
             .runtime
             .borrow_mut()
-            .cancel_tear_off_if_source_unavailable(&pending, &key, cx)
-        {
-            close_window_quietly(window, cx);
+            .finalize_tear_off_source_check(source_observation);
+        if let Some(cancelled) = cancelled {
+            self.retire_window_open_attempt_for_close(open_attempt, window, cx);
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!(
@@ -1346,38 +1916,100 @@ impl DockViewportRuntimeHandle {
             .into());
         }
 
-        let committed = {
-            let mut runtime = self.runtime.borrow_mut();
-            match runtime.commit_prepared_tear_off_move(&pending, cx) {
-                Ok(committed) => committed,
-                Err(error) => {
-                    runtime
-                        .cancel_tear_off_request(&key, DockViewportTearOffCancelReason::Cancelled);
-                    close_window_quietly(window, cx);
-                    return Err(error.into());
-                }
+        let prepared_claim = match {
+            self.runtime
+                .borrow()
+                .prepare_tear_off_target_claim(&pending, window, open_attempt)
+        } {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let _ = self
+                    .runtime
+                    .borrow_mut()
+                    .cancel_tear_off_pending(&pending, DockViewportTearOffCancelReason::Cancelled);
+                self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+                return Err(error.into());
             }
         };
-        let (outcome, runtime_update) = {
-            let mut runtime = self.runtime.borrow_mut();
-            let (completed, runtime_update) =
-                runtime.complete_committed_tear_off_window(committed, window, cx);
-            let outcome = DockViewportTearOffOpenOutcome::Completed(completed);
-            runtime.record_tear_off_outcome(&outcome);
-            (outcome, runtime_update)
+        let applied_claim = prepared_claim.sample(cx);
+        let claim_result = self
+            .runtime
+            .borrow_mut()
+            .finalize_tear_off_target_claim(applied_claim);
+        let claimed = match claim_result {
+            Ok(claimed) => claimed,
+            Err(error) => {
+                let _ = self
+                    .runtime
+                    .borrow_mut()
+                    .cancel_tear_off_pending(&pending, DockViewportTearOffCancelReason::Cancelled);
+                self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+                return Err(error.into());
+            }
         };
+
+        let prepared_move = {
+            self.runtime
+                .borrow_mut()
+                .prepare_tear_off_move_apply(&pending)
+        };
+        let applied_move = prepared_move.map(|prepared| prepared.apply(cx));
+        let commit_result = applied_move.and_then(|applied| {
+            self.runtime
+                .borrow_mut()
+                .finalize_tear_off_move_apply(applied)
+        });
+        let (committed, source_is_empty) = match commit_result {
+            Ok(committed) => committed,
+            Err(error) => {
+                self.rollback_claimed_tear_off_target(claimed, excluded_window, cx);
+                return Err(error.into());
+            }
+        };
+        let completion_result = self.runtime.borrow_mut().complete_tear_off_registration(
+            committed,
+            claimed,
+            source_is_empty,
+        );
+        let (completed, runtime_update) = match completion_result {
+            Ok(finalized) => finalized,
+            Err((error, claimed)) => {
+                self.rollback_claimed_tear_off_target(claimed, excluded_window, cx);
+                return Err(error.into());
+            }
+        };
+        let registration_key = completed.registration().registration_key().clone();
         self.publish_surface_commit(&runtime_update, cx);
-        if let DockViewportTearOffOpenOutcome::Completed(completed) = &outcome {
-            let mut graph_update = DockViewportRuntimeUpdate::default();
-            graph_update.mark_graph_commit(
-                completed.action().changed(),
-                self.active_surface_transaction.get(),
-            );
-            self.publish_surface_commit(&graph_update, cx);
+        let mut graph_update = DockViewportRuntimeUpdate::default();
+        graph_update.mark_graph_commit(
+            completed.action().changed(),
+            self.active_surface_transaction.get(),
+        );
+        self.publish_surface_commit(&graph_update, cx);
+        let registration_current_after_publication =
+            self.is_current_registration(&registration_key);
+        apply_viewport_window_effects_excluding(
+            &self.runtime,
+            completed.window_effects(),
+            excluded_window,
+            cx,
+        );
+        if !registration_current_after_publication {
+            self.retire_claimed_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(std::io::Error::other(
+                "tear-off viewport registration changed during surface publication",
+            )
+            .into());
         }
-        if let DockViewportTearOffOpenOutcome::Completed(completed) = &outcome {
-            apply_viewport_window_effects(completed.window_effects(), cx);
+        if !self.is_current_registration(&registration_key) {
+            self.retire_claimed_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(std::io::Error::other(
+                "tear-off viewport registration changed while applying window effects",
+            )
+            .into());
         }
+        let outcome = DockViewportTearOffOpenOutcome::Completed(completed);
+        self.runtime.borrow_mut().record_tear_off_outcome(&outcome);
         Ok(outcome)
     }
 
@@ -1388,7 +2020,28 @@ impl DockViewportRuntimeHandle {
         window: AnyWindowHandle,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        self.finish_opened_tear_off_viewport(pending, window, cx)
+        let Some(open_attempt) = self
+            .runtime
+            .borrow_mut()
+            .begin_window_open_attempt(window.window_id())
+        else {
+            return Err(std::io::Error::other(
+                "test tear-off window id is already owned by another runtime generation",
+            )
+            .into());
+        };
+        if !self
+            .runtime
+            .borrow_mut()
+            .bind_tear_off_target_window(&pending, window)
+        {
+            self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(std::io::Error::other(
+                "test tear-off viewport did not own the target reservation",
+            )
+            .into());
+        }
+        self.finish_opened_tear_off_viewport(pending, window, open_attempt, None, cx)
     }
 
     /// Exports serializable placement snapshots from the shared runtime.
@@ -1406,6 +2059,184 @@ impl DockViewportRuntimeHandle {
         placement: &DockViewportPlacementLayout,
     ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
         self.runtime.borrow_mut().check_placement_restore(placement)
+    }
+}
+
+#[cfg(test)]
+mod current_window_open_tests {
+    use super::{DockViewportRuntimeHandle, apply_viewport_window_effects_from_window_context};
+    use crate::{
+        DockController, DockGraph, DockNode, DockSpaceId, DockViewportOpenStatus,
+        DockViewportWindowEffects, DockWorkspace,
+        host_test_support::{item, test_view, viewport_window_options},
+    };
+    use open_gpui::{
+        AppContext as _, Context, IntoElement, Render, TestAppContext, Window, div, px, size,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    struct RenderCounter {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for RenderCounter {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+        }
+    }
+
+    #[open_gpui::test]
+    fn current_window_reuse_does_not_require_generic_handle_update(cx: &mut TestAppContext) {
+        let space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(space.clone(), root);
+
+        let mut workspace = DockWorkspace::new(space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+
+        let opened = cx
+            .update(|app| {
+                runtime.open_viewport(space.clone(), viewport_window_options(360.0, 220.0), app)
+            })
+            .expect("viewport should open before exercising current-window reuse");
+        let window = opened.window();
+        let registration = runtime
+            .registration_key_for_space_window(&space, window.window_id())
+            .expect("opened viewport should own a registration");
+
+        let reused = window
+            .update(cx, |_, current_window, app| {
+                assert!(
+                    window.update(app, |_, _, _| ()).is_err(),
+                    "generic handle update must be unavailable while the current window is borrowed"
+                );
+                runtime.open_viewport_from_window(
+                    space.clone(),
+                    viewport_window_options(480.0, 260.0),
+                    current_window,
+                    app,
+                )
+            })
+            .expect("outer current-window update should remain live")
+            .expect("explicit current-window reuse should succeed");
+
+        assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+        assert_eq!(reused.window(), window);
+        assert_eq!(
+            runtime.registration_key_for_space_window(&space, window.window_id()),
+            Some(registration),
+            "current-window reuse must preserve the existing registration generation"
+        );
+        assert_eq!(
+            runtime
+                .runtime_status()
+                .last_platform_dispatch
+                .as_ref()
+                .map(|record| record.window_id),
+            Some(window.window_id()),
+            "current-window reuse should still publish platform synchronization diagnostics"
+        );
+    }
+
+    #[open_gpui::test]
+    fn current_window_refresh_effect_uses_live_window_borrow(cx: &mut TestAppContext) {
+        let controller = cx.new(|_| {
+            DockController::new(DockWorkspace::new(
+                DockSpaceId::from("main"),
+                DockGraph::new(),
+            ))
+        });
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(320.0), px(240.0)), |_, _| RenderCounter {
+            renders: renders.clone(),
+        });
+        cx.run_until_parked();
+        let renders_before_refresh = renders.get();
+        let any_window: open_gpui::AnyWindowHandle = window.into();
+
+        window
+            .update(cx, |_, current_window, app| {
+                assert!(
+                    any_window.update(app, |_, _, _| ()).is_err(),
+                    "the generic handle must be unavailable during a live window update"
+                );
+                apply_viewport_window_effects_from_window_context(
+                    &runtime.runtime,
+                    DockViewportWindowEffects::refresh_only([any_window]),
+                    Some(current_window),
+                    app,
+                );
+            })
+            .expect("current-window refresh effect must not reborrow the window");
+        cx.run_until_parked();
+
+        assert!(
+            renders.get() > renders_before_refresh,
+            "a current-window refresh effect must schedule a real follow-up render"
+        );
+    }
+}
+
+#[cfg(test)]
+mod open_reservation_tests {
+    use super::DockViewportOpenReservations;
+    use crate::DockSpaceId;
+
+    #[test]
+    fn open_reservations_are_exclusive_per_space_only() {
+        let reservations = DockViewportOpenReservations::default();
+        let main = DockSpaceId::from("main");
+        let secondary = DockSpaceId::from("secondary");
+
+        let main_reservation = reservations
+            .try_reserve(main.clone())
+            .expect("first main open should reserve the space");
+        assert!(
+            reservations.try_reserve(main.clone()).is_err(),
+            "a nested open for the same space must not become a second creator"
+        );
+        let secondary_reservation = reservations
+            .try_reserve(secondary)
+            .expect("an unrelated space should retain independent open progress");
+
+        drop(main_reservation);
+        let replacement = reservations
+            .try_reserve(main)
+            .expect("dropping the current reservation should release its space");
+        drop(replacement);
+        drop(secondary_reservation);
+    }
+
+    #[test]
+    fn stale_open_reservation_drop_does_not_clear_replacement_generation() {
+        let reservations = DockViewportOpenReservations::default();
+        let main = DockSpaceId::from("main");
+        let stale = reservations
+            .try_reserve(main.clone())
+            .expect("initial open should reserve the space");
+
+        let replacement_generation = {
+            let mut state = reservations.state.borrow_mut();
+            let generation = stale.generation + 1;
+            state.active.insert(main.clone(), generation);
+            generation
+        };
+        drop(stale);
+
+        assert_eq!(
+            reservations.state.borrow().active.get(&main),
+            Some(&replacement_generation),
+            "an old guard must not release a replacement reservation"
+        );
     }
 }
 

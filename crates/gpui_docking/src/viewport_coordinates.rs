@@ -1,10 +1,67 @@
 use crate::{
-    DockSpaceId, DockViewportAdapter, DockViewportHostGeometry, DockViewportWindowFacts,
+    DockSpaceId, DockViewportAdapter, DockViewportHostGeometry, DockViewportIdentity,
+    DockViewportWindowFacts,
     viewport_registry::{
-        DockViewportInputMask, DockViewportStaleReason, DockViewportWindowFactsChange,
+        DockViewportInputMask, DockViewportRegistrationKey, DockViewportStaleReason,
+        DockViewportWindowFactsChange,
     },
 };
-use open_gpui::{AnyWindowHandle, AppContext, Pixels, Point, WindowId, point};
+use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId, point};
+
+#[derive(Debug, Clone)]
+pub(crate) struct DockViewportFrameSampleRequest {
+    identity: DockViewportIdentity,
+    registration_key: DockViewportRegistrationKey,
+    window: AnyWindowHandle,
+    expected_facts_generation: u64,
+    expected_input_mask: DockViewportInputMask,
+}
+
+impl DockViewportFrameSampleRequest {
+    fn new(
+        space: DockSpaceId,
+        registration_key: DockViewportRegistrationKey,
+        window: AnyWindowHandle,
+        expected_facts_generation: u64,
+        expected_input_mask: DockViewportInputMask,
+    ) -> Self {
+        Self {
+            identity: DockViewportIdentity::new(space, window.window_id()),
+            registration_key,
+            window,
+            expected_facts_generation,
+            expected_input_mask,
+        }
+    }
+
+    pub(crate) fn window(&self) -> AnyWindowHandle {
+        self.window
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportFrameObservation {
+    InputMask(DockViewportInputMask),
+    Unavailable,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DockViewportFrameSample {
+    request: DockViewportFrameSampleRequest,
+    observation: DockViewportFrameObservation,
+}
+
+impl DockViewportFrameSample {
+    pub(crate) fn new(
+        request: DockViewportFrameSampleRequest,
+        observation: DockViewportFrameObservation,
+    ) -> Self {
+        Self {
+            request,
+            observation,
+        }
+    }
+}
 
 impl DockViewportAdapter {
     /// Collects all registered platform viewport windows containing a screen point.
@@ -25,12 +82,15 @@ impl DockViewportAdapter {
                     return None;
                 }
                 let window = snapshot.window;
+                let registration_key = snapshot.registration_key(&space);
                 if !snapshot.input_mask.participates_in_hover_hit_testing() {
                     return None;
                 }
                 if let Some(reason) = snapshot.route_unavailable_reason() {
                     return Some(crate::DockViewportWindowHit::blocking(
-                        space, window, reason,
+                        registration_key,
+                        window,
+                        reason,
                     ));
                 }
                 let facts_generation = snapshot.facts_generation();
@@ -39,11 +99,10 @@ impl DockViewportAdapter {
                     position.y - screen_bounds.origin.y,
                 );
                 let host_position = self.window_to_host(&space, window_position);
-                Some(crate::DockViewportWindowHit::with_facts_generation(
-                    space,
+                Some(crate::DockViewportWindowHit::with_route_proof(
                     window,
                     host_position,
-                    facts_generation,
+                    crate::DockViewportRouteProof::new(registration_key, facts_generation),
                 ))
             })
             .collect()
@@ -78,45 +137,61 @@ impl DockViewportAdapter {
         snapshot.update_route_facts(window_facts, host_geometry)
     }
 
-    /// Refreshes live input-mask facts while avoiding a window that is already in the
-    /// current render/update callback.
-    pub(crate) fn refresh_registered_window_facts_except_window<C: AppContext>(
-        &mut self,
-        cx: &mut C,
+    /// Captures stable identities for live input-mask sampling outside the adapter borrow.
+    pub(crate) fn prepare_registered_window_fact_samples(
+        &self,
         skip_window_id: Option<WindowId>,
-    ) -> Vec<AnyWindowHandle> {
-        let viewports = self
-            .registry
+    ) -> Vec<DockViewportFrameSampleRequest> {
+        self.registry
             .snapshots()
-            .map(|(space, snapshot)| (space.clone(), snapshot.window))
-            .collect::<Vec<_>>();
-        let mut changed_windows = Vec::new();
-        for (space, window) in viewports {
-            if Some(window.window_id()) == skip_window_id {
-                continue;
-            }
-            let Ok(input_mask) = window.update(cx, |_, window, _| {
-                if window.is_minimized() {
-                    DockViewportInputMask::Minimized
-                } else if !window.accepts_pointer_input() {
-                    DockViewportInputMask::NoInputPassThrough
-                } else {
-                    DockViewportInputMask::ReceivesInput
-                }
-            }) else {
-                if self.mark_window_snapshot_stale(window.window_id()) {
-                    changed_windows.push(window);
-                }
-                continue;
-            };
-            let Some(snapshot) = self.snapshot_mut(&space) else {
-                continue;
-            };
-            if snapshot.refresh_input_mask(input_mask) {
-                changed_windows.push(window);
-            }
+            .filter(|(_, snapshot)| Some(snapshot.window.window_id()) != skip_window_id)
+            .map(|(space, snapshot)| {
+                DockViewportFrameSampleRequest::new(
+                    space.clone(),
+                    snapshot.registration_key(space),
+                    snapshot.window,
+                    snapshot.facts_generation(),
+                    snapshot.input_mask,
+                )
+            })
+            .collect()
+    }
+
+    /// Applies a sampled fact only while the viewport identity and prepare token are current.
+    pub(crate) fn finalize_registered_window_fact_sample(
+        &mut self,
+        sample: DockViewportFrameSample,
+    ) -> Option<AnyWindowHandle> {
+        let DockViewportFrameSample {
+            request,
+            observation,
+        } = sample;
+        if !self
+            .registry
+            .is_current_registration(&request.registration_key)
+        {
+            return None;
         }
-        changed_windows
+        let snapshot = self.snapshot_mut(request.identity.space())?;
+        if snapshot.window != request.window
+            || !request
+                .identity
+                .matches(request.identity.space(), snapshot.window.window_id())
+            || snapshot.facts_generation() != request.expected_facts_generation
+            || snapshot.input_mask != request.expected_input_mask
+        {
+            return None;
+        }
+
+        let changed = match observation {
+            DockViewportFrameObservation::InputMask(input_mask) => {
+                snapshot.refresh_input_mask(input_mask)
+            }
+            DockViewportFrameObservation::Unavailable => {
+                snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged)
+            }
+        };
+        changed.then_some(request.window)
     }
 
     /// Marks a registered window's live facts stale until its next render frame publishes them.
@@ -242,6 +317,7 @@ mod tests {
         DockViewportAdapter, DockViewportHit, DockViewportHostGeometry, DockViewportTargetContext,
         DockViewportWindowFacts,
         host_test_support::test_view,
+        viewport_coordinates::{DockViewportFrameObservation, DockViewportFrameSample},
         viewport_registry::{
             DockViewportLifecycleState, DockViewportRouteUnavailableReason, DockViewportStaleReason,
         },
@@ -366,7 +442,16 @@ mod tests {
             .expect("test window should still be live");
         cx.run_until_parked();
 
-        let changed_windows = adapter.refresh_registered_window_facts_except_window(cx, None);
+        let changed_windows = adapter
+            .prepare_registered_window_fact_samples(None)
+            .into_iter()
+            .filter_map(|request| {
+                adapter.finalize_registered_window_fact_sample(DockViewportFrameSample::new(
+                    request,
+                    DockViewportFrameObservation::Unavailable,
+                ))
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
             changed_windows
                 .into_iter()
@@ -385,6 +470,62 @@ mod tests {
         assert!(
             hits[0].blocks_host_target(),
             "stale live-window facts must block fallback instead of authorizing a stale host target"
+        );
+    }
+
+    #[test]
+    fn frame_sample_rejects_input_mask_change_that_does_not_advance_facts_generation() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let window = handle(1);
+        register_viewport(&mut adapter, main.clone(), window);
+        assert!(adapter.update_snapshot(
+            &main,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        ));
+        let generation = adapter
+            .snapshot(&main)
+            .expect("registered viewport should have a snapshot")
+            .facts_generation();
+        let request = adapter
+            .prepare_registered_window_fact_samples(None)
+            .into_iter()
+            .next()
+            .expect("registered viewport should produce a sample request");
+
+        assert!(
+            adapter
+                .snapshot_mut(&main)
+                .expect("registered viewport should have a mutable snapshot")
+                .refresh_input_mask(
+                    crate::viewport_registry::DockViewportInputMask::NoInputPassThrough,
+                )
+        );
+        assert_eq!(
+            adapter
+                .snapshot(&main)
+                .expect("registered viewport should keep its snapshot")
+                .facts_generation(),
+            generation,
+            "input-mask-only changes intentionally preserve route-facts generation"
+        );
+
+        assert_eq!(
+            adapter.finalize_registered_window_fact_sample(DockViewportFrameSample::new(
+                request,
+                DockViewportFrameObservation::InputMask(
+                    crate::viewport_registry::DockViewportInputMask::Minimized,
+                ),
+            )),
+            None,
+            "a stale sample must not overwrite a newer input-mask-only observation"
+        );
+        assert_eq!(
+            adapter.space_input_mask(&main),
+            Some(crate::viewport_registry::DockViewportInputMask::NoInputPassThrough)
         );
     }
 

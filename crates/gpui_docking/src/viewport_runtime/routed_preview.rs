@@ -1,8 +1,9 @@
 use super::DockViewportRuntime;
 use crate::{
     DockSpaceId, DockViewportDropRoute, DockViewportResolvedDropRoute, DockViewportRoutePreview,
-    DockViewportRoutedDropPreview, DockViewportRoutedDropPreviewReplacement,
-    DockViewportRuntimeUpdate, drag::DockDragPayload, interaction::DockRuntimeDragSession,
+    DockViewportRouteProof, DockViewportRoutedDropPreview,
+    DockViewportRoutedDropPreviewReplacement, DockViewportRuntimeUpdate, drag::DockDragPayload,
+    interaction::DockRuntimeDragSession,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId};
 
@@ -12,7 +13,8 @@ impl DockViewportRuntime {
         space: &DockSpaceId,
         window_id: WindowId,
     ) -> Option<DockViewportRoutedDropPreview> {
-        self.routed_drop_preview.preview_for(space, window_id)
+        let route_proof = self.current_route_proof(space, window_id)?;
+        self.routed_drop_preview.preview_for(&route_proof)
     }
 
     pub(crate) fn routed_drop_route_preview_for(
@@ -20,7 +22,8 @@ impl DockViewportRuntime {
         space: &DockSpaceId,
         window_id: WindowId,
     ) -> Option<crate::drop_preview::DockDropRoutePreview> {
-        self.routed_drop_preview.route_preview_for(space, window_id)
+        let route_proof = self.current_route_proof(space, window_id)?;
+        self.routed_drop_preview.route_preview_for(&route_proof)
     }
 
     #[cfg(test)]
@@ -32,7 +35,6 @@ impl DockViewportRuntime {
             .has_preview_for_drag_session(session)
     }
 
-    #[cfg(test)]
     pub(crate) fn update_routed_drop_preview(
         &mut self,
         resolution: &DockViewportResolvedDropRoute,
@@ -66,7 +68,19 @@ impl DockViewportRuntime {
         host_window_id: Option<WindowId>,
         host_position: Option<Point<Pixels>>,
     ) -> DockViewportRuntimeUpdate {
-        let active_drag_session_id = self.payload_drag.active_session_id();
+        if !self.resolution_registration_is_current(resolution) {
+            return DockViewportRuntimeUpdate::default();
+        }
+        if let Some(session) = resolution.drag_session() {
+            if !self.payload_drag.matches_session(Some(session))
+                || !session.accepts_payload(payload)
+            {
+                return DockViewportRuntimeUpdate::default();
+            }
+        } else if resolution.routed_preview_target_snapshot().is_some() {
+            return DockViewportRuntimeUpdate::default();
+        }
+        let active_drag_session_id = resolution.drag_session().map(DockRuntimeDragSession::id);
         if let Some(active_drag_session) = self.payload_drag.active_session()
             && let Some(identity) = crate::last_routed_viewport_identity_from_resolution(
                 resolution,
@@ -110,15 +124,16 @@ impl DockViewportRuntime {
             DockViewportDropRoute::Unavailable => None,
         };
         let next_route_preview = match (host_space, host_window_id, host_position) {
-            (Some(space), Some(window_id), Some(position)) => {
-                crate::routed_drop_route_preview_for_host(
-                    resolution,
-                    space,
-                    window_id,
-                    position,
-                    active_drag_session_id,
-                )
-            }
+            (Some(space), Some(window_id), Some(position)) => self
+                .current_route_proof(&space, window_id)
+                .and_then(|route_proof| {
+                    crate::routed_drop_route_preview_for_host(
+                        resolution,
+                        route_proof,
+                        position,
+                        active_drag_session_id,
+                    )
+                }),
             _ => None,
         };
         let next_resolution = match resolution.route() {
@@ -126,6 +141,91 @@ impl DockViewportRuntime {
             _ => Some(resolution.clone()),
         };
         self.replace_routed_drop_preview(next, next_route_preview, next_resolution)
+    }
+
+    fn current_route_proof(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockViewportRouteProof> {
+        let registration_key = self
+            .adapter
+            .registration_key(space)
+            .filter(|key| key.window_id() == window_id)?;
+        let facts_generation = self.adapter.snapshot_facts_generation(space, window_id)?;
+        Some(DockViewportRouteProof::new(
+            registration_key,
+            facts_generation,
+        ))
+    }
+
+    fn resolution_registration_is_current(
+        &self,
+        resolution: &DockViewportResolvedDropRoute,
+    ) -> bool {
+        let route_proof = resolution.route().route_proof();
+        match resolution.route() {
+            DockViewportDropRoute::Local {
+                route_proof,
+                source,
+                ..
+            } => {
+                if !self
+                    .adapter
+                    .is_current_registration(route_proof.registration_key())
+                {
+                    return false;
+                }
+                if source.requires_current_route_facts()
+                    && self
+                        .adapter
+                        .snapshot_facts_generation(route_proof.space(), route_proof.window_id())
+                        != Some(route_proof.facts_generation())
+                {
+                    return false;
+                }
+            }
+            DockViewportDropRoute::KnownViewport { target, .. } => {
+                let proof = target.route_proof();
+                if !self
+                    .adapter
+                    .is_current_registration(proof.registration_key())
+                    || self
+                        .adapter
+                        .snapshot_facts_generation(proof.space(), proof.window_id())
+                        != Some(proof.facts_generation())
+                {
+                    return false;
+                }
+            }
+            DockViewportDropRoute::TearOff
+            | DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Rejected(_) => {}
+        }
+
+        let Some(target) = resolution.routed_preview_target_snapshot() else {
+            return true;
+        };
+        if !self
+            .frame_coordinator
+            .host_scenes()
+            .is_current_frame(target.frame())
+        {
+            return false;
+        }
+        let frame_registration = target.frame().registration_key();
+        if !self.adapter.is_current_registration(frame_registration) {
+            return false;
+        }
+        if target.facts_generation().is_some_and(|facts_generation| {
+            self.adapter.snapshot_facts_generation(
+                target.route_proof().space(),
+                target.route_proof().window_id(),
+            ) != Some(facts_generation)
+        }) {
+            return false;
+        }
+        route_proof.is_none_or(|proof| proof == target.route_proof())
     }
 
     fn replace_routed_drop_preview(
@@ -171,7 +271,7 @@ impl DockViewportRuntime {
         }
     }
 
-    pub(super) fn clear_routed_drop_preview_for_drag_session(
+    pub(crate) fn clear_routed_drop_preview_for_drag_session(
         &mut self,
         session: Option<&DockRuntimeDragSession>,
     ) -> DockViewportRuntimeUpdate {

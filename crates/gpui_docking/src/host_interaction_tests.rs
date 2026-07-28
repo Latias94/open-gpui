@@ -2422,7 +2422,6 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     cx.set_platform_hovered_window(None);
-    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -2444,13 +2443,13 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
         "panel B should remain visible in the target window after the split"
     );
     assert!(
-        selector_for(
-            &source_visual,
-            &source_host,
-            DockDebugRegion::Panel { item: item("a") }
-        )
-        .is_none(),
-        "panel A should leave the source window after the cross-window split"
+        !cx.windows().contains(&source_window.into()),
+        "the vacated source viewport should close after the cross-window split"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "the vacated source space should no longer own a runtime window"
     );
 
     cx.read_entity(&controller, |controller, _| {
@@ -2585,7 +2584,6 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     cx.set_platform_hovered_window(None);
-    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -2616,13 +2614,13 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
         "panel C should remain visible in the target window after the reorientation"
     );
     assert!(
-        selector_for(
-            &source_visual,
-            &source_host,
-            DockDebugRegion::Panel { item: item("a") }
-        )
-        .is_none(),
-        "panel A should leave the source window after the cross-window drop"
+        !cx.windows().contains(&source_window.into()),
+        "the vacated source viewport should close after the cross-window drop"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "the vacated source space should no longer own a runtime window"
     );
 
     cx.read_entity(&controller, |controller, _| {
@@ -2771,7 +2769,6 @@ fn cross_window_tab_drag_to_edge_creates_split(
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     cx.set_platform_hovered_window(None);
-    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -2793,13 +2790,13 @@ fn cross_window_tab_drag_to_edge_creates_split(
         "panel B should remain visible in the target window after the split"
     );
     assert!(
-        selector_for(
-            &source_visual,
-            &source_host,
-            DockDebugRegion::Panel { item: item("a") }
-        )
-        .is_none(),
-        "panel A should leave the source window after the cross-window split"
+        !cx.windows().contains(&source_window.into()),
+        "the vacated source viewport should close after the cross-window split"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "the vacated source space should no longer own a runtime window"
     );
 
     let (first_expected, second_expected) = match zone {
@@ -3242,12 +3239,32 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
+    let source_registration = runtime
+        .borrow()
+        .adapter()
+        .registration_key(&source_space)
+        .expect("source viewport should have an exact registration before release");
 
     activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    {
+        let runtime = runtime.borrow();
+        assert_eq!(
+            runtime.adapter().registration_key(&source_space),
+            Some(source_registration.clone()),
+            "source-only release must retain the exact source registration"
+        );
+        assert!(
+            runtime
+                .adapter()
+                .snapshot(&source_space)
+                .is_some_and(|snapshot| snapshot.is_route_ready()),
+            "source-only release must not resample its currently borrowed source window as unavailable"
+        );
+    }
     cx.run_until_parked();
 
     let detached_space = cx.read_entity(&controller, |controller, _| {
@@ -3422,11 +3439,12 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
         );
         detached_space
     });
-    let detached_bounds = runtime
+    let detached_window = runtime
         .borrow()
         .adapter()
         .window_for_space(&detached_space)
-        .expect("detached space should have a runtime window")
+        .expect("detached space should have a runtime window");
+    let detached_bounds = detached_window
         .update(cx, |_, window, _| window.window_bounds().get_bounds())
         .expect("detached viewport should remain live");
 

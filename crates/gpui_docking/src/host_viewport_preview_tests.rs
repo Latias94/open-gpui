@@ -62,6 +62,9 @@ mod runtime_suite {
         workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         let controller = cx.new(|_| DockController::new(workspace));
+        let policy = cx.read_entity(&controller, |controller, _| {
+            controller.workspace().policy().clone()
+        });
 
         let target_window = handle(21);
         let mut adapter = DockViewportAdapter::new();
@@ -119,7 +122,7 @@ mod runtime_suite {
 
         target_scene.begin_empty_runtime_frame(&mut runtime);
         let target_after_scene_change =
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app));
+            runtime.resolve_host_scene_target(&target_space, host_position, &policy);
         assert!(
             target_after_scene_change.is_none(),
             "new frame intentionally has no facts; re-resolving would fail"
@@ -942,11 +945,6 @@ mod runtime_suite {
         let update = runtime.update_routed_drop_preview(&preview_resolution, &payload);
         assert!(update.changed());
         assert_eq!(update.into_windows(), vec![target_window]);
-        assert!(runtime.update_viewport_snapshot(
-            &decoy_space,
-            DockViewportWindowFacts::from_window_bounds(shared_window_bounds),
-            floating_bounds(0.0, 0.0, 360.0, 220.0),
-        ));
         let release_request = hovered_window_route_request_for_test(
             source_space,
             source_tabs,
@@ -1341,12 +1339,14 @@ mod runtime_suite {
         assert!(!runtime.has_routed_drop_preview_for_drag_session(None));
 
         let local_resolution = DockViewportResolvedDropRoute::new(
-            DockViewportDropRoute::Local {
-                host_position: target_position,
-                window_id: target_window.window_id(),
-                facts_generation: 1,
-                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
+            DockViewportDropRoute::local_for_registration_test(
+                runtime
+                    .registration_key_for_space_window(&target_space, target_window.window_id())
+                    .expect("registered viewport should have an exact key"),
+                target_position,
+                1,
+                crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            ),
             None,
         );
         runtime.update_routed_drop_preview(&local_resolution, &payload);
@@ -1374,6 +1374,148 @@ mod runtime_suite {
         runtime.update_routed_drop_preview(&next_resolution, &payload);
         assert!(runtime.has_routed_drop_preview_for_drag_session(Some(&next_session)));
         assert!(!runtime.has_routed_drop_preview_for_drag_session(Some(&session)));
+        assert!(
+            !runtime
+                .update_routed_drop_preview(&resolution, &payload)
+                .changed(),
+            "a delayed resolution from the previous drag session must not replace the current preview"
+        );
+        assert!(runtime.has_routed_drop_preview_for_drag_session(Some(&next_session)));
+    }
+
+    #[open_gpui::test]
+    fn stale_routed_preview_store_rejects_registration_and_scene_generations(
+        cx: &mut TestAppContext,
+    ) {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("target");
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let target_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+        graph.set_root(target_space.clone(), target_tabs);
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+
+        let target_window = handle(78);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, target_space.clone(), target_window);
+        let mut runtime = DockViewportRuntime::from_adapter(
+            controller,
+            adapter,
+            DockViewportClosePolicy::RetainLayout,
+        );
+        let target_scene =
+            DockViewportHostSceneSeed::new(target_space.clone(), target_window, target_tabs);
+        target_scene.publish_runtime(&mut runtime);
+        let payload = DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        );
+        let session = runtime.begin_payload_drag(&payload);
+        let request = hovered_window_route_request_for_test(
+            source_space,
+            source_tabs,
+            DockViewportDropPayload::Item(item("a")),
+            target_scene.screen_position(),
+            None,
+            target_window,
+            DockPayloadDropReleaseOrigin::HoveredHost,
+        )
+        .with_drag_session(Some(session));
+
+        let stale_resolution =
+            cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+        let stale_registration = stale_resolution
+            .route()
+            .route_proof()
+            .expect("known viewport route should carry a registration proof")
+            .registration_key()
+            .clone();
+
+        let replacement =
+            runtime.replace_adapter_registration_for_test(target_space.clone(), target_window);
+        assert_ne!(replacement, stale_registration);
+        target_scene.publish_runtime(&mut runtime);
+        let current_resolution =
+            cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+        assert_eq!(
+            current_resolution
+                .route()
+                .route_proof()
+                .map(|proof| proof.registration_key()),
+            Some(&replacement)
+        );
+        assert!(
+            runtime
+                .update_routed_drop_preview(&current_resolution, &payload)
+                .changed()
+        );
+        assert!(
+            runtime
+                .routed_drop_preview_for(&target_space, target_window.window_id())
+                .is_some()
+        );
+
+        let stale_update = runtime.update_routed_drop_preview(&stale_resolution, &payload);
+        assert!(
+            !stale_update.changed(),
+            "a delayed G1 resolution must be rejected before preview replacement"
+        );
+        assert!(
+            runtime
+                .routed_drop_preview_for(&target_space, target_window.window_id())
+                .is_some(),
+            "rejecting G1 must preserve the already stored G2 preview"
+        );
+
+        let stale_scene_frame = current_resolution
+            .routed_preview_target_snapshot()
+            .expect("current preview resolution should retain its scene frame")
+            .frame()
+            .clone();
+        assert!(runtime.push_viewport_host_scene_fact(
+            &target_space,
+            target_window.window_id(),
+            leaf_host_scene_fact(target_tabs, target_tabs),
+        ));
+        let next_scene_resolution =
+            cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+        let next_scene_frame = next_scene_resolution
+            .routed_preview_target_snapshot()
+            .expect("the advanced scene should resolve a current preview target")
+            .frame();
+        assert_ne!(
+            next_scene_frame, &stale_scene_frame,
+            "same-registration scene updates must advance the exact frame proof"
+        );
+        assert!(
+            runtime
+                .update_routed_drop_preview(&next_scene_resolution, &payload)
+                .changed()
+        );
+        assert!(
+            !runtime
+                .update_routed_drop_preview(&current_resolution, &payload)
+                .changed(),
+            "a delayed scene frame must not replace a preview from the current frame"
+        );
+        assert!(
+            runtime
+                .routed_drop_preview_for(&target_space, target_window.window_id())
+                .is_some(),
+            "rejecting a stale scene frame must preserve the current preview"
+        );
     }
 
     #[open_gpui::test]
@@ -1566,6 +1708,12 @@ mod handle_suite {
             .expect("source viewport should expose DockHost root");
         let target_screen_position =
             screen_position_for_host_position(target_bounds, target_center_host_position());
+        let payload = DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        );
         let resolution = cache_known_viewport_preview(
             cx,
             &runtime,
@@ -1582,7 +1730,7 @@ mod handle_suite {
             cx,
             &runtime,
             &resolution,
-            "Panel A",
+            &payload,
             source_space.clone(),
             source_opened.window().window_id(),
             target_center_host_position(),
@@ -2449,17 +2597,17 @@ mod handle_suite {
             "Panel A".to_string(),
         );
         let session = runtime.begin_payload_drag(&payload);
-        let preview_request = DockViewportDropRouteRequest::from_target_context(
+        let preview_resolution = cache_known_viewport_preview_with_payload(
+            cx,
+            &runtime,
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_screen_position,
-            None,
-            DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
-        )
-        .with_drag_session(Some(session.clone()));
-        let preview_resolution =
-            cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
+            target_opened.window(),
+            Some(session.clone()),
+            &payload,
+        );
         assert!(
             matches!(
                 preview_resolution.route(),
@@ -2485,9 +2633,6 @@ mod handle_suite {
             Some(session.id()),
             "fresh preview should mint delivery bound to the active drag session"
         );
-        cx.update(|app| {
-            runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
-        });
         assert!(
             runtime
                 .routed_drop_preview_for(&target_space, target_opened.window().window_id())
@@ -2666,19 +2811,17 @@ mod handle_suite {
             "A".to_string(),
         );
         let session = runtime.begin_payload_drag(&payload);
-        let preview_request = DockViewportDropRouteRequest::from_target_context(
+        let resolution = cache_known_viewport_preview_with_payload(
+            cx,
+            &runtime,
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             point(px(220.0), px(200.0)),
-            None,
-            DockViewportTargetContext::new()
-                .with_trusted_hovered_window(target_opened.window())
-                .with_window_stack([source_opened.window(), target_opened.window()]),
-        )
-        .with_drag_session(Some(session.clone()));
-        let resolution =
-            cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
+            target_opened.window(),
+            Some(session.clone()),
+            &payload,
+        );
         assert!(
             matches!(
                 resolution.route(),
@@ -2687,9 +2830,6 @@ mod handle_suite {
             ),
             "preview route should target the main viewport"
         );
-        cx.update(|app| {
-            runtime.update_routed_drop_preview(&resolution, &payload, app);
-        });
         assert!(
             runtime
                 .routed_drop_preview_for(&target_space, target_opened.window().window_id())

@@ -21,6 +21,7 @@ mod runtime_suite {
         drop_target::DockLeafDropTarget,
         host_test_support::*,
         interaction::DockPayloadDropReleaseOrigin,
+        surface::DockSurfaceChangeCategory,
         viewport_activation::{
             DockViewportActivationApplyOutcome, DockViewportActivationBackendFocusApply,
             DockViewportActivationBackendFocusObservation,
@@ -127,16 +128,16 @@ mod runtime_suite {
 
         let closed = cx.update(|app| {
             let closed = runtime
-                .borrow_mut()
-                .handle_window_closed_with_app(detached.window().window_id(), app);
+                .prepare_and_finalize_window_closed_for_test(detached.window().window_id(), app)
+                .outcome;
             assert_eq!(
                 runtime.borrow().adapter().window_for_space(&detached_space),
                 None,
                 "closed detached viewport should be unregistered before close recovery activation"
             );
             let activation = runtime
-                .borrow_mut()
-                .activation_transaction_after_close(&closed, app)
+                .prepare_and_finalize_close_recovery_for_test(&closed, app)
+                .activation
                 .expect("merge-back close should request close recovery activation");
             assert_eq!(
                 activation.window_activation(),
@@ -218,11 +219,11 @@ mod runtime_suite {
 
         let closed = cx.update(|app| {
             let closed = runtime
-                .borrow_mut()
-                .handle_window_closed_with_app(detached.window().window_id(), app);
+                .prepare_and_finalize_window_closed_for_test(detached.window().window_id(), app)
+                .outcome;
             let activation = runtime
-                .borrow_mut()
-                .activation_transaction_after_close(&closed, app)
+                .prepare_and_finalize_close_recovery_for_test(&closed, app)
+                .activation
                 .expect("merge-back close should request close recovery activation");
             assert_eq!(
                 activation.window_activation(),
@@ -281,11 +282,11 @@ mod runtime_suite {
         freeze_should_close_plan(cx, &runtime, detached.window().window_id());
         let closed = cx.update(|app| {
             let closed = runtime
-                .borrow_mut()
-                .handle_window_closed_with_app(detached.window().window_id(), app);
+                .prepare_and_finalize_window_closed_for_test(detached.window().window_id(), app)
+                .outcome;
             let activation = runtime
-                .borrow_mut()
-                .activation_transaction_after_close(&closed, app)
+                .prepare_and_finalize_close_recovery_for_test(&closed, app)
+                .activation
                 .expect("merge-back close should request activation");
             assert_eq!(
                 activation.focus_request(),
@@ -384,11 +385,11 @@ mod runtime_suite {
         freeze_should_close_plan(cx, &runtime, detached.window().window_id());
         let outcome = cx.update(|app| {
             let outcome = runtime
-                .borrow_mut()
-                .handle_window_closed_with_app(detached.window().window_id(), app);
+                .prepare_and_finalize_window_closed_for_test(detached.window().window_id(), app)
+                .outcome;
             let activation = runtime
-                .borrow_mut()
-                .activation_transaction_after_close(&outcome, app);
+                .prepare_and_finalize_close_recovery_for_test(&outcome, app)
+                .activation;
             assert_eq!(
                 activation
                     .as_ref()
@@ -534,6 +535,167 @@ mod runtime_suite {
     }
 
     #[open_gpui::test]
+    fn viewport_runtime_should_close_controller_sampling_releases_runtime_borrow(
+        cx: &mut TestAppContext,
+    ) {
+        let detached_space = DockSpaceId::from("detached");
+        let fixture = DockViewportRuntimeFixture::builder(detached_space.clone())
+            .space(detached_space.clone(), ["b"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened =
+            fixture.open_viewport(cx, &detached_space, viewport_window_options(360.0, 220.0));
+        let window_id = opened.window().window_id();
+
+        let prepared = runtime.borrow_mut().prepare_window_should_close(window_id);
+        let applied = cx.update(|app| {
+            let applied = prepared.apply_with_controller_observer_for_test(app, || {
+                assert_eq!(
+                    runtime.borrow().adapter().window_for_space(&detached_space),
+                    Some(opened.window()),
+                    "controller sampling must run after the runtime RefCell borrow is released"
+                );
+            });
+            assert!(
+                runtime
+                    .borrow()
+                    .registration_key_for_space_window(&detached_space, window_id)
+                    .is_some(),
+                "controller sampling must permit a synchronous runtime query"
+            );
+            applied
+        });
+        let finalized = runtime.borrow_mut().finalize_window_should_close(applied);
+
+        assert!(finalized.is_current());
+        assert_eq!(
+            finalized.into_refresh().outcome.status,
+            DockViewportShouldCloseStatus::Allowed
+        );
+        assert!(
+            runtime.borrow().adapter().window_close_requested(window_id),
+            "a current allowed transaction should invalidate the route for platform close"
+        );
+    }
+
+    #[open_gpui::test]
+    fn stale_should_close_transaction_cannot_mutate_recreated_registration(
+        cx: &mut TestAppContext,
+    ) {
+        let target_space = DockSpaceId::from("main");
+        let detached_space = DockSpaceId::from("detached");
+        let fixture = DockViewportRuntimeFixture::builder(target_space.clone())
+            .space(target_space.clone(), ["a"])
+            .space(detached_space.clone(), ["b"])
+            .close_policy(DockViewportClosePolicy::MergeBack {
+                target_space: target_space.clone(),
+            })
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened =
+            fixture.open_viewport(cx, &detached_space, viewport_window_options(360.0, 220.0));
+        let window_id = opened.window().window_id();
+
+        runtime.set_close_policy(DockViewportClosePolicy::Prevent);
+        assert_eq!(
+            cx.update(|app| runtime.handle_window_should_close_with_app(window_id, app))
+                .status,
+            DockViewportShouldCloseStatus::Vetoed
+        );
+        let previous_diagnostic = runtime.runtime_status().last_should_close;
+        runtime.set_close_policy(DockViewportClosePolicy::MergeBack {
+            target_space: target_space.clone(),
+        });
+
+        let prepared = runtime.borrow_mut().prepare_window_should_close(window_id);
+        let first_registration = runtime
+            .registration_key_for_space_window(&detached_space, window_id)
+            .expect("first registration should exist");
+        let applied = cx.update(|app| prepared.apply(app));
+        let replacement_registration = runtime
+            .borrow_mut()
+            .replace_adapter_registration_for_test(detached_space.clone(), opened.window());
+        assert_ne!(
+            replacement_registration, first_registration,
+            "recreating the same space/window identity must rotate registration authority"
+        );
+
+        let finalized = runtime.borrow_mut().finalize_window_should_close(applied);
+        assert!(!finalized.is_current());
+        assert_eq!(
+            finalized.into_refresh().outcome.status,
+            DockViewportShouldCloseStatus::Allowed,
+            "the stale callback keeps its already-computed platform decision"
+        );
+        assert!(
+            !runtime.borrow().adapter().window_close_requested(window_id),
+            "the stale G1 transaction must not invalidate G2 route facts"
+        );
+        assert_eq!(
+            runtime.runtime_status().last_should_close,
+            previous_diagnostic,
+            "the stale G1 transaction must not replace current runtime diagnostics"
+        );
+
+        let closed = cx.update(|app| runtime.handle_window_closed_with_app(window_id, app));
+        assert_eq!(
+            closed.status(),
+            DockViewportCloseStatus::Closed,
+            "the stale G1 transaction must not leave a merge-back plan for G2"
+        );
+    }
+
+    #[open_gpui::test]
+    fn reentrant_should_close_transaction_supersedes_outer_plan_on_same_registration(
+        cx: &mut TestAppContext,
+    ) {
+        let target_space = DockSpaceId::from("main");
+        let detached_space = DockSpaceId::from("detached");
+        let fixture = DockViewportRuntimeFixture::builder(target_space.clone())
+            .space(target_space.clone(), ["a"])
+            .space(detached_space.clone(), ["b"])
+            .close_policy(DockViewportClosePolicy::MergeBack {
+                target_space: target_space.clone(),
+            })
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened =
+            fixture.open_viewport(cx, &detached_space, viewport_window_options(360.0, 220.0));
+        let window_id = opened.window().window_id();
+
+        let prepared = runtime.borrow_mut().prepare_window_should_close(window_id);
+        let applied = cx.update(|app| prepared.apply(app));
+        runtime.set_close_policy(DockViewportClosePolicy::Prevent);
+        let reentrant = cx.update(|app| {
+            assert!(
+                runtime.borrow().adapter().space_for_window_id(window_id) == Some(&detached_space),
+                "the reentrant callback must be able to query runtime authority"
+            );
+            runtime.handle_window_should_close_with_app(window_id, app)
+        });
+        assert_eq!(reentrant.status, DockViewportShouldCloseStatus::Vetoed);
+
+        let finalized = runtime.borrow_mut().finalize_window_should_close(applied);
+        assert!(!finalized.is_current());
+        assert!(
+            !runtime.borrow().adapter().window_close_requested(window_id),
+            "the superseded outer allow decision must not invalidate the current route"
+        );
+        assert_eq!(
+            runtime.runtime_status().last_should_close,
+            Some(reentrant),
+            "the superseded outer transaction must not overwrite reentrant diagnostics"
+        );
+
+        let closed = cx.update(|app| runtime.handle_window_closed_with_app(window_id, app));
+        assert_eq!(
+            closed.status(),
+            DockViewportCloseStatus::Closed,
+            "the superseded outer transaction must not publish its merge-back plan"
+        );
+    }
+
+    #[open_gpui::test]
     fn viewport_runtime_merge_back_close_without_frozen_plan_only_unregisters(
         cx: &mut TestAppContext,
     ) {
@@ -578,7 +740,11 @@ mod runtime_suite {
 
         let outcome =
             cx.update(|app| runtime.handle_window_closed_with_app(window.window_id(), app));
-        let activation = cx.update(|app| runtime.activation_transaction_after_close(&outcome, app));
+        let prepared = runtime.prepare_close_recovery_window(&outcome);
+        let applied = cx.update(|app| prepared.map(|prepared| prepared.sample(app)));
+        let activation = runtime
+            .finalize_close_recovery_activation(&outcome, applied)
+            .activation;
 
         assert_eq!(outcome.status(), DockViewportCloseStatus::Closed);
         assert_eq!(
@@ -1102,6 +1268,117 @@ mod runtime_suite {
     }
 
     #[open_gpui::test]
+    fn viewport_runtime_handle_merge_back_apply_can_reenter_without_finalizing_stale_close(
+        cx: &mut TestAppContext,
+    ) {
+        let main_space = DockSpaceId::from("main");
+        let detached_space = DockSpaceId::from("detached");
+        let mut graph = DockGraph::new();
+        let main_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let detached_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(main_space.clone(), main_tabs);
+        graph.set_root(detached_space.clone(), detached_tabs);
+
+        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+        workspace.register_panel_descriptor(
+            item("a"),
+            crate::DockPanelDescriptor::new("Panel A").with_dock_class("editor"),
+        );
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        workspace
+            .policy_mut()
+            .allow_dock_class_in_space(main_space.clone(), "editor");
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::with_close_policy(
+            controller.clone(),
+            DockViewportClosePolicy::MergeBack {
+                target_space: main_space.clone(),
+            },
+        );
+        let commits = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        runtime.install_surface_commit_sink({
+            let commits = commits.clone();
+            move |_, categories, _| commits.borrow_mut().push(categories.to_vec())
+        });
+        let target_window = handle(44);
+        let closing_window = handle(45);
+        runtime
+            .borrow_mut()
+            .register_opened_viewport(main_space.clone(), target_window);
+        runtime
+            .borrow_mut()
+            .register_opened_viewport(detached_space.clone(), closing_window);
+        let should_close = cx.update(|app| {
+            runtime.handle_window_should_close_with_app(closing_window.window_id(), app)
+        });
+        assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
+
+        let replacement_window = handle(46);
+        let reentered = std::rc::Rc::new(std::cell::Cell::new(false));
+        runtime.install_window_close_apply_hook_for_test({
+            let runtime = runtime.clone();
+            let detached_space = detached_space.clone();
+            let reentered = reentered.clone();
+            move |app| {
+                assert!(!reentered.replace(true));
+                runtime
+                    .borrow_mut()
+                    .register_opened_viewport(detached_space.clone(), replacement_window);
+                let replacement_close =
+                    runtime.handle_window_closed_with_app(replacement_window.window_id(), app);
+                assert_eq!(replacement_close.status(), DockViewportCloseStatus::Closed);
+            }
+        });
+
+        let close =
+            cx.update(|app| runtime.handle_window_closed_with_app(closing_window.window_id(), app));
+
+        assert!(
+            reentered.get(),
+            "the explicit close-apply boundary should run synchronously"
+        );
+        assert_eq!(close.status(), DockViewportCloseStatus::MergedBack);
+        assert_eq!(
+            runtime
+                .runtime_status()
+                .last_close
+                .as_ref()
+                .map(|close| close.window_id()),
+            Some(replacement_window.window_id()),
+            "the stale outer finalize must not overwrite the replacement close generation"
+        );
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&main_space),
+            Some(target_window),
+            "stale recovery must not probe or unregister the replacement generation's target"
+        );
+        assert_eq!(
+            commits.borrow().as_slice(),
+            &[
+                vec![DockSurfaceChangeCategory::ViewportTopology],
+                vec![
+                    DockSurfaceChangeCategory::Layout,
+                    DockSurfaceChangeCategory::Selection,
+                    DockSurfaceChangeCategory::PanelLifecycle,
+                ],
+            ],
+            "the stale outer close may publish its graph commit but not old topology"
+        );
+        cx.read_entity(&controller, |controller, _| {
+            assert_eq!(
+                controller.graph().collect_items_in_space(&main_space),
+                vec![item("b"), item("a")]
+            );
+        });
+    }
+
+    #[open_gpui::test]
     fn viewport_runtime_pending_merge_back_activation_uses_should_close_target(
         cx: &mut TestAppContext,
     ) {
@@ -1179,8 +1456,8 @@ mod runtime_suite {
         });
         let activation = cx.update(|app| {
             runtime
-                .borrow_mut()
-                .activation_transaction_after_close(&closed, app)
+                .prepare_and_finalize_close_recovery_for_test(&closed, app)
+                .activation
         });
 
         assert_eq!(closed.status(), DockViewportCloseStatus::MergedBack);
@@ -1712,7 +1989,7 @@ mod runtime_suite {
             cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
         let DockViewportDropRoute::Local {
             host_position: routed_position,
-            window_id: routed_window,
+            route_proof,
             source,
             ..
         } = fresh_resolution.route()
@@ -1720,7 +1997,7 @@ mod runtime_suite {
             panic!("fresh route facts should restore local route selection");
         };
         assert_point_close(*routed_position, host_position);
-        assert_eq!(*routed_window, window.window_id());
+        assert_eq!(route_proof.window_id(), window.window_id());
         assert_eq!(
             *source,
             crate::DockViewportRouteSelectionSource::TrustedHoveredWindow
@@ -2082,6 +2359,9 @@ mod runtime_suite {
         let mut workspace = DockWorkspace::new(target_space.clone(), graph);
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         let controller = cx.new(|_| DockController::new(workspace));
+        let policy = cx.read_entity(&controller, |controller, _| {
+            controller.workspace().policy().clone()
+        });
         let mut runtime = DockViewportRuntime::new(controller);
         let target_window = handle(49);
         let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
@@ -2103,14 +2383,16 @@ mod runtime_suite {
             leaf_host_scene_fact(target_tabs, target_tabs),
         ));
         assert!(
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            runtime
+                .resolve_host_scene_target(&target_space, host_position, &policy)
                 .is_some(),
             "test setup should start with a resolvable current host scene"
         );
 
         runtime.unregister_adapter_window_for_test(target_window.window_id());
         assert!(
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            runtime
+                .resolve_host_scene_target(&target_space, host_position, &policy)
                 .is_none(),
             "host scene target resolution must not bypass the runtime window mapping"
         );
@@ -2227,6 +2509,9 @@ mod runtime_suite {
         let mut workspace = DockWorkspace::new(target_space.clone(), graph);
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         let controller = cx.new(|_| DockController::new(workspace));
+        let policy = cx.read_entity(&controller, |controller, _| {
+            controller.workspace().policy().clone()
+        });
 
         let old_window = handle(71);
         let new_window = handle(72);
@@ -2269,7 +2554,8 @@ mod runtime_suite {
             leaf_host_scene_fact(target_tabs, target_tabs),
         ));
         assert!(
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            runtime
+                .resolve_host_scene_target(&target_space, host_position, &policy)
                 .is_some(),
             "test setup should start with current route facts for the replacement window"
         );
@@ -2284,7 +2570,8 @@ mod runtime_suite {
             "a late close notification for a retired window must not unregister the replacement"
         );
         assert!(
-            cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            runtime
+                .resolve_host_scene_target(&target_space, host_position, &policy)
                 .is_some(),
             "late close cleanup must only forget scenes for the retired window id"
         );
@@ -2362,14 +2649,15 @@ mod handle_suite {
     use crate::{
         DockAction, DockActionApplyError, DockController, DockDropDelivery, DockGraph,
         DockGraphDropTarget, DockItemId, DockNode, DockNodeId, DockPanel, DockPolicy, DockSpaceId,
-        DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropOutcomeKind,
+        DockSurface, DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropOutcomeKind,
         DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
         DockViewportDropRouteRequest, DockViewportFocusCommand, DockViewportFocusRequest,
         DockViewportInputStatus, DockViewportOpenStatus, DockViewportPlatformSignals,
         DockViewportRouteStatus, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
         DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
         DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome,
-        DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+        DockViewportTearOffRequest, DockViewportWindowCloseEffect, DockViewportWindowFacts,
+        DockWorkspace, DropZone, SplitAxis,
         debug::DockDebugRegion,
         drag::DockDragPayload,
         drop_preview::DockDropRoutePreviewKind,
@@ -2379,8 +2667,10 @@ mod handle_suite {
         interaction::{
             DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession,
         },
+        surface::DockSurfaceChangeCategory,
         viewport_activation::apply_viewport_activation_transaction,
         viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
+        viewport_test_support::handle,
     };
     use open_gpui::{
         AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
@@ -2428,6 +2718,134 @@ mod handle_suite {
                 .adapter()
                 .window_for_space(&secondary_space),
             None
+        );
+    }
+
+    #[open_gpui::test]
+    fn viewport_runtime_app_close_observer_reuses_surface_transaction_during_reentry(
+        cx: &mut TestAppContext,
+    ) {
+        let main_space = DockSpaceId::from("main");
+        let detached_space = DockSpaceId::from("detached");
+        let mut graph = DockGraph::new();
+        let main_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let detached_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(main_space.clone(), main_tabs);
+        graph.set_root(detached_space.clone(), detached_tabs);
+
+        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let changes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let reentered = std::rc::Rc::new(std::cell::Cell::new(false));
+        let replacement_window = handle(946);
+
+        let (surface, runtime, opened, _change_subscription) = cx.update(|app| {
+            let surface = DockSurface::from_controller_with_close_policy_and_visual_style_resolver(
+                controller.clone(),
+                DockViewportClosePolicy::MergeBack {
+                    target_space: main_space.clone(),
+                },
+                None,
+                app,
+            );
+            let runtime = surface.viewport_runtime(app);
+            let opened = runtime
+                .open_viewport_unchecked_policy(
+                    detached_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+                .expect("detached viewport should open");
+
+            let observed_changes = changes.clone();
+            let change_subscription = surface.subscribe_changes(app, move |event, _| {
+                observed_changes.borrow_mut().push(event.clone());
+            });
+            (surface, runtime, opened, change_subscription)
+        });
+
+        cx.run_until_parked();
+        changes.borrow_mut().clear();
+        let revision_before_close = cx.update(|app| {
+            let should_close =
+                runtime.handle_window_should_close_with_app(opened.window().window_id(), app);
+            assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
+            assert!(
+                runtime
+                    .borrow()
+                    .adapter()
+                    .window_close_requested(opened.window().window_id()),
+                "the close plan must remain pending until the terminal close callback"
+            );
+
+            let reentrant_runtime = runtime.clone();
+            let reentrant_space = detached_space.clone();
+            let reentered = reentered.clone();
+            runtime.install_window_close_apply_hook_for_test(move |app| {
+                assert!(!reentered.replace(true));
+                reentrant_runtime
+                    .borrow_mut()
+                    .register_opened_viewport(reentrant_space.clone(), replacement_window);
+                let replacement_close = reentrant_runtime
+                    .handle_window_closed_with_app(replacement_window.window_id(), app);
+                assert_eq!(replacement_close.status(), DockViewportCloseStatus::Closed);
+            });
+            surface.revision(app)
+        });
+
+        opened
+            .window()
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("detached viewport should still be live");
+        cx.run_until_parked();
+
+        assert!(
+            reentered.get(),
+            "the explicit close-apply boundary should run synchronously"
+        );
+        assert_eq!(
+            runtime
+                .runtime_status()
+                .last_close
+                .as_ref()
+                .map(|close| close.window_id()),
+            Some(replacement_window.window_id()),
+            "the outer app callback must not overwrite the reentrant close generation"
+        );
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&detached_space),
+            None
+        );
+        cx.read_entity(&controller, |controller, _| {
+            assert_eq!(
+                controller.graph().collect_items_in_space(&main_space),
+                vec![item("b"), item("a")]
+            );
+        });
+        let changes = changes.borrow();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes[0].categories(),
+            &[
+                DockSurfaceChangeCategory::Layout,
+                DockSurfaceChangeCategory::Selection,
+                DockSurfaceChangeCategory::PanelLifecycle,
+                DockSurfaceChangeCategory::ViewportTopology,
+            ],
+            "nested close work must commit with the app observer's existing root transaction"
+        );
+        assert_eq!(
+            cx.read(|app| surface.revision(app)),
+            revision_before_close + 1
         );
     }
 
@@ -2520,9 +2938,10 @@ mod handle_suite {
         );
 
         let closed = cx.update(|app| {
-            runtime
-                .borrow_mut()
-                .handle_window_closed_with_app_and_refresh(source_opened.window().window_id(), app)
+            runtime.prepare_and_finalize_window_closed_for_test(
+                source_opened.window().window_id(),
+                app,
+            )
         });
 
         assert_eq!(
@@ -3017,7 +3436,7 @@ mod handle_suite {
         };
         assert_eq!(
             completed.window_effects().close_after_current_effect(),
-            &[source_window]
+            &[DockViewportWindowCloseEffect::for_test(source_window)]
         );
         assert_eq!(
             runtime.borrow().adapter().window_for_space(&primary_space),
@@ -3105,7 +3524,7 @@ mod handle_suite {
         };
         assert_eq!(
             completed.window_effects().close_after_current_effect(),
-            &[source_window]
+            &[DockViewportWindowCloseEffect::for_test(source_window)]
         );
         assert_eq!(
             runtime.borrow().adapter().window_for_space(&primary_space),
@@ -3156,11 +3575,13 @@ mod handle_suite {
         workspace.register_panel_view(item("occupied"), "Occupied", test_view(cx, "Occupied"));
         let controller = cx.new(|_| DockController::new(workspace));
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        cx.update(|app| {
+            let _ = runtime.observe_window_closed(app);
+        });
         let request = tear_off_request(primary_space.clone(), source_tabs, item("a"));
         let pending = cx.update(|app| {
-            let DockViewportTearOffBeginOutcome::Pending(pending) = runtime
-                .borrow_mut()
-                .begin_tear_off_request(request, detached_space.clone(), app)
+            let DockViewportTearOffBeginOutcome::Pending(pending) =
+                runtime.begin_tear_off_request_for_test(request, detached_space.clone(), app)
             else {
                 panic!("fresh tear-off request should create pending state");
             };
@@ -3247,11 +3668,13 @@ mod handle_suite {
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         let controller = cx.new(|_| DockController::new(workspace));
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        cx.update(|app| {
+            let _ = runtime.observe_window_closed(app);
+        });
         let request = tear_off_request(primary_space.clone(), source_tabs, item("a"));
         let pending = cx.update(|app| {
-            let DockViewportTearOffBeginOutcome::Pending(pending) = runtime
-                .borrow_mut()
-                .begin_tear_off_request(request, detached_space.clone(), app)
+            let DockViewportTearOffBeginOutcome::Pending(pending) =
+                runtime.begin_tear_off_request_for_test(request, detached_space.clone(), app)
             else {
                 panic!("fresh tear-off request should create pending state");
             };
@@ -3344,11 +3767,13 @@ mod handle_suite {
         workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
         let controller = cx.new(|_| DockController::new(workspace));
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        cx.update(|app| {
+            let _ = runtime.observe_window_closed(app);
+        });
         let request = tear_off_request(primary_space.clone(), source_tabs, item("a"));
         let pending = cx.update(|app| {
-            let DockViewportTearOffBeginOutcome::Pending(pending) = runtime
-                .borrow_mut()
-                .begin_tear_off_request(request, detached_space.clone(), app)
+            let DockViewportTearOffBeginOutcome::Pending(pending) =
+                runtime.begin_tear_off_request_for_test(request, detached_space.clone(), app)
             else {
                 panic!("fresh tear-off request should create pending state");
             };

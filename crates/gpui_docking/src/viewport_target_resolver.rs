@@ -1,6 +1,62 @@
-use crate::viewport_registry::DockViewportRouteUnavailableReason;
+use crate::viewport_registry::{DockViewportRegistrationKey, DockViewportRouteUnavailableReason};
 use crate::{DockSpaceId, DockViewportTargetContext, DockViewportWindowStackSource};
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId};
+
+/// Immutable proof that route facts belong to one exact viewport registration.
+///
+/// Facts generations only order coordinate snapshots within a registration. The registration key
+/// prevents delayed routes from becoming valid again after the same space and window id are bound
+/// to a replacement generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportRouteProof {
+    registration_key: DockViewportRegistrationKey,
+    facts_generation: u64,
+}
+
+impl DockViewportRouteProof {
+    pub(crate) fn new(
+        registration_key: DockViewportRegistrationKey,
+        facts_generation: u64,
+    ) -> Self {
+        Self {
+            registration_key,
+            facts_generation,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_registration_generation(
+        space: DockSpaceId,
+        window_id: WindowId,
+        registration_generation: u64,
+        facts_generation: u64,
+    ) -> Self {
+        Self::new(
+            DockViewportRegistrationKey::for_test_generation(
+                space,
+                window_id,
+                registration_generation,
+            ),
+            facts_generation,
+        )
+    }
+
+    pub(crate) fn registration_key(&self) -> &DockViewportRegistrationKey {
+        &self.registration_key
+    }
+
+    pub(crate) fn space(&self) -> &DockSpaceId {
+        self.registration_key.space()
+    }
+
+    pub(crate) fn window_id(&self) -> WindowId {
+        self.registration_key.window_id()
+    }
+
+    pub(crate) fn facts_generation(&self) -> u64 {
+        self.facts_generation
+    }
+}
 
 /// Result of resolving a screen point into a registered dock viewport.
 #[cfg(test)]
@@ -25,14 +81,12 @@ impl DockViewportHit {
 /// A registered viewport hit with the runtime window that owns it.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTargetHit {
-    /// Logical dock space that contains the point.
-    space: DockSpaceId,
     /// GPUI window currently rendering the logical dock space.
     window: AnyWindowHandle,
     /// Point relative to the dock host bounds.
     host_position: Point<Pixels>,
-    /// Live window-facts generation used to derive `host_position`.
-    facts_generation: u64,
+    /// Exact registration and route-facts generation used to derive `host_position`.
+    route_proof: DockViewportRouteProof,
 }
 
 impl DockViewportTargetHit {
@@ -42,114 +96,141 @@ impl DockViewportTargetHit {
         window: AnyWindowHandle,
         host_position: Point<Pixels>,
     ) -> Self {
-        Self::with_facts_generation(space, window, host_position, 0)
+        Self::with_route_proof(
+            window,
+            host_position,
+            DockViewportRouteProof::for_test_registration_generation(
+                space.into(),
+                window.window_id(),
+                1,
+                0,
+            ),
+        )
     }
 
+    #[cfg(test)]
     pub(crate) fn with_facts_generation(
         space: impl Into<DockSpaceId>,
         window: AnyWindowHandle,
         host_position: Point<Pixels>,
         facts_generation: u64,
     ) -> Self {
-        Self {
-            space: space.into(),
+        Self::with_route_proof(
             window,
             host_position,
-            facts_generation,
+            DockViewportRouteProof::for_test_registration_generation(
+                space.into(),
+                window.window_id(),
+                1,
+                facts_generation,
+            ),
+        )
+    }
+
+    pub(crate) fn with_route_proof(
+        window: AnyWindowHandle,
+        host_position: Point<Pixels>,
+        route_proof: DockViewportRouteProof,
+    ) -> Self {
+        debug_assert_eq!(route_proof.window_id(), window.window_id());
+        Self {
+            window,
+            host_position,
+            route_proof,
         }
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {
-        &self.space
+        self.route_proof.space()
     }
 
     pub(crate) fn window_id(&self) -> WindowId {
-        self.window.window_id()
+        self.route_proof.window_id()
     }
 
     pub(crate) fn host_position(&self) -> Point<Pixels> {
         self.host_position
     }
 
-    pub(crate) fn facts_generation(&self) -> u64 {
-        self.facts_generation
+    pub(crate) fn route_proof(&self) -> &DockViewportRouteProof {
+        &self.route_proof
     }
 
     #[cfg(test)]
     pub(crate) fn into_hit(self) -> DockViewportHit {
-        DockViewportHit::new(self.space, self.host_position)
+        DockViewportHit::new(self.route_proof.space().clone(), self.host_position)
     }
 }
 
 /// A registered platform viewport window that contains the pointer.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportWindowHit {
-    /// Logical dock space bound to the platform window.
-    space: DockSpaceId,
+    /// Exact logical-space-to-window registration that produced this hit.
+    registration_key: DockViewportRegistrationKey,
     /// GPUI window currently rendering the logical dock space.
     window: AnyWindowHandle,
     /// Point relative to the dock host bounds, when the pointer is inside the dock host.
     host_position: Option<Point<Pixels>>,
-    /// Live window-facts generation used to derive this hit.
-    facts_generation: Option<u64>,
+    /// Exact route proof when current route facts can provide a host target.
+    route_proof: Option<DockViewportRouteProof>,
     /// Why this window contains the pointer but cannot currently provide a host route.
     route_unavailable_reason: Option<DockViewportRouteUnavailableReason>,
 }
 
 impl DockViewportWindowHit {
-    pub(crate) fn with_facts_generation(
-        space: impl Into<DockSpaceId>,
+    pub(crate) fn with_route_proof(
         window: AnyWindowHandle,
         host_position: Option<Point<Pixels>>,
-        facts_generation: u64,
+        route_proof: DockViewportRouteProof,
     ) -> Self {
+        debug_assert_eq!(route_proof.window_id(), window.window_id());
         Self {
-            space: space.into(),
+            registration_key: route_proof.registration_key().clone(),
             window,
             host_position,
-            facts_generation: Some(facts_generation),
+            route_proof: Some(route_proof),
             route_unavailable_reason: None,
         }
     }
 
     pub(crate) fn blocking(
-        space: impl Into<DockSpaceId>,
+        registration_key: DockViewportRegistrationKey,
         window: AnyWindowHandle,
         route_unavailable_reason: DockViewportRouteUnavailableReason,
     ) -> Self {
+        debug_assert_eq!(registration_key.window_id(), window.window_id());
         Self {
-            space: space.into(),
+            registration_key,
             window,
             host_position: None,
-            facts_generation: None,
+            route_proof: None,
             route_unavailable_reason: Some(route_unavailable_reason),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn space(&self) -> &DockSpaceId {
-        &self.space
+        self.registration_key.space()
     }
 
     pub(crate) fn window_id(&self) -> WindowId {
-        self.window.window_id()
+        self.registration_key.window_id()
     }
 
     pub(crate) fn blocks_host_target(&self) -> bool {
         self.route_unavailable_reason.is_some()
             || self.host_position.is_none()
-            || self.facts_generation.is_none()
+            || self.route_proof.is_none()
     }
 
     pub(crate) fn target_hit(&self) -> Option<DockViewportTargetHit> {
         if self.route_unavailable_reason.is_some() {
             return None;
         }
-        Some(DockViewportTargetHit::with_facts_generation(
-            self.space.clone(),
+        Some(DockViewportTargetHit::with_route_proof(
             self.window,
             self.host_position?,
-            self.facts_generation?,
+            self.route_proof.clone()?,
         ))
     }
 
@@ -157,22 +238,20 @@ impl DockViewportWindowHit {
         if self.route_unavailable_reason.is_some() {
             return None;
         }
-        Some(DockViewportTargetHit::with_facts_generation(
-            self.space,
+        Some(DockViewportTargetHit::with_route_proof(
             self.window,
             self.host_position?,
-            self.facts_generation?,
+            self.route_proof?,
         ))
     }
 }
 
 impl From<DockViewportTargetHit> for DockViewportWindowHit {
     fn from(target: DockViewportTargetHit) -> Self {
-        Self::with_facts_generation(
-            target.space,
+        Self::with_route_proof(
             target.window,
             Some(target.host_position),
-            target.facts_generation,
+            target.route_proof,
         )
     }
 }
@@ -252,6 +331,10 @@ impl DockViewportRouteSelection {
 }
 
 impl DockViewportRouteSelectionSource {
+    pub(crate) fn requires_current_route_facts(self) -> bool {
+        !matches!(self, Self::EventReceiverLocalScene)
+    }
+
     pub(crate) fn records_routed_viewport_identity(self) -> bool {
         matches!(
             self,

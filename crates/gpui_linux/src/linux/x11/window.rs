@@ -1,13 +1,16 @@
 use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
-use crate::linux::X11ClientStatePtr;
+use crate::linux::{X11ClientStatePtr, should_close_callback::ShouldCloseCallbackSlot};
 use open_gpui::{
     AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, DisplayId, ForegroundExecutor,
-    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, px,
+    GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowKind, WindowParams, px,
 };
 use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -29,7 +32,13 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
+    cell::RefCell,
+    ffi::c_void,
+    fmt::Display,
+    num::NonZeroU32,
+    ptr::NonNull,
+    rc::{Rc, Weak},
+    sync::Arc,
 };
 
 use super::{
@@ -70,6 +79,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_ACTIVE_WINDOW,
+        _NET_WM_USER_TIME,
         _NET_WM_SYNC_REQUEST,
         _NET_WM_SYNC_REQUEST_COUNTER,
         _NET_WM_BYPASS_COMPOSITOR,
@@ -358,13 +368,13 @@ pub(crate) fn x11_supports_toplevel_creation_state(kind: &WindowKind) -> bool {
 #[derive(Default)]
 pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    input: Option<Box<dyn FnMut(PlatformInput) -> open_gpui::DispatchEventResult>>,
+    input: PlatformInputCallbackSlot,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     window_state_change: Option<Box<dyn FnMut()>>,
-    should_close: Option<Box<dyn FnMut() -> bool>>,
+    should_close: ShouldCloseCallbackSlot,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
     button_layout_changed: Option<Box<dyn FnMut()>>,
@@ -387,7 +397,7 @@ pub struct X11WindowState {
     scale_factor: f32,
     renderer: WgpuRenderer,
     display: Rc<dyn PlatformDisplay>,
-    input_handler: Option<PlatformInputHandler>,
+    input_handler: PlatformInputHandlerSlot,
     appearance: WindowAppearance,
     background_appearance: WindowBackgroundAppearance,
     alpha_capable: bool,
@@ -395,6 +405,8 @@ pub struct X11WindowState {
     focus_on_click: bool,
     topmost: bool,
     taskbar_visible: bool,
+    initially_shown: bool,
+    initial_presentation_completed: bool,
     maximized_vertical: bool,
     maximized_horizontal: bool,
     hidden: bool,
@@ -422,6 +434,205 @@ pub(crate) struct X11WindowStatePtr {
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb: Rc<XCBConnection>,
     pub(crate) x_window: xproto::Window,
+}
+
+struct X11WindowCommandTarget {
+    owner: Weak<()>,
+    state: Weak<RefCell<X11WindowState>>,
+    xcb: Rc<XCBConnection>,
+    x_window: xproto::Window,
+}
+
+impl X11WindowCommandTarget {
+    fn new(window: &X11Window) -> Self {
+        Self {
+            owner: Rc::downgrade(&window.1),
+            state: Rc::downgrade(&window.0.state),
+            xcb: window.0.xcb.clone(),
+            x_window: window.0.x_window,
+        }
+    }
+
+    fn dispatch(&self, command: PlatformWindowCommand) -> PlatformWindowCommandOutcome {
+        let Some(_owner) = self.owner.upgrade() else {
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        let Some(state) = self.state.upgrade() else {
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        let mut state = state.borrow_mut();
+        if state.destroyed {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+
+        match command {
+            PlatformWindowCommand::CompleteInitialPresentation { activate } => {
+                if state.initial_presentation_completed {
+                    return PlatformWindowCommandOutcome::Accepted;
+                }
+                if state.initially_shown && activate {
+                    activate_x11_window(&state, &self.xcb, self.x_window).log_err();
+                }
+                state.initial_presentation_completed = true;
+                PlatformWindowCommandOutcome::Accepted
+            }
+            PlatformWindowCommand::Activate => {
+                x11_command_outcome(activate_x11_window(&state, &self.xcb, self.x_window))
+            }
+            PlatformWindowCommand::ShowWindowMenu(position) => x11_command_outcome(
+                show_x11_window_menu(&state, &self.xcb, self.x_window, position),
+            ),
+            PlatformWindowCommand::StartWindowMove => {
+                const MOVERESIZE_MOVE: u32 = 8;
+                x11_command_outcome(send_x11_moveresize(
+                    &state,
+                    &self.xcb,
+                    self.x_window,
+                    MOVERESIZE_MOVE,
+                ))
+            }
+            PlatformWindowCommand::StartWindowResize(edge) => {
+                x11_command_outcome(send_x11_moveresize(
+                    &state,
+                    &self.xcb,
+                    self.x_window,
+                    resize_edge_to_moveresize(edge),
+                ))
+            }
+        }
+    }
+}
+
+fn x11_command_outcome(result: anyhow::Result<()>) -> PlatformWindowCommandOutcome {
+    if result.log_err().is_some() {
+        PlatformWindowCommandOutcome::Accepted
+    } else {
+        PlatformWindowCommandOutcome::Rejected
+    }
+}
+
+fn activate_x11_window(
+    state: &X11WindowState,
+    xcb: &XCBConnection,
+    x_window: xproto::Window,
+) -> anyhow::Result<()> {
+    let data = [1, xproto::Time::CURRENT_TIME.into(), 0, 0, 0];
+    let message =
+        xproto::ClientMessageEvent::new(32, x_window, state.atoms._NET_ACTIVE_WINDOW, data);
+    check_reply(
+        || "X11 SendEvent to activate window failed.",
+        xcb.send_event(
+            false,
+            state.x_root_window,
+            xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+            message,
+        ),
+    )?;
+    check_reply(
+        || "X11 SetInputFocus failed.",
+        xcb.set_input_focus(
+            xproto::InputFocus::POINTER_ROOT,
+            x_window,
+            xproto::Time::CURRENT_TIME,
+        ),
+    )?;
+    xcb_flush(xcb);
+    Ok(())
+}
+
+fn get_x11_root_position(
+    state: &X11WindowState,
+    xcb: &XCBConnection,
+    x_window: xproto::Window,
+    position: Point<Pixels>,
+) -> anyhow::Result<TranslateCoordinatesReply> {
+    get_reply(
+        || "X11 TranslateCoordinates failed.",
+        xcb.translate_coordinates(
+            x_window,
+            state.x_root_window,
+            (f32::from(position.x) * state.scale_factor) as i16,
+            (f32::from(position.y) * state.scale_factor) as i16,
+        ),
+    )
+}
+
+fn show_x11_window_menu(
+    state: &X11WindowState,
+    xcb: &XCBConnection,
+    x_window: xproto::Window,
+    position: Point<Pixels>,
+) -> anyhow::Result<()> {
+    check_reply(
+        || "X11 UngrabPointer failed.",
+        xcb.ungrab_pointer(x11rb::CURRENT_TIME),
+    )?;
+
+    let coords = get_x11_root_position(state, xcb, x_window, position)?;
+    let message = ClientMessageEvent::new(
+        32,
+        x_window,
+        state.atoms._GTK_SHOW_WINDOW_MENU,
+        [
+            XINPUT_ALL_DEVICE_GROUPS as u32,
+            coords.dst_x as u32,
+            coords.dst_y as u32,
+            0,
+            0,
+        ],
+    );
+    check_reply(
+        || "X11 SendEvent to show window menu failed.",
+        xcb.send_event(
+            false,
+            state.x_root_window,
+            xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+            message,
+        ),
+    )?;
+    xcb_flush(xcb);
+    Ok(())
+}
+
+fn send_x11_moveresize(
+    state: &X11WindowState,
+    xcb: &XCBConnection,
+    x_window: xproto::Window,
+    flag: u32,
+) -> anyhow::Result<()> {
+    check_reply(
+        || "X11 UngrabPointer before move/resize of window failed.",
+        xcb.ungrab_pointer(x11rb::CURRENT_TIME),
+    )?;
+
+    let pointer = get_reply(
+        || "X11 QueryPointer before move/resize of window failed.",
+        xcb.query_pointer(x_window),
+    )?;
+    let message = ClientMessageEvent::new(
+        32,
+        x_window,
+        state.atoms._NET_WM_MOVERESIZE,
+        [
+            pointer.root_x as u32,
+            pointer.root_y as u32,
+            flag,
+            0, // Left mouse button
+            0,
+        ],
+    );
+    check_reply(
+        || "X11 SendEvent to move/resize window failed.",
+        xcb.send_event(
+            false,
+            state.x_root_window,
+            xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+            message,
+        ),
+    )?;
+
+    xcb_flush(xcb);
+    Ok(())
 }
 
 impl rwh::HasWindowHandle for RawWindow {
@@ -575,6 +786,7 @@ impl X11WindowState {
             scale_factor,
             alpha_capable,
         );
+        let initially_shown = params.show;
 
         let colormap = if visual.colormap != 0 {
             visual.colormap
@@ -657,6 +869,18 @@ impl X11WindowState {
                     &[pid],
                 ),
             )?;
+            if !params.focus {
+                check_reply(
+                    || "X11 ChangeProperty32 setting _NET_WM_USER_TIME failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_USER_TIME,
+                        xproto::AtomEnum::CARDINAL,
+                        &[0],
+                    ),
+                )?;
+            }
 
             let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
             if reply.x == 0 && reply.y == 0 {
@@ -752,8 +976,6 @@ impl X11WindowState {
             let parent = if params.kind == WindowKind::Dialog
                 && let Some(parent) = parent_window
             {
-                parent.add_child(x_window);
-
                 Some(parent)
             } else {
                 None
@@ -943,7 +1165,7 @@ impl X11WindowState {
                 scale_factor,
                 renderer,
                 atoms: *atoms,
-                input_handler: None,
+                input_handler: PlatformInputHandlerSlot::default(),
                 active: false,
                 hovered: false,
                 force_render_after_recovery: false,
@@ -959,6 +1181,8 @@ impl X11WindowState {
                 focus_on_click: creation.focus_on_click,
                 topmost: creation.topmost,
                 taskbar_visible: creation.taskbar_visible,
+                initially_shown,
+                initial_presentation_completed: false,
                 destroyed: false,
                 client_side_decorations_supported,
                 decorations: WindowDecorations::Server,
@@ -986,10 +1210,11 @@ impl X11WindowState {
     }
 }
 
-pub(crate) struct X11Window(pub X11WindowStatePtr);
+pub(crate) struct X11Window(pub X11WindowStatePtr, Rc<()>);
 
 impl Drop for X11Window {
     fn drop(&mut self) {
+        self.0.terminate_callback_slots();
         let mut state = self.0.state.borrow_mut();
 
         if let Some(parent) = state.parent.as_ref() {
@@ -1078,8 +1303,11 @@ impl X11Window {
 
         let state = ptr.state.borrow_mut();
         let _ = ptr.set_wm_properties(state)?;
+        if let Some(parent) = ptr.state.borrow().parent.as_ref() {
+            parent.add_child(x_window);
+        }
 
-        Ok(Self(ptr))
+        Ok(Self(ptr, Rc::new(())))
     }
 
     fn set_wm_hints<C: Display + Send + Sync + 'static, F: FnOnce() -> C>(
@@ -1108,72 +1336,23 @@ impl X11Window {
         xcb_flush(&self.0.xcb);
         Ok(())
     }
-
-    fn get_root_position(
-        &self,
-        position: Point<Pixels>,
-    ) -> anyhow::Result<TranslateCoordinatesReply> {
-        let state = self.0.state.borrow();
-        get_reply(
-            || "X11 TranslateCoordinates failed.",
-            self.0.xcb.translate_coordinates(
-                self.0.x_window,
-                state.x_root_window,
-                (f32::from(position.x) * state.scale_factor) as i16,
-                (f32::from(position.y) * state.scale_factor) as i16,
-            ),
-        )
-    }
-
-    fn send_moveresize(&self, flag: u32) -> anyhow::Result<()> {
-        let state = self.0.state.borrow();
-
-        check_reply(
-            || "X11 UngrabPointer before move/resize of window failed.",
-            self.0.xcb.ungrab_pointer(x11rb::CURRENT_TIME),
-        )?;
-
-        let pointer = get_reply(
-            || "X11 QueryPointer before move/resize of window failed.",
-            self.0.xcb.query_pointer(self.0.x_window),
-        )?;
-        let message = ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            state.atoms._NET_WM_MOVERESIZE,
-            [
-                pointer.root_x as u32,
-                pointer.root_y as u32,
-                flag,
-                0, // Left mouse button
-                0,
-            ],
-        );
-        check_reply(
-            || "X11 SendEvent to move/resize window failed.",
-            self.0.xcb.send_event(
-                false,
-                state.x_root_window,
-                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
-            ),
-        )?;
-
-        xcb_flush(&self.0.xcb);
-        Ok(())
-    }
 }
 
 impl X11WindowStatePtr {
+    fn terminate_callback_slots(&self) {
+        let (input_callback, should_close) = {
+            let callbacks = self.callbacks.borrow();
+            (callbacks.input.clone(), callbacks.should_close.clone())
+        };
+        let input_handler = self.state.borrow().input_handler.clone();
+        input_callback.terminate();
+        input_handler.terminate();
+        should_close.terminate();
+    }
+
     pub fn should_close(&self) -> bool {
-        let mut cb = self.callbacks.borrow_mut();
-        if let Some(mut should_close) = cb.should_close.take() {
-            let result = (should_close)();
-            cb.should_close = Some(should_close);
-            result
-        } else {
-            true
-        }
+        let should_close = self.callbacks.borrow().should_close.clone();
+        should_close.invoke()
     }
 
     pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) -> anyhow::Result<()> {
@@ -1314,6 +1493,7 @@ impl X11WindowStatePtr {
     }
 
     pub fn close(&self) {
+        self.terminate_callback_slots();
         let state = self.state.borrow();
         let client = state.client.clone();
         #[allow(clippy::mutable_key_type)]
@@ -1328,8 +1508,8 @@ impl X11WindowStatePtr {
             }
         }
 
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(fun) = callbacks.close.take() {
+        let callback = self.callbacks.borrow_mut().close.take();
+        if let Some(fun) = callback {
             fun()
         }
     }
@@ -1346,26 +1526,22 @@ impl X11WindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        let callback = self.callbacks.borrow_mut().input.take();
-        if let Some(mut fun) = callback {
-            let result = fun(input.clone());
-            self.callbacks.borrow_mut().input = Some(fun);
-            if !result.propagate {
-                return;
-            }
+        let input_callback = self.callbacks.borrow().input.clone();
+        if input_callback
+            .dispatch(input.clone())
+            .is_some_and(|result| !result.propagate)
+        {
+            return;
         }
         if let PlatformInput::KeyDown(event) = input {
             // only allow shift modifier when inserting text
-            if event.keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
-                let mut state = self.state.borrow_mut();
-                if let Some(mut input_handler) = state.input_handler.take() {
-                    if let Some(key_char) = &event.keystroke.key_char {
-                        drop(state);
-                        input_handler.replace_text_in_range(None, key_char);
-                        state = self.state.borrow_mut();
-                    }
-                    state.input_handler = Some(input_handler);
-                }
+            if event.keystroke.modifiers.is_subset_of(&Modifiers::shift())
+                && let Some(key_char) = &event.keystroke.key_char
+            {
+                let input_handler = self.state.borrow().input_handler.clone();
+                let _ = input_handler.with_handler(|input_handler| {
+                    input_handler.replace_text_in_range(None, key_char)
+                });
             }
         }
     }
@@ -1374,68 +1550,63 @@ impl X11WindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        let mut state = self.state.borrow_mut();
-        if let Some(mut input_handler) = state.input_handler.take() {
-            drop(state);
-            input_handler.replace_text_in_range(None, &text);
-            let mut state = self.state.borrow_mut();
-            state.input_handler = Some(input_handler);
-        }
+        let input_handler = self.state.borrow().input_handler.clone();
+        let _ = input_handler
+            .with_handler(|input_handler| input_handler.replace_text_in_range(None, &text));
     }
 
     pub fn handle_ime_preedit(&self, text: String) {
         if self.is_blocked() {
             return;
         }
-        let mut state = self.state.borrow_mut();
-        if let Some(mut input_handler) = state.input_handler.take() {
-            drop(state);
-            input_handler.replace_and_mark_text_in_range(None, &text, None);
-            let mut state = self.state.borrow_mut();
-            state.input_handler = Some(input_handler);
-        }
+        let input_handler = self.state.borrow().input_handler.clone();
+        let _ = input_handler.with_handler(|input_handler| {
+            input_handler.replace_and_mark_text_in_range(None, &text, None)
+        });
     }
 
     pub fn handle_ime_unmark(&self) {
         if self.is_blocked() {
             return;
         }
-        let mut state = self.state.borrow_mut();
-        if let Some(mut input_handler) = state.input_handler.take() {
-            drop(state);
-            input_handler.unmark_text();
-            let mut state = self.state.borrow_mut();
-            state.input_handler = Some(input_handler);
-        }
+        let input_handler = self.state.borrow().input_handler.clone();
+        let _ = input_handler.with_handler(|input_handler| input_handler.unmark_text());
     }
 
     pub fn handle_ime_delete(&self) {
         if self.is_blocked() {
             return;
         }
-        let mut state = self.state.borrow_mut();
-        if let Some(mut input_handler) = state.input_handler.take() {
-            drop(state);
-            if let Some(marked) = input_handler.marked_text_range() {
-                input_handler.replace_text_in_range(Some(marked), "");
-            }
-            let mut state = self.state.borrow_mut();
-            state.input_handler = Some(input_handler);
-        }
+        let input_handler = self.state.borrow().input_handler.clone();
+        let _ =
+            input_handler.with_handler(|input_handler| match input_handler.marked_text_range() {
+                NativeInputHandlerOutcome::Delivered(Some(marked)) => {
+                    input_handler.replace_text_in_range(Some(marked), "")
+                }
+                NativeInputHandlerOutcome::Delivered(None) => {
+                    NativeInputHandlerOutcome::Delivered(())
+                }
+                NativeInputHandlerOutcome::StaleWindow => NativeInputHandlerOutcome::StaleWindow,
+                NativeInputHandlerOutcome::Quitting => NativeInputHandlerOutcome::Quitting,
+            });
     }
 
     pub fn get_ime_area(&self) -> Option<Bounds<ScaledPixels>> {
-        let mut state = self.state.borrow_mut();
-        let scale_factor = state.scale_factor;
-        let mut bounds: Option<Bounds<Pixels>> = None;
-        if let Some(mut input_handler) = state.input_handler.take() {
-            drop(state);
-            if let Some(selection) = input_handler.selected_text_range(true) {
-                bounds = input_handler.bounds_for_range(selection.range);
-            }
-            let mut state = self.state.borrow_mut();
-            state.input_handler = Some(input_handler);
+        let (scale_factor, input_handler) = {
+            let state = self.state.borrow();
+            (state.scale_factor, state.input_handler.clone())
         };
+        let bounds = input_handler
+            .with_handler(|input_handler| {
+                input_handler
+                    .selected_text_range(true)
+                    .and_then(|selection| match selection {
+                        Some(selection) => input_handler.bounds_for_range(selection.range),
+                        None => NativeInputHandlerOutcome::Delivered(None),
+                    })
+            })
+            .and_then(NativeInputHandlerOutcome::into_delivered)
+            .flatten();
         bounds.map(|b| b.scale(scale_factor))
     }
 
@@ -1530,6 +1701,11 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
+    fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
+        let target = X11WindowCommandTarget::new(self);
+        PlatformWindowCommandDispatcher::new(move |command| target.dispatch(command))
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds
     }
@@ -1664,11 +1840,13 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.state.borrow_mut().input_handler = Some(input_handler);
+        let input_handler_slot = self.0.state.borrow().input_handler.clone();
+        input_handler_slot.set(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.0.state.borrow_mut().input_handler.take()
+        let input_handler_slot = self.0.state.borrow().input_handler.clone();
+        input_handler_slot.take()
     }
 
     fn prompt(
@@ -1679,34 +1857,6 @@ impl PlatformWindow for X11Window {
         _answers: &[PromptButton],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         None
-    }
-
-    fn activate(&self) {
-        let data = [1, xproto::Time::CURRENT_TIME.into(), 0, 0, 0];
-        let message = xproto::ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            self.0.state.borrow().atoms._NET_ACTIVE_WINDOW,
-            data,
-        );
-        self.0
-            .xcb
-            .send_event(
-                false,
-                self.0.state.borrow().x_root_window,
-                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
-            )
-            .log_err();
-        self.0
-            .xcb
-            .set_input_focus(
-                xproto::InputFocus::POINTER_ROOT,
-                self.0.x_window,
-                xproto::Time::CURRENT_TIME,
-            )
-            .log_err();
-        xcb_flush(&self.0.xcb);
     }
 
     fn is_active(&self) -> bool {
@@ -1764,6 +1914,9 @@ impl PlatformWindow for X11Window {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
+        if !self.0.state.borrow().initially_shown {
+            return Ok(());
+        }
         check_reply(
             || "X11 MapWindow failed.",
             self.0.xcb.map_window(self.0.x_window),
@@ -1811,8 +1964,9 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> open_gpui::DispatchEventResult>) {
-        self.0.callbacks.borrow_mut().input = Some(callback);
+    fn on_input(&self, callback: PlatformInputCallback) {
+        let input = self.0.callbacks.borrow().input.clone();
+        input.set(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
@@ -1836,7 +1990,8 @@ impl PlatformWindow for X11Window {
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.callbacks.borrow_mut().should_close = Some(callback);
+        let should_close = self.0.callbacks.borrow().should_close.clone();
+        should_close.set(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
@@ -1887,52 +2042,6 @@ impl PlatformWindow for X11Window {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
-    }
-
-    fn show_window_menu(&self, position: Point<Pixels>) {
-        let state = self.0.state.borrow();
-
-        check_reply(
-            || "X11 UngrabPointer failed.",
-            self.0.xcb.ungrab_pointer(x11rb::CURRENT_TIME),
-        )
-        .log_err();
-
-        let Some(coords) = self.get_root_position(position).log_err() else {
-            return;
-        };
-        let message = ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            state.atoms._GTK_SHOW_WINDOW_MENU,
-            [
-                XINPUT_ALL_DEVICE_GROUPS as u32,
-                coords.dst_x as u32,
-                coords.dst_y as u32,
-                0,
-                0,
-            ],
-        );
-        check_reply(
-            || "X11 SendEvent to show window menu failed.",
-            self.0.xcb.send_event(
-                false,
-                state.x_root_window,
-                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
-            ),
-        )
-        .log_err();
-    }
-
-    fn start_window_move(&self) {
-        const MOVERESIZE_MOVE: u32 = 8;
-        self.send_moveresize(MOVERESIZE_MOVE).log_err();
-    }
-
-    fn start_window_resize(&self, edge: ResizeEdge) {
-        self.send_moveresize(resize_edge_to_moveresize(edge))
-            .log_err();
     }
 
     fn window_decorations(&self) -> open_gpui::Decorations {
@@ -2301,5 +2410,70 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::Opaque
         );
         assert!(!adjusted.renderer_transparent);
+    }
+}
+
+#[cfg(test)]
+mod should_close_callback_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn replacement_installed_during_x11_should_close_survives_old_callback_return() {
+        let should_close = Callbacks::default().should_close;
+        let slot_holder = Rc::new(RefCell::new(Some(should_close.clone())));
+        let slot_holder_weak = Rc::downgrade(&slot_holder);
+        let replacement_calls = Rc::new(Cell::new(0));
+
+        should_close.set(Box::new({
+            let replacement_calls = replacement_calls.clone();
+            move || {
+                let replacement_slot = slot_holder_weak
+                    .upgrade()
+                    .expect("test slot holder must remain alive")
+                    .borrow()
+                    .clone()
+                    .expect("test slot must remain installed");
+                let replacement_calls = replacement_calls.clone();
+                replacement_slot.set(Box::new(move || {
+                    replacement_calls.set(replacement_calls.get() + 1);
+                    false
+                }));
+
+                assert!(!replacement_slot.invoke());
+                true
+            }
+        }));
+
+        assert!(should_close.invoke());
+        assert!(!should_close.invoke());
+        assert_eq!(replacement_calls.get(), 2);
+    }
+
+    #[test]
+    fn close_during_x11_should_close_permanently_retires_checked_out_callback() {
+        let should_close = Callbacks::default().should_close;
+        let slot_holder = Rc::new(RefCell::new(Some(should_close.clone())));
+        let slot_holder_weak = Rc::downgrade(&slot_holder);
+        let calls = Rc::new(Cell::new(0));
+
+        should_close.set(Box::new({
+            let calls = calls.clone();
+            move || {
+                calls.set(calls.get() + 1);
+                slot_holder_weak
+                    .upgrade()
+                    .expect("test slot holder must remain alive")
+                    .borrow()
+                    .as_ref()
+                    .expect("test slot must remain installed")
+                    .terminate();
+                true
+            }
+        }));
+
+        assert!(should_close.invoke());
+        assert!(!should_close.invoke());
+        assert_eq!(calls.get(), 1);
     }
 }

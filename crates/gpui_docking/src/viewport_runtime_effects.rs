@@ -1,23 +1,64 @@
-use crate::surface::{DockSurfaceChangeCategory, DockSurfaceTransactionId};
-use open_gpui::{AnyWindowHandle, App};
+use crate::{
+    DockViewportRuntime, DockViewportWindowRetirement, DockViewportWindowRetirementKey,
+    surface::{DockSurfaceChangeCategory, DockSurfaceTransactionId},
+};
+use open_gpui::{AnyWindowHandle, App, WindowId};
+use std::{cell::RefCell, rc::Rc};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DockViewportWindowCloseEffect {
+    window: AnyWindowHandle,
+    retirement: DockViewportWindowRetirementKey,
+}
+
+impl DockViewportWindowCloseEffect {
+    pub(crate) fn from_retirement(
+        window: AnyWindowHandle,
+        retirement: DockViewportWindowRetirement,
+    ) -> Option<Self> {
+        let retirement = retirement.key()?;
+        debug_assert_eq!(
+            window.window_id(),
+            retirement.window_id(),
+            "dock viewport close effect must carry its window retirement ticket"
+        );
+        (window.window_id() == retirement.window_id()).then_some(Self { window, retirement })
+    }
+
+    pub(crate) fn window(self) -> AnyWindowHandle {
+        self.window
+    }
+
+    pub(crate) fn retirement(self) -> DockViewportWindowRetirementKey {
+        self.retirement
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(window: AnyWindowHandle) -> Self {
+        Self {
+            window,
+            retirement: DockViewportWindowRetirementKey::for_test(window.window_id()),
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportWindowEffects {
-    close_now: Vec<AnyWindowHandle>,
+    close_now: Vec<DockViewportWindowCloseEffect>,
     refresh: Vec<AnyWindowHandle>,
-    close_after_current_effect: Vec<AnyWindowHandle>,
+    close_after_current_effect: Vec<DockViewportWindowCloseEffect>,
 }
 
 impl DockViewportWindowEffects {
     pub(crate) fn new(
-        close_now: impl IntoIterator<Item = AnyWindowHandle>,
+        close_now: impl IntoIterator<Item = DockViewportWindowCloseEffect>,
         refresh: impl IntoIterator<Item = AnyWindowHandle>,
-        close_after_current_effect: impl IntoIterator<Item = AnyWindowHandle>,
+        close_after_current_effect: impl IntoIterator<Item = DockViewportWindowCloseEffect>,
     ) -> Self {
         let mut effects = Self::default();
-        extend_unique_windows(&mut effects.close_now, close_now);
+        extend_unique_close_effects(&mut effects.close_now, close_now);
         extend_unique_windows(&mut effects.refresh, refresh);
-        extend_unique_windows(
+        extend_unique_close_effects(
             &mut effects.close_after_current_effect,
             close_after_current_effect,
         );
@@ -28,17 +69,21 @@ impl DockViewportWindowEffects {
         Self::new(Vec::new(), refresh, Vec::new())
     }
 
+    pub(crate) fn close_now_only(close: DockViewportWindowCloseEffect) -> Self {
+        Self::new([close], Vec::new(), Vec::new())
+    }
+
     pub(crate) fn merge(mut self, other: Self) -> Self {
-        extend_unique_windows(&mut self.close_now, other.close_now);
+        extend_unique_close_effects(&mut self.close_now, other.close_now);
         extend_unique_windows(&mut self.refresh, other.refresh);
-        extend_unique_windows(
+        extend_unique_close_effects(
             &mut self.close_after_current_effect,
             other.close_after_current_effect,
         );
         self
     }
 
-    pub(crate) fn close_now(&self) -> &[AnyWindowHandle] {
+    pub(crate) fn close_now(&self) -> &[DockViewportWindowCloseEffect] {
         &self.close_now
     }
 
@@ -46,7 +91,7 @@ impl DockViewportWindowEffects {
         &self.refresh
     }
 
-    pub(crate) fn close_after_current_effect(&self) -> &[AnyWindowHandle] {
+    pub(crate) fn close_after_current_effect(&self) -> &[DockViewportWindowCloseEffect] {
         &self.close_after_current_effect
     }
 
@@ -54,6 +99,21 @@ impl DockViewportWindowEffects {
         !self.close_now.is_empty()
             || !self.refresh.is_empty()
             || !self.close_after_current_effect.is_empty()
+    }
+}
+
+fn extend_unique_close_effects(
+    effects: &mut Vec<DockViewportWindowCloseEffect>,
+    next_effects: impl IntoIterator<Item = DockViewportWindowCloseEffect>,
+) {
+    for effect in next_effects {
+        if effects
+            .iter()
+            .any(|existing| existing.retirement() == effect.retirement())
+        {
+            continue;
+        }
+        effects.push(effect);
     }
 }
 
@@ -200,8 +260,26 @@ pub(crate) fn unique_windows(windows: Vec<AnyWindowHandle>) -> Vec<AnyWindowHand
     unique
 }
 
+fn unique_windows_excluding(
+    windows: Vec<AnyWindowHandle>,
+    excluded_window: Option<WindowId>,
+) -> Vec<AnyWindowHandle> {
+    unique_windows(windows)
+        .into_iter()
+        .filter(|window| Some(window.window_id()) != excluded_window)
+        .collect()
+}
+
 pub(crate) fn refresh_windows<C: open_gpui::AppContext>(windows: Vec<AnyWindowHandle>, cx: &mut C) {
-    for window in unique_windows(windows) {
+    refresh_windows_excluding(windows, None, cx);
+}
+
+pub(crate) fn refresh_windows_excluding<C: open_gpui::AppContext>(
+    windows: Vec<AnyWindowHandle>,
+    excluded_window: Option<WindowId>,
+    cx: &mut C,
+) {
+    for window in unique_windows_excluding(windows, excluded_window) {
         let _ = window.update(cx, |_, window, _| window.refresh());
     }
 }
@@ -210,8 +288,16 @@ pub(crate) fn refresh_runtime_update<C: open_gpui::AppContext>(
     update: DockViewportRuntimeUpdate,
     cx: &mut C,
 ) -> bool {
+    refresh_runtime_update_excluding(update, None, cx)
+}
+
+pub(crate) fn refresh_runtime_update_excluding<C: open_gpui::AppContext>(
+    update: DockViewportRuntimeUpdate,
+    excluded_window: Option<WindowId>,
+    cx: &mut C,
+) -> bool {
     let changed = update.changed();
-    refresh_windows(update.into_windows(), cx);
+    refresh_windows_excluding(update.into_windows(), excluded_window, cx);
     changed
 }
 
@@ -219,37 +305,65 @@ pub(crate) fn close_window_quietly(window: AnyWindowHandle, cx: &mut App) {
     let _ = window.update(cx, |_, window, cx| window.remove_window(cx));
 }
 
-fn close_windows_quietly(windows: Vec<AnyWindowHandle>, cx: &mut App) {
-    for window in windows {
-        close_window_quietly(window, cx);
+fn settle_and_close_windows_quietly(
+    runtime: &Rc<RefCell<DockViewportRuntime>>,
+    effects: Vec<DockViewportWindowCloseEffect>,
+    cx: &mut App,
+) {
+    for effect in effects {
+        let should_close = runtime
+            .borrow_mut()
+            .settle_window_retirement(effect.retirement());
+        if should_close {
+            close_window_quietly(effect.window(), cx);
+        }
     }
 }
 
-fn close_windows_after_current_effect(windows: Vec<AnyWindowHandle>, cx: &mut App) {
-    if windows.is_empty() {
+fn close_windows_after_current_effect(
+    runtime: &Rc<RefCell<DockViewportRuntime>>,
+    effects: Vec<DockViewportWindowCloseEffect>,
+    cx: &mut App,
+) {
+    if effects.is_empty() {
         return;
     }
-    cx.defer(move |cx| close_windows_quietly(windows, cx));
+    let runtime = runtime.clone();
+    cx.defer(move |cx| settle_and_close_windows_quietly(&runtime, effects, cx));
 }
 
-pub(crate) fn apply_viewport_window_effects(effects: DockViewportWindowEffects, cx: &mut App) {
-    close_windows_after_current_effect(effects.close_now().to_vec(), cx);
-    refresh_windows(effects.refresh().to_vec(), cx);
-    close_windows_after_current_effect(effects.close_after_current_effect().to_vec(), cx);
-}
-
-pub(crate) fn refresh_viewport_window_effects<C: open_gpui::AppContext>(
+pub(crate) fn apply_viewport_window_effects(
+    runtime: &Rc<RefCell<DockViewportRuntime>>,
     effects: DockViewportWindowEffects,
+    cx: &mut App,
+) {
+    apply_viewport_window_effects_excluding(runtime, effects, None, cx);
+}
+
+pub(crate) fn apply_viewport_window_effects_excluding(
+    runtime: &Rc<RefCell<DockViewportRuntime>>,
+    effects: DockViewportWindowEffects,
+    excluded_window: Option<WindowId>,
+    cx: &mut App,
+) {
+    close_windows_after_current_effect(runtime, effects.close_now().to_vec(), cx);
+    refresh_windows_excluding(effects.refresh().to_vec(), excluded_window, cx);
+    close_windows_after_current_effect(runtime, effects.close_after_current_effect().to_vec(), cx);
+}
+
+pub(crate) fn refresh_viewport_window_effects_excluding<C: open_gpui::AppContext>(
+    effects: DockViewportWindowEffects,
+    excluded_window: Option<WindowId>,
     cx: &mut C,
 ) {
     debug_assert!(effects.close_now().is_empty());
     debug_assert!(effects.close_after_current_effect().is_empty());
-    refresh_windows(effects.refresh().to_vec(), cx);
+    refresh_windows_excluding(effects.refresh().to_vec(), excluded_window, cx);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DockViewportRuntimeUpdate, unique_windows};
+    use super::{DockViewportRuntimeUpdate, unique_windows, unique_windows_excluding};
     use crate::{surface::DockSurfaceChangeCategory, viewport_test_support::handle};
 
     #[test]
@@ -260,6 +374,20 @@ mod tests {
         assert_eq!(
             unique_windows(vec![first, second, first, second, first]),
             vec![first, second]
+        );
+    }
+
+    #[test]
+    fn unique_windows_excluding_never_reenters_current_window() {
+        let current = handle(1);
+        let other = handle(2);
+
+        assert_eq!(
+            unique_windows_excluding(
+                vec![current, other, current, other],
+                Some(current.window_id()),
+            ),
+            vec![other]
         );
     }
 

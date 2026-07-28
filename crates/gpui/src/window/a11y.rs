@@ -1063,6 +1063,7 @@ impl A11y {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn set_requested_active(state: &AtomicU64, active: bool) {
     let _ = state.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
         let generation = (current >> 1).wrapping_add(1);
@@ -1075,6 +1076,7 @@ fn requested_state(state: &AtomicU64) -> (bool, u64) {
     (state & 1 == 1, state >> 1)
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn requested_generation(state: &AtomicU64) -> u64 {
     requested_state(state).1
 }

@@ -4,7 +4,7 @@ use crate::{
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropResolution, DockDropTargetValidator, DockEdgePlanResolver},
     geometry::DockDropGuideMetrics,
-    viewport_registry::DockViewportWindowBoundsFrame,
+    viewport_registry::{DockViewportRegistrationKey, DockViewportWindowBoundsFrame},
 };
 #[cfg(test)]
 use open_gpui::point;
@@ -14,18 +14,23 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportHostSceneFrame {
     identity: DockViewportIdentity,
+    registration_key: DockViewportRegistrationKey,
     generation: u64,
 }
 
 impl DockViewportHostSceneFrame {
     #[cfg(test)]
     pub(crate) fn new_for_test(
-        space: impl Into<DockSpaceId>,
-        window_id: WindowId,
+        registration_key: DockViewportRegistrationKey,
         generation: u64,
     ) -> Self {
+        let identity = DockViewportIdentity::new(
+            registration_key.space().clone(),
+            registration_key.window_id(),
+        );
         Self {
-            identity: DockViewportIdentity::new(space, window_id),
+            identity,
+            registration_key,
             generation,
         }
     }
@@ -40,7 +45,13 @@ impl DockViewportHostSceneFrame {
     }
 
     fn matches_snapshot(&self, snapshot: &DockViewportHostSceneSnapshot) -> bool {
-        self.identity == snapshot.identity() && self.generation == snapshot.generation
+        self.identity == snapshot.identity()
+            && self.registration_key == snapshot.registration_key
+            && self.generation == snapshot.generation
+    }
+
+    pub(crate) fn registration_key(&self) -> &DockViewportRegistrationKey {
+        &self.registration_key
     }
 }
 
@@ -56,11 +67,21 @@ pub(crate) struct DockViewportHostSceneSnapshot {
     pub(crate) window_id: WindowId,
     pub(crate) current_bounds: DockViewportWindowBoundsFrame,
     pub(crate) host_geometry: DockViewportHostGeometry,
+    registration_key: DockViewportRegistrationKey,
     generation: u64,
     scene: DockHostDropScene,
 }
 
-impl DockViewportHostSceneSnapshot {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportHostSceneDraft {
+    pub(crate) space: DockSpaceId,
+    pub(crate) window_id: WindowId,
+    pub(crate) current_bounds: DockViewportWindowBoundsFrame,
+    pub(crate) host_geometry: DockViewportHostGeometry,
+    scene: DockHostDropScene,
+}
+
+impl DockViewportHostSceneDraft {
     pub(crate) fn new(
         space: DockSpaceId,
         window_id: WindowId,
@@ -78,7 +99,6 @@ impl DockViewportHostSceneSnapshot {
             window_id,
             current_bounds,
             host_geometry,
-            generation: 0,
             scene: DockHostDropScene::new(layout_position)
                 .with_drop_guide_metrics(drop_guide_metrics),
         }
@@ -107,9 +127,81 @@ impl DockViewportHostSceneSnapshot {
         snapshot
     }
 
+    pub(crate) fn bind(
+        self,
+        registration_key: DockViewportRegistrationKey,
+    ) -> Option<DockViewportHostSceneSnapshot> {
+        if registration_key.space() != &self.space || registration_key.window_id() != self.window_id
+        {
+            return None;
+        }
+        Some(DockViewportHostSceneSnapshot {
+            space: self.space,
+            window_id: self.window_id,
+            current_bounds: self.current_bounds,
+            host_geometry: self.host_geometry,
+            registration_key,
+            generation: 0,
+            scene: self.scene,
+        })
+    }
+
+    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
+        self.scene.push_fact(fact)
+    }
+}
+
+impl DockViewportHostSceneSnapshot {
+    #[cfg(test)]
+    pub(crate) fn new(
+        space: DockSpaceId,
+        window_id: WindowId,
+        current_bounds: DockViewportWindowBoundsFrame,
+        host_geometry: impl Into<DockViewportHostGeometry>,
+        host_position: Point<Pixels>,
+        drop_guide_metrics: DockDropGuideMetrics,
+    ) -> Self {
+        let registration_key = DockViewportRegistrationKey::for_test(space.clone(), window_id);
+        DockViewportHostSceneDraft::new(
+            space,
+            window_id,
+            current_bounds,
+            host_geometry,
+            host_position,
+            drop_guide_metrics,
+        )
+        .bind(registration_key)
+        .expect("matching test registration must bind")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_facts(
+        space: DockSpaceId,
+        window_id: WindowId,
+        current_bounds: DockViewportWindowBoundsFrame,
+        host_geometry: impl Into<DockViewportHostGeometry>,
+        host_position: Point<Pixels>,
+        drop_guide_metrics: DockDropGuideMetrics,
+        initial_facts: impl IntoIterator<Item = DockHostDropSceneFact>,
+    ) -> Self {
+        let registration_key = DockViewportRegistrationKey::for_test(space.clone(), window_id);
+        DockViewportHostSceneDraft::new_with_facts(
+            space,
+            window_id,
+            current_bounds,
+            host_geometry,
+            host_position,
+            drop_guide_metrics,
+            initial_facts,
+        )
+        .bind(registration_key)
+        .expect("matching test registration must bind")
+    }
+
     fn same_content_as(&self, other: &Self) -> bool {
         self.space == other.space
             && self.window_id == other.window_id
+            && self.registration_key == other.registration_key
             && self.current_bounds == other.current_bounds
             && self.host_geometry == other.host_geometry
             && self.scene == other.scene
@@ -118,6 +210,7 @@ impl DockViewportHostSceneSnapshot {
     fn frame(&self) -> DockViewportHostSceneFrame {
         DockViewportHostSceneFrame {
             identity: self.identity(),
+            registration_key: self.registration_key.clone(),
             generation: self.generation,
         }
     }
@@ -126,7 +219,11 @@ impl DockViewportHostSceneSnapshot {
         DockViewportIdentity::new(self.space.clone(), self.window_id)
     }
 
-    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
+    pub(crate) fn registration_key(&self) -> &DockViewportRegistrationKey {
+        &self.registration_key
+    }
+
+    fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
         self.scene.push_fact(fact)
     }
 
@@ -210,7 +307,9 @@ impl DockViewportHostSceneRegistry {
         mut snapshot: DockViewportHostSceneSnapshot,
     ) -> DockViewportHostSceneRegistration {
         if let Some(existing) = self.scenes.get(&snapshot.space) {
-            if existing.identity() == snapshot.identity() {
+            if existing.identity() == snapshot.identity()
+                && existing.registration_key == snapshot.registration_key
+            {
                 snapshot
                     .scene
                     .preserve_measured_tab_labels_from(&existing.scene);
@@ -261,6 +360,12 @@ impl DockViewportHostSceneRegistry {
         self.next_generation = self.next_generation.wrapping_add(1);
         scene.generation = self.next_generation;
         Some(scene.frame())
+    }
+
+    pub(crate) fn is_current_frame(&self, frame: &DockViewportHostSceneFrame) -> bool {
+        self.scenes
+            .get(frame.space())
+            .is_some_and(|snapshot| frame.matches_snapshot(snapshot))
     }
 
     pub(crate) fn leaf_bounds_for_tabs(
@@ -445,6 +550,18 @@ impl DockViewportHostSceneRegistry {
         true
     }
 
+    pub(crate) fn discard_exact_frame(&mut self, frame: &DockViewportHostSceneFrame) -> bool {
+        if self
+            .scenes
+            .get(frame.space())
+            .is_none_or(|snapshot| !frame.matches_snapshot(snapshot))
+        {
+            return false;
+        }
+        self.scenes.remove(frame.space());
+        true
+    }
+
     pub(crate) fn unregister_window(&mut self, window_id: WindowId) {
         self.scenes
             .retain(|_, snapshot| snapshot.window_id != window_id);
@@ -505,6 +622,59 @@ mod tests {
                 .is_some()
         );
         assert_empty_space_target(&registry, &space);
+    }
+
+    #[test]
+    fn host_scene_frame_rejects_same_window_from_replaced_registration() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut registry = DockViewportHostSceneRegistry::default();
+        let first_registration =
+            DockViewportRegistrationKey::for_test_generation(space.clone(), window_id, 1);
+        let replacement_registration =
+            DockViewportRegistrationKey::for_test_generation(space.clone(), window_id, 2);
+
+        let old_frame = registry
+            .register(
+                DockViewportHostSceneDraft::new(
+                    space.clone(),
+                    window_id,
+                    DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 800.0, 600.0)),
+                    bounds(0.0, 0.0, 800.0, 600.0),
+                    point(px(10.0), px(10.0)),
+                    DockDropGuideMetrics::default(),
+                )
+                .bind(first_registration)
+                .expect("matching registration must bind"),
+            )
+            .frame;
+        let replacement_frame = registry
+            .register(
+                DockViewportHostSceneDraft::new(
+                    space.clone(),
+                    window_id,
+                    DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 800.0, 600.0)),
+                    bounds(0.0, 0.0, 800.0, 600.0),
+                    point(px(10.0), px(10.0)),
+                    DockDropGuideMetrics::default(),
+                )
+                .bind(replacement_registration)
+                .expect("matching replacement registration must bind"),
+            )
+            .frame;
+
+        assert_ne!(old_frame, replacement_frame);
+        assert!(
+            registry
+                .push_frame_fact(&old_frame, empty_space_fact(space.clone()))
+                .is_none(),
+            "a frame from the replaced registration must not mutate the replacement scene"
+        );
+        assert!(
+            registry
+                .push_frame_fact(&replacement_frame, empty_space_fact(space.clone()))
+                .is_some()
+        );
     }
 
     #[test]

@@ -81,6 +81,113 @@ fn runtime_opened_multi_window_reoriented_dock_model_keeps_state_consistent(
     }
 }
 
+#[open_gpui::test]
+fn prepared_source_vacate_cannot_unregister_recreated_registration(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let controller =
+        cx.new(|_| DockController::new(DockWorkspace::new(source_space.clone(), DockGraph::new())));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let first = handle(1);
+    let second = handle(2);
+    assert!(
+        runtime
+            .borrow_mut()
+            .register_opened_viewport(source_space.clone(), first)
+            .is_empty()
+    );
+    let prepared = runtime.prepare_empty_payload_drop_source_vacate(&source_space, &target_space);
+
+    runtime
+        .borrow_mut()
+        .unregister_adapter_window_for_test(first.window_id());
+    assert!(
+        runtime
+            .borrow_mut()
+            .register_opened_viewport(source_space.clone(), second)
+            .is_empty()
+    );
+
+    let changed = cx
+        .update(|app| runtime.finalize_empty_payload_drop_source_vacate(prepared.apply(true), app));
+
+    assert!(!changed);
+    assert_eq!(
+        runtime.window_id_for_space(&source_space),
+        Some(second.window_id())
+    );
+}
+
+#[open_gpui::test]
+fn source_vacate_without_registration_cannot_unregister_later_registration(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let controller =
+        cx.new(|_| DockController::new(DockWorkspace::new(source_space.clone(), DockGraph::new())));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let prepared = runtime.prepare_empty_payload_drop_source_vacate(&source_space, &target_space);
+    let later = handle(1);
+    assert!(
+        runtime
+            .borrow_mut()
+            .register_opened_viewport(source_space.clone(), later)
+            .is_empty()
+    );
+
+    let changed = cx
+        .update(|app| runtime.finalize_empty_payload_drop_source_vacate(prepared.apply(true), app));
+
+    assert!(!changed);
+    assert_eq!(
+        runtime.window_id_for_space(&source_space),
+        Some(later.window_id())
+    );
+}
+
+#[open_gpui::test]
+fn source_vacate_controller_apply_can_reenter_runtime_and_unregisters_current_once(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let controller =
+        cx.new(|_| DockController::new(DockWorkspace::new(source_space.clone(), DockGraph::new())));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let source_window = handle(1);
+    assert!(
+        runtime
+            .borrow_mut()
+            .register_opened_viewport(source_space.clone(), source_window)
+            .is_empty()
+    );
+    let prepared = runtime.prepare_empty_payload_drop_source_vacate(&source_space, &target_space);
+
+    let source_is_empty = controller.update(cx, |controller, _| {
+        let runtime_reentry = runtime.borrow_mut();
+        assert_eq!(
+            runtime_reentry.adapter().window_for_space(&source_space),
+            Some(source_window)
+        );
+        drop(runtime_reentry);
+        controller
+            .graph()
+            .collect_items_in_space(&source_space)
+            .is_empty()
+    });
+    let first_changed = cx.update(|app| {
+        runtime.finalize_empty_payload_drop_source_vacate(prepared.apply(source_is_empty), app)
+    });
+    let second = runtime.prepare_empty_payload_drop_source_vacate(&source_space, &target_space);
+    let second_changed =
+        cx.update(|app| runtime.finalize_empty_payload_drop_source_vacate(second.apply(true), app));
+
+    assert!(first_changed);
+    assert!(!second_changed);
+    assert!(!runtime.is_viewport_open(&source_space));
+}
+
 impl DockModelHarness {
     fn new(cx: &mut TestAppContext) -> Self {
         let source_space = DockSpaceId::from("source");
@@ -286,6 +393,8 @@ fn commit_model_move(
         format!("Panel {}", operation.item.to_ascii_uppercase()),
     );
     let session = runtime.borrow_mut().begin_payload_drag(&payload);
+    let prepared_source_vacate =
+        runtime.prepare_empty_payload_drop_source_vacate(&source_space, &target_space);
 
     let target = cx.read_entity(controller, |controller, _| match operation.drop_kind {
         ModelDropKind::Center => DockWorkspaceResolvedDropTarget::new(
@@ -312,7 +421,7 @@ fn commit_model_move(
         }
     });
 
-    controller.update(cx, |controller, _| {
+    let source_is_empty = controller.update(cx, |controller, _| {
         let outcome = controller
             .workspace_mut()
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
@@ -331,11 +440,17 @@ fn commit_model_move(
             "{}",
             operation.name
         );
+        controller
+            .graph()
+            .collect_items_in_space(&source_space)
+            .is_empty()
     });
 
     cx.update(|app| {
-        let _ =
-            runtime.vacate_empty_payload_drop_source_viewport(&source_space, &target_space, app);
+        let _ = runtime.finalize_empty_payload_drop_source_vacate(
+            prepared_source_vacate.apply(source_is_empty),
+            app,
+        );
     });
 
     let _ = runtime.borrow_mut().finish_payload_drag(&session);

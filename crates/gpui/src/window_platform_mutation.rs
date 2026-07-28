@@ -3,7 +3,15 @@ use crate::{
     WindowBackgroundAppearance, WindowMutationDomain, WindowPlacementRequest, WindowPlacementState,
     WindowPlatformFacts,
 };
-use std::{cell::RefCell, collections::BTreeMap, fmt, mem, rc::Rc, sync::Arc};
+use std::{
+    any::Any,
+    cell::RefCell,
+    collections::BTreeMap,
+    fmt, mem,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
+    rc::Rc,
+    sync::Arc,
+};
 
 /// The request associated with a window mutation ticket.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -319,8 +327,22 @@ pub(crate) struct WindowMutationTicketDelivery {
 
 impl WindowMutationTicketDelivery {
     pub(crate) fn deliver(self) {
+        let mut first_panic: Option<Box<dyn Any + Send>> = None;
         for callback in self.callbacks {
-            callback(self.observation.clone());
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+                callback(self.observation.clone());
+            })) {
+                if first_panic.is_none() {
+                    first_panic = Some(payload);
+                } else {
+                    log::error!(
+                        "suppressed secondary panic while delivering window mutation ticket observers"
+                    );
+                }
+            }
+        }
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
         }
     }
 }

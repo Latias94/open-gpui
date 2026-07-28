@@ -1,7 +1,8 @@
 use crate::{
     DockSpaceId, DockViewportActivationTransaction, DockViewportCloseOutcome,
     DockViewportClosePlanState, DockViewportCloseStatus, DockViewportFocusRequest,
-    DockViewportMergeBackClosePlan, DockViewportShouldCloseOutcome, DockViewportWindowEffects,
+    DockViewportMergeBackClosePlan, DockViewportShouldCloseOutcome, DockViewportWindowCloseEffect,
+    DockViewportWindowEffects, viewport_registry::DockViewportRegistrationKey,
 };
 use open_gpui::AnyWindowHandle;
 
@@ -9,7 +10,7 @@ pub(crate) struct DockViewportWindowLifecycleController;
 
 #[derive(Default)]
 pub(crate) struct DockViewportReplacementCleanup {
-    pub(crate) replaced_windows: Vec<AnyWindowHandle>,
+    pub(crate) replaced_windows: Vec<DockViewportWindowCloseEffect>,
     pub(crate) affected_windows: Vec<AnyWindowHandle>,
 }
 
@@ -21,7 +22,7 @@ pub(crate) struct DockViewportUnregisteredSpace {
 #[derive(Default)]
 pub(crate) struct DockViewportVacatedTearOffSource {
     pub(crate) changed: bool,
-    pub(crate) windows: Vec<AnyWindowHandle>,
+    pub(crate) windows: Vec<DockViewportWindowCloseEffect>,
     pub(crate) affected_windows: Vec<AnyWindowHandle>,
 }
 
@@ -89,21 +90,25 @@ impl DockViewportWindowLifecycleController {
         };
         let (window, window_effects) = reusable.into_parts();
         let activation = match window {
-            DockViewportReusableWindow::Reused(window) => {
+            DockViewportReusableWindow::Reused {
+                registration,
+                window,
+            } if registration.space() == &target_space => {
                 Some(DockViewportActivationTransaction::close_recovery(
-                    target_space,
+                    registration,
                     window,
                     focus_request,
                 ))
             }
-            DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
+            DockViewportReusableWindow::Missing
+            | DockViewportReusableWindow::Stale
+            | DockViewportReusableWindow::Reused { .. } => None,
         };
         DockViewportCloseRecoveryActivation::new(activation, window_effects)
     }
 
     pub(crate) fn drop_activation(
         reusable: DockViewportReusableWindowOutcome,
-        space: DockSpaceId,
         focus_request: DockViewportFocusRequest,
     ) -> (
         Option<DockViewportActivationTransaction>,
@@ -111,9 +116,14 @@ impl DockViewportWindowLifecycleController {
     ) {
         let (window, window_effects) = reusable.into_parts();
         let activation = match window {
-            DockViewportReusableWindow::Reused(window) => Some(
-                DockViewportActivationTransaction::new(space, window, focus_request),
-            ),
+            DockViewportReusableWindow::Reused {
+                registration,
+                window,
+            } => Some(DockViewportActivationTransaction::registered(
+                registration,
+                window,
+                focus_request,
+            )),
             DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
         };
         (activation, window_effects)
@@ -175,7 +185,10 @@ impl DockViewportCloseRecoveryActivation {
 
 pub(crate) enum DockViewportReusableWindow {
     Missing,
-    Reused(AnyWindowHandle),
+    Reused {
+        registration: DockViewportRegistrationKey,
+        window: AnyWindowHandle,
+    },
     Stale,
 }
 
@@ -194,9 +207,20 @@ impl DockViewportReusableWindowOutcome {
         }
     }
 
-    pub(crate) fn reused(window: AnyWindowHandle) -> Self {
+    pub(crate) fn reused(
+        registration: DockViewportRegistrationKey,
+        window: AnyWindowHandle,
+    ) -> Self {
+        debug_assert_eq!(
+            registration.window_id(),
+            window.window_id(),
+            "reused viewport lease must belong to its window"
+        );
         Self {
-            window: DockViewportReusableWindow::Reused(window),
+            window: DockViewportReusableWindow::Reused {
+                registration,
+                window,
+            },
             window_effects: DockViewportWindowEffects::default(),
             topology_changed: false,
         }
@@ -266,6 +290,7 @@ mod tests {
     use crate::{
         DockItemId, DockViewportCloseOutcome, DockViewportCloseStatus,
         DockViewportMergeBackClosePlan, DockViewportWindowActivation,
+        viewport_registry::DockViewportRegistrationKey,
         viewport_test_support::{handle, space},
     };
 
@@ -275,10 +300,11 @@ mod tests {
         let target_window = handle(7);
         let focus_item = DockItemId::from("panel-a");
         let focus_request = DockViewportFocusRequest::panel(focus_item.clone());
+        let registration =
+            DockViewportRegistrationKey::for_test(target_space.clone(), target_window.window_id());
 
         let (activation, window_effects) = DockViewportWindowLifecycleController::drop_activation(
-            DockViewportReusableWindowOutcome::reused(target_window),
-            target_space.clone(),
+            DockViewportReusableWindowOutcome::reused(registration.clone(), target_window),
             focus_request,
         );
 
@@ -286,6 +312,7 @@ mod tests {
         let activation = activation.expect("reused window should create drop activation");
         assert_eq!(activation.space(), &target_space);
         assert_eq!(activation.window(), target_window);
+        assert_eq!(activation.registration_key(), &registration);
         assert_eq!(
             activation.window_activation(),
             DockViewportWindowActivation::Request
@@ -302,6 +329,8 @@ mod tests {
         let target_space = space("target");
         let target_window = handle(11);
         let focus_item = DockItemId::from("panel-b");
+        let registration =
+            DockViewportRegistrationKey::for_test(target_space.clone(), target_window.window_id());
         let close = DockViewportCloseOutcome::new(
             Some(source_space.clone()),
             handle(5).window_id(),
@@ -315,7 +344,7 @@ mod tests {
 
         let recovery = DockViewportWindowLifecycleController::close_recovery_activation(
             &close,
-            DockViewportReusableWindowOutcome::reused(target_window),
+            DockViewportReusableWindowOutcome::reused(registration.clone(), target_window),
         );
 
         assert_eq!(
@@ -327,6 +356,7 @@ mod tests {
             .expect("reused target window should create recovery activation");
         assert_eq!(activation.space(), &target_space);
         assert_eq!(activation.window(), target_window);
+        assert_eq!(activation.registration_key(), &registration);
         assert_eq!(
             activation.window_activation(),
             DockViewportWindowActivation::DoNotRequest
@@ -342,7 +372,6 @@ mod tests {
         let refresh = handle(13);
         let (activation, window_effects) = DockViewportWindowLifecycleController::drop_activation(
             DockViewportReusableWindowOutcome::stale_with_affected_windows(vec![refresh]),
-            space("target"),
             DockViewportFocusRequest::no_panel_focus(),
         );
 

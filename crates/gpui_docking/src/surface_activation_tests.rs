@@ -161,6 +161,126 @@ fn facade_activation_targets_a_host_nested_below_an_arbitrary_window_root(cx: &m
 }
 
 #[open_gpui::test]
+fn facade_activation_from_current_window_listener_commits_without_reborrowing_window(
+    cx: &mut TestAppContext,
+) {
+    let (surface, host) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel("editor", DockPanel::lazy_focusable("Editor", focus_panel))
+            .build(cx)
+            .expect("surface should build");
+        let host = cx.new(|cx| surface.host("main", cx));
+        (surface, host)
+    });
+    let window_host = host.clone();
+    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| EmbeddedHostRoot {
+        host: window_host,
+        presentation: SubtreePresentation::Visible,
+    });
+    cx.run_until_parked();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("embedded host window should remain live");
+    cx.run_until_parked();
+
+    let outcomes = Rc::new(RefCell::new(Vec::new()));
+    let observed = outcomes.clone();
+    let (request_id, subscription) = window
+        .update(cx, |_, current_window, app| {
+            surface.activate_panel_with_completion_from_window(
+                "editor",
+                current_window,
+                app,
+                move |outcome, _cx| observed.borrow_mut().push(outcome),
+            )
+        })
+        .expect("current event-receiver window should remain live");
+    cx.run_until_parked();
+
+    assert_eq!(request_id.sequence(), 1);
+    assert_eq!(
+        outcomes.borrow().as_slice(),
+        &[DockSurfaceActivationOutcome::Committed],
+        "current-window activation must wait for the event receiver to return instead of reporting WindowUnavailable"
+    );
+    assert!(cx.read_entity(&host, |host, _| host.pending_focus_command().is_none()));
+    drop(subscription);
+}
+
+#[open_gpui::test]
+fn deferred_current_window_activation_rejects_replaced_viewport_registration(
+    cx: &mut TestAppContext,
+) {
+    let (surface, host) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel("editor", DockPanel::lazy_focusable("Editor", focus_panel))
+            .build(cx)
+            .expect("surface should build");
+        let host = cx.new(|cx| surface.host("main", cx));
+        (surface, host)
+    });
+    let window_host = host.clone();
+    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| EmbeddedHostRoot {
+        host: window_host,
+        presentation: SubtreePresentation::Visible,
+    });
+    cx.run_until_parked();
+
+    let runtime = cx.read_entity(&host, |host, _| host.viewport_runtime().clone());
+    let space = cx.read_entity(&host, |host, _| host.space().clone());
+    let first_registration = runtime
+        .registration_key_for_space_window(&space, window.window_id())
+        .expect("mounted host should retain its viewport registration");
+    let outcomes = Rc::new(RefCell::new(Vec::new()));
+    let observed = outcomes.clone();
+    let subscription = window
+        .update(cx, |_, current_window, app| {
+            let (_, subscription) = surface.activate_panel_with_completion_from_window(
+                "editor",
+                current_window,
+                app,
+                move |outcome, _cx| observed.borrow_mut().push(outcome),
+            );
+            let replacement_registration = {
+                let mut runtime = runtime.borrow_mut();
+                runtime.unregister_adapter_window_for_test(window.window_id());
+                runtime
+                    .register_opened_viewport_with_cleanup(
+                        space.clone(),
+                        current_window.window_handle(),
+                    )
+                    .expect("replacement registration should succeed")
+                    .outcome
+                    .registration_key()
+                    .clone()
+            };
+            assert_ne!(first_registration, replacement_registration);
+            subscription
+        })
+        .expect("current event-receiver window should remain live");
+    cx.run_until_parked();
+
+    assert_eq!(
+        outcomes.borrow().as_slice(),
+        &[DockSurfaceActivationOutcome::Unavailable],
+        "the deferred activation must reject the registration generation captured before replacement"
+    );
+    assert_eq!(
+        cx.read_entity(&host, |host, _| {
+            (
+                host.pending_focus_command().is_some(),
+                host.viewport_runtime().pending_activation().is_some(),
+            )
+        }),
+        (false, false),
+        "a stale deferred activation must not mutate host or backend-focus state"
+    );
+    drop(subscription);
+}
+
+#[open_gpui::test]
 fn activation_completion_can_reenter_surface_after_first_settlement(cx: &mut TestAppContext) {
     let (surface, host) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
@@ -267,10 +387,16 @@ fn stale_surface_activation_is_rejected_before_runtime_focus_mutation(cx: &mut T
             host.viewport_runtime().pending_activation().is_some(),
         )
     });
+    let registration = cx
+        .read_entity(&host, |host, _| {
+            host.viewport_runtime()
+                .registration_key_for_space_window(host.space(), window.window_id())
+        })
+        .expect("mounted host should retain its viewport registration");
     let outcome = cx.update(|cx| {
         apply_viewport_activation_transaction(
             Some(DockViewportActivationTransaction::surface_activation(
-                "main",
+                registration,
                 window,
                 DockViewportFocusRequest::panel("editor"),
                 binding,

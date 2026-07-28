@@ -81,7 +81,8 @@ impl DockHost {
             DockOutsideReleasePollDecision::Stop(drag_session) => {
                 self.finish_payload_drag_session(&drag_session, window, cx);
                 self.clear_drop_preview_interaction();
-                self.viewport_runtime().clear_routed_drop_preview(cx);
+                self.viewport_runtime()
+                    .clear_routed_drop_preview_from_window(window, cx);
                 window.refresh();
                 false
             }

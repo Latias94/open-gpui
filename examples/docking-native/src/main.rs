@@ -198,11 +198,14 @@ impl RuntimeStatusPanel {
         self.set_operation_log(format!("set close policy: {policy:?}"), cx);
     }
 
-    fn open_demo_viewport(&mut self, space: &str, cx: &mut Context<Self>) {
+    fn open_demo_viewport(&mut self, space: &str, window: &mut Window, cx: &mut Context<Self>) {
         let space_id = DockSpaceId::from(space);
         let fallback_bounds = self.fallback_bounds(&space_id);
         let options = restored_viewport_options(&self.placement, space_id.clone(), fallback_bounds);
-        match self.runtime.open_viewport(space_id.clone(), options, cx) {
+        match self
+            .runtime
+            .open_viewport_from_window(space_id.clone(), options, window, cx)
+        {
             Ok(outcome) => self.set_operation_log(
                 format!(
                     "opened viewport {}: {:?}",
@@ -543,20 +546,20 @@ impl Render for RuntimeStatusPanel {
                             .gap_2()
                             .child(control_button(
                                 "Open primary",
-                                cx.listener(|this, _, _, cx| {
-                                    this.open_demo_viewport(SPACE, cx);
+                                cx.listener(|this, _, window, cx| {
+                                    this.open_demo_viewport(SPACE, window, cx);
                                 }),
                             ))
                             .child(control_button(
                                 "Open secondary",
-                                cx.listener(|this, _, _, cx| {
-                                    this.open_demo_viewport(SECONDARY_SPACE, cx);
+                                cx.listener(|this, _, window, cx| {
+                                    this.open_demo_viewport(SECONDARY_SPACE, window, cx);
                                 }),
                             ))
                             .child(control_button(
                                 "Open central",
-                                cx.listener(|this, _, _, cx| {
-                                    this.open_demo_viewport(CENTRAL_SPACE, cx);
+                                cx.listener(|this, _, window, cx| {
+                                    this.open_demo_viewport(CENTRAL_SPACE, window, cx);
                                 }),
                             ))
                             .child(control_button(

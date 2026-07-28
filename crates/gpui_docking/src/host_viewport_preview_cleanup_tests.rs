@@ -81,8 +81,9 @@ mod runtime_suite {
             cx,
         );
 
-        let registration =
-            runtime.register_opened_viewport_with_cleanup(target_space.clone(), new_window);
+        let registration = runtime
+            .register_opened_viewport_with_cleanup(target_space.clone(), new_window)
+            .expect("unreserved replacement registration should succeed");
         let effects = registration.window_effects();
 
         assert!(
