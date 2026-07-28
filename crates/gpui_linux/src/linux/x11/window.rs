@@ -7,14 +7,13 @@ use open_gpui::{
     GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
     PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, px,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
+    Tiling, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams, px,
 };
 use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
-use open_gpui_collections::FxHashSet;
 use open_gpui_util::{ResultExt, maybe};
 use raw_window_handle as rwh;
 use x11rb::{
@@ -281,7 +280,7 @@ struct X11WindowCreationProjection {
     initial_state: X11InitialWindowState,
     alpha_capable: bool,
     focus_on_appearing: bool,
-    focus_on_click: bool,
+    activation_policy: WindowActivationPolicy,
     topmost: bool,
     taskbar_visible: bool,
 }
@@ -292,6 +291,8 @@ impl X11WindowCreationProjection {
         kind: &WindowKind,
         scale_factor: f32,
         alpha_capable: bool,
+        focus_on_appearing: bool,
+        activation_policy: WindowActivationPolicy,
     ) -> Self {
         let mut device_bounds = window_bounds.get_bounds().to_device_pixels(scale_factor);
         let mut restore_bounds = window_bounds.get_bounds();
@@ -311,13 +312,19 @@ impl X11WindowCreationProjection {
             X11InitialWindowState::Windowed
         };
 
+        let popup = matches!(kind, WindowKind::PopUp);
         Self {
             device_bounds,
             restore_bounds,
             initial_state,
             alpha_capable,
-            focus_on_appearing: !matches!(kind, WindowKind::PopUp),
-            focus_on_click: !matches!(kind, WindowKind::PopUp),
+            focus_on_appearing,
+            activation_policy: WindowActivationPolicy {
+                accepts_activation: activation_policy.accepts_activation,
+                // Override-redirect popups do not receive window-manager click focus. Managed
+                // toplevels use the window manager's global click-focus policy.
+                focus_on_click: !popup,
+            },
             topmost: false,
             taskbar_visible: !matches!(kind, WindowKind::PopUp),
         }
@@ -330,6 +337,23 @@ impl X11WindowCreationProjection {
     fn create_y(self) -> i16 {
         self.device_bounds.origin.y.0 as i16
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct X11TransientOwner {
+    pub(crate) handle: AnyWindowHandle,
+    pub(crate) x_window: xproto::Window,
+}
+
+pub(crate) fn x11_supports_transient_owner(kind: &WindowKind) -> bool {
+    matches!(
+        kind,
+        WindowKind::Normal | WindowKind::Floating | WindowKind::Dialog
+    )
+}
+
+pub(crate) fn x11_supports_initial_appearance_policy(_kind: &WindowKind) -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -382,8 +406,6 @@ pub struct Callbacks {
 
 pub struct X11WindowState {
     pub destroyed: bool,
-    parent: Option<X11WindowStatePtr>,
-    children: FxHashSet<xproto::Window>,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -402,7 +424,8 @@ pub struct X11WindowState {
     background_appearance: WindowBackgroundAppearance,
     alpha_capable: bool,
     focus_on_appearing: bool,
-    focus_on_click: bool,
+    activation_policy: WindowActivationPolicy,
+    transient_for: Option<AnyWindowHandle>,
     topmost: bool,
     taskbar_visible: bool,
     initially_shown: bool,
@@ -410,6 +433,7 @@ pub struct X11WindowState {
     maximized_vertical: bool,
     maximized_horizontal: bool,
     hidden: bool,
+    mapped: bool,
     active: bool,
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
@@ -470,15 +494,16 @@ impl X11WindowCommandTarget {
                 if state.initial_presentation_completed {
                     return PlatformWindowCommandOutcome::Accepted;
                 }
-                if state.initially_shown && activate {
+                if state.initially_shown && activate && state.activation_policy.accepts_activation {
                     activate_x11_window(&state, &self.xcb, self.x_window).log_err();
                 }
                 state.initial_presentation_completed = true;
                 PlatformWindowCommandOutcome::Accepted
             }
-            PlatformWindowCommand::Activate => {
+            PlatformWindowCommand::Activate if state.activation_policy.accepts_activation => {
                 x11_command_outcome(activate_x11_window(&state, &self.xcb, self.x_window))
             }
+            PlatformWindowCommand::Activate => PlatformWindowCommandOutcome::Rejected,
             PlatformWindowCommand::ShowWindowMenu(position) => x11_command_outcome(
                 show_x11_window_menu(&state, &self.xcb, self.x_window, position),
             ),
@@ -757,7 +782,7 @@ impl X11WindowState {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
-        parent_window: Option<X11WindowStatePtr>,
+        transient_owner: Option<X11TransientOwner>,
         supports_xinput_gestures: bool,
         is_bgr: bool,
     ) -> anyhow::Result<Self> {
@@ -785,6 +810,8 @@ impl X11WindowState {
             &params.kind,
             scale_factor,
             alpha_capable,
+            params.focus_on_appearing,
+            params.activation_policy,
         );
         let initially_shown = params.show;
 
@@ -869,7 +896,7 @@ impl X11WindowState {
                     &[pid],
                 ),
             )?;
-            if !params.focus {
+            if !creation.focus_on_appearing {
                 check_reply(
                     || "X11 ChangeProperty32 setting _NET_WM_USER_TIME failed.",
                     xcb.change_property32(
@@ -954,32 +981,20 @@ impl X11WindowState {
                 )?;
             }
 
-            if params.kind == WindowKind::Floating || params.kind == WindowKind::Dialog {
-                if let Some(parent_window) = parent_window.as_ref().map(|w| w.x_window) {
-                    // WM_TRANSIENT_FOR hint indicating the main application window. For floating windows, we set
-                    // a parent window (WM_TRANSIENT_FOR) such that the window manager knows where to
-                    // place the floating window in relation to the main window.
-                    // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
-                    check_reply(
-                        || "X11 ChangeProperty32 setting WM_TRANSIENT_FOR for floating window failed.",
-                        xcb.change_property32(
-                            xproto::PropMode::REPLACE,
-                            x_window,
-                            atoms.WM_TRANSIENT_FOR,
-                            xproto::AtomEnum::WINDOW,
-                            &[parent_window],
-                        ),
-                    )?;
-                }
+            if let Some(transient_owner) = transient_owner {
+                // WM_TRANSIENT_FOR is a top-level ownership relationship. It does not make the
+                // owner responsible for the transient window's lifetime.
+                check_reply(
+                    || "X11 ChangeProperty32 setting WM_TRANSIENT_FOR failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms.WM_TRANSIENT_FOR,
+                        xproto::AtomEnum::WINDOW,
+                        &[transient_owner.x_window],
+                    ),
+                )?;
             }
-
-            let parent = if params.kind == WindowKind::Dialog
-                && let Some(parent) = parent_window
-            {
-                Some(parent)
-            } else {
-                None
-            };
 
             if params.kind == WindowKind::Dialog {
                 // _NET_WM_WINDOW_TYPE_DIALOG indicates that this is a dialog (floating) window
@@ -1152,8 +1167,6 @@ impl X11WindowState {
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
             Ok(Self {
-                parent,
-                children: FxHashSet::default(),
                 client,
                 executor,
                 display,
@@ -1173,12 +1186,14 @@ impl X11WindowState {
                 maximized_vertical: false,
                 maximized_horizontal: false,
                 hidden: false,
+                mapped: false,
                 appearance,
                 handle,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 alpha_capable: creation.alpha_capable,
                 focus_on_appearing: creation.focus_on_appearing,
-                focus_on_click: creation.focus_on_click,
+                activation_policy: creation.activation_policy,
+                transient_for: transient_owner.map(|owner| owner.handle),
                 topmost: creation.topmost,
                 taskbar_visible: creation.taskbar_visible,
                 initially_shown,
@@ -1216,10 +1231,6 @@ impl Drop for X11Window {
     fn drop(&mut self) {
         self.0.terminate_callback_slots();
         let mut state = self.0.state.borrow_mut();
-
-        if let Some(parent) = state.parent.as_ref() {
-            parent.state.borrow_mut().children.remove(&self.0.x_window);
-        }
 
         state.renderer.destroy();
 
@@ -1273,7 +1284,7 @@ impl X11Window {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
-        parent_window: Option<X11WindowStatePtr>,
+        transient_owner: Option<X11TransientOwner>,
         supports_xinput_gestures: bool,
         is_bgr: bool,
     ) -> anyhow::Result<Self> {
@@ -1292,7 +1303,7 @@ impl X11Window {
                 atoms,
                 scale_factor,
                 appearance,
-                parent_window,
+                transient_owner,
                 supports_xinput_gestures,
                 is_bgr,
             )?)),
@@ -1303,10 +1314,6 @@ impl X11Window {
 
         let state = ptr.state.borrow_mut();
         let _ = ptr.set_wm_properties(state)?;
-        if let Some(parent) = ptr.state.borrow().parent.as_ref() {
-            parent.add_child(x_window);
-        }
-
         Ok(Self(ptr, Rc::new(())))
     }
 
@@ -1375,10 +1382,11 @@ impl X11WindowStatePtr {
         let changed = {
             let mut state = self.state.borrow_mut();
             let hidden = !mapped;
-            if state.hidden == hidden {
+            if state.hidden == hidden && state.mapped == mapped {
                 false
             } else {
                 state.hidden = hidden;
+                state.mapped = mapped;
                 true
             }
         };
@@ -1482,32 +1490,8 @@ impl X11WindowStatePtr {
             ))
     }
 
-    pub fn add_child(&self, child: xproto::Window) {
-        let mut state = self.state.borrow_mut();
-        state.children.insert(child);
-    }
-
-    pub fn is_blocked(&self) -> bool {
-        let state = self.state.borrow();
-        !state.children.is_empty()
-    }
-
     pub fn close(&self) {
         self.terminate_callback_slots();
-        let state = self.state.borrow();
-        let client = state.client.clone();
-        #[allow(clippy::mutable_key_type)]
-        let children = state.children.clone();
-        drop(state);
-
-        if let Some(client) = client.get_client() {
-            for child in children {
-                if let Some(child_window) = client.get_window(child) {
-                    child_window.close();
-                }
-            }
-        }
-
         let callback = self.callbacks.borrow_mut().close.take();
         if let Some(fun) = callback {
             fun()
@@ -1523,9 +1507,6 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
-        if self.is_blocked() {
-            return;
-        }
         let input_callback = self.callbacks.borrow().input.clone();
         if input_callback
             .dispatch(input.clone())
@@ -1547,18 +1528,12 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_ime_commit(&self, text: String) {
-        if self.is_blocked() {
-            return;
-        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ = input_handler
             .with_handler(|input_handler| input_handler.replace_text_in_range(None, &text));
     }
 
     pub fn handle_ime_preedit(&self, text: String) {
-        if self.is_blocked() {
-            return;
-        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ = input_handler.with_handler(|input_handler| {
             input_handler.replace_and_mark_text_in_range(None, &text, None)
@@ -1566,17 +1541,11 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_ime_unmark(&self) {
-        if self.is_blocked() {
-            return;
-        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ = input_handler.with_handler(|input_handler| input_handler.unmark_text());
     }
 
     pub fn handle_ime_delete(&self) {
-        if self.is_blocked() {
-            return;
-        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ =
             input_handler.with_handler(|input_handler| match input_handler.marked_text_range() {
@@ -1721,8 +1690,29 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().hidden
     }
 
+    fn creation_facts(&self) -> WindowCreationFacts {
+        let state = self.0.state.borrow();
+        WindowCreationFacts {
+            show: state.initially_shown,
+            focus_on_appearing: state.focus_on_appearing,
+            transient_for: state.transient_for,
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        self.0.state.borrow().mapped
+    }
+
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
         let window_bounds = self.window_bounds();
+        let (activation_policy, topmost, taskbar_visible) = {
+            let state = self.0.state.borrow();
+            (
+                state.activation_policy,
+                state.topmost,
+                state.taskbar_visible,
+            )
+        };
         open_gpui::WindowPlatformFacts {
             bounds: self.bounds(),
             coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
@@ -1735,11 +1725,11 @@ impl PlatformWindow for X11Window {
             is_maximized: self.is_maximized(),
             is_fullscreen: self.is_fullscreen(),
             accepts_pointer_input: self.accepts_pointer_input(),
-            focus_on_appearing: self.0.state.borrow().focus_on_appearing,
-            focus_on_click: self.0.state.borrow().focus_on_click,
+            accepts_activation: activation_policy.accepts_activation,
+            focus_on_click: activation_policy.focus_on_click,
             background_appearance: self.background_appearance(),
-            topmost: self.0.state.borrow().topmost,
-            taskbar_visible: self.0.state.borrow().taskbar_visible,
+            topmost,
+            taskbar_visible,
             is_active: self.is_active(),
         }
     }
@@ -2009,7 +1999,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
         let mut inner = self.0.state.borrow_mut();
 
         if inner.renderer.device_lost() {
@@ -2029,14 +2019,16 @@ impl PlatformWindow for X11Window {
             }
 
             inner.force_render_after_recovery = true;
-            return;
+            return PlatformWindowPresentOutcome::Deferred;
         }
 
-        inner.renderer.draw(scene);
+        let outcome = inner.renderer.draw(scene);
 
         if inner.renderer.needs_redraw() {
             inner.force_render_after_recovery = true;
         }
+
+        outcome
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -2317,8 +2309,14 @@ mod creation_projection_tests {
         ];
 
         for (window_bounds, expected_state) in cases {
-            let projection =
-                X11WindowCreationProjection::new(window_bounds, &WindowKind::Normal, 2.0, true);
+            let projection = X11WindowCreationProjection::new(
+                window_bounds,
+                &WindowKind::Normal,
+                2.0,
+                true,
+                true,
+                WindowActivationPolicy::default(),
+            );
             assert_eq!(projection.device_bounds.origin.x.0, 20);
             assert_eq!(projection.device_bounds.origin.y.0, 40);
             assert_eq!(projection.device_bounds.size.width.0, 1280);
@@ -2329,7 +2327,10 @@ mod creation_projection_tests {
             assert_eq!(projection.initial_state, expected_state);
             assert!(projection.alpha_capable);
             assert!(projection.focus_on_appearing);
-            assert!(projection.focus_on_click);
+            assert_eq!(
+                projection.activation_policy,
+                WindowActivationPolicy::default()
+            );
             assert!(!projection.topmost);
             assert!(projection.taskbar_visible);
         }
@@ -2342,12 +2343,20 @@ mod creation_projection_tests {
             &WindowKind::PopUp,
             1.0,
             true,
+            true,
+            WindowActivationPolicy::default(),
         );
 
         assert_eq!(projection.initial_state, X11InitialWindowState::Windowed);
         assert_eq!(projection.restore_bounds, restore_bounds());
-        assert!(!projection.focus_on_appearing);
-        assert!(!projection.focus_on_click);
+        assert!(projection.focus_on_appearing);
+        assert_eq!(
+            projection.activation_policy,
+            WindowActivationPolicy {
+                accepts_activation: true,
+                focus_on_click: false,
+            }
+        );
         assert!(!projection.topmost);
         assert!(!projection.taskbar_visible);
 
@@ -2356,8 +2365,34 @@ mod creation_projection_tests {
             &WindowKind::Dialog,
             1.0,
             true,
+            true,
+            WindowActivationPolicy::default(),
         );
         assert_eq!(dialog.initial_state, X11InitialWindowState::Windowed);
+    }
+
+    #[test]
+    fn creation_projection_does_not_claim_x11_click_focus_control() {
+        let projection = X11WindowCreationProjection::new(
+            WindowBounds::Windowed(restore_bounds()),
+            &WindowKind::Normal,
+            1.0,
+            true,
+            false,
+            WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: false,
+            },
+        );
+
+        assert!(!projection.focus_on_appearing);
+        assert_eq!(
+            projection.activation_policy,
+            WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: true,
+            }
+        );
     }
 
     #[test]
@@ -2367,6 +2402,8 @@ mod creation_projection_tests {
             &WindowKind::Normal,
             2.0,
             true,
+            true,
+            WindowActivationPolicy::default(),
         );
 
         assert_eq!(projection.device_bounds.size.width.0, 800);

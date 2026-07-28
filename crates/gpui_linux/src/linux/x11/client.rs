@@ -8,7 +8,9 @@ use core::str;
 use log::Level;
 use open_gpui::{
     Capslock, PlatformFocusedWindow, PlatformHoveredWindow, PlatformViewportCapabilities,
-    PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowMutationSupport, profiler,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowMutationSupport, profiler,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_http_client::Url;
@@ -44,12 +46,13 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb::{self as xkbc, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
-    XimHandler, button_or_scroll_from_event_detail, check_reply,
+    ButtonOrScroll, ScrollDirection, X11Display, X11TransientOwner, X11WindowStatePtr, XcbAtoms,
+    XimCallbackEvent, XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
     get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
     point_from_x11_window_coords, pressed_button_from_mask, resolve_x11_screen_index,
-    x11_supports_alpha_creation, x11_supports_toplevel_creation_state, xcb_flush,
+    x11_supports_alpha_creation, x11_supports_initial_appearance_policy,
+    x11_supports_toplevel_creation_state, x11_supports_transient_owner, xcb_flush,
 };
 
 use crate::linux::{
@@ -317,11 +320,7 @@ impl X11ClientStatePtr {
             .cursor_styles
             .get(&x_window)
             .unwrap_or(&CursorStyle::Arrow);
-        let window = state.windows.get(&x_window);
-        let should_change =
-            *current_style != style && window.is_none_or(|window| !window.is_blocked());
-
-        if !should_change {
+        if *current_style == style {
             return;
         }
 
@@ -1305,33 +1304,6 @@ impl X11Client {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
                 state.restore_cursor_after_hide();
-                if window.is_blocked() {
-                    // We want to set the cursor to the default arrow
-                    // when the window is blocked
-                    let style = CursorStyle::Arrow;
-
-                    let current_style = state
-                        .cursor_styles
-                        .get(&window.x_window)
-                        .unwrap_or(&CursorStyle::Arrow);
-                    if *current_style != style
-                        && let Some(cursor) = state.get_cursor_icon(style)
-                    {
-                        state.cursor_styles.insert(window.x_window, style);
-                        check_reply(
-                            || "Failed to set cursor style",
-                            state.xcb_connection.change_window_attributes(
-                                window.x_window,
-                                &ChangeWindowAttributesAux {
-                                    cursor: Some(cursor),
-                                    ..Default::default()
-                                },
-                            ),
-                        )
-                        .log_err();
-                        state.xcb_connection.flush().log_err();
-                    };
-                }
                 let pressed_button = pressed_button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
@@ -1592,54 +1564,70 @@ impl X11Client {
     }
 }
 
-fn x11_window_mutation_capabilities(
+fn x11_window_capabilities(
     kind: &WindowKind,
     alpha_creation_supported: bool,
-) -> PlatformWindowMutationCapabilities {
+) -> PlatformWindowCapabilities {
     let supports_toplevel_state = x11_supports_toplevel_creation_state(kind);
-    PlatformWindowMutationCapabilities {
-        position: WindowMutationSupport::CreationOnly,
-        size: WindowMutationSupport::CreationOnly,
-        windowed: WindowMutationSupport::CreationOnly,
-        maximized: if supports_toplevel_state {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
+    PlatformWindowCapabilities {
+        creation: PlatformWindowCreationCapabilities {
+            focus_on_appearing: if x11_supports_initial_appearance_policy(kind) {
+                WindowCreationSupport::Supported
+            } else {
+                WindowCreationSupport::Unsupported
+            },
+            transient_for: if x11_supports_transient_owner(kind) {
+                WindowCreationSupport::Supported
+            } else {
+                WindowCreationSupport::Unsupported
+            },
+            initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
         },
-        fullscreen: if supports_toplevel_state {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
+        mutations: PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::CreationOnly,
+            size: WindowMutationSupport::CreationOnly,
+            windowed: WindowMutationSupport::CreationOnly,
+            maximized: if supports_toplevel_state {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            fullscreen: if supports_toplevel_state {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            minimized: WindowMutationSupport::Unsupported,
+            restore_bounds: if supports_toplevel_state {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            activation_policy: WindowMutationSupport::Unsupported,
+            alpha: if alpha_creation_supported {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            ..Default::default()
         },
-        minimized: WindowMutationSupport::Unsupported,
-        restore_bounds: if supports_toplevel_state {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
-        },
-        alpha: if alpha_creation_supported {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
-        },
-        coordinate_space: WindowCoordinateSpace::GlobalScreen,
-        ..Default::default()
     }
 }
 
-fn x11_window_mutation_capabilities_for_screens(
+fn x11_window_capabilities_for_screens(
     kind: &WindowKind,
     display_id: Option<DisplayId>,
     default_screen_index: usize,
     screens: &[xproto::Screen],
-) -> PlatformWindowMutationCapabilities {
+) -> PlatformWindowCapabilities {
     let Some(screen_index) =
         resolve_x11_screen_index(display_id, default_screen_index, screens.len())
     else {
-        return PlatformWindowMutationCapabilities::default();
+        return PlatformWindowCapabilities::default();
     };
 
-    x11_window_mutation_capabilities(kind, x11_supports_alpha_creation(screens, screen_index))
+    x11_window_capabilities(kind, x11_supports_alpha_creation(screens, screen_index))
 }
 
 impl LinuxClient for X11Client {
@@ -1717,10 +1705,24 @@ impl LinuxClient for X11Client {
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
-        let parent_window = state
-            .keyboard_focused_window
-            .and_then(|focused_window| state.windows.get(&focused_window))
-            .map(|w| w.window.clone());
+        let transient_owner = if x11_supports_transient_owner(&params.kind) {
+            params
+                .transient_for
+                .map(|owner| {
+                    state
+                        .windows
+                        .values()
+                        .find(|window| window.handle() == owner)
+                        .map(|window| X11TransientOwner {
+                            handle: owner,
+                            x_window: window.window.x_window,
+                        })
+                        .ok_or_else(|| anyhow!("X11 transient owner is no longer open"))
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let x_window = state
             .xcb_connection
             .generate_id()
@@ -1752,7 +1754,7 @@ impl LinuxClient for X11Client {
             &atoms,
             scale_factor,
             appearance,
-            parent_window,
+            transient_owner,
             supports_xinput_gestures,
             is_bgr,
         )?;
@@ -1954,13 +1956,13 @@ impl LinuxClient for X11Client {
         }
     }
 
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         kind: &WindowKind,
         display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
+    ) -> PlatformWindowCapabilities {
         let state = self.0.borrow();
-        x11_window_mutation_capabilities_for_screens(
+        x11_window_capabilities_for_screens(
             kind,
             display_id,
             state.x_root_index,
@@ -3034,8 +3036,7 @@ mod tests {
             minimized: WindowMutationSupport::Unsupported,
             restore_bounds: toplevel_state,
             pointer_input: WindowMutationSupport::Unsupported,
-            focus_on_appearing: WindowMutationSupport::Unsupported,
-            focus_on_click: WindowMutationSupport::Unsupported,
+            activation_policy: WindowMutationSupport::Unsupported,
             alpha,
             topmost: WindowMutationSupport::Unsupported,
             taskbar_visibility: WindowMutationSupport::Unsupported,
@@ -3085,30 +3086,30 @@ mod tests {
     }
 
     #[test]
-    fn window_mutation_capabilities_match_x11_creation_paths() {
+    fn window_capabilities_match_x11_creation_paths() {
         assert_eq!(
-            x11_window_mutation_capabilities(&WindowKind::Normal, true),
+            x11_window_capabilities(&WindowKind::Normal, true).mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::CreationOnly,
                 WindowMutationSupport::CreationOnly,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities(&WindowKind::Floating, true),
+            x11_window_capabilities(&WindowKind::Floating, true).mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::CreationOnly,
                 WindowMutationSupport::CreationOnly,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities(&WindowKind::PopUp, true),
+            x11_window_capabilities(&WindowKind::PopUp, true).mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::Unsupported,
                 WindowMutationSupport::CreationOnly,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities(&WindowKind::Dialog, true),
+            x11_window_capabilities(&WindowKind::Dialog, true).mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::Unsupported,
                 WindowMutationSupport::CreationOnly,
@@ -3116,24 +3117,22 @@ mod tests {
         );
         #[cfg(feature = "wayland")]
         assert_eq!(
-            x11_window_mutation_capabilities(
-                &WindowKind::LayerShell(LayerShellOptions::default()),
-                true
-            ),
+            x11_window_capabilities(&WindowKind::LayerShell(LayerShellOptions::default()), true)
+                .mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::Unsupported,
                 WindowMutationSupport::CreationOnly,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities(&WindowKind::Normal, false),
+            x11_window_capabilities(&WindowKind::Normal, false).mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::CreationOnly,
                 WindowMutationSupport::Unsupported,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities(&WindowKind::PopUp, false),
+            x11_window_capabilities(&WindowKind::PopUp, false).mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::Unsupported,
                 WindowMutationSupport::Unsupported,
@@ -3142,47 +3141,70 @@ mod tests {
     }
 
     #[test]
-    fn window_mutation_capabilities_use_target_screen_visuals() {
+    fn creation_capabilities_expose_exact_x11_owner_and_initial_focus_support() {
+        for kind in [WindowKind::Normal, WindowKind::Floating, WindowKind::Dialog] {
+            let creation = x11_window_capabilities(&kind, true).creation;
+            assert_eq!(
+                creation.focus_on_appearing,
+                WindowCreationSupport::Supported
+            );
+            assert_eq!(creation.transient_for, WindowCreationSupport::Supported);
+            assert_eq!(
+                creation.initial_presentation_order,
+                WindowInitialPresentationOrder::AfterVisibility
+            );
+        }
+
+        let popup = x11_window_capabilities(&WindowKind::PopUp, true).creation;
+        assert_eq!(popup.focus_on_appearing, WindowCreationSupport::Supported);
+        assert_eq!(popup.transient_for, WindowCreationSupport::Unsupported);
+    }
+
+    #[test]
+    fn window_capabilities_use_target_screen_visuals() {
         let screens = [x11_test_screen(false), x11_test_screen(true)];
 
         assert_eq!(
-            x11_window_mutation_capabilities_for_screens(
+            x11_window_capabilities_for_screens(
                 &WindowKind::Normal,
                 Some(DisplayId::from(0)),
                 1,
                 &screens,
-            ),
+            )
+            .mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::CreationOnly,
                 WindowMutationSupport::Unsupported,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities_for_screens(
+            x11_window_capabilities_for_screens(
                 &WindowKind::Normal,
                 Some(DisplayId::from(1)),
                 0,
                 &screens,
-            ),
+            )
+            .mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::CreationOnly,
                 WindowMutationSupport::CreationOnly,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities_for_screens(&WindowKind::Normal, None, 1, &screens),
+            x11_window_capabilities_for_screens(&WindowKind::Normal, None, 1, &screens).mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::CreationOnly,
                 WindowMutationSupport::CreationOnly,
             )
         );
         assert_eq!(
-            x11_window_mutation_capabilities_for_screens(
+            x11_window_capabilities_for_screens(
                 &WindowKind::Normal,
                 Some(DisplayId::from(9)),
                 0,
                 &screens,
-            ),
+            )
+            .mutations,
             expected_x11_capabilities(
                 WindowMutationSupport::CreationOnly,
                 WindowMutationSupport::Unsupported,

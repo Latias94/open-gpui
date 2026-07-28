@@ -5,10 +5,13 @@ use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DummyKeyboardMapper,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, DummyKeyboardMapper,
     ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    ThermalState, WindowAppearance, WindowParams,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, Task, ThermalState, WindowAppearance,
+    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
+    WindowParams,
 };
 use open_gpui_wgpu::{WebGpuContextOptions, WgpuContext};
 use std::{
@@ -179,6 +182,25 @@ impl Platform for WebPlatform {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         *self.active_window.borrow()
+    }
+
+    fn window_capabilities(
+        &self,
+        _kind: &WindowKind,
+        _display_id: Option<DisplayId>,
+    ) -> PlatformWindowCapabilities {
+        PlatformWindowCapabilities {
+            creation: PlatformWindowCreationCapabilities {
+                focus_on_appearing: WindowCreationSupport::Supported,
+                transient_for: WindowCreationSupport::Unsupported,
+                initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
+            },
+            mutations: PlatformWindowMutationCapabilities {
+                pointer_input: WindowMutationSupport::CreationOnly,
+                activation_policy: WindowMutationSupport::CreationOnly,
+                ..Default::default()
+            },
+        }
     }
 
     fn open_window(

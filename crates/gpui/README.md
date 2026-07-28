@@ -25,19 +25,34 @@ Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates
 
 For higher-level controls, use `open-gpui-ui-components`. For deterministic UI motion primitives, use `open-gpui-motion`. For retained dock spaces, use `open-gpui-docking`.
 
-## Platform Window Mutation
+## Platform Window Lifecycle
 
-Already-open window placement and independent flag changes use one observed-fact contract. Query
-`Window::window_mutation_capabilities()` before issuing a request: position, size, each placement
-state, restore bounds, pointer input, focus-on-appearing/click, alpha, topmost, and taskbar
-visibility are each `Unsupported`, `CreationOnly`, or `Live`. `CreationOnly` belongs in
-`WindowOptions`; only `Live` properties can be requested on an existing window.
+Window creation, presentation, and already-open mutations have separate observed-fact contracts.
+Query `Window::window_capabilities()` before opening or mutating a window. Its `creation` half
+reports support for a non-activating first appearance, typed transient ownership, and first-frame
+ordering. Its `mutations` half reports position, size, each placement state, restore bounds,
+pointer input, coherent activation policy, alpha, topmost, and taskbar visibility as
+`Unsupported`, `CreationOnly`, or `Live`. Only `Live` properties can be requested on an existing
+window.
 For app-level diagnostics that only retain an `AnyWindowHandle`, use
-`App::window_mutation_profile(handle)`: the immutable profile records the opened window's actual
-`WindowKind` and target-display-resolved property matrix and is removed when the window closes.
-Before opening a window, `App::window_mutation_capabilities_for(kind, display_id)` projects that
-same support; `None` selects the backend's primary or default display. An unavailable display id
-is normalized to `None`, so capability projection and window creation use that same fallback.
+`App::window_profile(handle)`: the immutable profile records the opened window's actual
+`WindowKind` and target-display-resolved creation and mutation capabilities and is removed when
+the window closes. Before opening a window, `App::window_capabilities_for(kind, display_id)`
+projects the same support; `None` selects the backend's primary or default display. An unavailable
+display id is normalized to `None`, so capability projection and window creation use that same
+fallback.
+
+`WindowOptions::focus_on_appearing` is one-shot appearance policy. It does not disable later
+activation. Lifetime activation and click-focus behavior live together in
+`WindowOptions::activation_policy`, while pointer acceptance remains independent. Use
+`App::transient_window_owner` to create an application-bound token for an exact live owner
+generation; native ownership assists grouping and z-order but never owns window teardown.
+`Window::creation_facts` records the immutable applied creation relationship, and
+`Window::presentation_facts` distinguishes native creation, accepted frames, submitted presents,
+non-empty presents, the exact latest submission outcome, bounded initial-presentation settlement,
+and current native visibility. Initial-presentation capabilities distinguish a frame submitted
+while hidden, a frame submitted after native visibility, and protocols where the first frame
+submission itself establishes native visibility.
 
 Use `WindowPlacementRequest` with `request_window_placement_request`, a named flag helper, or
 `request_window_mutation` with a `WindowMutationRequest` when the result matters. A
@@ -49,13 +64,13 @@ and generation; a stale terminal is rejected before it can replace committed fac
 backend's committed facts snapshot.
 
 Position, size, window state, and restore bounds share one placement conflict domain. Pointer
-input, focus-on-appearing, focus-on-click, alpha, topmost, and taskbar visibility each own an
-independent generation. Closing a window invalidates queued backend generations before settling
-their tickets as `WindowClosed`. `WindowBounds` remains a compatibility value for windowed,
-maximized, and fullscreen creation or complete requests; `WindowPlacementRequest` additionally
-supports partial updates and minimized state. `resize`, `zoom_window`, `minimize_window`,
-`toggle_fullscreen`, `set_background_appearance`, and the named flag helpers return the same
-`must_use` typed dispatch rather than bypassing mutation generations. See
+input, coherent activation policy, alpha, topmost, and taskbar visibility each own an independent
+generation. Closing a window invalidates queued backend generations before settling their tickets
+as `WindowClosed`. `WindowBounds` remains a compatibility value for windowed, maximized, and
+fullscreen creation or complete requests; `WindowPlacementRequest` additionally supports partial
+updates and minimized state. `resize`, `zoom_window`, `minimize_window`, `toggle_fullscreen`,
+`set_background_appearance`, `request_activation_policy`, and the named flag helpers return the
+same `must_use` typed dispatch rather than bypassing mutation generations. See
 [ADR 0029](../../docs/adr/0029-open-gpui-platform-window-mutation-capabilities.md).
 
 ## Interactive Subtree Geometry

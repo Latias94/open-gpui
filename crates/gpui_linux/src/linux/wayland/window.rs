@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::channel::oneshot::Receiver;
-use open_gpui_collections::{FxHashSet, HashMap};
+use open_gpui_collections::HashMap;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
@@ -29,18 +29,18 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{
-    Globals, Output, WaylandClientStatePtr, get_window,
-    should_close_callback::ShouldCloseCallbackSlot,
+    Globals, Output, WaylandClientStatePtr, should_close_callback::ShouldCloseCallbackSlot,
 };
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
     NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
     PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px, size,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
+    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowControls, WindowCreationFacts, WindowDecorations, WindowKind,
+    WindowParams, layer_shell::LayerShellNotSupportedError, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
@@ -93,7 +93,7 @@ struct WaylandWindowCreationProjection {
     role: WaylandCreationRole,
     alpha_surface: bool,
     focus_on_appearing: bool,
-    focus_on_click: bool,
+    activation_policy: WindowActivationPolicy,
     topmost: bool,
     taskbar_visible: bool,
 }
@@ -105,7 +105,7 @@ impl WaylandWindowCreationProjection {
             origin: Point::default(),
             size: requested_bounds.size,
         };
-        let (role, focus_on_appearing, focus_on_click, topmost, taskbar_visible) = match kind {
+        let (role, focus_on_appearing, activation_policy, topmost, taskbar_visible) = match kind {
             WindowKind::LayerShell(options) => {
                 let (focus_on_appearing, focus_on_click) = match options.keyboard_interactivity {
                     open_gpui::layer_shell::KeyboardInteractivity::None => (false, false),
@@ -119,7 +119,10 @@ impl WaylandWindowCreationProjection {
                 (
                     WaylandCreationRole::LayerShell,
                     focus_on_appearing,
-                    focus_on_click,
+                    WindowActivationPolicy {
+                        accepts_activation: false,
+                        focus_on_click,
+                    },
                     topmost,
                     false,
                 )
@@ -135,8 +138,10 @@ impl WaylandWindowCreationProjection {
                         initial_state,
                         restore_bounds: bounds,
                     },
+                    // XDG does not expose a non-activating first-map policy. Record the platform
+                    // default instead of claiming that an unsupported false request was applied.
                     true,
-                    true,
+                    WindowActivationPolicy::default(),
                     false,
                     matches!(kind, WindowKind::Normal | WindowKind::PopUp),
                 )
@@ -148,7 +153,7 @@ impl WaylandWindowCreationProjection {
             role,
             alpha_surface: true,
             focus_on_appearing,
-            focus_on_click,
+            activation_policy,
             topmost,
             taskbar_visible,
         }
@@ -227,8 +232,6 @@ struct InProgressConfigure {
 pub struct WaylandWindowState {
     surface_state: WaylandSurfaceState,
     acknowledged_first_configure: bool,
-    parent: Option<WaylandWindowStatePtr>,
-    children: FxHashSet<ObjectId>,
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
@@ -254,6 +257,7 @@ pub struct WaylandWindowState {
     cursor_style: CursorStyle,
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
+    has_presented_frame: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -264,6 +268,13 @@ pub struct WaylandWindowState {
     initially_shown: bool,
     initial_map_committed: bool,
     initial_presentation_completed: bool,
+    transient_for: Option<AnyWindowHandle>,
+}
+
+#[derive(Clone)]
+pub(crate) struct WaylandTransientOwner {
+    pub(crate) handle: AnyWindowHandle,
+    pub(crate) toplevel: xdg_toplevel::XdgToplevel,
 }
 
 pub enum WaylandSurfaceState {
@@ -277,7 +288,7 @@ impl WaylandSurfaceState {
         globals: &Globals,
         params: &WindowParams,
         creation: &WaylandWindowCreationProjection,
-        parent: Option<WaylandWindowStatePtr>,
+        transient_owner: Option<&WaylandTransientOwner>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<Self> {
         // For layer_shell windows, create a layer surface instead of an xdg surface
@@ -333,10 +344,8 @@ impl WaylandSurfaceState {
             .get_xdg_surface(&surface, &globals.qh, surface.id());
 
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
-        let xdg_parent = parent.as_ref().and_then(|w| w.toplevel());
-
-        if params.kind == WindowKind::Floating || params.kind == WindowKind::Dialog {
-            toplevel.set_parent(xdg_parent.as_ref());
+        if let Some(transient_owner) = transient_owner {
+            toplevel.set_parent(Some(&transient_owner.toplevel));
         }
 
         let dialog = if params.kind == WindowKind::Dialog {
@@ -490,14 +499,20 @@ impl WaylandWindowCommandTarget {
                     return PlatformWindowCommandOutcome::Accepted;
                 }
                 state.initial_presentation_completed = true;
-                if state.initial_map_committed && activate {
+                if state.initial_map_committed
+                    && activate
+                    && state.creation.activation_policy.accepts_activation
+                {
                     let _ = activate_wayland_window(&state);
                 }
                 PlatformWindowCommandOutcome::Accepted
             }
-            PlatformWindowCommand::Activate => {
+            PlatformWindowCommand::Activate
+                if state.creation.activation_policy.accepts_activation =>
+            {
                 wayland_command_outcome(activate_wayland_window(&state))
             }
+            PlatformWindowCommand::Activate => PlatformWindowCommandOutcome::Rejected,
             PlatformWindowCommand::ShowWindowMenu(position) => {
                 wayland_command_outcome(show_wayland_window_menu(&state, position))
             }
@@ -522,11 +537,15 @@ fn wayland_command_outcome(accepted: bool) -> PlatformWindowCommandOutcome {
 fn activate_wayland_window(state: &WaylandWindowState) -> bool {
     // Try to request an activation token. Even though the activation is likely going to be
     // rejected, KWin and Mutter can use the app_id to indicate that attention was requested.
-    if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone()) {
-        state.client.set_pending_activation(state.surface.id());
+    if let Some(activation) = &state.globals.activation {
         let token = activation.get_activation_token(&state.globals.qh, ());
+        state
+            .client
+            .set_pending_window_activation(token.id(), state.surface.id(), state.handle);
         let serial = state.client.get_serial(SerialKind::MousePress);
-        token.set_app_id(app_id);
+        if let Some(app_id) = state.app_id.clone() {
+            token.set_app_id(app_id);
+        }
         token.set_serial(serial, &state.globals.seat);
         token.set_surface(&state.surface);
         token.commit();
@@ -584,7 +603,7 @@ impl WaylandWindowState {
         compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
         creation: WaylandWindowCreationProjection,
-        parent: Option<WaylandWindowStatePtr>,
+        transient_for: Option<AnyWindowHandle>,
     ) -> anyhow::Result<Self> {
         let initially_shown = options.show;
         let renderer = {
@@ -624,8 +643,6 @@ impl WaylandWindowState {
         Ok(Self {
             surface_state,
             acknowledged_first_configure: false,
-            parent,
-            children: FxHashSet::default(),
             surface,
             app_id: None,
             blur: None,
@@ -653,6 +670,7 @@ impl WaylandWindowState {
             cursor_style: CursorStyle::Arrow,
             force_render_after_recovery: false,
             renderer_presented: false,
+            has_presented_frame: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -661,6 +679,7 @@ impl WaylandWindowState {
             initially_shown,
             initial_map_committed: false,
             initial_presentation_completed: false,
+            transient_for,
         })
     }
 
@@ -721,10 +740,6 @@ impl Drop for WaylandWindow {
         self.0.terminate_callback_slots();
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
-        if let Some(parent) = state.parent.as_ref() {
-            parent.state.borrow_mut().children.remove(&surface_id);
-        }
-
         let client = state.client.clone();
 
         state.renderer.destroy();
@@ -783,18 +798,18 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
-        parent: Option<WaylandWindowStatePtr>,
+        transient_owner: Option<WaylandTransientOwner>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let creation = WaylandWindowCreationProjection::new(params.window_bounds, &params.kind);
-        let is_dialog = params.kind == WindowKind::Dialog;
+        let transient_for = transient_owner.as_ref().map(|owner| owner.handle);
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let surface_state = WaylandSurfaceState::new(
             &surface,
             &globals,
             &params,
             &creation,
-            parent.clone(),
+            transient_owner.as_ref(),
             target_output,
         )?;
 
@@ -821,16 +836,12 @@ impl WaylandWindow {
                     compositor_gpu,
                     params,
                     creation,
-                    parent.clone(),
+                    transient_for,
                 )?)),
                 callbacks: Rc::new(RefCell::new(Callbacks::default())),
             },
             Rc::new(()),
         );
-
-        if is_dialog && let Some(parent) = parent {
-            parent.add_child(surface.id());
-        }
 
         Ok((this, surface.id()))
     }
@@ -867,16 +878,6 @@ impl WaylandWindowStatePtr {
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
-    }
-
-    pub fn add_child(&self, child: ObjectId) {
-        let mut state = self.state.borrow_mut();
-        state.children.insert(child);
-    }
-
-    pub fn is_blocked(&self) -> bool {
-        let state = self.state.borrow();
-        !state.children.is_empty()
     }
 
     pub fn cursor_style(&self) -> CursorStyle {
@@ -1248,9 +1249,6 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_ime(&self, ime: ImeInput) {
-        if self.is_blocked() {
-            return;
-        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ = input_handler.with_handler(|input_handler| match ime {
             ImeInput::InsertText(text) => input_handler.replace_text_in_range(None, &text),
@@ -1323,21 +1321,6 @@ impl WaylandWindowStatePtr {
 
     pub fn close(&self) {
         self.terminate_callback_slots();
-        let state = self.state.borrow();
-        let client = state.client.get_client();
-        #[allow(clippy::mutable_key_type)]
-        let children = state.children.clone();
-        drop(state);
-
-        for child in children {
-            let mut client_state = client.borrow_mut();
-            let window = get_window(&mut client_state, &child);
-            drop(client_state);
-
-            if let Some(child) = window {
-                child.close();
-            }
-        }
         let callback = self.callbacks.borrow_mut().close.take();
         if let Some(fun) = callback {
             fun()
@@ -1345,9 +1328,6 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
-        if self.is_blocked() {
-            return;
-        }
         let input_callback = self.callbacks.borrow().input.clone();
         if input_callback
             .dispatch(input.clone())
@@ -1468,6 +1448,20 @@ impl PlatformWindow for WaylandWindow {
         Ok(())
     }
 
+    fn creation_facts(&self) -> WindowCreationFacts {
+        let state = self.borrow();
+        WindowCreationFacts {
+            show: state.initially_shown,
+            focus_on_appearing: state.creation.focus_on_appearing,
+            transient_for: state.transient_for,
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        let state = self.borrow();
+        state.initially_shown && state.has_presented_frame
+    }
+
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
         let state = self.borrow();
         let window_bounds = if state.fullscreen {
@@ -1501,8 +1495,8 @@ impl PlatformWindow for WaylandWindow {
             is_maximized: state.maximized,
             is_fullscreen: state.fullscreen,
             accepts_pointer_input: true,
-            focus_on_appearing: state.creation.focus_on_appearing,
-            focus_on_click: state.creation.focus_on_click,
+            accepts_activation: state.creation.activation_policy.accepts_activation,
+            focus_on_click: state.creation.activation_policy.focus_on_click,
             background_appearance: state.background_appearance,
             topmost: state.creation.topmost,
             taskbar_visible: state.creation.taskbar_visible,
@@ -1705,10 +1699,10 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
         let mut state = self.borrow_mut();
         if !state.initial_map_committed {
-            return;
+            return PlatformWindowPresentOutcome::Deferred;
         }
 
         if state.renderer.device_lost() {
@@ -1730,14 +1724,20 @@ impl PlatformWindow for WaylandWindow {
             }
 
             state.force_render_after_recovery = true;
-            return;
+            return PlatformWindowPresentOutcome::Deferred;
         }
 
-        state.renderer_presented = state.renderer.draw(scene);
+        let outcome = state.renderer.draw(scene);
+        state.renderer_presented = outcome == PlatformWindowPresentOutcome::Submitted;
+        if state.renderer_presented {
+            state.has_presented_frame = true;
+        }
 
         if state.renderer.needs_redraw() {
             state.force_render_after_recovery = true;
         }
+
+        outcome
     }
 
     fn completed_frame(&self) {
@@ -2018,6 +2018,13 @@ mod creation_projection_tests {
         Bounds::new(point(px(24.0), px(36.0)), size(px(900.0), px(640.0)))
     }
 
+    fn creation_projection(
+        window_bounds: WindowBounds,
+        kind: &WindowKind,
+    ) -> WaylandWindowCreationProjection {
+        WaylandWindowCreationProjection::new(window_bounds, kind)
+    }
+
     #[test]
     fn xdg_creation_projection_preserves_size_state_restore_and_alpha_surface() {
         let restore_bounds = restore_bounds();
@@ -2038,8 +2045,7 @@ mod creation_projection_tests {
         ];
 
         for (window_bounds, expected_state) in cases {
-            let projection =
-                WaylandWindowCreationProjection::new(window_bounds, &WindowKind::Normal);
+            let projection = creation_projection(window_bounds, &WindowKind::Normal);
             assert_eq!(projection.bounds, local_restore_bounds);
             assert_eq!(projection.restore_bounds(), Some(local_restore_bounds));
             assert_eq!(
@@ -2051,15 +2057,16 @@ mod creation_projection_tests {
             );
             assert!(projection.alpha_surface);
             assert!(projection.focus_on_appearing);
-            assert!(projection.focus_on_click);
+            assert_eq!(
+                projection.activation_policy,
+                WindowActivationPolicy::default()
+            );
             assert!(!projection.topmost);
             assert!(projection.taskbar_visible);
         }
 
-        let dialog = WaylandWindowCreationProjection::new(
-            WindowBounds::Maximized(restore_bounds),
-            &WindowKind::Dialog,
-        );
+        let dialog =
+            creation_projection(WindowBounds::Maximized(restore_bounds), &WindowKind::Dialog);
         assert!(!dialog.topmost);
         assert!(!dialog.taskbar_visible);
     }
@@ -2067,7 +2074,7 @@ mod creation_projection_tests {
     #[test]
     fn layer_shell_projection_uses_size_and_alpha_without_xdg_state_or_restore() {
         let restore_bounds = restore_bounds();
-        let projection = WaylandWindowCreationProjection::new(
+        let projection = creation_projection(
             WindowBounds::Fullscreen(restore_bounds),
             &WindowKind::LayerShell(LayerShellOptions::default()),
         );
@@ -2080,7 +2087,8 @@ mod creation_projection_tests {
         assert_eq!(projection.restore_bounds(), None);
         assert!(projection.alpha_surface);
         assert!(!projection.focus_on_appearing);
-        assert!(projection.focus_on_click);
+        assert!(projection.activation_policy.focus_on_click);
+        assert!(!projection.activation_policy.accepts_activation);
         assert!(projection.topmost);
         assert!(!projection.taskbar_visible);
 
@@ -2088,24 +2096,24 @@ mod creation_projection_tests {
         background_options.layer = open_gpui::layer_shell::Layer::Background;
         background_options.keyboard_interactivity =
             open_gpui::layer_shell::KeyboardInteractivity::None;
-        let background = WaylandWindowCreationProjection::new(
+        let background = creation_projection(
             WindowBounds::Windowed(restore_bounds),
             &WindowKind::LayerShell(background_options),
         );
         assert!(!background.focus_on_appearing);
-        assert!(!background.focus_on_click);
+        assert!(!background.activation_policy.focus_on_click);
         assert!(!background.topmost);
         assert!(!background.taskbar_visible);
 
         let mut exclusive_options = LayerShellOptions::default();
         exclusive_options.keyboard_interactivity =
             open_gpui::layer_shell::KeyboardInteractivity::Exclusive;
-        let exclusive = WaylandWindowCreationProjection::new(
+        let exclusive = creation_projection(
             WindowBounds::Windowed(restore_bounds),
             &WindowKind::LayerShell(exclusive_options),
         );
         assert!(exclusive.focus_on_appearing);
-        assert!(exclusive.focus_on_click);
+        assert!(exclusive.activation_policy.focus_on_click);
     }
 
     #[test]

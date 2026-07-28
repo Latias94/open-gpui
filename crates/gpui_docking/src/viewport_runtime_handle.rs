@@ -207,6 +207,9 @@ fn immediate_terminal_window_mutation(
         DockViewportPlatformSyncRequest::BackgroundAppearance { requested } => {
             Some(WindowMutationRequest::Alpha(*requested))
         }
+        DockViewportPlatformSyncRequest::ActivationPolicy { requested } => {
+            Some(WindowMutationRequest::ActivationPolicy(*requested))
+        }
         _ => None,
     }
 }
@@ -232,10 +235,10 @@ fn relevant_window_mutation_facts_match(
                 && previous.is_maximized == current.is_maximized
                 && previous.is_fullscreen == current.is_fullscreen
         }
-        WindowMutationRequest::FocusOnAppearing(_) => {
-            previous.focus_on_appearing == current.focus_on_appearing
+        WindowMutationRequest::ActivationPolicy(_) => {
+            previous.accepts_activation == current.accepts_activation
+                && previous.focus_on_click == current.focus_on_click
         }
-        WindowMutationRequest::FocusOnClick(_) => previous.focus_on_click == current.focus_on_click,
         WindowMutationRequest::Alpha(_) => {
             previous.background_appearance == current.background_appearance
         }
@@ -753,15 +756,13 @@ impl DockViewportRuntimeHandle {
         let capabilities: Vec<_> = viewport_windows
             .into_iter()
             .filter_map(|(space, window_id, window)| {
-                let profile = cx.window_mutation_profile(window)?;
-                Some(
-                    crate::DockViewportWindowMutationCapabilityRecord::from_profile(
-                        space, window_id, profile,
-                    ),
-                )
+                let profile = cx.window_profile(window)?;
+                Some(crate::DockViewportWindowProfileRecord::from_profile(
+                    space, window_id, profile,
+                ))
             })
             .collect();
-        status.with_window_mutation_capabilities(capabilities)
+        status.with_window_profiles(capabilities)
     }
 
     fn record_platform_dispatch_result(
@@ -1021,10 +1022,13 @@ impl DockViewportRuntimeHandle {
         &self,
         activation: &crate::DockViewportActivationTransaction,
         backend_focus: crate::DockViewportActivationBackendFocusObservation,
+        request_backend_activation: bool,
     ) -> crate::DockViewportActivationBackendFocusApply {
-        self.runtime
-            .borrow_mut()
-            .apply_activation_backend_focus(activation, backend_focus)
+        self.runtime.borrow_mut().apply_activation_backend_focus(
+            activation,
+            backend_focus,
+            request_backend_activation,
+        )
     }
 
     pub(crate) fn settle_backend_focus_cancellation_in_context(&self, cx: &mut Context<DockHost>) {
@@ -1425,7 +1429,7 @@ impl DockViewportRuntimeHandle {
     fn open_viewport_unchecked_policy_for_surface_transaction(
         &self,
         space: impl Into<DockSpaceId>,
-        options: WindowOptions,
+        mut options: WindowOptions,
         surface_transaction: Option<DockSurfaceTransactionId>,
         mut current_window: Option<&mut Window>,
         cx: &mut App,
@@ -1463,7 +1467,7 @@ impl DockViewportRuntimeHandle {
                 registration,
                 window,
             } => {
-                let existing_kind = match cx.window_mutation_profile(window) {
+                let existing_kind = match cx.window_profile(window) {
                     Some(profile) => profile.kind.clone(),
                     None => {
                         if self.is_current_registration(&registration) {
@@ -1472,7 +1476,7 @@ impl DockViewportRuntimeHandle {
                             );
                         }
                         return Err(std::io::Error::other(
-                            "reused viewport window has no registered mutation profile",
+                            "reused viewport window has no registered platform profile",
                         )
                         .into());
                     }
@@ -1604,6 +1608,17 @@ impl DockViewportRuntimeHandle {
         let mut stale_cleanup_update = DockViewportRuntimeUpdate::default();
         stale_cleanup_update.mark_viewport_topology(reusable_topology_changed, surface_transaction);
         self.publish_surface_commit(&stale_cleanup_update, cx);
+
+        if options.transient_for.is_none()
+            && cx
+                .window_capabilities_for(&options.kind, options.display_id)
+                .creation
+                .transient_for
+                .is_supported()
+            && let Some(owner) = current_window.as_ref().map(|window| window.window_handle())
+        {
+            options.transient_for = Some(cx.transient_window_owner(owner)?);
+        }
 
         let controller = self.runtime.borrow().controller_entity();
         let host_space = space.clone();
@@ -2071,7 +2086,9 @@ mod current_window_open_tests {
         host_test_support::{item, test_view, viewport_window_options},
     };
     use open_gpui::{
-        AppContext as _, Context, IntoElement, Render, TestAppContext, Window, div, px, size,
+        AppContext as _, Context, IntoElement, PlatformWindowCreationCapabilities, Render,
+        TestAppContext, Window, WindowCreationSupport, WindowInitialPresentationOrder, div, px,
+        size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -2143,6 +2160,94 @@ mod current_window_open_tests {
                 .map(|record| record.window_id),
             Some(window.window_id()),
             "current-window reuse should still publish platform synchronization diagnostics"
+        );
+    }
+
+    #[open_gpui::test]
+    fn current_window_open_binds_exact_transient_owner(cx: &mut TestAppContext) {
+        let space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(space.clone(), root);
+
+        let mut workspace = DockWorkspace::new(space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let renders = Rc::new(Cell::new(0));
+        let owner = cx.open_window(size(px(320.0), px(240.0)), |_, _| RenderCounter {
+            renders: renders.clone(),
+        });
+        let owner_handle = owner.into();
+
+        let opened = owner
+            .update(cx, |_, owner_window, app| {
+                runtime.open_viewport_from_window(
+                    space,
+                    viewport_window_options(360.0, 220.0),
+                    owner_window,
+                    app,
+                )
+            })
+            .expect("the owner should remain live")
+            .expect("the detached viewport should open");
+
+        assert_eq!(
+            opened
+                .window()
+                .update(cx, |_, window, _| { window.creation_facts().transient_for })
+                .expect("the detached viewport should remain live"),
+            Some(owner_handle)
+        );
+    }
+
+    #[open_gpui::test]
+    fn current_window_open_omits_unsupported_transient_owner(cx: &mut TestAppContext) {
+        cx.set_platform_window_creation_capabilities(PlatformWindowCreationCapabilities {
+            focus_on_appearing: WindowCreationSupport::Supported,
+            transient_for: WindowCreationSupport::Unsupported,
+            initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
+        });
+        let space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(space.clone(), root);
+
+        let mut workspace = DockWorkspace::new(space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let owner = cx.open_window(size(px(320.0), px(240.0)), |_, _| RenderCounter {
+            renders: Rc::new(Cell::new(0)),
+        });
+
+        let opened = owner
+            .update(cx, |_, owner_window, app| {
+                runtime.open_viewport_from_window(
+                    space,
+                    viewport_window_options(360.0, 220.0),
+                    owner_window,
+                    app,
+                )
+            })
+            .expect("the owner should remain live")
+            .expect("unsupported implicit ownership should not prevent opening the viewport");
+
+        assert_eq!(
+            opened
+                .window()
+                .update(cx, |_, window, _| window.creation_facts().transient_for)
+                .expect("the detached viewport should remain live"),
+            None,
+            "an unsupported implicit transient owner must be omitted"
         );
     }
 
@@ -2262,7 +2367,7 @@ mod window_mutation_retry_tests {
             is_maximized: false,
             is_fullscreen: false,
             accepts_pointer_input: true,
-            focus_on_appearing: true,
+            accepts_activation: true,
             focus_on_click: true,
             background_appearance: WindowBackgroundAppearance::Opaque,
             topmost: false,

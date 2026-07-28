@@ -24,9 +24,9 @@ use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
     Keymap, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
     PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
-    PlatformWindowMutationCapabilities, Result, RunnableVariant, Task, ThermalState,
-    WindowAppearance, WindowButtonLayout, WindowKind, WindowParams,
+    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
+    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowKind,
+    WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use open_gpui::{CursorStyle, Pixels, Point, px};
@@ -99,12 +99,12 @@ pub(crate) trait LinuxClient {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
     }
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         _kind: &WindowKind,
         _display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
-        PlatformWindowMutationCapabilities::default()
+    ) -> PlatformWindowCapabilities {
+        PlatformWindowCapabilities::default()
     }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None
@@ -404,12 +404,12 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.viewport_capabilities()
     }
 
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         kind: &WindowKind,
         display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
-        self.inner.window_mutation_capabilities(kind, display_id)
+    ) -> PlatformWindowCapabilities {
+        self.inner.window_capabilities(kind, display_id)
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {

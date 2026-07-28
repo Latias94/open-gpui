@@ -58,7 +58,7 @@ fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> Window
         display_id: Some(display_id),
         titlebar: None,
         window_background: WindowBackgroundAppearance::Transparent,
-        focus: false,
+        focus_on_appearing: false,
         show: true,
         kind: WindowKind::PopUp,
         is_movable: false,

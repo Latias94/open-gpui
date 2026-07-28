@@ -250,7 +250,7 @@ mod tests {
                 &main,
                 WindowOptions {
                     window_bounds: Some(fallback_bounds),
-                    focus: false,
+                    focus_on_appearing: false,
                     ..Default::default()
                 },
             )
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(options.window_bounds, Some(saved_bounds.to_window_bounds()));
         assert_eq!(options.display_id, Some(DisplayId::from(7)));
         assert!(
-            !options.focus,
+            !options.focus_on_appearing,
             "fallback options should preserve non-placement fields"
         );
     }

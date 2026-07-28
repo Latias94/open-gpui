@@ -342,8 +342,8 @@ ticket or roll the public cache backward. Dropping a subscription stops callback
 never cancels the request or its terminal record.
 
 Position, size, windowed/maximized/fullscreen/minimized state, and restore bounds are one
-placement conflict domain. Pointer input, focus-on-appearing, focus-on-click, alpha, topmost, and
-taskbar visibility are six independent domains. A newer legal request supersedes only the older
+placement conflict domain. Pointer input, coherent activation policy, alpha, topmost, and taskbar
+visibility are five independent domains. A newer legal request supersedes only the older
 request in its own domain, while an invalid placement request does not disturb a pending one.
 Closing a window first invalidates every queued backend generation, then settles retained tickets
 as `WindowClosed`. `WindowBounds` remains the compatibility projection for windowed, maximized,
@@ -351,7 +351,7 @@ and fullscreen creation or requests; use `WindowPlacementRequest` for partial up
 minimized state.
 
 `Window::request_window_mutation` accepts the complete `WindowMutationRequest` vocabulary.
-`request_pointer_input`, `request_focus_on_appearing`, `request_focus_on_click`, `request_topmost`,
+`request_pointer_input`, `request_activation_policy`, `request_topmost`,
 `request_taskbar_visibility`, `set_background_appearance`, `resize`, `zoom_window`,
 `minimize_window`, and `toggle_fullscreen` are ergonomic typed wrappers over that same authority
 and now return a `must_use` `WindowMutationDispatch`. The state helpers request only the target
@@ -360,17 +360,36 @@ it to `_` when the terminal result is intentionally ignored.
 
 `PlatformViewportCapabilities::live_window_move`, `PlatformViewportFlagCapabilities`, and
 `App::viewport_flag_capabilities()` have been deleted. Inspect
-`Window::window_mutation_capabilities()` instead. The one matrix covers placement, pointer input,
-focus-on-appearing/click, alpha, topmost, taskbar visibility, and coordinate space. Windows
+`Window::window_capabilities()` instead. The `mutations` matrix covers placement, pointer input,
+the two-field activation policy, alpha, topmost, taskbar visibility, and coordinate space. Windows
 currently exposes live size, windowed/maximized/fullscreen, and pointer-input mutation, but reports
 window-local coordinates and keeps position plus restore bounds creation-only until mixed-DPI
 desktop coordinates are comparable. Other native backends conservatively report only their
 creation-time or unsupported properties. Capability lookup is per `WindowKind`: Wayland
 LayerShell windows do not inherit XDG windowed/maximized/fullscreen/restore claims.
-When code has only an opened `AnyWindowHandle`, use `App::window_mutation_profile(handle)` to read
+When code has only an opened `AnyWindowHandle`, use `App::window_profile(handle)` to read
 the immutable profile captured for that window's actual creation kind and target display. Do not call
-`App::window_mutation_capabilities()` and assume its normal-window matrix describes floating,
+`App::window_capabilities()` and assume its normal-window matrix describes floating,
 popup, or LayerShell windows.
+
+The former `WindowOptions::focus` field and live focus-on-appearing/click mutation requests have
+been deleted. Use `WindowOptions::focus_on_appearing` only for the first native appearance. It
+never means permanent non-activation. Set `WindowOptions::activation_policy` for lifetime
+`accepts_activation` and `focus_on_click` behavior; both fields share one mutation generation and
+terminal observation. Pointer-input acceptance remains independent.
+
+To establish a native top-level owner relationship, create a token with
+`App::transient_window_owner(live_handle)` and assign it to `WindowOptions::transient_for`. The
+token is bound to the exact live window generation and application. Self, stale, closed, or
+foreign-app owners are rejected before native creation. Native ownership assists grouping,
+activation, minimization, and z-order only; applications must still close subordinate windows
+explicitly.
+
+Creation and presentation history no longer leak through lifetime flags. Read
+`Window::creation_facts()` for the immutable applied first-appearance and owner facts. Read
+`Window::presentation_facts()` to distinguish native creation, accepted frame, submitted present,
+first non-empty present, the exact latest present attempt, bounded initial-presentation settlement,
+and current native visibility.
 
 ### Custom platform backends
 
@@ -378,21 +397,28 @@ Third-party `Platform` implementations must accept the target display when proje
 live support:
 
 ```rust
-fn window_mutation_capabilities(
+fn window_capabilities(
     &self,
     kind: &WindowKind,
     display_id: Option<DisplayId>,
-) -> PlatformWindowMutationCapabilities;
+) -> PlatformWindowCapabilities;
 ```
 
 `None` means the backend's primary or default display. `App` normalizes an unavailable requested
 display id to `None` before both capability lookup and window creation, so restoring a stale display
 does not leave a profile and native constructor disagreeing. Use the supplied display for
 capabilities that depend on native resources, such as an X11 screen's transparent visual.
-`WindowParams` now contains the mandatory canonical `window_bounds`; use it for creation state and
-restore geometry, while `bounds` remains a compatibility projection.
+`WindowParams` now contains the mandatory canonical `window_bounds`, `focus_on_appearing`,
+`activation_policy`, and validated `transient_for`; use them as independent creation inputs while
+`bounds` remains a compatibility projection.
 
-`PlatformWindow::platform_facts` must return one coherent observed snapshot. A property may be
+`PlatformWindow::creation_facts` must report the exact applied immutable creation facts,
+`is_visible` must report native visibility, and `draw` must return a truthful
+`PlatformWindowPresentOutcome`. `PlatformWindow::platform_facts` must return one coherent observed
+snapshot. Set `initial_presentation_order` to `BeforeVisibility` only when a frame can be submitted
+while hidden, `AfterVisibility` only when native visibility precedes submission, or
+`PresentationEstablishesVisibility` when the first submission itself maps the native surface. A
+property may be
 reported as `Live` only when the backend implements the typed `prepare_window_mutation`,
 `request_window_mutation`, and `invalidate_window_mutation` paths and can emit a terminal
 generation-bound observation through `on_window_mutation_observation`. Use

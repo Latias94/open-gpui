@@ -20,7 +20,7 @@ fn reused_viewport_no_input_request_queues_typed_pointer_dispatch(cx: &mut TestA
                 window,
                 &WindowKind::Normal,
                 WindowOptions {
-                    focus: false,
+                    focus_on_appearing: false,
                     accepts_pointer_input: false,
                     ..viewport_window_options(320.0, 240.0)
                 },
@@ -193,8 +193,8 @@ mod runtime_suite {
             .expect("floating viewport should open through runtime");
         let status = cx.update(|app| runtime.runtime_status_for_app(app));
 
-        assert_eq!(status.window_mutation_capabilities.len(), 1);
-        let profile = &status.window_mutation_capabilities[0];
+        assert_eq!(status.window_profiles.len(), 1);
+        let profile = &status.window_profiles[0];
         assert_eq!(profile.space, space);
         assert_eq!(profile.window_id, opened.window().window_id());
         assert_eq!(profile.window_kind, WindowKind::Floating);
@@ -202,7 +202,7 @@ mod runtime_suite {
             profile.capabilities,
             opened
                 .window()
-                .update(cx, |_, window, _| window.window_mutation_capabilities())
+                .update(cx, |_, window, _| window.window_capabilities())
                 .expect("floating viewport should remain live")
         );
     }
@@ -436,8 +436,8 @@ mod runtime_suite {
         assert_eq!(sync.window_id, reused.window().window_id());
         assert!(sync.dispatches.iter().any(|dispatch| matches!(
             dispatch,
-            DockViewportPlatformSyncDispatch::Immediate {
-                action: DockViewportPlatformSyncAction::Activate
+            DockViewportPlatformSyncDispatch::Unchanged {
+                request: DockViewportPlatformSyncRequest::ActivationPolicy { .. }
             }
         )));
         assert!(sync.dispatches.iter().any(|dispatch| matches!(
@@ -1208,7 +1208,7 @@ mod runtime_suite {
     }
 
     #[open_gpui::test]
-    fn viewport_runtime_reuse_respects_focus_option(cx: &mut TestAppContext) {
+    fn viewport_runtime_reuse_does_not_replay_initial_appearance(cx: &mut TestAppContext) {
         let primary_space = DockSpaceId::from("primary");
         let secondary_space = DockSpaceId::from("secondary");
         let mut graph = DockGraph::new();
@@ -1243,7 +1243,7 @@ mod runtime_suite {
                 runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
-                        focus: false,
+                        focus_on_appearing: false,
                         ..viewport_window_options(360.0, 220.0)
                     },
                     app,
@@ -1262,7 +1262,7 @@ mod runtime_suite {
                 runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
-                        focus: false,
+                        focus_on_appearing: false,
                         ..viewport_window_options(420.0, 240.0)
                     },
                     app,
@@ -1276,16 +1276,16 @@ mod runtime_suite {
         assert_eq!(
             cx.update(|app| app.active_window()),
             Some(primary.window()),
-            "reusing a viewport with focus=false should not raise it during stale probing"
+            "reusing a viewport must not replay its creation-only appearance policy"
         );
         let sync = runtime
             .runtime_status()
             .last_platform_dispatch
             .expect("reuse should record platform dispatch diagnostics");
-        assert!(!sync.dispatches.iter().any(|dispatch| matches!(
+        assert!(sync.dispatches.iter().any(|dispatch| matches!(
             dispatch,
-            DockViewportPlatformSyncDispatch::Immediate {
-                action: DockViewportPlatformSyncAction::Activate
+            DockViewportPlatformSyncDispatch::Unchanged {
+                request: DockViewportPlatformSyncRequest::ActivationPolicy { .. }
             }
         )));
         assert!(sync.dispatches.iter().any(|dispatch| matches!(

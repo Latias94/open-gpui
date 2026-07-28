@@ -351,7 +351,7 @@ mod runtime_suite {
             window_bounds: Some(WindowBounds::Windowed(floating_bounds(
                 0.0, 0.0, 360.0, 220.0,
             ))),
-            focus: false,
+            focus_on_appearing: false,
             ..Default::default()
         };
         let main = cx
@@ -1423,7 +1423,7 @@ mod runtime_suite {
             window_bounds: Some(WindowBounds::Windowed(floating_bounds(
                 0.0, 0.0, 360.0, 220.0,
             ))),
-            focus: false,
+            focus_on_appearing: false,
             ..Default::default()
         };
         let _main = cx
@@ -1523,7 +1523,7 @@ mod runtime_suite {
             window_bounds: Some(WindowBounds::Windowed(floating_bounds(
                 0.0, 0.0, 360.0, 220.0,
             ))),
-            focus: false,
+            focus_on_appearing: false,
             ..Default::default()
         };
         let _main = cx
@@ -1635,7 +1635,7 @@ mod runtime_suite {
             window_bounds: Some(WindowBounds::Windowed(floating_bounds(
                 0.0, 0.0, 360.0, 220.0,
             ))),
-            focus: false,
+            focus_on_appearing: false,
             ..Default::default()
         };
         let _main = cx

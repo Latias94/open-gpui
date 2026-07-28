@@ -1,17 +1,18 @@
 use super::{WindowsPlatform, translate_accelerator};
-use crate::WindowsWindowInner;
+use crate::{WindowsWindowInner, get_window_long};
 use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Empty, NativeBoundaryDiagnosticCursor,
     NativeBoundaryDisposition, NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind,
-    NativePlatformCommandKind, PointerCancelReason, QuitMode, WindowBounds, WindowKind,
-    WindowMouseEvent, WindowOptions, px, size,
+    NativePlatformCommandKind, PointerCancelReason, QuitMode, WindowActivationPolicy, WindowBounds,
+    WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome, WindowOptions, px,
+    size,
 };
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
 use windows::Win32::{
-    Foundation::{HWND, LPARAM, WPARAM},
+    Foundation::{HWND, LPARAM, RECT, WPARAM},
     Graphics::Gdi::{RDW_INVALIDATE, RedrawWindow},
     System::SystemServices::MK_LBUTTON,
     UI::{
@@ -20,10 +21,12 @@ use windows::Win32::{
             GetActiveWindow, GetCapture, IsWindowEnabled, ReleaseCapture, SetActiveWindow,
         },
         WindowsAndMessaging::{
-            DispatchMessageW, IsWindow, IsWindowVisible, MSG, PM_REMOVE, PeekMessageW,
-            PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SendMessageW, TranslateMessage, WM_CLOSE,
-            WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOVE, WM_PAINT, WM_QUIT,
-            WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT, GW_OWNER, GWL_EXSTYLE,
+            GetForegroundWindow, GetWindow, GetWindowRect, IsWindow, IsWindowVisible, IsZoomed,
+            MA_NOACTIVATE, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED,
+            SIZE_RESTORED, SendMessageW, TranslateMessage, WM_CLOSE, WM_KEYDOWN, WM_KEYUP,
+            WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_PAINT, WM_QUIT, WM_SIZE,
+            WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
         },
     },
 };
@@ -185,6 +188,44 @@ fn is_registered(platform: &WindowsPlatform, hwnd: HWND) -> bool {
         .any(|handle| handle.as_raw() == hwnd)
 }
 
+fn application_window_z_order(platform: &WindowsPlatform) -> Vec<HWND> {
+    let registered = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .map(|handle| handle.as_raw())
+        .collect::<Vec<_>>();
+    let Some(seed) = registered.first().copied() else {
+        return Vec::new();
+    };
+    let mut current = unsafe { GetWindow(seed, GW_HWNDFIRST) }
+        .expect("a registered top-level window should belong to the desktop z-order");
+    let mut ordered = Vec::with_capacity(registered.len());
+
+    for _ in 0..4096 {
+        if registered.contains(&current) {
+            ordered.push(current);
+            if ordered.len() == registered.len() {
+                return ordered;
+            }
+        }
+        let Ok(next) = (unsafe { GetWindow(current, GW_HWNDNEXT) }) else {
+            break;
+        };
+        current = next;
+    }
+
+    panic!(
+        "desktop z-order walk did not observe every registered application window; registered={registered:?}, observed={ordered:?}"
+    );
+}
+
+fn native_window_rect(hwnd: HWND) -> (i32, i32, i32, i32) {
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect) }.expect("native window rect should be readable");
+    (rect.left, rect.top, rect.right, rect.bottom)
+}
+
 #[test]
 fn real_hwnd_lifecycle_and_input_dispatch_converge_with_bounded_message_pump() {
     discard_stale_quit_messages();
@@ -198,7 +239,7 @@ fn real_hwnd_lifecycle_and_input_dispatch_converge_with_bounded_message_pump() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -352,6 +393,616 @@ fn real_hwnd_lifecycle_and_input_dispatch_converge_with_bounded_message_pump() {
 }
 
 #[test]
+fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let owner = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("owner window should open");
+    let owner_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("owner should register an HWND")
+        .as_raw();
+    let foreground = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("foreground sentinel should open");
+    let foreground_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("foreground sentinel should register an HWND")
+        .as_raw();
+    unsafe {
+        let _ = SetActiveWindow(foreground_hwnd);
+    }
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+    let native_foreground_before = unsafe { GetForegroundWindow() };
+    let z_order_before = application_window_z_order(&platform);
+    assert_eq!(
+        z_order_before,
+        [foreground_hwnd, owner_hwnd],
+        "the foreground sentinel must begin directly above the owner in application z-order"
+    );
+
+    let transient_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(owner.into())
+            .expect("the live owner should produce a transient-owner token")
+    });
+    let child = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    kind: WindowKind::Floating,
+                    window_bounds: Some(WindowBounds::centered(size(px(260.0), px(180.0)), cx)),
+                    focus_on_appearing: false,
+                    transient_for: Some(transient_owner),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("ordinary owned detached window should open");
+    let child_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("ordinary owned child should register an HWND")
+        .as_raw();
+
+    assert_eq!(
+        unsafe { GetWindow(child_hwnd, GW_OWNER) }
+            .expect("the ordinary child should retain a native owner"),
+        owner_hwnd
+    );
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+    assert_eq!(
+        unsafe { GetForegroundWindow() },
+        native_foreground_before,
+        "showing the owned child must not steal global foreground ownership"
+    );
+    let z_order_after = application_window_z_order(&platform);
+    assert_eq!(
+        z_order_after
+            .iter()
+            .copied()
+            .filter(|hwnd| *hwnd != child_hwnd)
+            .collect::<Vec<_>>(),
+        z_order_before,
+        "inserting the owned child must not reorder any pre-existing application HWND"
+    );
+    assert_eq!(
+        z_order_after,
+        [child_hwnd, foreground_hwnd, owner_hwnd],
+        "the visible child must sit above the active sentinel while its owner remains in place"
+    );
+    let child_ex_style = unsafe { get_window_long(child_hwnd, GWL_EXSTYLE) } as u32;
+    assert_eq!(
+        child_ex_style & WS_EX_NOACTIVATE.0,
+        0,
+        "a non-activating first show must not install permanent WS_EX_NOACTIVATE"
+    );
+    let platform_facts = app.update_for_test(|cx| {
+        child
+            .update(cx, |_, window, _| window.platform_facts().clone())
+            .expect("ordinary owned child should remain live")
+    });
+    assert!(platform_facts.accepts_activation);
+    assert!(platform_facts.focus_on_click);
+
+    let mouse_activate_result = unsafe {
+        SendMessageW(
+            child_hwnd,
+            WM_MOUSEACTIVATE,
+            Some(WPARAM::default()),
+            Some(LPARAM::default()),
+        )
+    };
+    assert_ne!(mouse_activate_result.0, MA_NOACTIVATE as isize);
+    assert_eq!(unsafe { GetActiveWindow() }, child_hwnd);
+
+    unsafe {
+        let _ = SetActiveWindow(foreground_hwnd);
+    }
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+    app.update_for_test(|cx| {
+        child
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("ordinary owned child should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("ordinary owned programmatic activation", || unsafe {
+        GetActiveWindow() == child_hwnd
+    });
+    pump_messages_until_idle("ordinary owned activation follow-up");
+
+    for handle in [
+        AnyWindowHandle::from(child),
+        AnyWindowHandle::from(foreground),
+        AnyWindowHandle::from(owner),
+    ] {
+        app.update_for_test(|cx| {
+            handle
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("ordinary owned activation test window should close");
+        });
+        pump_messages_until_idle("ordinary owned activation test teardown");
+    }
+}
+
+#[test]
+fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let owner = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("owner window should open");
+    let owner_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("owner should register an HWND")
+        .as_raw();
+    let restore_bounds = platform
+        .window_from_hwnd(owner_hwnd)
+        .expect("owner should remain registered")
+        .observed_platform_facts_for_test()
+        .expect("owner native facts should be readable")
+        .window_bounds
+        .get_bounds();
+    let reference = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    kind: WindowKind::Floating,
+                    window_bounds: Some(WindowBounds::Maximized(restore_bounds)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("ordinary activating maximized reference should open");
+    let reference_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("maximized reference should register an HWND")
+        .as_raw();
+    pump_messages_until("ordinary activating maximized reference", || unsafe {
+        IsWindowVisible(reference_hwnd).as_bool() && IsZoomed(reference_hwnd).as_bool()
+    });
+    pump_messages_until_idle("ordinary activating maximized reference follow-up");
+    let reference_outer_bounds = native_window_rect(reference_hwnd);
+    let reference_facts = platform
+        .window_from_hwnd(reference_hwnd)
+        .expect("maximized reference should remain registered")
+        .observed_platform_facts_for_test()
+        .expect("maximized reference native facts should be readable");
+    assert!(reference_facts.is_maximized);
+    assert_eq!(
+        reference_facts.window_bounds,
+        WindowBounds::Maximized(restore_bounds)
+    );
+    let reference_handle = AnyWindowHandle::from(reference);
+    app.update_for_test(|cx| {
+        reference_handle
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("maximized reference should close");
+    });
+    pump_messages_until("maximized reference teardown", || {
+        !unsafe { IsWindow(Some(reference_hwnd)).as_bool() }
+            && !is_registered(&platform, reference_hwnd)
+    });
+
+    let foreground = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("foreground sentinel should open");
+    let foreground_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("foreground sentinel should register an HWND")
+        .as_raw();
+    unsafe {
+        let _ = SetActiveWindow(foreground_hwnd);
+    }
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+
+    let transient_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(owner.into())
+            .expect("the live owner should produce a transient-owner token")
+    });
+    let child = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    kind: WindowKind::Floating,
+                    window_bounds: Some(WindowBounds::Maximized(restore_bounds)),
+                    focus_on_appearing: false,
+                    transient_for: Some(transient_owner),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("maximized owned child should open");
+    let child_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("maximized owned child should register an HWND")
+        .as_raw();
+
+    pump_messages_until("non-activating maximized initial presentation", || unsafe {
+        IsWindowVisible(child_hwnd).as_bool() && IsZoomed(child_hwnd).as_bool()
+    });
+    pump_messages_until_idle("non-activating maximized initial presentation follow-up");
+
+    assert_eq!(
+        unsafe { GetWindow(child_hwnd, GW_OWNER) }
+            .expect("the maximized child should retain a native owner"),
+        owner_hwnd
+    );
+    assert_eq!(
+        unsafe { GetActiveWindow() },
+        foreground_hwnd,
+        "a non-activating maximized first show must preserve the active window"
+    );
+    assert!(unsafe { IsZoomed(child_hwnd) }.as_bool());
+    let child_ex_style = unsafe { get_window_long(child_hwnd, GWL_EXSTYLE) } as u32;
+    assert_eq!(
+        child_ex_style & WS_EX_NOACTIVATE.0,
+        0,
+        "a non-activating maximized first show must not install permanent WS_EX_NOACTIVATE"
+    );
+
+    let native_window = platform
+        .window_from_hwnd(child_hwnd)
+        .expect("maximized child should remain registered");
+    let native_facts = native_window
+        .observed_platform_facts_for_test()
+        .expect("maximized child native facts should be readable");
+    assert!(native_facts.is_maximized);
+    assert_eq!(
+        native_window_rect(child_hwnd),
+        reference_outer_bounds,
+        "non-activating maximization must use the ordinary native maximized outer bounds"
+    );
+    assert_eq!(
+        native_facts.bounds, reference_facts.bounds,
+        "non-activating maximization must preserve ordinary native titlebar and client geometry"
+    );
+    assert_eq!(
+        native_facts.window_bounds,
+        WindowBounds::Maximized(restore_bounds),
+        "non-activating maximization must preserve rcNormalPosition as the restore bounds"
+    );
+    assert!(native_facts.accepts_activation);
+    assert!(native_facts.focus_on_click);
+
+    app.update_for_test(|cx| {
+        child
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("maximized owned child should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("maximized owned programmatic activation", || unsafe {
+        GetActiveWindow() == child_hwnd
+    });
+    pump_messages_until_idle("maximized owned activation follow-up");
+    let activated_ex_style = unsafe { get_window_long(child_hwnd, GWL_EXSTYLE) } as u32;
+    assert_eq!(activated_ex_style & WS_EX_NOACTIVATE.0, 0);
+
+    for handle in [
+        AnyWindowHandle::from(child),
+        AnyWindowHandle::from(foreground),
+        AnyWindowHandle::from(owner),
+    ] {
+        app.update_for_test(|cx| {
+            handle
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("maximized owned activation test window should close");
+        });
+        pump_messages_until_idle("maximized owned activation test teardown");
+    }
+}
+
+#[test]
+fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let owner = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("owner window should open");
+    let owner_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("owner should register an HWND")
+        .as_raw();
+
+    for policy in [
+        WindowActivationPolicy {
+            accepts_activation: false,
+            focus_on_click: true,
+        },
+        WindowActivationPolicy {
+            accepts_activation: true,
+            focus_on_click: false,
+        },
+    ] {
+        unsafe {
+            let _ = SetActiveWindow(owner_hwnd);
+        }
+        assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+        let transient_owner = app.update_for_test(|cx| {
+            cx.transient_window_owner(owner.into())
+                .expect("the live owner should produce a transient-owner token")
+        });
+        let child = app
+            .update_for_test(|cx| {
+                cx.open_window(
+                    WindowOptions {
+                        kind: WindowKind::Floating,
+                        window_bounds: Some(WindowBounds::centered(size(px(260.0), px(180.0)), cx)),
+                        focus_on_appearing: false,
+                        activation_policy: policy,
+                        transient_for: Some(transient_owner),
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+            })
+            .expect("asymmetric-policy child should open");
+        let child_hwnd = platform
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("child should register an HWND")
+            .as_raw();
+
+        let facts = app.update_for_test(|cx| {
+            child
+                .update(cx, |_, window, _| window.platform_facts().clone())
+                .expect("asymmetric-policy child should remain live")
+        });
+        assert_eq!(facts.accepts_activation, policy.accepts_activation);
+        assert_eq!(facts.focus_on_click, policy.focus_on_click);
+        let child_ex_style = unsafe { get_window_long(child_hwnd, GWL_EXSTYLE) } as u32;
+        assert_eq!(
+            child_ex_style & WS_EX_NOACTIVATE.0 == 0,
+            policy.focus_on_click,
+            "the native no-activate style must project click focus only"
+        );
+
+        let mouse_activate_result = unsafe {
+            SendMessageW(
+                child_hwnd,
+                WM_MOUSEACTIVATE,
+                Some(WPARAM::default()),
+                Some(LPARAM::default()),
+            )
+        };
+        if policy.focus_on_click {
+            assert_ne!(mouse_activate_result.0, MA_NOACTIVATE as isize);
+            assert_eq!(unsafe { GetActiveWindow() }, child_hwnd);
+        } else {
+            assert_eq!(mouse_activate_result.0, MA_NOACTIVATE as isize);
+            assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+        }
+
+        unsafe {
+            let _ = SetActiveWindow(owner_hwnd);
+        }
+        app.update_for_test(|cx| {
+            child
+                .update(cx, |_, window, _| window.activate_window())
+                .expect("asymmetric-policy child should remain live")
+        });
+        platform.inner.run_foreground_task();
+        if policy.accepts_activation {
+            pump_messages_until("asymmetric programmatic activation", || unsafe {
+                GetActiveWindow() == child_hwnd
+            });
+        } else {
+            pump_messages_until_idle("rejected asymmetric programmatic activation");
+            assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+        }
+
+        app.update_for_test(|cx| {
+            child
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("asymmetric-policy child should close");
+        });
+        pump_messages_until_idle("asymmetric-policy child teardown");
+    }
+
+    app.update_for_test(|cx| {
+        owner
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("owner should close");
+    });
+    pump_messages_until_idle("asymmetric activation test teardown");
+}
+
+#[test]
+fn owned_permanently_nonactivating_window_preserves_owner_and_rejects_activation() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let owner = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("owner window should open");
+    let owner_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("owner should register an HWND")
+        .as_raw();
+    unsafe {
+        let _ = SetActiveWindow(owner_hwnd);
+    }
+    assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+    let transient_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(owner.into())
+            .expect("the live owner should produce a transient-owner token")
+    });
+
+    let child = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    kind: WindowKind::Floating,
+                    window_bounds: Some(WindowBounds::centered(size(px(260.0), px(180.0)), cx)),
+                    focus_on_appearing: true,
+                    activation_policy: WindowActivationPolicy {
+                        accepts_activation: false,
+                        focus_on_click: false,
+                    },
+                    transient_for: Some(transient_owner),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("owned nonactivating window should open");
+    let child_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("child should register an HWND")
+        .as_raw();
+
+    assert_eq!(
+        unsafe { GetWindow(child_hwnd, GW_OWNER) }.expect("the child should retain a native owner"),
+        owner_hwnd
+    );
+    assert_eq!(
+        unsafe { GetActiveWindow() },
+        owner_hwnd,
+        "the owned first show must not activate either window out of order"
+    );
+    let (creation_facts, platform_facts) = app.update_for_test(|cx| {
+        child
+            .update(cx, |_, window, _| {
+                (
+                    window.creation_facts().clone(),
+                    window.platform_facts().clone(),
+                )
+            })
+            .expect("the owned child should remain live")
+    });
+    assert_eq!(creation_facts.transient_for, Some(owner.into()));
+    assert!(creation_facts.focus_on_appearing);
+    assert!(!platform_facts.accepts_activation);
+    assert!(!platform_facts.focus_on_click);
+
+    let mouse_activate_result = unsafe {
+        SendMessageW(
+            child_hwnd,
+            WM_MOUSEACTIVATE,
+            Some(WPARAM::default()),
+            Some(LPARAM::default()),
+        )
+    };
+    assert_eq!(mouse_activate_result.0, MA_NOACTIVATE as isize);
+    assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+
+    app.update_for_test(|cx| {
+        child
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("the owned child should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until_idle("rejected owned-child activation follow-up");
+    assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+
+    for handle in [AnyWindowHandle::from(child), AnyWindowHandle::from(owner)] {
+        app.update_for_test(|cx| {
+            handle
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("owned activation test window should close");
+        });
+        pump_messages_until_idle("owned activation test teardown");
+    }
+}
+
+#[test]
 fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
     discard_stale_quit_messages();
 
@@ -402,7 +1053,7 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -516,6 +1167,164 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
 }
 
 #[test]
+fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred_placement() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let foreground = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("foreground sentinel should open");
+    let foreground_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("foreground sentinel should register an HWND")
+        .as_raw();
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(340.0), px(240.0)), cx)),
+                    focus_on_appearing: false,
+                    show: false,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("hidden activation target should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("hidden activation target should register an HWND")
+        .as_raw();
+    assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
+    unsafe {
+        let _ = SetActiveWindow(foreground_hwnd);
+    }
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+
+    let initial_window_bounds = platform
+        .window_from_hwnd(hwnd)
+        .expect("hidden activation target should remain registered")
+        .observed_platform_facts_for_test()
+        .expect("hidden activation target native facts should be readable")
+        .window_bounds;
+    assert!(matches!(initial_window_bounds, WindowBounds::Windowed(_)));
+    let placement_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| {
+                match window.request_window_placement(WindowBounds::Maximized(
+                    initial_window_bounds.get_bounds(),
+                )) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => panic!("expected deferred placement ticket, got {dispatch:?}"),
+                }
+            })
+            .expect("hidden activation target should remain live")
+    });
+    assert!(placement_ticket.observation().is_none());
+    platform
+        .lifecycle_test_probe
+        .fail_next_initial_presentation();
+    let diagnostic_cursor = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("hidden activation target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("rejected forced initial presentation", || {
+        placement_ticket.observation().is_some()
+    });
+    pump_messages_until_idle("rejected forced initial presentation follow-up");
+
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+    assert!(
+        !unsafe { IsWindowVisible(hwnd).as_bool() },
+        "a rejected forced presentation must leave the target hidden"
+    );
+    let placement_observation = placement_ticket
+        .observation()
+        .expect("the deferred placement ticket must settle on presentation failure");
+    assert_eq!(
+        placement_observation.outcome,
+        WindowMutationOutcome::Rejected
+    );
+    assert_eq!(
+        placement_observation.facts.window_bounds,
+        initial_window_bounds
+    );
+    assert!(!placement_observation.facts.is_maximized);
+
+    let target = NativeBoundaryTarget::Window(window.window_id());
+    let diagnostic_delta =
+        app.update_for_test(|cx| cx.native_boundary_diagnostics(diagnostic_cursor));
+    let activation_dispositions = diagnostic_delta
+        .terminal
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.target == target
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
+        })
+        .map(|diagnostic| diagnostic.disposition)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        activation_dispositions,
+        [NativeBoundaryDisposition::Rejected],
+        "activation must reject immediately after forced presentation fails"
+    );
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("hidden activation target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("retried activation after presentation failure", || unsafe {
+        IsWindowVisible(hwnd).as_bool() && GetActiveWindow() == hwnd
+    });
+    pump_messages_until_idle("retried activation follow-up");
+    let retry_facts = platform
+        .window_from_hwnd(hwnd)
+        .expect("retried activation target should remain registered")
+        .observed_platform_facts_for_test()
+        .expect("retried activation target native facts should be readable");
+    assert_eq!(retry_facts.window_bounds, initial_window_bounds);
+    assert!(!retry_facts.is_maximized);
+
+    for handle in [
+        AnyWindowHandle::from(window),
+        AnyWindowHandle::from(foreground),
+    ] {
+        app.update_for_test(|cx| {
+            handle
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("forced-presentation activation test window should close");
+        });
+        pump_messages_until_idle("forced-presentation activation test teardown");
+    }
+}
+
+#[test]
 fn real_hwnd_reserved_callbacks_deliver_after_commit_and_retire_after_rollback() {
     discard_stale_quit_messages();
 
@@ -534,7 +1343,7 @@ fn real_hwnd_reserved_callbacks_deliver_after_commit_and_retire_after_rollback()
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: false,
                     ..WindowOptions::default()
                 },
@@ -607,7 +1416,7 @@ fn real_hwnd_reserved_callbacks_deliver_after_commit_and_retire_after_rollback()
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(280.0), px(180.0)), cx)),
-                focus: false,
+                focus_on_appearing: false,
                 show: false,
                 ..WindowOptions::default()
             },
@@ -697,7 +1506,7 @@ fn repeated_native_minimize_preserves_frame_callback_through_restore() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -790,7 +1599,7 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -932,7 +1741,7 @@ fn nested_native_close_is_prevented_while_should_close_slot_is_checked_out() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -1002,7 +1811,7 @@ fn failed_native_destroy_keeps_window_registered_and_callbacks_live() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -1069,7 +1878,7 @@ fn failed_destroy_during_platform_window_drop_retains_native_owner_until_platfor
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -1120,7 +1929,7 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -1139,7 +1948,7 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -1249,7 +2058,7 @@ fn programmatic_close_while_captured_is_terminal_and_invariant_free() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -1339,7 +2148,7 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: true,
+                    focus_on_appearing: true,
                     show: false,
                     ..WindowOptions::default()
                 },
@@ -1429,7 +2238,7 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus: true,
+                    focus_on_appearing: true,
                     show: true,
                     ..WindowOptions::default()
                 },
@@ -1443,6 +2252,10 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
         .last()
         .expect("modal parent should register an HWND")
         .as_raw();
+    let transient_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(parent.into())
+            .expect("the live parent should produce a transient-owner token")
+    });
     unsafe {
         let _ = SetActiveWindow(parent_hwnd);
     }
@@ -1456,9 +2269,10 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
-                focus: true,
+                focus_on_appearing: true,
                 show: true,
                 kind: WindowKind::Dialog,
+                transient_for: Some(transient_owner),
                 ..WindowOptions::default()
             },
             |_, cx| cx.new(|_| Empty),
@@ -1511,7 +2325,7 @@ fn app_and_platform_drop_destroy_child_and_message_windows_synchronously() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
-                    focus: false,
+                    focus_on_appearing: false,
                     show: false,
                     ..WindowOptions::default()
                 },

@@ -43,9 +43,10 @@ use open_gpui::{
     KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowMutationCapabilities, Result,
-    SystemMenuType, Task, ThermalState, WindowAppearance, WindowCoordinateSpace, WindowKind,
-    WindowMutationSupport, WindowParams,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
+    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Result, SystemMenuType,
+    Task, ThermalState, WindowAppearance, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowKind, WindowMutationSupport, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -473,39 +474,49 @@ impl MacPlatform {
     }
 }
 
-fn macos_window_mutation_capabilities(kind: &WindowKind) -> PlatformWindowMutationCapabilities {
+fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
     let supports_toplevel_state = macos_supports_toplevel_creation_state(kind);
-    PlatformWindowMutationCapabilities {
-        position: WindowMutationSupport::CreationOnly,
-        size: WindowMutationSupport::CreationOnly,
-        windowed: WindowMutationSupport::CreationOnly,
-        maximized: if supports_toplevel_state {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
+    PlatformWindowCapabilities {
+        creation: PlatformWindowCreationCapabilities {
+            focus_on_appearing: if macos_supports_focus_on_appearing(kind) {
+                WindowCreationSupport::Supported
+            } else {
+                WindowCreationSupport::Unsupported
+            },
+            transient_for: WindowCreationSupport::Unsupported,
+            initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
         },
-        fullscreen: if supports_toplevel_state {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
+        mutations: PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::CreationOnly,
+            size: WindowMutationSupport::CreationOnly,
+            windowed: WindowMutationSupport::CreationOnly,
+            maximized: if supports_toplevel_state {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            fullscreen: if supports_toplevel_state {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            minimized: WindowMutationSupport::Unsupported,
+            restore_bounds: if supports_toplevel_state {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            pointer_input: WindowMutationSupport::CreationOnly,
+            activation_policy: if supports_toplevel_state {
+                WindowMutationSupport::CreationOnly
+            } else {
+                WindowMutationSupport::Unsupported
+            },
+            alpha: WindowMutationSupport::CreationOnly,
+            topmost: WindowMutationSupport::Unsupported,
+            taskbar_visibility: WindowMutationSupport::Unsupported,
+            coordinate_space: WindowCoordinateSpace::GlobalScreen,
         },
-        minimized: WindowMutationSupport::Unsupported,
-        restore_bounds: if supports_toplevel_state {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
-        },
-        pointer_input: WindowMutationSupport::CreationOnly,
-        focus_on_appearing: if macos_supports_focus_on_appearing(kind) {
-            WindowMutationSupport::CreationOnly
-        } else {
-            WindowMutationSupport::Unsupported
-        },
-        focus_on_click: WindowMutationSupport::Unsupported,
-        alpha: WindowMutationSupport::CreationOnly,
-        topmost: WindowMutationSupport::Unsupported,
-        taskbar_visibility: WindowMutationSupport::Unsupported,
-        coordinate_space: WindowCoordinateSpace::GlobalScreen,
     }
 }
 
@@ -693,12 +704,12 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         kind: &WindowKind,
         _display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
-        macos_window_mutation_capabilities(kind)
+    ) -> PlatformWindowCapabilities {
+        macos_window_capabilities(kind)
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -1574,53 +1585,63 @@ mod security {
 }
 
 #[cfg(test)]
-mod window_mutation_capability_tests {
+mod window_capability_tests {
     use open_gpui::{
-        PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowMutationSupport,
+        PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+        PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowCreationSupport,
+        WindowInitialPresentationOrder, WindowMutationSupport,
     };
 
-    fn expected_macos_capabilities(
-        supports_toplevel_state: bool,
-    ) -> PlatformWindowMutationCapabilities {
+    fn expected_macos_capabilities(supports_toplevel_state: bool) -> PlatformWindowCapabilities {
         let toplevel_state = if supports_toplevel_state {
             WindowMutationSupport::CreationOnly
         } else {
             WindowMutationSupport::Unsupported
         };
-        PlatformWindowMutationCapabilities {
-            position: WindowMutationSupport::CreationOnly,
-            size: WindowMutationSupport::CreationOnly,
-            windowed: WindowMutationSupport::CreationOnly,
-            maximized: toplevel_state,
-            fullscreen: toplevel_state,
-            minimized: WindowMutationSupport::Unsupported,
-            restore_bounds: toplevel_state,
-            pointer_input: WindowMutationSupport::CreationOnly,
-            focus_on_appearing: toplevel_state,
-            focus_on_click: WindowMutationSupport::Unsupported,
-            alpha: WindowMutationSupport::CreationOnly,
-            topmost: WindowMutationSupport::Unsupported,
-            taskbar_visibility: WindowMutationSupport::Unsupported,
-            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+        PlatformWindowCapabilities {
+            creation: PlatformWindowCreationCapabilities {
+                focus_on_appearing: if supports_toplevel_state {
+                    WindowCreationSupport::Supported
+                } else {
+                    WindowCreationSupport::Unsupported
+                },
+                transient_for: WindowCreationSupport::Unsupported,
+                initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
+            },
+            mutations: PlatformWindowMutationCapabilities {
+                position: WindowMutationSupport::CreationOnly,
+                size: WindowMutationSupport::CreationOnly,
+                windowed: WindowMutationSupport::CreationOnly,
+                maximized: toplevel_state,
+                fullscreen: toplevel_state,
+                minimized: WindowMutationSupport::Unsupported,
+                restore_bounds: toplevel_state,
+                pointer_input: WindowMutationSupport::CreationOnly,
+                activation_policy: toplevel_state,
+                alpha: WindowMutationSupport::CreationOnly,
+                topmost: WindowMutationSupport::Unsupported,
+                taskbar_visibility: WindowMutationSupport::Unsupported,
+                coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            },
         }
     }
 
     #[test]
     fn capabilities_match_exact_kind_specific_creation_paths() {
         assert_eq!(
-            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Normal),
+            super::macos_window_capabilities(&open_gpui::WindowKind::Normal),
             expected_macos_capabilities(true)
         );
         assert_eq!(
-            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Floating),
+            super::macos_window_capabilities(&open_gpui::WindowKind::Floating),
             expected_macos_capabilities(true)
         );
         assert_eq!(
-            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::PopUp),
+            super::macos_window_capabilities(&open_gpui::WindowKind::PopUp),
             expected_macos_capabilities(false)
         );
         assert_eq!(
-            super::macos_window_mutation_capabilities(&open_gpui::WindowKind::Dialog),
+            super::macos_window_capabilities(&open_gpui::WindowKind::Dialog),
             expected_macos_capabilities(false)
         );
     }

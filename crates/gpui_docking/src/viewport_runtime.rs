@@ -1008,13 +1008,14 @@ impl DockViewportRuntime {
         &mut self,
         activation: &DockViewportActivationTransaction,
         backend_focus: DockViewportActivationBackendFocusObservation,
+        request_backend_activation: bool,
     ) -> DockViewportActivationBackendFocusApply {
         let backend_focus_recorded_changed = if backend_focus.target_focused() {
             self.record_confirmed_backend_focus_for_window(activation.window_id())
         } else {
             false
         };
-        let pending_backend_focus = activation.requests_window_activation()
+        let pending_backend_focus = request_backend_activation
             && !backend_focus.target_focused()
             && self.record_pending_activation(activation.clone());
         let pending_backend_focus_cleared = if backend_focus.target_focused() {
@@ -2277,7 +2278,7 @@ impl DockViewportRuntime {
             window_bounds: Some(window_bounds),
             // Tear-off viewports are activated after graph commit and runtime registration, so
             // panel focus restoration flows through the explicit activation transaction.
-            focus: false,
+            focus_on_appearing: false,
             ..Default::default()
         })
     }

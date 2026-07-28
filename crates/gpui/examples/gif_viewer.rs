@@ -32,7 +32,7 @@ fn run_example() {
 
         cx.open_window(
             WindowOptions {
-                focus: true,
+                focus_on_appearing: true,
                 ..Default::default()
             },
             |_, cx| cx.new(|_| GifViewer::new(gif_path)),

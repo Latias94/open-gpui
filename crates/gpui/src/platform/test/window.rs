@@ -8,9 +8,10 @@ use crate::{
     PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
     PlatformWindowDispatch, PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
-    Point, PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowMutationDomain,
-    WindowMutationRequest, WindowParams, WindowPlacementState, WindowPlatformFacts,
+    PlatformWindowPresentOutcome, Point, PromptButton, RequestFrameOptions, Scene, Size,
+    TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowCreationFacts, WindowMutationDomain, WindowMutationRequest,
+    WindowParams, WindowPlacementState, WindowPlatformFacts,
 };
 use image::RgbaImage;
 use open_gpui_collections::HashMap;
@@ -53,7 +54,9 @@ pub(crate) struct TestWindowState {
     is_active: bool,
     accepts_pointer_input: bool,
     focus_on_appearing: bool,
+    accepts_activation: bool,
     focus_on_click: bool,
+    transient_for: Option<AnyWindowHandle>,
     background_appearance: WindowBackgroundAppearance,
     topmost: bool,
     taskbar_visible: bool,
@@ -65,8 +68,11 @@ pub(crate) struct TestWindowState {
         Option<Box<dyn FnMut(PlatformWindowCommand, TestWindow) -> PlatformWindowCommandOutcome>>,
     platform_command_history: Vec<PlatformWindowCommand>,
     show_on_initial_presentation: bool,
+    creation_show_fact: bool,
     mapped: bool,
     initial_presentation_completed: bool,
+    present_outcome: PlatformWindowPresentOutcome,
+    reveal_on_next_present: bool,
     activation_count: usize,
     pub(crate) cursor_style: CursorStyle,
     accessibility: TestAccessibilityState,
@@ -152,6 +158,7 @@ impl TestWindow {
         display: Rc<dyn PlatformDisplay>,
         renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
         map_error: Option<String>,
+        creation_show_fact: Option<bool>,
     ) -> Self {
         let sprite_atlas: Arc<dyn PlatformAtlas> = match &renderer {
             Some(r) => r.sprite_atlas(),
@@ -188,8 +195,10 @@ impl TestWindow {
                 is_fullscreen: matches!(params.window_bounds, WindowBounds::Fullscreen(_)),
                 is_active: false,
                 accepts_pointer_input: params.accepts_pointer_input,
-                focus_on_appearing: params.focus,
-                focus_on_click: true,
+                focus_on_appearing: params.focus_on_appearing,
+                accepts_activation: params.activation_policy.accepts_activation,
+                focus_on_click: params.activation_policy.focus_on_click,
+                transient_for: params.transient_for,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 topmost: false,
                 taskbar_visible: true,
@@ -200,8 +209,11 @@ impl TestWindow {
                 platform_command_callback: None,
                 platform_command_history: Vec::new(),
                 show_on_initial_presentation: params.show,
+                creation_show_fact: creation_show_fact.unwrap_or(params.show),
                 mapped: false,
                 initial_presentation_completed: false,
+                present_outcome: PlatformWindowPresentOutcome::Submitted,
+                reveal_on_next_present: false,
                 activation_count: 0,
                 cursor_style: CursorStyle::Arrow,
                 accessibility: TestAccessibilityState::default(),
@@ -228,6 +240,21 @@ impl TestWindow {
     #[cfg(test)]
     pub(crate) fn platform_command_history(&self) -> Vec<PlatformWindowCommand> {
         self.0.lock().platform_command_history.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_present_outcome(&self, outcome: PlatformWindowPresentOutcome) {
+        self.0.lock().present_outcome = outcome;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_visible_for_test(&self, visible: bool) {
+        self.0.lock().mapped = visible;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reveal_on_next_present(&self) {
+        self.0.lock().reveal_on_next_present = true;
     }
 
     #[cfg(test)]
@@ -274,7 +301,7 @@ impl TestWindow {
                     let mut state = self.0.lock();
                     state.initial_presentation_completed = true;
                     state.mapped = state.show_on_initial_presentation;
-                    let should_activate = activate && state.mapped;
+                    let should_activate = activate && state.mapped && state.accepts_activation;
                     if should_activate {
                         state.activation_count += 1;
                     }
@@ -285,6 +312,9 @@ impl TestWindow {
                 }
             }
             PlatformWindowCommand::Activate => {
+                if !self.0.lock().accepts_activation {
+                    return PlatformWindowCommandOutcome::Rejected;
+                }
                 self.0.lock().activation_count += 1;
                 self.activate_for_test();
             }
@@ -664,6 +694,19 @@ impl PlatformWindow for TestWindow {
         self.0.lock().accepts_pointer_input
     }
 
+    fn creation_facts(&self) -> WindowCreationFacts {
+        let state = self.0.lock();
+        WindowCreationFacts {
+            show: state.creation_show_fact,
+            focus_on_appearing: state.focus_on_appearing,
+            transient_for: state.transient_for,
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        self.0.lock().mapped
+    }
+
     fn platform_facts(&self) -> WindowPlatformFacts {
         window_platform_facts(&self.0.lock())
     }
@@ -874,7 +917,13 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn draw(&self, _scene: &Scene) {}
+    fn draw(&self, _scene: &Scene) -> PlatformWindowPresentOutcome {
+        let mut state = self.0.lock();
+        if std::mem::take(&mut state.reveal_on_next_present) {
+            state.mapped = true;
+        }
+        state.present_outcome
+    }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
@@ -942,7 +991,7 @@ fn window_platform_facts(state: &TestWindowState) -> WindowPlatformFacts {
         is_maximized: state.is_maximized,
         is_fullscreen: state.is_fullscreen,
         accepts_pointer_input: state.accepts_pointer_input,
-        focus_on_appearing: state.focus_on_appearing,
+        accepts_activation: state.accepts_activation,
         focus_on_click: state.focus_on_click,
         background_appearance: state.background_appearance,
         topmost: state.topmost,
@@ -1004,11 +1053,9 @@ fn apply_test_window_mutation(state: &mut TestWindowState, request: WindowMutati
         WindowMutationRequest::PointerInput(accepts_pointer_input) => {
             state.accepts_pointer_input = accepts_pointer_input;
         }
-        WindowMutationRequest::FocusOnAppearing(focus) => {
-            state.focus_on_appearing = focus;
-        }
-        WindowMutationRequest::FocusOnClick(focus) => {
-            state.focus_on_click = focus;
+        WindowMutationRequest::ActivationPolicy(policy) => {
+            state.accepts_activation = policy.accepts_activation;
+            state.focus_on_click = policy.focus_on_click;
         }
         WindowMutationRequest::Alpha(background) => {
             state.background_appearance = background;
@@ -1030,7 +1077,7 @@ fn apply_window_platform_facts(state: &mut TestWindowState, facts: &WindowPlatfo
     state.is_fullscreen = facts.is_fullscreen;
     state.is_active = facts.is_active;
     state.accepts_pointer_input = facts.accepts_pointer_input;
-    state.focus_on_appearing = facts.focus_on_appearing;
+    state.accepts_activation = facts.accepts_activation;
     state.focus_on_click = facts.focus_on_click;
     state.background_appearance = facts.background_appearance;
     state.topmost = facts.topmost;
@@ -1047,10 +1094,11 @@ mod window_mutation_tests {
     use super::*;
     use crate::{
         AppContext, Context, DisplayId, Empty, InteractiveElement, IntoElement, Modifiers,
-        MouseButton, MouseDownEvent, MouseMoveEvent, PlatformWindowMutationCapabilities, QuitMode,
-        Render, Styled, TestAppContext, Window, WindowKind, WindowMouseEvent,
-        WindowMutationDispatch, WindowMutationOutcome, WindowMutationSupport, WindowMutationTicket,
-        WindowOptions, WindowPlacementRequest, div, point, px, size,
+        MouseButton, MouseDownEvent, MouseMoveEvent, PlatformWindowCreationCapabilities,
+        PlatformWindowMutationCapabilities, QuitMode, Render, Styled, TestAppContext, Window,
+        WindowActivationPolicy, WindowCreationSupport, WindowInitialPresentationOrder, WindowKind,
+        WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome, WindowMutationSupport,
+        WindowMutationTicket, WindowOptions, WindowPlacementRequest, div, point, px, size,
     };
     use std::{
         cell::Cell,
@@ -1080,10 +1128,268 @@ mod window_mutation_tests {
         }
     }
 
+    struct PaintedRoot;
+
+    impl Render for PaintedRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().bg(crate::white())
+        }
+    }
+
     #[crate::test]
-    fn app_retains_actual_window_kind_mutation_profile_through_updates_and_close(
+    fn transient_owner_token_is_live_generation_and_application_bound(cx: &mut TestAppContext) {
+        let owner: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(240.0)), |_, _| Empty)
+            .into();
+        let owner_token = cx
+            .read(|app| app.transient_window_owner(owner))
+            .expect("a committed window should produce an owner token");
+        let child: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        transient_for: Some(owner_token.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| Empty),
+                )
+            })
+            .expect("the live same-application owner should be accepted")
+            .into();
+        assert_eq!(
+            cx.update_window(child, |_, window, _| {
+                window.creation_facts().transient_for
+            })
+            .expect("the child should remain live"),
+            Some(owner)
+        );
+
+        cx.update_window(owner, |_, window, app| window.remove_window(app))
+            .expect("the owner should close");
+        let replacement: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(240.0)), |_, _| Empty)
+            .into();
+        assert_ne!(
+            replacement, owner,
+            "a reused slot must carry a new generation"
+        );
+        let stale_result: anyhow::Result<crate::WindowHandle<Empty>> = cx.update(|app| {
+            app.open_window(
+                WindowOptions {
+                    transient_for: Some(owner_token),
+                    ..Default::default()
+                },
+                |_, app| app.new(|_| Empty),
+            )
+        });
+        assert!(
+            stale_result
+                .expect_err("a closed owner generation must be rejected")
+                .to_string()
+                .contains("closed or its generation is stale")
+        );
+
+        let mut foreign = TestAppContext::single();
+        let foreign_owner: AnyWindowHandle = foreign
+            .open_window(size(px(320.0), px(240.0)), |_, _| Empty)
+            .into();
+        let foreign_token = foreign
+            .read(|app| app.transient_window_owner(foreign_owner))
+            .expect("the foreign application should create its own token");
+        let foreign_result: anyhow::Result<crate::WindowHandle<Empty>> = cx.update(|app| {
+            app.open_window(
+                WindowOptions {
+                    transient_for: Some(foreign_token),
+                    ..Default::default()
+                },
+                |_, app| app.new(|_| Empty),
+            )
+        });
+        assert!(
+            foreign_result
+                .expect_err("an owner token from another application must be rejected")
+                .to_string()
+                .contains("different application")
+        );
+    }
+
+    #[crate::test]
+    fn unsupported_transient_owner_is_rejected_before_native_creation(cx: &mut TestAppContext) {
+        cx.set_platform_window_creation_capabilities(PlatformWindowCreationCapabilities {
+            focus_on_appearing: WindowCreationSupport::Supported,
+            transient_for: WindowCreationSupport::Unsupported,
+            initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
+        });
+        let owner: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(240.0)), |_, _| Empty)
+            .into();
+        let owner = cx
+            .read(|app| app.transient_window_owner(owner))
+            .expect("the owner token itself is backend-independent");
+        let result: anyhow::Result<crate::WindowHandle<Empty>> = cx.update(|app| {
+            app.open_window(
+                WindowOptions {
+                    transient_for: Some(owner),
+                    ..Default::default()
+                },
+                |_, app| app.new(|_| Empty),
+            )
+        });
+
+        assert!(
+            result
+                .expect_err("unsupported ownership must not be silently ignored")
+                .to_string()
+                .contains("does not support transient top-level owners")
+        );
+    }
+
+    #[crate::test]
+    fn presentation_facts_distinguish_submitted_empty_and_non_empty_frames(
         cx: &mut TestAppContext,
     ) {
+        let empty: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(240.0)), |_, _| Empty)
+            .into();
+        let empty_facts = cx
+            .update_window(empty, |_, window, _| window.presentation_facts())
+            .expect("the empty window should remain live");
+        assert!(empty_facts.native_created);
+        assert!(empty_facts.native_visible);
+        assert_eq!(
+            empty_facts.present_submitted_generation,
+            empty_facts.frame_accepted_generation
+        );
+        assert_eq!(
+            empty_facts
+                .latest_present_attempt
+                .expect("the first present attempt should be observable")
+                .outcome,
+            PlatformWindowPresentOutcome::Submitted
+        );
+        assert_eq!(empty_facts.non_empty_presented_generation, None);
+
+        let painted: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(240.0)), |_, _| PaintedRoot)
+            .into();
+        let painted_facts = cx
+            .update_window(painted, |_, window, _| window.presentation_facts())
+            .expect("the painted window should remain live");
+        assert_eq!(
+            painted_facts.non_empty_presented_generation,
+            painted_facts.frame_accepted_generation
+        );
+        assert_eq!(
+            painted_facts.present_submitted_generation,
+            painted_facts.frame_accepted_generation
+        );
+    }
+
+    #[crate::test]
+    fn presentation_facts_read_current_native_visibility_without_a_present(
+        cx: &mut TestAppContext,
+    ) {
+        let handle: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(240.0)), |_, _| Empty)
+            .into();
+        let platform_window = cx.test_window(handle);
+        platform_window.set_visible_for_test(false);
+
+        let facts = cx
+            .update_window(handle, |_, window, _| window.presentation_facts())
+            .expect("the test window should remain live");
+        assert!(
+            !facts.native_visible,
+            "a native hide must not require another presentation to become observable"
+        );
+    }
+
+    #[crate::test]
+    fn visible_during_hidden_initial_present_rolls_back_window_creation(cx: &mut TestAppContext) {
+        let result: anyhow::Result<crate::WindowHandle<PaintedRoot>> = cx.update(|app| {
+            app.open_window(WindowOptions::default(), |window, app| {
+                window
+                    .platform_window
+                    .as_test()
+                    .expect("the test backend should expose TestWindow")
+                    .reveal_on_next_present();
+                app.new(|_| PaintedRoot)
+            })
+        });
+
+        assert!(
+            result
+                .expect_err("visibility during a hidden first present must fail creation")
+                .to_string()
+                .contains("became visible during its hidden first presentation")
+        );
+    }
+
+    #[crate::test]
+    fn mismatched_creation_visibility_fact_is_rejected_before_root_builder(
+        cx: &mut TestAppContext,
+    ) {
+        cx.set_next_window_creation_show_fact(false);
+        let root_builder_ran = Rc::new(Cell::new(false));
+        let result: anyhow::Result<crate::WindowHandle<Empty>> = cx.update(|app| {
+            app.open_window(WindowOptions::default(), {
+                let root_builder_ran = root_builder_ran.clone();
+                move |_, app| {
+                    root_builder_ran.set(true);
+                    app.new(|_| Empty)
+                }
+            })
+        });
+
+        assert!(
+            result
+                .expect_err("a false creation visibility fact must not commit")
+                .to_string()
+                .contains("did not preserve the requested initial visibility")
+        );
+        assert!(!root_builder_ran.get());
+    }
+
+    #[crate::test]
+    fn rejected_or_deferred_initial_present_rolls_back_window_creation(cx: &mut TestAppContext) {
+        for outcome in [
+            PlatformWindowPresentOutcome::Deferred,
+            PlatformWindowPresentOutcome::Rejected,
+        ] {
+            let reserved_id = Rc::new(Cell::new(None));
+            let result: anyhow::Result<crate::WindowHandle<Empty>> = cx.update(|app| {
+                app.open_window(WindowOptions::default(), {
+                    let reserved_id = reserved_id.clone();
+                    move |window, app| {
+                        reserved_id.set(Some(Window::window_handle(window).window_id()));
+                        window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend should expose TestWindow")
+                            .set_present_outcome(outcome);
+                        app.new(|_| Empty)
+                    }
+                })
+            });
+            assert!(
+                result
+                    .expect_err("an unsubmitted initial frame must fail creation")
+                    .to_string()
+                    .contains("rejected or deferred")
+            );
+            let reserved_id = reserved_id
+                .get()
+                .expect("the root builder should observe its reservation");
+            assert!(
+                cx.read(|app| app.window_handles.get(&reserved_id).copied())
+                    .is_none()
+            );
+        }
+    }
+
+    #[crate::test]
+    fn app_retains_actual_window_profile_through_updates_and_close(cx: &mut TestAppContext) {
         let handle: AnyWindowHandle = cx
             .update(|app| {
                 app.open_window(
@@ -1097,27 +1403,25 @@ mod window_mutation_tests {
             .expect("floating test window should open")
             .into();
         let expected_capabilities = cx
-            .update_window(handle, |_, window, _| window.window_mutation_capabilities())
+            .update_window(handle, |_, window, _| window.window_capabilities())
             .expect("floating test window should remain live");
 
         let profile = cx
-            .read(|app| app.window_mutation_profile(handle).cloned())
-            .expect("opened window should have a mutation profile");
+            .read(|app| app.window_profile(handle).cloned())
+            .expect("opened window should have a platform profile");
         assert_eq!(profile.kind, WindowKind::Floating);
         assert_eq!(profile.capabilities, expected_capabilities);
         assert_eq!(
-            cx.update_window(handle, |_, _, app| {
-                app.window_mutation_profile(handle).cloned()
-            })
-            .expect("profile should remain readable while the window is being updated"),
+            cx.update_window(handle, |_, _, app| { app.window_profile(handle).cloned() })
+                .expect("profile should remain readable while the window is being updated"),
             Some(profile)
         );
 
         cx.update_window(handle, |_, window, app| window.remove_window(app))
             .expect("floating test window should close");
         assert!(
-            cx.read(|app| app.window_mutation_profile(handle).is_none()),
-            "closed windows must not retain stale mutation profiles"
+            cx.read(|app| app.window_profile(handle).is_none()),
+            "closed windows must not retain stale platform profiles"
         );
     }
 
@@ -1963,6 +2267,13 @@ mod window_mutation_tests {
                 PlatformWindowCommand::CompleteInitialPresentation { activate: true },
             ]
         );
+        assert_eq!(
+            cx.update_window(handle, |_, window, _| {
+                window.presentation_facts().initial_presentation
+            })
+            .expect("the accepted retry should remain registered"),
+            crate::WindowInitialPresentationStatus::Completed
+        );
     }
 
     #[crate::test]
@@ -2074,6 +2385,13 @@ mod window_mutation_tests {
             platform_window.platform_command_history(),
             [PlatformWindowCommand::CompleteInitialPresentation { activate: true }]
         );
+        assert_eq!(
+            cx.update_window(handle, |_, window, _| {
+                window.presentation_facts().initial_presentation
+            })
+            .expect("the committed window should remain live"),
+            crate::WindowInitialPresentationStatus::Completed
+        );
     }
 
     #[crate::test]
@@ -2083,7 +2401,7 @@ mod window_mutation_tests {
                 app.open_window(
                     WindowOptions {
                         show: false,
-                        focus: true,
+                        focus_on_appearing: true,
                         ..Default::default()
                     },
                     |_, app| app.new(|_| Empty),
@@ -2101,6 +2419,64 @@ mod window_mutation_tests {
             platform_window.platform_command_history(),
             [PlatformWindowCommand::CompleteInitialPresentation { activate: false }]
         );
+    }
+
+    #[crate::test]
+    fn initial_appearance_is_independent_from_lifetime_activation_policy(cx: &mut TestAppContext) {
+        for focus_on_appearing in [false, true] {
+            for (accepts_activation, focus_on_click) in
+                [(false, false), (false, true), (true, false), (true, true)]
+            {
+                let policy = WindowActivationPolicy {
+                    accepts_activation,
+                    focus_on_click,
+                };
+                let handle: AnyWindowHandle = cx
+                    .update(|app| {
+                        app.open_window(
+                            WindowOptions {
+                                focus_on_appearing,
+                                activation_policy: policy,
+                                ..Default::default()
+                            },
+                            |_, app| app.new(|_| Empty),
+                        )
+                    })
+                    .expect("the independent policy combination should open")
+                    .into();
+                let platform_window = cx.test_window(handle);
+                let expected_initial_activation =
+                    usize::from(focus_on_appearing && accepts_activation);
+                assert_eq!(
+                    platform_window.initial_presentation_state(),
+                    (true, true, expected_initial_activation)
+                );
+
+                let (creation, facts) = cx
+                    .update_window(handle, |_, window, _| {
+                        (
+                            window.creation_facts().clone(),
+                            window.platform_facts().clone(),
+                        )
+                    })
+                    .expect("the policy test window should remain live");
+                assert_eq!(creation.focus_on_appearing, focus_on_appearing);
+                assert_eq!(facts.accepts_activation, accepts_activation);
+                assert_eq!(facts.focus_on_click, focus_on_click);
+
+                cx.update_window(handle, |_, window, _| window.activate_window())
+                    .expect("the policy test window should accept a framework command");
+                cx.run_until_parked();
+                assert_eq!(
+                    platform_window.initial_presentation_state().2,
+                    expected_initial_activation + usize::from(accepts_activation),
+                    "programmatic activation must depend only on lifetime activation policy"
+                );
+
+                cx.update_window(handle, |_, window, app| window.remove_window(app))
+                    .expect("the policy test window should close");
+            }
+        }
     }
 
     #[crate::test]
@@ -2491,12 +2867,11 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
-    fn independent_flag_domains_queue_and_settle_without_superseding_each_other(
+    fn activation_policy_is_one_coherent_domain_independent_from_other_flags(
         cx: &mut TestAppContext,
     ) {
         cx.set_platform_window_mutation_capabilities(PlatformWindowMutationCapabilities {
-            focus_on_appearing: WindowMutationSupport::Live,
-            focus_on_click: WindowMutationSupport::Live,
+            activation_policy: WindowMutationSupport::Live,
             alpha: WindowMutationSupport::Live,
             topmost: WindowMutationSupport::Live,
             taskbar_visibility: WindowMutationSupport::Live,
@@ -2504,8 +2879,10 @@ mod window_mutation_tests {
         });
         let (handle, _) = open_test_window(cx);
         let requests = [
-            WindowMutationRequest::FocusOnAppearing(true),
-            WindowMutationRequest::FocusOnClick(false),
+            WindowMutationRequest::ActivationPolicy(WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: true,
+            }),
             WindowMutationRequest::Alpha(WindowBackgroundAppearance::Transparent),
             WindowMutationRequest::Topmost(true),
             WindowMutationRequest::TaskbarVisibility(false),
@@ -2527,8 +2904,7 @@ mod window_mutation_tests {
             assert!(ticket.observation().is_none());
         }
         for domain in [
-            WindowMutationDomain::FocusOnAppearing,
-            WindowMutationDomain::FocusOnClick,
+            WindowMutationDomain::ActivationPolicy,
             WindowMutationDomain::Alpha,
             WindowMutationDomain::Topmost,
             WindowMutationDomain::TaskbarVisibility,
@@ -2543,14 +2919,58 @@ mod window_mutation_tests {
         let facts = cx
             .update_window(handle, |_, window, _| window.platform_facts().clone())
             .unwrap();
-        assert!(facts.focus_on_appearing);
-        assert!(!facts.focus_on_click);
+        assert!(!facts.accepts_activation);
+        assert!(facts.focus_on_click);
         assert_eq!(
             facts.background_appearance,
             WindowBackgroundAppearance::Transparent
         );
         assert!(facts.topmost);
         assert!(!facts.taskbar_visible);
+    }
+
+    #[crate::test]
+    fn activation_policy_preserves_all_independent_field_combinations(cx: &mut TestAppContext) {
+        cx.set_platform_window_mutation_capabilities(PlatformWindowMutationCapabilities {
+            activation_policy: WindowMutationSupport::Live,
+            ..Default::default()
+        });
+        let (handle, _) = open_test_window(cx);
+
+        for (generation, accepts_activation, focus_on_click) in [
+            (1, false, false),
+            (2, false, true),
+            (3, true, false),
+            (4, true, true),
+        ] {
+            let policy = WindowActivationPolicy {
+                accepts_activation,
+                focus_on_click,
+            };
+            let ticket = cx
+                .update_window(handle, |_, window, _| {
+                    match window.request_activation_policy(policy) {
+                        WindowMutationDispatch::Queued(ticket) => ticket,
+                        dispatch => {
+                            panic!("expected queued activation-policy dispatch, got {dispatch:?}")
+                        }
+                    }
+                })
+                .unwrap();
+            assert_eq!(ticket.generation(), generation);
+            assert_eq!(ticket.domain(), WindowMutationDomain::ActivationPolicy);
+            assert!(cx.flush_window_mutation(handle, WindowMutationDomain::ActivationPolicy));
+            assert_eq!(
+                ticket.observation().unwrap().outcome,
+                WindowMutationOutcome::Exact
+            );
+
+            let facts = cx
+                .update_window(handle, |_, window, _| window.platform_facts().clone())
+                .unwrap();
+            assert_eq!(facts.accepts_activation, accepts_activation);
+            assert_eq!(facts.focus_on_click, focus_on_click);
+        }
     }
 
     #[crate::test]

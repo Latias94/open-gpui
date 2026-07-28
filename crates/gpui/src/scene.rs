@@ -138,6 +138,17 @@ impl Scene {
             .count()
     }
 
+    pub(crate) fn has_primitives(&self) -> bool {
+        !self.shadows.is_empty()
+            || !self.quads.is_empty()
+            || !self.paths.is_empty()
+            || !self.underlines.is_empty()
+            || !self.monochrome_sprites.is_empty()
+            || !self.subpixel_sprites.is_empty()
+            || !self.polychrome_sprites.is_empty()
+            || !self.surfaces.is_empty()
+    }
+
     pub(crate) fn journal_len(&self) -> usize {
         self.paint_operations.len()
     }
@@ -1353,6 +1364,16 @@ mod tests {
             )
             .unwrap();
         ClipStackSnapshot::root(viewport).push(clip)
+    }
+
+    #[test]
+    fn layer_operations_are_not_non_empty_paint_content() {
+        let mut scene = Scene::default();
+        scene.push_layer(scaled_bounds(0.0, 0.0, 100.0, 100.0));
+        scene.pop_layer();
+
+        assert_eq!(scene.len(), 2);
+        assert!(!scene.has_primitives());
     }
 
     #[test]

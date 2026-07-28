@@ -1075,6 +1075,9 @@ impl NativeEventEnvelope {
             NativeWindowEvent::InitialPresentationCompleted => {
                 deliver_window_event(app, window_id, Window::initial_presentation_completed)
             }
+            NativeWindowEvent::InitialPresentationFailed => {
+                deliver_window_event(app, window_id, Window::initial_presentation_failed)
+            }
             NativeWindowEvent::Resized
             | NativeWindowEvent::Moved
             | NativeWindowEvent::WindowStateChanged => {
@@ -1299,6 +1302,7 @@ pub(super) enum NativeWindowEvent {
     ModifiersChanged(ModifiersChangedEvent),
     AppearanceChanged,
     InitialPresentationCompleted,
+    InitialPresentationFailed,
     Resized,
     Moved,
     WindowStateChanged,
@@ -1325,6 +1329,7 @@ impl NativeWindowEvent {
             Self::ActiveChanged(_)
             | Self::ModifiersChanged(_)
             | Self::InitialPresentationCompleted
+            | Self::InitialPresentationFailed
             | Self::CloseRequested
             | Self::Closed
             | Self::HoverChanged(_)
@@ -1364,6 +1369,9 @@ impl NativeWindowEvent {
             Self::AppearanceChanged => (NativeCallbackKind::AppearanceChanged, None),
             Self::InitialPresentationCompleted => {
                 (NativeCallbackKind::InitialPresentationCompleted, None)
+            }
+            Self::InitialPresentationFailed => {
+                (NativeCallbackKind::InitialPresentationFailed, None)
             }
             Self::Resized => (NativeCallbackKind::Resized, None),
             Self::Moved => (NativeCallbackKind::Moved, None),

@@ -353,9 +353,13 @@ fn apply_activation_to_host(
         cx.focused_window(),
         transaction.window(),
     );
-    let backend_focus_apply = host
-        .viewport_runtime()
-        .apply_activation_backend_focus(transaction, backend_focus);
+    let request_backend_activation =
+        should_activate_window && window.platform_facts().accepts_activation;
+    let backend_focus_apply = host.viewport_runtime().apply_activation_backend_focus(
+        transaction,
+        backend_focus,
+        request_backend_activation,
+    );
     host.viewport_runtime()
         .settle_backend_focus_cancellation_in_context(cx);
     if !registration_is_current(host) {
@@ -371,7 +375,7 @@ fn apply_activation_to_host(
         outcome.set(DockViewportActivationApplyOutcome::NoTarget);
         return;
     }
-    let window_activation_requested = should_activate_window && !backend_focus.target_focused();
+    let window_activation_requested = request_backend_activation && !backend_focus.target_focused();
     if window_activation_requested {
         window.activate_window();
     }
@@ -513,7 +517,10 @@ mod tests {
         DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusRequest,
         host_test_support::{open_host, space, tabs_graph},
     };
-    use open_gpui::{AppContext as _, Entity, TestAppContext, px, size};
+    use open_gpui::{
+        AppContext as _, Entity, TestAppContext, WindowActivationPolicy, WindowMutationDispatch,
+        WindowMutationDomain, px, size,
+    };
 
     fn current_registration(
         cx: &TestAppContext,
@@ -705,6 +712,60 @@ mod tests {
             Some(DockViewportFocusRequest::panel("a")),
             "low-level apply records intent; host render subscription consumes it after backend focus"
         );
+    }
+
+    #[open_gpui::test]
+    fn permanent_nonactivation_does_not_queue_or_count_activation(cx: &mut TestAppContext) {
+        let (graph, _) = tabs_graph(&["a"]);
+        let (window, host, _visual) = open_host(
+            cx,
+            graph,
+            &[("a", "Panel A", "A")],
+            size(px(320.0), px(240.0)),
+        );
+        let window_handle: AnyWindowHandle = window.into();
+        let dispatch = window
+            .update(cx, |_, window, _| {
+                window.request_activation_policy(WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: true,
+                })
+            })
+            .expect("the viewport should remain live");
+        assert!(matches!(dispatch, WindowMutationDispatch::Queued(_)));
+        assert!(cx.flush_window_mutation(window_handle, WindowMutationDomain::ActivationPolicy));
+        assert!(
+            !window
+                .update(cx, |_, window, _| {
+                    window.platform_facts().accepts_activation
+                })
+                .expect("the committed viewport facts should remain readable")
+        );
+
+        let activation = DockViewportActivationTransaction::registered(
+            current_registration(cx, &host, window.window_id()),
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+        let outcome = cx.update(|app| apply_viewport_activation_transaction(Some(activation), app));
+
+        assert_eq!(
+            outcome,
+            DockViewportActivationApplyOutcome::Applied {
+                changed: false,
+                focus_command_queued: false,
+                window_activation_requested: false,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
+                backend_focus_apply: DockViewportActivationBackendFocusApply::default(),
+            }
+        );
+        assert_eq!(
+            cx.read_entity(&host, |host, _| {
+                host.viewport_runtime().pending_activation()
+            }),
+            None
+        );
+        assert_ne!(cx.update(|app| app.active_window()), Some(window_handle));
     }
 
     #[open_gpui::test]

@@ -146,7 +146,7 @@ fn run_example() {
         let bounds = Bounds::centered(None, size(px(400.), px(500.)), cx);
         cx.open_window(
             WindowOptions {
-                focus: true,
+                focus_on_appearing: true,
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },

@@ -117,7 +117,7 @@ impl HeadlessAppContext {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                focus: false,
+                focus_on_appearing: false,
                 show: false,
                 ..Default::default()
             },

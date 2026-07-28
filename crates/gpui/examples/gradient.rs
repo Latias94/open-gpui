@@ -249,7 +249,7 @@ fn run_example() {
     application().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
-                focus: true,
+                focus_on_appearing: true,
                 ..Default::default()
             },
             |_, cx| cx.new(|_| GradientViewer::new()),

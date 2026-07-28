@@ -20,6 +20,7 @@ use super::{
         NativeAppEvent, NativeEventDisposition, NativeEventDrainControl, NativeEventIngress,
         NativeEventPrefixPop, NativeWindowEvent, NativeWorkEnvelope, NativeWorkPop,
     },
+    native_platform_commands::NativePlatformCommandRejection,
     native_query_snapshot::{NativeQuerySnapshots, NativeWindowLifecycle},
 };
 use crate::{
@@ -814,8 +815,17 @@ impl AppCell {
                                     }
                                     PlatformWindowCommandOutcome::Rejected => {
                                         terminal.settle(NativeBoundaryDisposition::Rejected);
-                                        if let Some(retry) = command.retry_after_rejection() {
-                                            self.native_events.enqueue_native_command(retry);
+                                        match command.settle_rejection() {
+                                            NativePlatformCommandRejection::Retry(retry) => {
+                                                self.native_events.enqueue_native_command(retry);
+                                            }
+                                            NativePlatformCommandRejection::InitialPresentationFailed => {
+                                                self.enqueue_native_window_event(
+                                                    window_id,
+                                                    NativeWindowEvent::InitialPresentationFailed,
+                                                );
+                                            }
+                                            NativePlatformCommandRejection::Terminal => {}
                                         }
                                     }
                                 }

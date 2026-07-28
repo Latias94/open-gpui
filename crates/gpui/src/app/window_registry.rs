@@ -67,8 +67,7 @@ fn commit_reserved(app: &mut App, id: WindowId, window: Window) {
         "window reservation must be current when committed"
     );
     app.window_handles.insert(id, window.handle);
-    app.window_mutation_profiles
-        .insert(id, window.window_mutation_profile());
+    app.window_profiles.insert(id, window.window_profile());
     app.windows
         .get_mut(id)
         .expect("reserved window id should still exist")
@@ -89,7 +88,7 @@ fn rollback_reserved(app: &mut App, id: WindowId) {
         )
     });
     app.window_handles.remove(&id);
-    app.window_mutation_profiles.remove(&id);
+    app.window_profiles.remove(&id);
     cleanup_entity_window_links(app, id);
     if app.windows.remove(id).is_some()
         && let Some(cell) = app.this.upgrade()
@@ -237,7 +236,7 @@ fn restore_taken_window(app: &mut App, id: WindowId, window: Box<Window>) {
 pub(super) fn clear(app: &mut App) {
     app.windows.clear();
     app.window_handles.clear();
-    app.window_mutation_profiles.clear();
+    app.window_profiles.clear();
     if let Some(cell) = app.this.upgrade() {
         cell.clear_native_windows();
     }
@@ -262,7 +261,7 @@ pub(super) fn finish_window_update(app: &mut App, id: WindowId, window: Box<Wind
 
 fn unregister_removed_window(app: &mut App, id: WindowId) {
     app.window_handles.remove(&id);
-    app.window_mutation_profiles.remove(&id);
+    app.window_profiles.remove(&id);
     app.windows.remove(id);
     if let Some(cell) = app.this.upgrade() {
         cell.remove_native_window(id);

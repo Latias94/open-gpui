@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-25
-**Amended**: 2026-07-27 (U24 callback authority)
+**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority)
 
 ## Context
 
@@ -36,13 +36,15 @@ later window incarnation.
 
 ## Decision
 
-GPUI exposes one backend-neutral, property-specific window mutation capability contract. The
-single `PlatformWindowMutationCapabilities` matrix separates coordinate authority from support for
-position, size, windowed, maximized, fullscreen, minimized, restore bounds, pointer input,
-focus-on-appearing, focus-on-click, alpha, topmost, and taskbar visibility. Each property is
-explicitly unsupported, creation-only, or live; a creation-only claim requires a native creation
-path, and a live claim also requires typed dispatch plus a readable native observation path for
-the resulting fact.
+GPUI exposes one backend-neutral `PlatformWindowCapabilities` contract with separate creation and
+mutation halves. `PlatformWindowCreationCapabilities` reports whether the backend can honor a
+non-activating first appearance and a typed transient owner, plus whether the first frame can be
+submitted before native visibility. `PlatformWindowMutationCapabilities` separates coordinate
+authority from support for position, size, windowed, maximized, fullscreen, minimized, restore
+bounds, pointer input, one coherent activation policy, alpha, topmost, and taskbar visibility.
+Each mutation property is explicitly unsupported, creation-only, or live; a creation-only claim
+requires a native creation path, and a live claim also requires typed dispatch plus a readable
+native observation path for the resulting fact.
 
 The coordinate contract is explicit:
 
@@ -58,14 +60,15 @@ The coordinate contract is explicit:
   windows have no equivalent state request and remain unsupported for those kind-specific
   operations.
 
-Windows advertises `Live` size, windowed, maximized, fullscreen, and pointer-input support.
-Position, restore bounds, focus-on-appearing, and alpha are `CreationOnly`; minimized,
-focus-on-click, topmost, and taskbar visibility are unsupported. Its live backend paths return
-typed queued dispatch, guard each placement or pointer-input generation, read the resulting native
-facts, roll back failed multi-step native writes, and emit one domain-and-generation-bound
-terminal observation. Fullscreen rollback includes style, bounds, `WINDOWPLACEMENT`, restore
-state, display/scale facts, and the `NonRudeHWND` taskbar property; pointer-input rollback restores
-both the native style and the internal hit-test fact.
+Windows advertises `Live` size, windowed, maximized, fullscreen, pointer-input, and
+activation-policy support. Position, restore bounds, and alpha are `CreationOnly`; minimized,
+topmost, and taskbar visibility are unsupported. It supports non-activating first appearance,
+typed transient ownership, and first submission before visibility. Its live backend paths return
+typed queued dispatch, guard each placement, pointer-input, or activation-policy generation, read
+the resulting native facts, roll back failed multi-step native writes, and emit one
+domain-and-generation-bound terminal observation. Fullscreen rollback includes style, bounds,
+`WINDOWPLACEMENT`, restore state, display/scale facts, and the `NonRudeHWND` taskbar property;
+pointer and activation rollback restore both native state and the committed backend fact.
 
 The remaining native projections advertise creation-only support where the backend consumes the
 canonical creation request. They do not upgrade legacy resize, toggle, or boolean setters to
@@ -76,8 +79,8 @@ X11 window-manager and Wayland compositor state requests remain requests: the re
 facts may be adjusted and are authoritative only after native observation.
 
 Position, size, each placement state, and restore bounds remain one GPUI placement conflict domain.
-Pointer input, focus-on-appearing, focus-on-click, alpha, topmost, and taskbar visibility each own
-an independent domain. The common GPUI authority owns all seven monotonic generation streams,
+Pointer input, coherent activation policy, alpha, topmost, and taskbar visibility each own an
+independent domain. The common GPUI authority owns all six monotonic generation streams,
 queued versus terminal outcomes, close handling, and the committed fact cache. Every backend
 terminal observation carries the exact domain and generation supplied at dispatch. `Window`
 rejects a stale generation before committing its facts, so a delayed callback cannot settle a
@@ -86,7 +89,7 @@ unsupported, or queued, the backend invalidates older queued work in that domain
 invalidates every backend domain before retained tickets settle as `WindowClosed`.
 
 `WindowMutationRequest` is the complete executable request vocabulary, not merely a diagnostic
-matrix. The public placement, pointer-input, focus, alpha, topmost, taskbar, resize, zoom,
+matrix. The public placement, pointer-input, activation-policy, alpha, topmost, taskbar, resize, zoom,
 minimize, and fullscreen helpers are thin typed wrappers over it. `WindowPlatformFacts` carries
 the corresponding committed independent-flag facts. A creation-only value is seeded from window
 creation and preserved when a generic native geometry refresh cannot observe that property.
@@ -116,12 +119,37 @@ Capability projection before opening a window uses its actual creation kind and 
 report display-dependent creation support exactly, including whether an X11 screen exposes a
 transparent visual. An unavailable display id is normalized to `None` before both projection and
 creation, so a stale saved target falls back to the current default rather than creating a profile
-for one screen and a window on another. GPUI captures one immutable
-`PlatformWindowMutationProfile` containing the `WindowKind` and resolved matrix when the window is
+for one screen and a window on another. GPUI captures one immutable `PlatformWindowProfile`
+containing the `WindowKind` and resolved creation and mutation capabilities when the window is
 registered, keeps it readable while a window update temporarily removes mutable window state from
 the registry, and removes it on close. Dock runtime status resolves every viewport window through
 that profile instead of applying the backend's `WindowKind::Normal` or primary-display matrix to
 heterogeneous windows.
+
+### Appearance, activation, ownership, and presentation
+
+`WindowOptions::focus_on_appearing` is an immutable one-shot first-appearance request. It is never
+projected into a permanent no-activate native style and has no live mutation request.
+`WindowActivationPolicy` independently carries lifetime `accepts_activation` and
+`focus_on_click`; both fields share one request, generation, rollback, committed fact update, and
+terminal observation so callers cannot observe a half-applied policy. Pointer-input acceptance is
+another independent domain.
+
+`WindowTransientOwner` is an opaque application-bound token for one exact live
+`AnyWindowHandle`. GPUI validates the application, full window generation, liveness, and non-self
+relationship before native creation. Backends either establish the requested top-level native
+relationship and report it in `WindowCreationFacts` or reject it according to their creation
+capability; they never guess the active window. Ownership assists native grouping, activation,
+minimization, and z-order. It does not imply child-window style or cascading application lifetime.
+
+`WindowPresentationFacts` deliberately separates native creation, latest accepted frame, latest
+submitted present, latest submitted non-empty scene, the exact latest present attempt, bounded
+initial-presentation settlement, and current native visibility. A draw returns `Submitted`,
+`Deferred`, or `Rejected`; only a real renderer submission advances present facts. Windows can
+submit the initial frame while hidden and reveals only after that accepted presentation gate.
+Backends that must map first declare `AfterVisibility`. Wayland declares
+`PresentationEstablishesVisibility` because its first buffer commit both presents content and maps
+the toplevel. Visibility never stands in for non-empty presentation.
 
 ### Callback delivery and reentrancy
 
@@ -262,8 +290,9 @@ Every dispatcher returns the synchronous terminal
 receives its own terminal diagnostic, and a missing weak native target is `Rejected`. Only an
 accepted `CompleteInitialPresentation` publishes `InitialPresentationCompleted`. A rejected
 initial-presentation attempt retains the backend's hidden/show intent and receives exactly one
-bounded retry, for two attempts total; a second rejection leaves the window unpresented and emits
-no completion. Other rejected commands are terminal and are never retried.
+bounded retry, for two attempts total; a second rejection leaves the window unpresented, publishes
+`InitialPresentationFailed`, and records `WindowInitialPresentationStatus::Rejected`. Other
+rejected commands are terminal and are never retried.
 
 No generic `Box<dyn FnOnce(&mut App)>`, arbitrary native closure, executor task, or callback outbox
 may cross this boundary. Model, controller, and Dock operations instead return typed effects;

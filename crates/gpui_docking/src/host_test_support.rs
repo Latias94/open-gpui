@@ -125,6 +125,7 @@ pub(crate) fn viewport_window_options(width: f32, height: f32) -> WindowOptions 
         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
             0.0, 0.0, width, height,
         ))),
+        focus_on_appearing: false,
         ..Default::default()
     }
 }

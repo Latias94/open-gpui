@@ -156,8 +156,7 @@ pub struct WindowsWindowState {
     pub input_dispatch: Cell<WindowsInputDispatchState>,
     pub pressed_caption_button: Cell<Option<WindowsCaptionButtonAction>>,
     accepts_pointer_input: Cell<bool>,
-    focus_on_appearing: bool,
-    focus_on_click: bool,
+    activation_policy: Cell<WindowActivationPolicy>,
     taskbar_visible: bool,
 
     pub display: Cell<WindowsDisplay>,
@@ -166,9 +165,12 @@ pub struct WindowsWindowState {
     pub invalidate_devices: Arc<AtomicBool>,
     placement_mutation_generation: Cell<Option<u64>>,
     pointer_input_mutation_generation: Cell<Option<u64>>,
+    activation_policy_mutation_generation: Cell<Option<u64>>,
     deferred_placement_mutation: Cell<Option<DeferredWindowPlacementMutation>>,
     #[cfg(test)]
     pub(crate) fail_next_pointer_input_frame_change: Cell<bool>,
+    #[cfg(test)]
+    pub(crate) fail_next_activation_policy_frame_change: Cell<bool>,
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
     hwnd: HWND,
@@ -180,6 +182,7 @@ pub(crate) struct WindowsWindowInner {
     native_window_lifecycle: Cell<NativeWindowLifecycle>,
     drag_drop_registered: Cell<bool>,
     show_on_initial_presentation: Cell<bool>,
+    creation_facts: WindowCreationFacts,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: WindowsWindowState,
     system_settings: WindowsSystemSettings,
@@ -193,7 +196,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     raw_window_handles: std::sync::Weak<RegisteredWindows>,
-    pub(crate) parent_hwnd: Option<HWND>,
+    owner_hwnd: Option<HWND>,
     modal_parent_disabled: Cell<bool>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
@@ -212,8 +215,7 @@ impl WindowsWindowState {
         disable_direct_composition: bool,
         invalidate_devices: Arc<AtomicBool>,
         accepts_pointer_input: bool,
-        focus_on_appearing: bool,
-        focus_on_click: bool,
+        activation_policy: WindowActivationPolicy,
         taskbar_visible: bool,
     ) -> Result<Self> {
         let scale_factor = {
@@ -250,6 +252,7 @@ impl WindowsWindowState {
         let initial_placement = None;
         let placement_mutation_generation = Cell::new(None);
         let pointer_input_mutation_generation = Cell::new(None);
+        let activation_policy_mutation_generation = Cell::new(None);
         let deferred_placement_mutation = Cell::new(None);
 
         let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
@@ -281,15 +284,17 @@ impl WindowsWindowState {
             input_dispatch,
             pressed_caption_button: Cell::new(pressed_caption_button),
             accepts_pointer_input: Cell::new(accepts_pointer_input),
-            focus_on_appearing,
-            focus_on_click,
+            activation_policy: Cell::new(activation_policy),
             taskbar_visible,
             display: Cell::new(display),
             placement_mutation_generation,
             pointer_input_mutation_generation,
+            activation_policy_mutation_generation,
             deferred_placement_mutation,
             #[cfg(test)]
             fail_next_pointer_input_frame_change: Cell::new(false),
+            #[cfg(test)]
+            fail_next_activation_policy_frame_change: Cell::new(false),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
             hwnd,
@@ -306,6 +311,10 @@ impl WindowsWindowState {
 
     pub(crate) fn accepts_pointer_input(&self) -> bool {
         self.accepts_pointer_input.get()
+    }
+
+    pub(crate) fn activation_policy(&self) -> WindowActivationPolicy {
+        self.activation_policy.get()
     }
 
     pub(crate) fn is_maximized(&self) -> bool {
@@ -376,8 +385,7 @@ impl WindowsWindowInner {
             context.disable_direct_composition,
             context.invalidate_devices.clone(),
             context.accepts_pointer_input,
-            context.focus_on_appearing,
-            context.focus_on_click,
+            context.activation_policy,
             context.taskbar_visible,
         )?;
 
@@ -386,6 +394,11 @@ impl WindowsWindowInner {
             native_window_lifecycle: Cell::new(NativeWindowLifecycle::Live),
             drag_drop_registered: Cell::new(false),
             show_on_initial_presentation: Cell::new(context.show_on_initial_presentation),
+            creation_facts: WindowCreationFacts {
+                show: context.show_on_initial_presentation,
+                focus_on_appearing: context.focus_on_appearing,
+                transient_for: context.transient_for,
+            },
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
@@ -393,13 +406,17 @@ impl WindowsWindowInner {
             is_movable: context.is_movable,
             executor: context.executor.clone(),
             validation_number: context.validation_number,
-            registration: RegisteredWindow::new(hwnd, context.native_window_generation),
+            registration: RegisteredWindow::new(
+                hwnd,
+                context.native_window_generation,
+                context.handle.window_id(),
+            ),
             recovered_directx_devices: context.recovered_directx_devices.clone(),
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
             raw_window_handles: context.raw_window_handles.clone(),
             system_settings: WindowsSystemSettings::new(),
-            parent_hwnd: context.parent_hwnd,
+            owner_hwnd: context.owner_hwnd,
             modal_parent_disabled: Cell::new(context.modal_parent_disabled),
             #[cfg(test)]
             lifecycle_test_probe: context.lifecycle_test_probe.clone(),
@@ -469,7 +486,7 @@ impl WindowsWindowInner {
         if !self.modal_parent_disabled.replace(false) {
             return;
         }
-        let Some(parent_hwnd) = self.parent_hwnd else {
+        let Some(parent_hwnd) = self.owner_hwnd else {
             return;
         };
         unsafe {
@@ -524,7 +541,7 @@ impl WindowsWindowInner {
                 rect.top,
                 rect.right - rect.left,
                 rect.bottom - rect.top,
-                SWP_NOACTIVATE | SWP_NOZORDER,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
             )
         }
         .context("failed to prepare hidden window placement");
@@ -551,7 +568,8 @@ impl WindowsWindowInner {
             self.state.initial_placement.set(Some(open_status));
             anyhow::bail!("injected initial-presentation failure");
         }
-        let result = (|| {
+        let activate = activate && self.state.activation_policy.get().accepts_activation;
+        let result = self.with_owner_detached_for_nonactivating_show(activate, || {
             let rect = open_status.placement.rcNormalPosition;
             unsafe {
                 SetWindowPos(
@@ -561,18 +579,21 @@ impl WindowsWindowInner {
                     rect.top,
                     rect.right - rect.left,
                     rect.bottom - rect.top,
-                    SWP_NOACTIVATE | SWP_NOZORDER,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
                 )
             }
             .context("failed to apply initial restore geometry")?;
 
             match open_status.state {
-                WindowOpenState::Maximized => unsafe {
+                WindowOpenState::Maximized if activate => unsafe {
                     let mut placement = open_status.placement;
                     placement.showCmd = SW_SHOWMAXIMIZED.0 as u32;
                     SetWindowPlacement(self.hwnd, &placement)
                         .context("failed to apply initial maximized placement")?;
                 },
+                WindowOpenState::Maximized => {
+                    self.apply_nonactivating_initial_maximized_placement()?;
+                }
                 WindowOpenState::Fullscreen => {
                     if !self.state.is_fullscreen() {
                         self.toggle_fullscreen_now()?;
@@ -592,8 +613,15 @@ impl WindowsWindowInner {
             unsafe {
                 let _ = ShowWindow(self.hwnd, command);
             }
+            if activate && !self.state.activation_policy.get().focus_on_click {
+                unsafe {
+                    SetActiveWindow(self.hwnd).ok();
+                    SetFocus(Some(self.hwnd)).ok();
+                    let _ = SetForegroundWindow(self.hwnd);
+                }
+            }
             Ok(())
-        })();
+        });
         match result {
             Ok(()) => {
                 self.show_on_initial_presentation.set(false);
@@ -604,6 +632,78 @@ impl WindowsWindowInner {
                 Err(error)
             }
         }
+    }
+
+    fn apply_nonactivating_initial_maximized_placement(&self) -> Result<()> {
+        let style = WINDOW_STYLE(
+            self.get_window_long_checked(
+                GWL_STYLE,
+                "failed to read initial maximized window style",
+            )? as _,
+        ) | WS_MAXIMIZE;
+        let maximized_outer_bounds = calculate_window_rect(
+            self.state
+                .display
+                .get()
+                .visible_bounds()
+                .to_device_pixels(self.state.scale_factor.get()),
+            &self.state.border_offset,
+        );
+
+        self.apply_window_style_and_bounds(StyleAndBounds {
+            style,
+            x: maximized_outer_bounds.left,
+            y: maximized_outer_bounds.top,
+            cx: maximized_outer_bounds.right - maximized_outer_bounds.left,
+            cy: maximized_outer_bounds.bottom - maximized_outer_bounds.top,
+        })
+        .context("failed to apply non-activating initial maximized placement")
+    }
+
+    fn with_owner_detached_for_nonactivating_show<T>(
+        &self,
+        activate: bool,
+        show: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        if activate {
+            return show();
+        }
+        let Some(owner_hwnd) = self.owner_hwnd else {
+            return show();
+        };
+        let observed_owner = unsafe { GetWindow(self.hwnd, GW_OWNER) }
+            .context("failed to read transient owner before non-activating show")?;
+        anyhow::ensure!(
+            observed_owner == owner_hwnd,
+            "transient owner changed before non-activating show"
+        );
+        self.set_window_long_checked(
+            GWLP_HWNDPARENT,
+            0,
+            "failed to detach transient owner for non-activating show",
+        )?;
+
+        let show_result = show();
+        let restore_result = self.set_window_long_checked(
+            GWLP_HWNDPARENT,
+            owner_hwnd.0 as isize,
+            "failed to restore transient owner after non-activating show",
+        );
+        if let Err(error) = restore_result {
+            return match show_result {
+                Ok(_) => Err(error),
+                Err(show_error) => Err(show_error).context(format!(
+                    "restoring the transient owner also failed: {error:#}"
+                )),
+            };
+        }
+        let restored_owner = unsafe { GetWindow(self.hwnd, GW_OWNER) }
+            .context("failed to read back restored transient owner")?;
+        anyhow::ensure!(
+            restored_owner == owner_hwnd,
+            "restored transient owner did not match the committed creation fact"
+        );
+        show_result
     }
 
     fn complete_initial_presentation(
@@ -627,14 +727,18 @@ impl WindowsWindowInner {
 
     /// Must stay synchronous because activation APIs can pump window messages and command
     /// dispatch runs only after the application has released its mutable borrow.
-    fn activate_now(self: &Rc<Self>) {
-        if self.is_native_window_terminal() {
-            return;
+    fn activate_now(self: &Rc<Self>) -> PlatformWindowCommandOutcome {
+        if self.is_native_window_terminal()
+            || !self.state.activation_policy.get().accepts_activation
+        {
+            return PlatformWindowCommandOutcome::Rejected;
         }
 
         let hwnd = self.hwnd;
         let deferred_placement = self.state.deferred_placement_mutation.take();
         let had_initial_placement = self.has_pending_initial_placement();
+        let initial_placement_before_deferred =
+            deferred_placement.and_then(|_| self.pending_initial_placement());
         let before_facts = deferred_placement.map(|_| {
             self.observed_platform_facts_from_native()
                 .unwrap_or_else(|_| self.cached_platform_facts())
@@ -646,6 +750,10 @@ impl WindowsWindowInner {
             self.present_pending_initial_placement(true, true)
                 .map(|_| ())
         })();
+        let placement_failed = placement_result.is_err();
+        if placement_failed && let Some(initial_placement) = initial_placement_before_deferred {
+            self.state.initial_placement.set(Some(initial_placement));
+        }
 
         if let Some(deferred) = deferred_placement {
             if self.placement_mutation_is_current(deferred.generation)
@@ -667,8 +775,12 @@ impl WindowsWindowInner {
             placement_result.log_err();
         }
 
+        if placement_failed {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+
         if self.is_native_window_terminal() {
-            return;
+            return PlatformWindowCommandOutcome::Rejected;
         }
         if !had_initial_placement && unsafe { !IsWindowVisible(hwnd).as_bool() } {
             let command = if self.state.is_maximized() {
@@ -682,7 +794,7 @@ impl WindowsWindowInner {
         }
 
         if self.is_native_window_terminal() {
-            return;
+            return PlatformWindowCommandOutcome::Rejected;
         }
         // If the window is minimized, restore it.
         if unsafe { IsIconic(hwnd).as_bool() } {
@@ -692,21 +804,21 @@ impl WindowsWindowInner {
         }
 
         if self.is_native_window_terminal() {
-            return;
+            return PlatformWindowCommandOutcome::Rejected;
         }
         unsafe {
             SetActiveWindow(hwnd).ok();
         }
 
         if self.is_native_window_terminal() {
-            return;
+            return PlatformWindowCommandOutcome::Rejected;
         }
         unsafe {
             SetFocus(Some(hwnd)).ok();
         }
 
         if self.is_native_window_terminal() {
-            return;
+            return PlatformWindowCommandOutcome::Rejected;
         }
         // Foreground activation remains subject to the operating system's focus-stealing policy.
         // Never synthesize keyboard input to bypass that policy: framework commands must not
@@ -714,6 +826,7 @@ impl WindowsWindowInner {
         unsafe {
             let _ = SetForegroundWindow(hwnd);
         }
+        PlatformWindowCommandOutcome::Accepted
     }
 
     /// Applies a fullscreen transition on the window-owning thread.
@@ -759,7 +872,7 @@ impl WindowsWindowInner {
                     cx: physical_bounds.size.width.0,
                     cy: physical_bounds.size.height.0,
                 };
-                let result = self.apply_fullscreen_style_and_bounds(fullscreen_bounds);
+                let result = self.apply_window_style_and_bounds(fullscreen_bounds);
                 if result.is_ok() {
                     self.state.fullscreen.set(Some(fullscreen_restore));
                     set_non_rude_hwnd(self.hwnd, false)?;
@@ -781,7 +894,7 @@ impl WindowsWindowInner {
             }
         };
 
-        let result = self.apply_fullscreen_style_and_bounds(StyleAndBounds {
+        let result = self.apply_window_style_and_bounds(StyleAndBounds {
             style,
             x,
             y,
@@ -805,7 +918,7 @@ impl WindowsWindowInner {
         Ok(())
     }
 
-    fn apply_fullscreen_style_and_bounds(&self, style_and_bounds: StyleAndBounds) -> Result<()> {
+    fn apply_window_style_and_bounds(&self, style_and_bounds: StyleAndBounds) -> Result<()> {
         let rollback = self.current_style_and_bounds()?;
         let StyleAndBounds {
             style,
@@ -814,11 +927,7 @@ impl WindowsWindowInner {
             cx,
             cy,
         } = style_and_bounds;
-        self.set_window_long_checked(
-            GWL_STYLE,
-            style.0 as isize,
-            "failed to update fullscreen window style",
-        )?;
+        self.set_window_long_checked(GWL_STYLE, style.0 as isize, "failed to update window style")?;
         let placement_result = unsafe {
             SetWindowPos(
                 self.hwnd,
@@ -827,14 +936,14 @@ impl WindowsWindowInner {
                 y,
                 cx,
                 cy,
-                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
             )
         }
-        .context("failed to apply fullscreen window placement");
+        .context("failed to apply window style and bounds");
         if let Err(error) = placement_result {
             if let Err(rollback_error) = self.restore_style_and_bounds(rollback) {
                 return Err(error).context(format!(
-                    "fullscreen placement rollback also failed: {rollback_error:#}"
+                    "window style-and-bounds rollback also failed: {rollback_error:#}"
                 ));
             }
             return Err(error);
@@ -871,7 +980,7 @@ impl WindowsWindowInner {
                 snapshot.y,
                 snapshot.cx,
                 snapshot.cy,
-                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
             )
         }
         .context("failed to restore window bounds")?;
@@ -1143,7 +1252,12 @@ impl WindowsWindowInner {
                     0,
                     0,
                     0,
-                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER,
+                    SWP_FRAMECHANGED
+                        | SWP_NOMOVE
+                        | SWP_NOSIZE
+                        | SWP_NOACTIVATE
+                        | SWP_NOOWNERZORDER
+                        | SWP_NOZORDER,
                 )
             }
             .context("failed to apply pointer-input window style")
@@ -1163,7 +1277,12 @@ impl WindowsWindowInner {
                         0,
                         0,
                         0,
-                        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER,
+                        SWP_FRAMECHANGED
+                            | SWP_NOMOVE
+                            | SWP_NOSIZE
+                            | SWP_NOACTIVATE
+                            | SWP_NOOWNERZORDER
+                            | SWP_NOZORDER,
                     )
                 };
             }
@@ -1222,6 +1341,118 @@ impl WindowsWindowInner {
             .get_window_long_checked(GWL_EXSTYLE, "failed to read pointer-input window style")?
             & WS_EX_TRANSPARENT.0 as isize)
             == 0)
+    }
+
+    fn native_activation_policy(&self) -> Result<WindowActivationPolicy> {
+        let focus_on_click = (self
+            .get_window_long_checked(GWL_EXSTYLE, "failed to read activation window style")?
+            & WS_EX_NOACTIVATE.0 as isize)
+            == 0;
+        let mut policy = self.state.activation_policy.get();
+        policy.focus_on_click = focus_on_click;
+        self.state.activation_policy.set(policy);
+        Ok(policy)
+    }
+
+    fn refresh_activation_window_frame(&self, context: &'static str) -> Result<()> {
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED
+                    | SWP_NOMOVE
+                    | SWP_NOSIZE
+                    | SWP_NOACTIVATE
+                    | SWP_NOOWNERZORDER
+                    | SWP_NOZORDER,
+            )
+        }
+        .context(context)
+    }
+
+    fn set_activation_policy_now(&self, requested: WindowActivationPolicy) -> Result<()> {
+        let original = self.native_activation_policy()?;
+        if original == requested {
+            return Ok(());
+        }
+        if original.focus_on_click == requested.focus_on_click {
+            self.state.activation_policy.set(requested);
+            return Ok(());
+        }
+
+        let original_style =
+            self.get_window_long_checked(GWL_EXSTYLE, "failed to read activation window style")?;
+        let requested_style = if requested.focus_on_click {
+            original_style & !(WS_EX_NOACTIVATE.0 as isize)
+        } else {
+            original_style | WS_EX_NOACTIVATE.0 as isize
+        };
+        self.set_window_long_checked(
+            GWL_EXSTYLE,
+            requested_style,
+            "failed to update activation window style",
+        )?;
+        #[cfg(test)]
+        let fail_frame_change = self
+            .state
+            .fail_next_activation_policy_frame_change
+            .replace(false);
+        #[cfg(not(test))]
+        let fail_frame_change = false;
+        let apply_result = if fail_frame_change {
+            Err(anyhow::anyhow!(
+                "injected activation-policy frame-change failure"
+            ))
+        } else {
+            self.refresh_activation_window_frame("failed to apply activation window style")
+        };
+
+        if apply_result.is_err() {
+            let rollback_result = self.set_window_long_checked(
+                GWL_EXSTYLE,
+                original_style,
+                "failed to roll back activation window style",
+            );
+            if rollback_result.is_ok() {
+                self.refresh_activation_window_frame(
+                    "failed to refresh rolled-back activation window style",
+                )
+                .log_err();
+            }
+            rollback_result.log_err();
+        }
+
+        let native_focus_on_click = match self
+            .get_window_long_checked(GWL_EXSTYLE, "failed to verify activation window style")
+        {
+            Ok(style) => (style & WS_EX_NOACTIVATE.0 as isize) == 0,
+            Err(error) => {
+                self.set_window_long_checked(
+                    GWL_EXSTYLE,
+                    original_style,
+                    "failed to restore activation style after readback failure",
+                )
+                .log_err();
+                self.state.activation_policy.set(original);
+                return Err(error);
+            }
+        };
+        if native_focus_on_click == requested.focus_on_click {
+            self.state.activation_policy.set(requested);
+            return Ok(());
+        }
+
+        self.state.activation_policy.set(original);
+        if let Err(error) = apply_result {
+            return Err(error);
+        }
+        Err(anyhow::anyhow!(
+            "native activation style did not match the requested value"
+        ))
     }
 
     fn native_is_fullscreen(
@@ -1427,6 +1658,7 @@ impl WindowsWindowInner {
         let display_id =
             (!monitor.is_invalid()).then(|| WindowsDisplay::display_id_for_monitor(monitor));
         let accepts_pointer_input = self.native_accepts_pointer_input()?;
+        let activation_policy = self.state.activation_policy.get();
         let focus_on_click = window_ex_style.0 & WS_EX_NOACTIVATE.0 == 0;
         let taskbar_visible = window_ex_style.0 & WS_EX_APPWINDOW.0 != 0
             && window_ex_style.0 & WS_EX_TOOLWINDOW.0 == 0;
@@ -1444,7 +1676,7 @@ impl WindowsWindowInner {
             is_maximized,
             is_fullscreen,
             accepts_pointer_input,
-            focus_on_appearing: self.state.focus_on_appearing,
+            accepts_activation: activation_policy.accepts_activation,
             focus_on_click,
             background_appearance: self.state.background_appearance.get(),
             topmost,
@@ -1467,8 +1699,8 @@ impl WindowsWindowInner {
             is_maximized: self.state.is_maximized(),
             is_fullscreen: self.state.is_fullscreen(),
             accepts_pointer_input: self.state.accepts_pointer_input(),
-            focus_on_appearing: self.state.focus_on_appearing,
-            focus_on_click: self.state.focus_on_click,
+            accepts_activation: self.state.activation_policy.get().accepts_activation,
+            focus_on_click: self.state.activation_policy.get().focus_on_click,
             background_appearance: self.state.background_appearance.get(),
             topmost: false,
             taskbar_visible: self.state.taskbar_visible,
@@ -1489,9 +1721,12 @@ impl WindowsWindowInner {
                     .pointer_input_mutation_generation
                     .set(Some(generation));
             }
-            WindowMutationDomain::FocusOnAppearing
-            | WindowMutationDomain::FocusOnClick
-            | WindowMutationDomain::Alpha
+            WindowMutationDomain::ActivationPolicy => {
+                self.state
+                    .activation_policy_mutation_generation
+                    .set(Some(generation));
+            }
+            WindowMutationDomain::Alpha
             | WindowMutationDomain::Topmost
             | WindowMutationDomain::TaskbarVisibility => {}
         }
@@ -1506,9 +1741,10 @@ impl WindowsWindowInner {
             WindowMutationDomain::PointerInput => {
                 self.state.pointer_input_mutation_generation.set(None);
             }
-            WindowMutationDomain::FocusOnAppearing
-            | WindowMutationDomain::FocusOnClick
-            | WindowMutationDomain::Alpha
+            WindowMutationDomain::ActivationPolicy => {
+                self.state.activation_policy_mutation_generation.set(None);
+            }
+            WindowMutationDomain::Alpha
             | WindowMutationDomain::Topmost
             | WindowMutationDomain::TaskbarVisibility => {}
         }
@@ -1520,6 +1756,10 @@ impl WindowsWindowInner {
 
     fn pointer_input_mutation_is_current(&self, generation: u64) -> bool {
         self.state.pointer_input_mutation_generation.get() == Some(generation)
+    }
+
+    fn activation_policy_mutation_is_current(&self, generation: u64) -> bool {
+        self.state.activation_policy_mutation_generation.get() == Some(generation)
     }
 
     fn terminal_facts_after_mutation(
@@ -1688,12 +1928,13 @@ struct WindowCreateContext {
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
-    parent_hwnd: Option<HWND>,
+    owner_hwnd: Option<HWND>,
     modal_parent_disabled: bool,
     show_on_initial_presentation: bool,
     accepts_pointer_input: bool,
     focus_on_appearing: bool,
-    focus_on_click: bool,
+    activation_policy: WindowActivationPolicy,
+    transient_for: Option<AnyWindowHandle>,
     taskbar_visible: bool,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
@@ -1703,6 +1944,7 @@ impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
+        transient_owner_hwnd: Option<HWND>,
         creation_info: WindowCreationInfo,
     ) -> Result<Self> {
         let WindowCreationInfo {
@@ -1765,11 +2007,12 @@ impl WindowsWindow {
         if !params.accepts_pointer_input {
             dwexstyle |= WS_EX_TRANSPARENT;
         }
-        if !params.focus {
+        if !params.activation_policy.focus_on_click {
             dwexstyle |= WS_EX_NOACTIVATE;
         }
-        let focus_on_appearing = params.focus;
-        let focus_on_click = params.focus;
+        let focus_on_appearing = params.focus_on_appearing;
+        let activation_policy = params.activation_policy;
+        let transient_for = params.transient_for;
         let taskbar_visible = matches!(params.kind, WindowKind::Normal | WindowKind::Floating);
 
         let hinstance = get_module_handle();
@@ -1781,13 +2024,17 @@ impl WindowsWindow {
         .or_else(WindowsDisplay::primary_monitor)
         .context("failed to find any monitor")?;
         let appearance = system_appearance().unwrap_or_default();
-        let parent_hwnd = if params.kind == WindowKind::Dialog {
-            let parent_window = unsafe { GetActiveWindow() };
-            (!parent_window.is_invalid()).then_some(parent_window)
+        anyhow::ensure!(
+            dwstyle.0 & WS_CHILD.0 == 0,
+            "GPUI top-level transient windows must never use WS_CHILD"
+        );
+        let owner_hwnd = transient_owner_hwnd;
+        let modal_owner = if params.kind == WindowKind::Dialog {
+            owner_hwnd
         } else {
             None
         };
-        let modal_parent_guard = ModalParentGuard::acquire(parent_hwnd);
+        let modal_parent_guard = ModalParentGuard::acquire(modal_owner);
         let mut context = WindowCreateContext {
             inner: None,
             handle,
@@ -1809,12 +2056,13 @@ impl WindowsWindow {
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
-            parent_hwnd,
+            owner_hwnd,
             modal_parent_disabled: modal_parent_guard.owns_disable(),
             show_on_initial_presentation: params.show,
             accepts_pointer_input: params.accepts_pointer_input,
             focus_on_appearing,
-            focus_on_click,
+            activation_policy,
+            transient_for,
             taskbar_visible,
             #[cfg(test)]
             lifecycle_test_probe,
@@ -1829,7 +2077,7 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                parent_hwnd,
+                owner_hwnd,
                 None,
                 Some(hinstance.into()),
                 Some(&context as *const _ as *const _),
@@ -1846,6 +2094,14 @@ impl WindowsWindow {
             }
         };
         let hwnd_guard = CreatedNativeWindowGuard::new(hwnd);
+        if let Some(owner_hwnd) = owner_hwnd {
+            let observed_owner = unsafe { GetWindow(hwnd, GW_OWNER) }
+                .context("failed to read back transient window owner")?;
+            anyhow::ensure!(
+                observed_owner == owner_hwnd,
+                "native transient owner did not match the requested GPUI owner"
+            );
+        }
         let this = context
             .inner
             .take()
@@ -1974,6 +2230,71 @@ impl WindowsWindow {
             .detach();
         PlatformWindowDispatch::Queued
     }
+
+    fn request_activation_policy_mutation(
+        &mut self,
+        generation: u64,
+        activation_policy: WindowActivationPolicy,
+    ) -> PlatformWindowDispatch {
+        let current = match self.0.native_activation_policy() {
+            Ok(current) => current,
+            Err(error) => {
+                log::warn!(
+                    "Windows activation-policy request rejected because native facts could not be read: {error:#}"
+                );
+                return PlatformWindowDispatch::Rejected;
+            }
+        };
+        if current == activation_policy {
+            return PlatformWindowDispatch::Unchanged;
+        }
+        if !self.0.activation_policy_mutation_is_current(generation) {
+            return PlatformWindowDispatch::Rejected;
+        }
+        let this = self.0.clone();
+        let executor = this.executor.clone();
+        executor
+            .spawn(async move {
+                if !this.activation_policy_mutation_is_current(generation)
+                    || (unsafe { !IsWindow(Some(this.hwnd)).as_bool() })
+                {
+                    return;
+                }
+                let before_facts = match this.observed_platform_facts_from_native() {
+                    Ok(facts) => facts,
+                    Err(error) => {
+                        log::warn!(
+                            "Windows activation-policy mutation rejected before dispatch because native facts could not be read: {error:#}"
+                        );
+                        this.emit_window_mutation_observation(
+                            WindowMutationDomain::ActivationPolicy,
+                            generation,
+                            PlatformWindowMutationTerminal::Rejected,
+                            this.cached_platform_facts(),
+                        );
+                        return;
+                    }
+                };
+                let result = this.set_activation_policy_now(activation_policy);
+                if this.activation_policy_mutation_is_current(generation)
+                    && (unsafe { IsWindow(Some(this.hwnd)).as_bool() })
+                {
+                    let (terminal, facts) = this.terminal_facts_after_mutation(
+                        "activation-policy",
+                        result,
+                        before_facts,
+                    );
+                    this.emit_window_mutation_observation(
+                        WindowMutationDomain::ActivationPolicy,
+                        generation,
+                        terminal,
+                        facts,
+                    );
+                }
+            })
+            .detach();
+        PlatformWindowDispatch::Queued
+    }
 }
 
 impl PlatformWindow for WindowsWindow {
@@ -2009,10 +2330,7 @@ impl PlatformWindow for WindowsWindow {
                 PlatformWindowCommand::CompleteInitialPresentation { activate } => {
                     window.complete_initial_presentation(activate)
                 }
-                PlatformWindowCommand::Activate => {
-                    window.activate_now();
-                    PlatformWindowCommandOutcome::Accepted
-                }
+                PlatformWindowCommand::Activate => window.activate_now(),
                 // Preserve the existing Windows behavior for currently unsupported commands.
                 PlatformWindowCommand::ShowWindowMenu(_)
                 | PlatformWindowCommand::StartWindowMove
@@ -2039,6 +2357,14 @@ impl PlatformWindow for WindowsWindow {
         self.state.accepts_pointer_input.get()
     }
 
+    fn creation_facts(&self) -> WindowCreationFacts {
+        self.0.creation_facts.clone()
+    }
+
+    fn is_visible(&self) -> bool {
+        unsafe { IsWindowVisible(self.hwnd).as_bool() }
+    }
+
     fn platform_facts(&self) -> WindowPlatformFacts {
         self.0.observed_platform_facts()
     }
@@ -2051,6 +2377,9 @@ impl PlatformWindow for WindowsWindow {
         let WindowMutationRequest::Placement(request) = request else {
             if let WindowMutationRequest::PointerInput(accepts_pointer_input) = request {
                 return self.request_pointer_input_mutation(generation, accepts_pointer_input);
+            }
+            if let WindowMutationRequest::ActivationPolicy(activation_policy) = request {
+                return self.request_activation_policy_mutation(generation, activation_policy);
             }
             return PlatformWindowDispatch::Unsupported;
         };
@@ -2404,12 +2733,19 @@ impl PlatformWindow for WindowsWindow {
             .set(Some(callback));
     }
 
-    fn draw(&self, scene: &Scene) {
-        self.state
+    fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
+        match self
+            .state
             .renderer
             .borrow_mut()
             .draw(scene, self.state.background_appearance.get())
-            .log_err();
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                log::error!("failed to submit DirectX frame: {error:#}");
+                PlatformWindowPresentOutcome::Rejected
+            }
+        }
     }
 
     #[cfg(feature = "test-support")]

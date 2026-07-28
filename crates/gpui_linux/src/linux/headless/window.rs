@@ -17,9 +17,10 @@ use open_gpui::{
     AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels,
     DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, Scene, Size, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, px,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, TileId, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowParams,
+    WindowPlatformFacts, px,
 };
 
 #[derive(Debug)]
@@ -58,6 +59,7 @@ struct HeadlessWindowState {
     title: Option<String>,
     cursor_style: CursorStyle,
     accepts_pointer_input: bool,
+    creation_facts: WindowCreationFacts,
     atlas: Arc<HeadlessAtlas>,
 }
 
@@ -102,6 +104,11 @@ impl HeadlessWindow {
             title: None,
             cursor_style: CursorStyle::Arrow,
             accepts_pointer_input: params.accepts_pointer_input,
+            creation_facts: WindowCreationFacts {
+                show: params.show,
+                focus_on_appearing: params.focus_on_appearing,
+                transient_for: None,
+            },
             atlas: Arc::new(HeadlessAtlas::default()),
         })))
     }
@@ -196,6 +203,36 @@ impl PlatformWindow for HeadlessWindow {
         self.0.borrow().accepts_pointer_input
     }
 
+    fn creation_facts(&self) -> WindowCreationFacts {
+        self.0.borrow().creation_facts.clone()
+    }
+
+    fn is_visible(&self) -> bool {
+        false
+    }
+
+    fn platform_facts(&self) -> WindowPlatformFacts {
+        WindowPlatformFacts {
+            bounds: self.bounds(),
+            coordinate_space: open_gpui::WindowCoordinateSpace::WindowLocal,
+            window_bounds: self.window_bounds(),
+            inner_window_bounds: self.inner_window_bounds(),
+            content_size: self.content_size(),
+            scale_factor: self.scale_factor(),
+            display_id: self.display().map(|display| display.id()),
+            is_minimized: false,
+            is_maximized: self.is_maximized(),
+            is_fullscreen: self.is_fullscreen(),
+            accepts_pointer_input: self.accepts_pointer_input(),
+            accepts_activation: false,
+            focus_on_click: false,
+            background_appearance: self.background_appearance(),
+            topmost: false,
+            taskbar_visible: false,
+            is_active: false,
+        }
+    }
+
     fn background_appearance(&self) -> WindowBackgroundAppearance {
         WindowBackgroundAppearance::Opaque
     }
@@ -238,7 +275,9 @@ impl PlatformWindow for HeadlessWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn draw(&self, _scene: &Scene) {}
+    fn draw(&self, _scene: &Scene) -> PlatformWindowPresentOutcome {
+        PlatformWindowPresentOutcome::Submitted
+    }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.borrow().atlas.clone()

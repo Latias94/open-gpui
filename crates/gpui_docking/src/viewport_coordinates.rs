@@ -415,7 +415,7 @@ mod tests {
                 app.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
-                        focus: false,
+                        focus_on_appearing: false,
                         ..Default::default()
                     },
                     |_, _| root.clone(),

@@ -4,11 +4,11 @@ use crate::{
     DispatchEventResult, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
     ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
-    PlatformWindowDispatch, PlatformWindowMutationCapabilities, PlatformWindowMutationTerminal,
-    Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle,
-    WindowMutationDomain, WindowOptions, WindowPlatformFacts, app::GpuiMode,
-    platform::RequestFrameOptions, window::ElementArenaScope,
+    PlatformWindowCreationCapabilities, PlatformWindowDispatch, PlatformWindowMutationCapabilities,
+    PlatformWindowMutationTerminal, Point, Render, Result, Size, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions, WindowPlatformFacts,
+    app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -305,7 +305,7 @@ impl TestAppContext {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                focus: false,
+                focus_on_appearing: false,
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),
@@ -333,7 +333,7 @@ impl TestAppContext {
                     origin: Point::default(),
                     size: window_size,
                 })),
-                focus: false,
+                focus_on_appearing: false,
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),
@@ -349,7 +349,7 @@ impl TestAppContext {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
+                    focus_on_appearing: false,
                     ..Default::default()
                 },
                 |_, cx| cx.new(|_| Empty),
@@ -378,7 +378,7 @@ impl TestAppContext {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
+                    focus_on_appearing: false,
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| build_root_view(window, cx)),
@@ -822,6 +822,15 @@ impl TestAppContext {
             .set_window_mutation_capabilities(capabilities);
     }
 
+    /// Overrides the complete test-platform window creation capability matrix.
+    pub fn set_platform_window_creation_capabilities(
+        &self,
+        capabilities: PlatformWindowCreationCapabilities,
+    ) {
+        self.test_platform
+            .set_window_creation_capabilities(capabilities);
+    }
+
     /// Overrides whether the test platform can open independent platform viewport windows.
     pub fn set_platform_viewport_windows(&self, supported: bool) {
         self.test_platform.set_platform_viewport_windows(supported);
@@ -830,6 +839,11 @@ impl TestAppContext {
     /// Makes the next TestPlatform window fail during `PlatformWindow::map_window`.
     pub fn fail_next_window_map(&self, message: impl Into<String>) {
         self.test_platform.fail_next_window_map(message);
+    }
+
+    /// Overrides the immutable creation visibility fact reported by the next test window.
+    pub fn set_next_window_creation_show_fact(&self, show: bool) {
+        self.test_platform.set_next_window_creation_show_fact(show);
     }
 
     /// Simulate dispatching an action to the currently focused node in the window.

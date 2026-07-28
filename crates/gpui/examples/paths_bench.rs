@@ -79,7 +79,7 @@ fn run_example() {
                     title: Some("Vulkan".into()),
                     ..Default::default()
                 }),
-                focus: true,
+                focus_on_appearing: true,
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
                     size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),

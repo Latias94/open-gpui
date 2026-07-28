@@ -32,10 +32,10 @@ use open_gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
-    px, size,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
+    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowCreationFacts, WindowKind, WindowParams, point, px, size,
 };
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -328,6 +328,38 @@ unsafe fn set_native_window_cursor_style(native_window: id, style: CursorStyle) 
     }
 }
 
+/// Returns every visible application window in native front-to-back order, including panels.
+///
+/// The returned Objective-C objects are not retained. They must only be used synchronously on the
+/// AppKit main thread.
+unsafe fn visible_app_windows_front_to_back() -> Vec<id> {
+    unsafe {
+        let app = NSApplication::sharedApplication(nil);
+        let windows: id = msg_send![app, windows];
+        let count: NSUInteger = msg_send![windows, count];
+        let mut ordered_windows = Vec::with_capacity(count as usize);
+
+        for index in 0..count {
+            let window: id = msg_send![windows, objectAtIndex: index];
+            let visible: BOOL = msg_send![window, isVisible];
+            let miniaturized: BOOL = msg_send![window, isMiniaturized];
+            let on_active_space: BOOL = msg_send![window, isOnActiveSpace];
+            if visible == YES && miniaturized == NO && on_active_space == YES {
+                // NSApplication.orderedWindows excludes panels. orderedIndex covers every visible
+                // application window, including policy-backed GPUI NSPanel instances.
+                let ordered_index: NSInteger = msg_send![window, orderedIndex];
+                ordered_windows.push((ordered_index, window));
+            }
+        }
+
+        ordered_windows.sort_unstable_by_key(|(ordered_index, _)| *ordered_index);
+        ordered_windows
+            .into_iter()
+            .map(|(_, window)| window)
+            .collect()
+    }
+}
+
 /// Returns the native GPUI window under the mouse, matching the public hovered-window semantics.
 ///
 /// The returned Objective-C object is not retained. It must only be used synchronously on the
@@ -335,17 +367,7 @@ unsafe fn set_native_window_cursor_style(native_window: id, style: CursorStyle) 
 unsafe fn hovered_gpui_native_window() -> Option<id> {
     unsafe {
         let mouse_location = NSEvent::mouseLocation(nil);
-        let app = NSApplication::sharedApplication(nil);
-        let windows: id = msg_send![app, orderedWindows];
-        let count: NSUInteger = msg_send![windows, count];
-        for i in 0..count {
-            let window: id = msg_send![windows, objectAtIndex: i];
-            let visible = window.isVisible() == YES;
-            let miniaturized: BOOL = msg_send![window, isMiniaturized];
-            if !visible || miniaturized == YES {
-                continue;
-            }
-
+        for window in visible_app_windows_front_to_back() {
             let frame = NSWindow::frame(window);
             if !ns_rect_contains_point(frame, mouse_location) {
                 continue;
@@ -356,7 +378,11 @@ unsafe fn hovered_gpui_native_window() -> Option<id> {
             }
 
             let window_state = get_window_state(&*window);
-            if window_state.lock().accepts_pointer_input {
+            let window_state = window_state.lock();
+            if window_state.is_closed() {
+                return None;
+            }
+            if window_state.accepts_pointer_input {
                 return Some(window);
             }
         }
@@ -372,11 +398,11 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 
         decl.add_method(
             sel!(canBecomeMainWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
+            can_become_active_window as extern "C" fn(&Object, Sel) -> BOOL,
         );
         decl.add_method(
             sel!(canBecomeKeyWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
+            can_become_active_window as extern "C" fn(&Object, Sel) -> BOOL,
         );
         decl.add_method(
             sel!(windowDidResize:),
@@ -498,7 +524,6 @@ enum MacWindowCreationState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MacInitialPresentation {
     show: bool,
-    dialog: bool,
     allows_automatic_window_tabbing: bool,
     state: MacWindowCreationState,
     mapped: bool,
@@ -506,11 +531,8 @@ struct MacInitialPresentation {
 }
 
 impl MacInitialPresentation {
-    fn should_order_front_during_map(self) -> bool {
-        self.show
-            && !self.dialog
-            && !self.allows_automatic_window_tabbing
-            && self.state != MacWindowCreationState::Fullscreen
+    fn should_apply_automatic_tabbing(self) -> bool {
+        self.allows_automatic_window_tabbing
     }
 }
 
@@ -521,9 +543,17 @@ struct MacWindowCreationProjection {
     restore_bounds: Bounds<Pixels>,
     accepts_pointer_input: bool,
     focus_on_appearing: bool,
-    focus_on_click: bool,
+    activation_policy: WindowActivationPolicy,
     topmost: bool,
     taskbar_visible: bool,
+}
+
+fn macos_click_can_activate(policy: WindowActivationPolicy) -> bool {
+    policy.focus_on_click
+}
+
+fn should_defer_occluded_draw(attempted_window_draw: bool, visible: bool) -> bool {
+    attempted_window_draw && !visible
 }
 
 impl MacWindowCreationProjection {
@@ -532,6 +562,7 @@ impl MacWindowCreationProjection {
         kind: &WindowKind,
         accepts_pointer_input: bool,
         focus_on_appearing: bool,
+        activation_policy: WindowActivationPolicy,
     ) -> Self {
         let state = if macos_supports_toplevel_creation_state(kind) {
             match window_bounds {
@@ -549,17 +580,33 @@ impl MacWindowCreationProjection {
             restore_bounds: window_bounds.get_bounds(),
             accepts_pointer_input,
             focus_on_appearing: match kind {
+                WindowKind::Normal | WindowKind::Floating => focus_on_appearing,
                 WindowKind::PopUp => false,
-                _ => focus_on_appearing,
+                WindowKind::Dialog => true,
             },
-            focus_on_click: !matches!(kind, WindowKind::PopUp),
+            activation_policy: match kind {
+                WindowKind::Normal | WindowKind::Floating => activation_policy,
+                WindowKind::PopUp => WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: false,
+                },
+                WindowKind::Dialog => WindowActivationPolicy::default(),
+            },
             topmost: matches!(kind, WindowKind::PopUp | WindowKind::Floating),
             taskbar_visible: matches!(kind, WindowKind::Normal),
         }
     }
 
-    fn observed_focus_on_appearing(self, attached_as_sheet: bool) -> bool {
-        attached_as_sheet || self.focus_on_appearing
+    fn requires_nonactivating_panel(self) -> bool {
+        !self.activation_policy.focus_on_click
+    }
+
+    fn becomes_key_only_if_needed(self) -> bool {
+        !self.activation_policy.focus_on_click
+    }
+
+    fn panel_hides_on_deactivate(self) -> bool {
+        !self.taskbar_visible
     }
 }
 
@@ -627,8 +674,7 @@ struct MacWindowState {
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
     accepts_pointer_input: bool,
-    focus_on_appearing: bool,
-    focus_on_click: bool,
+    activation_policy: WindowActivationPolicy,
     topmost: bool,
     taskbar_visible: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
@@ -648,9 +694,9 @@ struct MacWindowState {
     activated_least_once: bool,
     closed: Arc<AtomicBool>,
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
-    // The parent window if this window is a sheet (Dialog kind)
-    sheet_parent: Option<id>,
+    creation_facts: WindowCreationFacts,
     initial_presentation: MacInitialPresentation,
+    attempted_window_draw: bool,
 }
 
 impl MacWindowState {
@@ -912,7 +958,9 @@ impl MacWindow {
             is_resizable,
             is_minimizable,
             accepts_pointer_input,
-            focus,
+            focus_on_appearing,
+            activation_policy,
+            transient_for: _,
             show,
             display_id,
             window_min_size,
@@ -929,7 +977,8 @@ impl MacWindow {
                 window_bounds,
                 &kind,
                 accepts_pointer_input,
-                focus,
+                focus_on_appearing,
+                activation_policy,
             );
             let bounds = creation.bounds;
             let pool = NSAutoreleasePool::new(nil);
@@ -937,11 +986,15 @@ impl MacWindow {
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
             let initial_presentation = MacInitialPresentation {
                 show,
-                dialog: kind == WindowKind::Dialog,
                 allows_automatic_window_tabbing,
                 state: creation.state,
                 mapped: false,
                 completed: false,
+            };
+            let creation_facts = WindowCreationFacts {
+                show,
+                focus_on_appearing: creation.focus_on_appearing,
+                transient_for: None,
             };
             if allows_automatic_window_tabbing {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
@@ -971,6 +1024,10 @@ impl MacWindow {
             }
 
             let native_window: id = match kind {
+                _ if creation.requires_nonactivating_panel() => {
+                    style_mask |= NSWindowStyleMaskNonactivatingPanel;
+                    msg_send![PANEL_CLASS, alloc]
+                }
                 WindowKind::Normal => {
                     msg_send![WINDOW_CLASS, alloc]
                 }
@@ -1033,6 +1090,15 @@ impl MacWindow {
                 target_screen,
             );
             assert!(!native_window.is_null());
+            if creation.requires_nonactivating_panel() {
+                let hides_on_deactivate = creation.panel_hides_on_deactivate().to_objc();
+                let _: () = msg_send![native_window, setHidesOnDeactivate: hides_on_deactivate];
+                let becomes_key_only_if_needed = creation.becomes_key_only_if_needed().to_objc();
+                let _: () = msg_send![
+                    native_window,
+                    setBecomesKeyOnlyIfNeeded: becomes_key_only_if_needed
+                ];
+            }
             let () = msg_send![
                 native_window,
                 registerForDraggedTypes:
@@ -1104,13 +1170,13 @@ impl MacWindow {
                 activated_least_once: false,
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
-                sheet_parent: None,
+                creation_facts,
                 accepts_pointer_input: creation.accepts_pointer_input,
-                focus_on_appearing: creation.focus_on_appearing,
-                focus_on_click: creation.focus_on_click,
+                activation_policy: creation.activation_policy,
                 topmost: creation.topmost,
                 taskbar_visible: creation.taskbar_visible,
                 initial_presentation,
+                attempted_window_draw: false,
             })));
 
             (*native_window).set_ivar(
@@ -1168,6 +1234,10 @@ impl MacWindow {
             // Reapply the requested normal frame before entering a non-windowed state. AppKit
             // otherwise derives the restore frame from whichever screen happened to be active.
             NSWindow::setFrameTopLeftPoint_(native_window, frame_top_left);
+            if creation.state == MacWindowCreationState::Maximized {
+                let visible_frame = NSScreen::visibleFrame(target_screen);
+                let _: () = msg_send![native_window, setFrame: visible_frame display: NO];
+            }
 
             match kind {
                 WindowKind::Normal | WindowKind::Floating => {
@@ -1267,16 +1337,14 @@ impl MacWindow {
 
     pub fn ordered_windows() -> Vec<AnyWindowHandle> {
         unsafe {
-            let app = NSApplication::sharedApplication(nil);
-            let windows: id = msg_send![app, orderedWindows];
-            let count: NSUInteger = msg_send![windows, count];
-
             let mut window_handles = Vec::new();
-            for i in 0..count {
-                let window: id = msg_send![windows, objectAtIndex:i];
+            for window in visible_app_windows_front_to_back() {
                 if is_gpui_window(window) {
-                    let handle = get_window_state(&*window).lock().handle;
-                    window_handles.push(handle);
+                    let state = get_window_state(&*window);
+                    let state = state.lock();
+                    if !state.is_closed() {
+                        window_handles.push(state.handle);
+                    }
                 }
             }
 
@@ -1321,12 +1389,11 @@ fn ns_rect_contains_point(rect: NSRect, point: NSPoint) -> bool {
 
 impl Drop for MacWindow {
     fn drop(&mut self) {
-        let (event_callback, input_handler, window, sheet_parent, foreground_executor) = {
+        let (event_callback, input_handler, window, foreground_executor) = {
             let mut this = self.0.lock();
             let (event_callback, input_handler) = this.mark_closed();
             this.renderer.destroy();
             let window = this.native_window;
-            let sheet_parent = this.sheet_parent.take();
             unsafe {
                 this.native_window.setDelegate_(nil);
             }
@@ -1334,7 +1401,6 @@ impl Drop for MacWindow {
                 event_callback,
                 input_handler,
                 window,
-                sheet_parent,
                 this.foreground_executor.clone(),
             )
         };
@@ -1343,9 +1409,6 @@ impl Drop for MacWindow {
         foreground_executor
             .spawn(async move {
                 unsafe {
-                    if let Some(parent) = sheet_parent {
-                        let _: () = msg_send![parent, endSheet: window];
-                    }
                     window.close();
                     window.autorelease();
                 }
@@ -1365,31 +1428,18 @@ fn if_window_not_closed(closed: Arc<AtomicBool>, f: impl FnOnce()) {
     }
 }
 
-unsafe fn initial_sheet_parent(native_window: id) -> Option<id> {
-    unsafe {
-        let app: id = NSApplication::sharedApplication(nil);
-        let main_window: id = msg_send![app, mainWindow];
-        if main_window.is_null() || main_window == native_window {
-            return None;
-        }
-
-        let active_sheet: id = msg_send![main_window, attachedSheet];
-        Some(if active_sheet.is_null() {
-            main_window
-        } else {
-            active_sheet
-        })
-    }
-}
-
 fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, activate: bool) {
-    let (native_window, presentation) = {
+    let (native_window, presentation, activate) = {
         let mut state = window_state.lock();
         if state.is_closed() || state.initial_presentation.completed {
             return;
         }
         state.initial_presentation.completed = true;
-        (state.native_window, state.initial_presentation)
+        (
+            state.native_window,
+            state.initial_presentation,
+            activate && state.activation_policy.accepts_activation,
+        )
     };
 
     if !presentation.show {
@@ -1397,23 +1447,11 @@ fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, 
     }
 
     unsafe {
-        if presentation.dialog
-            && let Some(parent) = initial_sheet_parent(native_window)
-        {
-            let _: () = msg_send![parent, beginSheet: native_window completionHandler: nil];
-            let mut state = window_state.lock();
-            if !state.is_closed() {
-                state.sheet_parent = Some(parent);
-                state.focus_on_appearing = true;
-            }
-            return;
-        }
-
         let app: id = NSApplication::sharedApplication(nil);
         let main_window: id = msg_send![app, mainWindow];
         let mut added_to_fullscreen_tab = false;
 
-        if presentation.allows_automatic_window_tabbing
+        if presentation.should_apply_automatic_tabbing()
             && !main_window.is_null()
             && main_window != native_window
         {
@@ -1444,7 +1482,7 @@ fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, 
 
         if activate {
             let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
-        } else if !presentation.should_order_front_during_map() && !added_to_fullscreen_tab {
+        } else if !added_to_fullscreen_tab {
             let _: () = msg_send![native_window, orderFront: nil];
         }
 
@@ -1454,11 +1492,11 @@ fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, 
     }
 }
 
-fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) {
+fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
     let window = {
         let state = window_state.lock();
-        if state.is_closed() {
-            return;
+        if state.is_closed() || !state.activation_policy.accepts_activation {
+            return false;
         }
         state.native_window
     };
@@ -1466,6 +1504,7 @@ fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) {
     unsafe {
         let _: () = msg_send![window, makeKeyAndOrderFront: nil];
     }
+    true
 }
 
 fn start_mac_window_move(window_state: &Arc<Mutex<MacWindowState>>) {
@@ -1501,8 +1540,11 @@ fn dispatch_mac_window_command(
             PlatformWindowCommandOutcome::Accepted
         }
         PlatformWindowCommand::Activate => {
-            activate_mac_window(&window_state);
-            PlatformWindowCommandOutcome::Accepted
+            if activate_mac_window(&window_state) {
+                PlatformWindowCommandOutcome::Accepted
+            } else {
+                PlatformWindowCommandOutcome::Rejected
+            }
         }
         PlatformWindowCommand::StartWindowMove => {
             start_mac_window_move(&window_state);
@@ -1527,31 +1569,17 @@ impl PlatformWindow for MacWindow {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
-        let (native_window, presentation) = {
+        let (native_window, show) = {
             let mut state = self.0.lock();
             if state.initial_presentation.mapped {
                 return Ok(());
             }
             state.initial_presentation.mapped = true;
-            (state.native_window, state.initial_presentation)
+            (state.native_window, state.initial_presentation.show)
         };
 
-        unsafe {
-            if presentation.state == MacWindowCreationState::Maximized {
-                let _: () = msg_send![native_window, zoom: nil];
-            }
-
-            if presentation.dialog
-                && presentation.show
-                && initial_sheet_parent(native_window).is_some()
-            {
-                let mut state = self.0.lock();
-                if !state.is_closed() {
-                    state.focus_on_appearing = true;
-                }
-            }
-
-            if presentation.should_order_front_during_map() {
+        if show {
+            unsafe {
                 let _: () = msg_send![native_window, orderFront: nil];
             }
         }
@@ -1579,8 +1607,17 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().accepts_pointer_input
     }
 
+    fn creation_facts(&self) -> WindowCreationFacts {
+        self.0.as_ref().lock().creation_facts.clone()
+    }
+
+    fn is_visible(&self) -> bool {
+        unsafe { self.0.as_ref().lock().native_window.isVisible() == YES }
+    }
+
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
         let window_bounds = self.window_bounds();
+        let activation_policy = self.0.as_ref().lock().activation_policy;
         open_gpui::WindowPlatformFacts {
             bounds: self.bounds(),
             coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
@@ -1593,8 +1630,8 @@ impl PlatformWindow for MacWindow {
             is_maximized: self.is_maximized(),
             is_fullscreen: self.is_fullscreen(),
             accepts_pointer_input: self.accepts_pointer_input(),
-            focus_on_appearing: self.0.as_ref().lock().focus_on_appearing,
-            focus_on_click: self.0.as_ref().lock().focus_on_click,
+            accepts_activation: activation_policy.accepts_activation,
+            focus_on_click: activation_policy.focus_on_click,
             background_appearance: self.background_appearance(),
             topmost: self.0.as_ref().lock().topmost,
             taskbar_visible: self.0.as_ref().lock().taskbar_visible,
@@ -1647,8 +1684,7 @@ impl PlatformWindow for MacWindow {
     fn set_tabbing_identifier(&self, tabbing_identifier: Option<String>) {
         let native_window = self.0.lock().native_window;
         unsafe {
-            let allows_automatic_window_tabbing = tabbing_identifier.is_some();
-            if allows_automatic_window_tabbing {
+            if tabbing_identifier.is_some() {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
             } else {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
@@ -2127,9 +2163,21 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn draw(&self, scene: &open_gpui::Scene) {
+    fn draw(&self, scene: &open_gpui::Scene) -> PlatformWindowPresentOutcome {
         let mut this = self.0.lock();
-        this.renderer.draw(scene);
+        let visible = unsafe {
+            this.native_window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+        };
+        // AppKit can block nextDrawable for roughly one second while a window is fully occluded.
+        // Permit the first attempt to avoid initial flicker, then wait for the occlusion callback
+        // to restart frame production once the native window becomes visible again.
+        if should_defer_occluded_draw(this.attempted_window_draw, visible) {
+            return PlatformWindowPresentOutcome::Deferred;
+        }
+        this.attempted_window_draw = true;
+        this.renderer.draw(scene)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -2329,14 +2377,42 @@ unsafe fn drop_window_state(object: &Object) {
     }
 }
 
-extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
-    YES
+unsafe fn window_callback_superclass(this: &Object) -> &'static Class {
+    unsafe {
+        let is_panel: BOOL = msg_send![this, isKindOfClass: class!(NSPanel)];
+        if is_panel == YES {
+            class!(NSPanel)
+        } else {
+            class!(NSWindow)
+        }
+    }
+}
+
+extern "C" fn can_become_active_window(this: &Object, _: Sel) -> BOOL {
+    unsafe {
+        let raw: *mut c_void = *this.get_ivar(WINDOW_STATE_IVAR);
+        if raw.is_null() {
+            // AppKit may query this while initWithContentRect is still constructing the object.
+            return YES;
+        }
+        let state = get_window_state(this);
+        let state = state.lock();
+        if !state.is_closed()
+            && (state.activation_policy.accepts_activation
+                || state.activation_policy.focus_on_click)
+        {
+            YES
+        } else {
+            NO
+        }
+    }
 }
 
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
-        let _: () = msg_send![super(this, class!(NSWindow)), dealloc];
+        let superclass = window_callback_superclass(this);
+        let _: () = msg_send![super(this, superclass), dealloc];
     }
 }
 
@@ -3021,7 +3097,8 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             callback();
         }
 
-        let _: () = msg_send![super(this, class!(NSWindow)), close];
+        let superclass = window_callback_superclass(this);
+        let _: () = msg_send![super(this, superclass), close];
     }
 }
 
@@ -3306,7 +3383,7 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
 extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    lock.first_mouse = true;
+    lock.first_mouse = macos_click_can_activate(lock.activation_policy);
     YES
 }
 
@@ -3540,7 +3617,9 @@ unsafe fn remove_layer_background(layer: id) {
 
 extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view_controller: id) {
     unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), addTitlebarAccessoryViewController: view_controller];
+        let superclass = window_callback_superclass(this);
+        let _: () =
+            msg_send![super(this, superclass), addTitlebarAccessoryViewController: view_controller];
 
         // Hide the native tab bar and set its height to 0, since we render our own.
         let accessory_view: id = msg_send![view_controller, view];
@@ -3553,7 +3632,8 @@ extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view
 
 extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
     unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), moveTabToNewWindow:nil];
+        let superclass = window_callback_superclass(this);
+        let _: () = msg_send![super(this, superclass), moveTabToNewWindow:nil];
 
         let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
@@ -3573,7 +3653,8 @@ extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
 
 extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
     unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), mergeAllWindows:nil];
+        let superclass = window_callback_superclass(this);
+        let _: () = msg_send![super(this, superclass), mergeAllWindows:nil];
 
         let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
@@ -3625,7 +3706,8 @@ extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
 
 extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
     unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), toggleTabBar:nil];
+        let superclass = window_callback_superclass(this);
+        let _: () = msg_send![super(this, superclass), toggleTabBar:nil];
 
         let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
@@ -3654,7 +3736,7 @@ mod creation_projection_tests {
     }
 
     #[test]
-    fn creation_projection_preserves_bounds_state_restore_pointer_and_focus() {
+    fn creation_projection_separates_first_appearance_from_lifetime_activation() {
         let restore_bounds = restore_bounds();
 
         let windowed = MacWindowCreationProjection::new(
@@ -3662,13 +3744,17 @@ mod creation_projection_tests {
             &WindowKind::Normal,
             true,
             true,
+            WindowActivationPolicy::default(),
         );
         assert_eq!(windowed.bounds, restore_bounds);
         assert_eq!(windowed.state, MacWindowCreationState::Windowed);
         assert_eq!(windowed.restore_bounds, restore_bounds);
         assert!(windowed.accepts_pointer_input);
         assert!(windowed.focus_on_appearing);
-        assert!(windowed.focus_on_click);
+        assert_eq!(
+            windowed.activation_policy,
+            WindowActivationPolicy::default()
+        );
         assert!(!windowed.topmost);
         assert!(windowed.taskbar_visible);
 
@@ -3677,13 +3763,23 @@ mod creation_projection_tests {
             &WindowKind::Floating,
             false,
             false,
+            WindowActivationPolicy {
+                accepts_activation: true,
+                focus_on_click: false,
+            },
         );
         assert_eq!(maximized.bounds, restore_bounds);
         assert_eq!(maximized.state, MacWindowCreationState::Maximized);
         assert_eq!(maximized.restore_bounds, restore_bounds);
         assert!(!maximized.accepts_pointer_input);
         assert!(!maximized.focus_on_appearing);
-        assert!(maximized.focus_on_click);
+        assert_eq!(
+            maximized.activation_policy,
+            WindowActivationPolicy {
+                accepts_activation: true,
+                focus_on_click: false,
+            }
+        );
         assert!(maximized.topmost);
         assert!(!maximized.taskbar_visible);
 
@@ -3692,43 +3788,69 @@ mod creation_projection_tests {
             &WindowKind::Normal,
             true,
             false,
+            WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: true,
+            },
         );
         assert_eq!(fullscreen.state, MacWindowCreationState::Fullscreen);
         assert_eq!(fullscreen.restore_bounds, restore_bounds);
+        assert!(!fullscreen.activation_policy.accepts_activation);
+        assert!(fullscreen.activation_policy.focus_on_click);
     }
 
     #[test]
-    fn initial_map_only_orders_safe_nonactivating_windows() {
+    fn toplevel_creation_preserves_all_activation_policy_pairs_atomically() {
+        for accepts_activation in [false, true] {
+            for focus_on_click in [false, true] {
+                let requested = WindowActivationPolicy {
+                    accepts_activation,
+                    focus_on_click,
+                };
+                let projection = MacWindowCreationProjection::new(
+                    WindowBounds::Windowed(restore_bounds()),
+                    &WindowKind::Normal,
+                    true,
+                    false,
+                    requested,
+                );
+
+                assert_eq!(projection.activation_policy, requested);
+                assert_eq!(projection.requires_nonactivating_panel(), !focus_on_click);
+                assert_eq!(projection.becomes_key_only_if_needed(), !focus_on_click);
+                assert!(!projection.panel_hides_on_deactivate());
+                assert_eq!(
+                    macos_click_can_activate(projection.activation_policy),
+                    focus_on_click
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn initial_presentation_tracks_automatic_tabbing() {
         let regular = MacInitialPresentation {
             show: true,
-            dialog: false,
             allows_automatic_window_tabbing: false,
             state: MacWindowCreationState::Windowed,
             mapped: false,
             completed: false,
         };
-        assert!(regular.should_order_front_during_map());
+        assert!(!regular.should_apply_automatic_tabbing());
 
-        for deferred in [
-            MacInitialPresentation {
-                dialog: true,
-                ..regular
-            },
-            MacInitialPresentation {
-                allows_automatic_window_tabbing: true,
-                ..regular
-            },
-            MacInitialPresentation {
-                state: MacWindowCreationState::Fullscreen,
-                ..regular
-            },
-            MacInitialPresentation {
-                show: false,
-                ..regular
-            },
-        ] {
-            assert!(!deferred.should_order_front_during_map());
-        }
+        let tabbed = MacInitialPresentation {
+            allows_automatic_window_tabbing: true,
+            ..regular
+        };
+        assert!(tabbed.should_apply_automatic_tabbing());
+    }
+
+    #[test]
+    fn occluded_draws_defer_after_the_first_attempt() {
+        assert!(!should_defer_occluded_draw(false, false));
+        assert!(!should_defer_occluded_draw(false, true));
+        assert!(should_defer_occluded_draw(true, false));
+        assert!(!should_defer_occluded_draw(true, true));
     }
 
     #[test]
@@ -3738,27 +3860,39 @@ mod creation_projection_tests {
             &WindowKind::PopUp,
             true,
             true,
+            WindowActivationPolicy::default(),
         );
 
         assert_eq!(projection.state, MacWindowCreationState::Windowed);
         assert_eq!(projection.bounds, restore_bounds());
         assert!(!projection.focus_on_appearing);
-        assert!(!projection.focus_on_click);
+        assert_eq!(
+            projection.activation_policy,
+            WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: false,
+            }
+        );
         assert!(projection.topmost);
         assert!(!projection.taskbar_visible);
+        assert!(projection.panel_hides_on_deactivate());
 
         let dialog = MacWindowCreationProjection::new(
             WindowBounds::Maximized(restore_bounds()),
             &WindowKind::Dialog,
             true,
             false,
+            WindowActivationPolicy {
+                accepts_activation: true,
+                focus_on_click: false,
+            },
         );
         assert_eq!(dialog.state, MacWindowCreationState::Windowed);
-        assert!(dialog.focus_on_click);
+        assert_eq!(dialog.activation_policy, WindowActivationPolicy::default());
         assert!(!dialog.topmost);
         assert!(!dialog.taskbar_visible);
-        assert!(!dialog.observed_focus_on_appearing(false));
-        assert!(dialog.observed_focus_on_appearing(true));
+        assert!(dialog.panel_hides_on_deactivate());
+        assert!(dialog.focus_on_appearing);
     }
 
     #[test]

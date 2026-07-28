@@ -510,11 +510,11 @@ fn surface_viewport_readiness_reports_unsupported_flags_without_opening(
         assert!(!readiness.ready());
         assert!(readiness.is_flag_unsupported());
         assert_eq!(
-            readiness.window_mutation_capabilities().pointer_input,
+            readiness.window_capabilities().mutations.pointer_input,
             WindowMutationSupport::Unsupported
         );
         assert_eq!(
-            readiness.window_mutation_capabilities().alpha,
+            readiness.window_capabilities().mutations.alpha,
             WindowMutationSupport::CreationOnly
         );
         assert_eq!(

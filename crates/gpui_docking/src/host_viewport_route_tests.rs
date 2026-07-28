@@ -106,7 +106,7 @@ mod runtime_suite {
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(window_bounds),
-                        focus: false,
+                        focus_on_appearing: false,
                         ..Default::default()
                     },
                     app,
@@ -333,7 +333,7 @@ mod runtime_suite {
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_window_bounds),
-                        focus: false,
+                        focus_on_appearing: false,
                         ..Default::default()
                     },
                     app,

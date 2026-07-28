@@ -3,8 +3,9 @@ use bytemuck::{Pod, Zeroable};
 use log::warn;
 use open_gpui::{
     AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, GpuSpecs,
-    MonochromeSprite, Path, Point, PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad,
-    ScaledPixels, Scene, Shadow, Size, SubpixelSprite, Underline, get_gamma_correction_ratios,
+    MonochromeSprite, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite, PrimitiveBatch,
+    PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite, Underline,
+    get_gamma_correction_ratios,
 };
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -60,6 +61,56 @@ impl From<ClipEnvelope> for PodClipEnvelope {
 struct SurfaceParams {
     bounds: PodBounds,
     clip: PodClipEnvelope,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceAcquireRecovery {
+    Reconfigure,
+    Recreate,
+    Skip,
+    Reject,
+}
+
+impl SurfaceAcquireRecovery {
+    fn outcome(self) -> PlatformWindowPresentOutcome {
+        match self {
+            Self::Reconfigure | Self::Recreate | Self::Skip => {
+                PlatformWindowPresentOutcome::Deferred
+            }
+            Self::Reject => PlatformWindowPresentOutcome::Rejected,
+        }
+    }
+}
+
+fn surface_acquire_recovery(
+    texture: &wgpu::CurrentSurfaceTexture,
+) -> Option<SurfaceAcquireRecovery> {
+    match texture {
+        wgpu::CurrentSurfaceTexture::Success(_) | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
+            None
+        }
+        wgpu::CurrentSurfaceTexture::Outdated => Some(SurfaceAcquireRecovery::Reconfigure),
+        wgpu::CurrentSurfaceTexture::Lost => Some(SurfaceAcquireRecovery::Recreate),
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+            Some(SurfaceAcquireRecovery::Skip)
+        }
+        wgpu::CurrentSurfaceTexture::Validation => Some(SurfaceAcquireRecovery::Reject),
+    }
+}
+
+fn recreate_configured_surface_slot<T, E>(
+    configured: bool,
+    surface: &mut Option<T>,
+    create: impl FnOnce() -> Result<T, E>,
+) -> Result<bool, E> {
+    if !configured {
+        return Ok(false);
+    }
+
+    // A lost wgpu surface must be destroyed before another surface is created for the target.
+    drop(surface.take());
+    *surface = Some(create()?);
+    Ok(true)
 }
 
 #[repr(C)]
@@ -148,11 +199,66 @@ struct WgpuBindGroupLayouts {
 /// Shared GPU context reference, used to coordinate device recovery across multiple windows.
 pub type GpuContext = Rc<RefCell<Option<WgpuContext>>>;
 
+enum SurfaceCreationTarget {
+    #[cfg(not(target_family = "wasm"))]
+    RawWindow(raw_window_handle::RawWindowHandle),
+    #[cfg(target_family = "wasm")]
+    Canvas(web_sys::HtmlCanvasElement),
+}
+
+struct SurfaceFactory {
+    instance: wgpu::Instance,
+    target: SurfaceCreationTarget,
+}
+
+impl SurfaceFactory {
+    #[cfg(not(target_family = "wasm"))]
+    fn for_raw_window(
+        instance: wgpu::Instance,
+        raw_window_handle: raw_window_handle::RawWindowHandle,
+    ) -> Self {
+        Self {
+            instance,
+            target: SurfaceCreationTarget::RawWindow(raw_window_handle),
+        }
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn for_canvas(instance: wgpu::Instance, canvas: web_sys::HtmlCanvasElement) -> Self {
+        Self {
+            instance,
+            target: SurfaceCreationTarget::Canvas(canvas),
+        }
+    }
+
+    fn create(&self) -> anyhow::Result<wgpu::Surface<'static>> {
+        match &self.target {
+            #[cfg(not(target_family = "wasm"))]
+            SurfaceCreationTarget::RawWindow(raw_window_handle) => unsafe {
+                // Safety: renderer construction requires this handle to remain valid until the
+                // renderer is destroyed or its surface target is replaced.
+                self.instance
+                    .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                        // The instance already owns the platform display handle.
+                        raw_display_handle: None,
+                        raw_window_handle: *raw_window_handle,
+                    })
+                    .map_err(|error| anyhow::anyhow!("Failed to create surface: {error}"))
+            },
+            #[cfg(target_family = "wasm")]
+            SurfaceCreationTarget::Canvas(canvas) => self
+                .instance
+                .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+                .map_err(|error| anyhow::anyhow!("Failed to create surface: {error}")),
+        }
+    }
+}
+
 /// GPU resources that must be dropped together during device recovery.
 struct WgpuResources {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    surface: wgpu::Surface<'static>,
+    surface: Option<wgpu::Surface<'static>>,
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
@@ -183,6 +289,7 @@ pub struct WgpuRenderer {
     /// Compositor GPU hint for adapter selection (unused on WASM).
     #[allow(dead_code)]
     compositor_gpu: Option<CompositorGpuHint>,
+    surface_factory: SurfaceFactory,
     resources: Option<WgpuResources>,
     surface_config: wgpu::SurfaceConfiguration,
     atlas: Arc<WgpuAtlas>,
@@ -243,12 +350,6 @@ impl WgpuRenderer {
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
 
-        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
-            // Fall back to the display handle already provided via InstanceDescriptor::display.
-            raw_display_handle: None,
-            raw_window_handle: window_handle.as_raw(),
-        };
-
         // Use the existing context's instance if available, otherwise create a new one.
         // The surface must be created with the same instance that will be used for
         // adapter selection, otherwise wgpu will panic.
@@ -258,14 +359,9 @@ impl WgpuRenderer {
             .map(|ctx| ctx.instance.clone())
             .unwrap_or_else(|| WgpuContext::instance(Box::new(window.clone())));
 
-        // Safety: The caller guarantees that the window handle is valid for the
-        // lifetime of this renderer. In practice, the RawWindow struct is created
-        // from the native window handles and the surface is dropped before the window.
-        let surface = unsafe {
-            instance
-                .create_surface_unsafe(target)
-                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
-        };
+        let surface_factory =
+            SurfaceFactory::for_raw_window(instance.clone(), window_handle.as_raw());
+        let surface = surface_factory.create()?;
 
         let mut ctx_ref = gpu_context.borrow_mut();
         let context = match ctx_ref.as_mut() {
@@ -281,6 +377,7 @@ impl WgpuRenderer {
         Self::new_internal(
             Some(Rc::clone(&gpu_context)),
             context,
+            surface_factory,
             surface,
             config,
             compositor_gpu,
@@ -294,19 +391,18 @@ impl WgpuRenderer {
         canvas: &web_sys::HtmlCanvasElement,
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
-        let surface = context
-            .instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?;
+        let surface_factory = SurfaceFactory::for_canvas(context.instance.clone(), canvas.clone());
+        let surface = surface_factory.create()?;
 
         let atlas = Arc::new(WgpuAtlas::from_context(context));
 
-        Self::new_internal(None, context, surface, config, None, atlas)
+        Self::new_internal(None, context, surface_factory, surface, config, None, atlas)
     }
 
     fn new_internal(
         gpu_context: Option<GpuContext>,
         context: &WgpuContext,
+        surface_factory: SurfaceFactory,
         surface: wgpu::Surface<'static>,
         config: WgpuSurfaceConfig,
         compositor_gpu: Option<CompositorGpuHint>,
@@ -492,7 +588,7 @@ impl WgpuRenderer {
         let resources = WgpuResources {
             device,
             queue,
-            surface,
+            surface: Some(surface),
             pipelines,
             bind_group_layouts,
             atlas_sampler,
@@ -512,6 +608,7 @@ impl WgpuRenderer {
         Ok(Self {
             context: gpu_context,
             compositor_gpu,
+            surface_factory,
             resources: Some(resources),
             surface_config,
             atlas,
@@ -1080,9 +1177,9 @@ impl WgpuRenderer {
                 texture.destroy();
             }
 
-            resources
-                .surface
-                .configure(&resources.device, &surface_config);
+            if let Some(surface) = &resources.surface {
+                surface.configure(&resources.device, &surface_config);
+            }
 
             // Invalidate intermediate textures - they will be lazily recreated
             // in draw() after we confirm the surface is healthy. This avoids
@@ -1136,9 +1233,9 @@ impl WgpuRenderer {
             let path_sample_count = self.rendering_params.path_sample_count;
             let dual_source_blending = self.dual_source_blending;
             let resources = self.resources_mut();
-            resources
-                .surface
-                .configure(&resources.device, &surface_config);
+            if let Some(surface) = &resources.surface {
+                surface.configure(&resources.device, &surface_config);
+            }
             resources.pipelines = Self::create_pipelines(
                 &resources.device,
                 &resources.bind_group_layouts,
@@ -1179,13 +1276,81 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    pub fn draw(&mut self, scene: &Scene) -> bool {
+    fn reconfigure_surface(&mut self) {
+        let surface_config = self.surface_config.clone();
+        let resources = self.resources_mut();
+        if let Some(surface) = &resources.surface {
+            surface.configure(&resources.device, &surface_config);
+        }
+    }
+
+    fn recreate_surface(&mut self) -> anyhow::Result<()> {
+        let configured = self.surface_configured;
+        if configured {
+            // Keep requesting frames even when creation fails so the retained factory can retry.
+            self.needs_redraw = true;
+        }
+
+        let surface_factory = &self.surface_factory;
+        let surface_config = &self.surface_config;
+        let resources = self
+            .resources
+            .as_mut()
+            .expect("GPU resources not available");
+        let device = &resources.device;
+        let recreated = recreate_configured_surface_slot(
+            configured,
+            &mut resources.surface,
+            || -> anyhow::Result<_> {
+                let surface = surface_factory.create()?;
+                surface.configure(device, surface_config);
+                Ok(surface)
+            },
+        )?;
+        if recreated {
+            resources.invalidate_intermediate_textures();
+        }
+        Ok(())
+    }
+
+    fn handle_surface_acquire_failure(
+        &mut self,
+        failure: &wgpu::CurrentSurfaceTexture,
+    ) -> PlatformWindowPresentOutcome {
+        let recovery = surface_acquire_recovery(failure)
+            .expect("successful surface acquisition is handled before recovery");
+
+        match recovery {
+            SurfaceAcquireRecovery::Reconfigure => self.reconfigure_surface(),
+            SurfaceAcquireRecovery::Recreate => {
+                if let Err(error) = self.recreate_surface() {
+                    warn!("Failed to recreate lost surface; will retry next frame: {error}");
+                }
+            }
+            SurfaceAcquireRecovery::Skip => {}
+            SurfaceAcquireRecovery::Reject => {
+                *self.last_error.lock().unwrap() =
+                    Some("Surface texture validation error".to_string());
+            }
+        }
+
+        recovery.outcome()
+    }
+
+    pub fn draw(&mut self, scene: &Scene) -> PlatformWindowPresentOutcome {
         // Bail out early if the surface has been unconfigured (e.g. during
         // Android background/rotation transitions).  Attempting to acquire
         // a texture from an unconfigured surface can block indefinitely on
         // some drivers (Adreno).
         if !self.surface_configured {
-            return false;
+            return PlatformWindowPresentOutcome::Deferred;
+        }
+
+        if self.resources().surface.is_none() {
+            if let Err(error) = self.recreate_surface() {
+                warn!("Failed to recreate lost surface; will retry next frame: {error}");
+            }
+            return PlatformWindowPresentOutcome::Deferred;
         }
 
         let last_error = self.last_error.lock().unwrap().take();
@@ -1206,45 +1371,38 @@ impl WgpuRenderer {
                 self.atlas.clear();
                 self.needs_redraw = true;
                 self.failed_frame_count = 0;
-                return false;
+                return PlatformWindowPresentOutcome::Deferred;
             }
         } else {
             self.failed_frame_count = 0;
         }
 
         let Some(clip_shape_count) = self.prepare_clip_buffer(scene.clip_shapes()) else {
-            return false;
+            return PlatformWindowPresentOutcome::Rejected;
         };
 
         self.atlas.before_frame();
 
-        let frame = match self.resources().surface.get_current_texture() {
+        let frame = match self
+            .resources()
+            .surface
+            .as_ref()
+            .expect("configured surface is available")
+            .get_current_texture()
+        {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Textures must be destroyed before the surface can be reconfigured.
                 drop(frame);
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
-                return false;
+                self.reconfigure_surface();
+                return PlatformWindowPresentOutcome::Deferred;
             }
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
-                return false;
-            }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return false;
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                *self.last_error.lock().unwrap() =
-                    Some("Surface texture validation error".to_string());
-                return false;
+            failure @ (wgpu::CurrentSurfaceTexture::Outdated
+            | wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Lost
+            | wgpu::CurrentSurfaceTexture::Validation) => {
+                return self.handle_surface_acquire_failure(&failure);
             }
         };
 
@@ -1424,8 +1582,7 @@ impl WgpuRenderer {
                         "instance buffer size grew too large: {}",
                         self.instance_buffer_capacity
                     );
-                    self.resources().queue.present(frame);
-                    return true;
+                    return PlatformWindowPresentOutcome::Rejected;
                 }
                 self.grow_instance_buffer();
                 continue;
@@ -1435,7 +1592,7 @@ impl WgpuRenderer {
                 .queue
                 .submit(std::iter::once(encoder.finish()));
             self.resources().queue.present(frame);
-            return true;
+            return PlatformWindowPresentOutcome::Submitted;
         }
     }
 
@@ -1902,8 +2059,9 @@ impl WgpuRenderer {
     /// surface later without losing cached atlas textures.
     pub fn unconfigure_surface(&mut self) {
         self.surface_configured = false;
-        // Drop intermediate textures since they reference the old surface size.
+        // Drop surface-bound resources before the native window becomes invalid.
         if let Some(res) = self.resources.as_mut() {
+            res.surface.take();
             res.invalidate_intermediate_textures();
         }
     }
@@ -1927,7 +2085,13 @@ impl WgpuRenderer {
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
 
-        let surface = create_surface(instance, window_handle.as_raw())?;
+        anyhow::ensure!(
+            &self.surface_factory.instance == instance,
+            "Replacement surface must use the renderer's wgpu instance"
+        );
+        let surface_factory =
+            SurfaceFactory::for_raw_window(instance.clone(), window_handle.as_raw());
+        let surface = surface_factory.create()?;
 
         let width = (config.size.width.0 as u32).max(1);
         let height = (config.size.height.0 as u32).max(1);
@@ -1951,12 +2115,13 @@ impl WgpuRenderer {
                 .as_mut()
                 .expect("GPU resources not available");
             surface.configure(&res.device, &self.surface_config);
-            res.surface = surface;
+            res.surface = Some(surface);
 
             // Invalidate intermediate textures — they'll be recreated lazily.
             res.invalidate_intermediate_textures();
         }
 
+        self.surface_factory = surface_factory;
         self.surface_configured = true;
 
         Ok(())
@@ -2003,7 +2168,7 @@ impl WgpuRenderer {
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
 
-        let surface = if needs_new_context {
+        let (surface_factory, surface) = if needs_new_context {
             log::warn!("GPU device lost, recreating context...");
 
             // Drop old resources to release Arc<Device>/Arc<Queue> and GPU resources
@@ -2017,15 +2182,19 @@ impl WgpuRenderer {
             std::thread::sleep(std::time::Duration::from_millis(350));
 
             let instance = WgpuContext::instance(Box::new(window.clone()));
-            let surface = create_surface(&instance, window_handle.as_raw())?;
+            let surface_factory =
+                SurfaceFactory::for_raw_window(instance.clone(), window_handle.as_raw());
+            let surface = surface_factory.create()?;
             let new_context =
                 WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
             *gpu_context.borrow_mut() = Some(new_context);
-            surface
+            (surface_factory, surface)
         } else {
             let ctx_ref = gpu_context.borrow();
-            let instance = &ctx_ref.as_ref().unwrap().instance;
-            create_surface(instance, window_handle.as_raw())?
+            let instance = ctx_ref.as_ref().unwrap().instance.clone();
+            let surface_factory = SurfaceFactory::for_raw_window(instance, window_handle.as_raw());
+            let surface = surface_factory.create()?;
+            (surface_factory, surface)
         };
 
         let config = WgpuSurfaceConfig {
@@ -2046,6 +2215,7 @@ impl WgpuRenderer {
         *self = Self::new_internal(
             Some(gpu_context.clone()),
             context,
+            surface_factory,
             surface,
             config,
             self.compositor_gpu,
@@ -2054,22 +2224,6 @@ impl WgpuRenderer {
 
         log::info!("GPU recovery complete");
         Ok(())
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn create_surface(
-    instance: &wgpu::Instance,
-    raw_window_handle: raw_window_handle::RawWindowHandle,
-) -> anyhow::Result<wgpu::Surface<'static>> {
-    unsafe {
-        instance
-            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                // Fall back to the display handle already provided via InstanceDescriptor::display.
-                raw_display_handle: None,
-                raw_window_handle,
-            })
-            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 }
 
@@ -2121,7 +2275,126 @@ impl RenderingParameters {
 #[cfg(test)]
 mod abi_layout_tests {
     use super::*;
-    use std::mem::{align_of, offset_of, size_of};
+    use std::{
+        cell::Cell,
+        mem::{align_of, offset_of, size_of},
+    };
+
+    struct SurfaceDropProbe<'a> {
+        drop_count: &'a Cell<usize>,
+    }
+
+    impl Drop for SurfaceDropProbe<'_> {
+        fn drop(&mut self) {
+            self.drop_count.set(self.drop_count.get() + 1);
+        }
+    }
+
+    #[test]
+    fn surface_acquisition_failures_select_exact_recovery() {
+        for (failure, expected_recovery, expected_outcome) in [
+            (
+                wgpu::CurrentSurfaceTexture::Lost,
+                SurfaceAcquireRecovery::Recreate,
+                PlatformWindowPresentOutcome::Deferred,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Outdated,
+                SurfaceAcquireRecovery::Reconfigure,
+                PlatformWindowPresentOutcome::Deferred,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Timeout,
+                SurfaceAcquireRecovery::Skip,
+                PlatformWindowPresentOutcome::Deferred,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Occluded,
+                SurfaceAcquireRecovery::Skip,
+                PlatformWindowPresentOutcome::Deferred,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Validation,
+                SurfaceAcquireRecovery::Reject,
+                PlatformWindowPresentOutcome::Rejected,
+            ),
+        ] {
+            let recovery = surface_acquire_recovery(&failure)
+                .expect("each case represents a surface acquisition failure");
+            assert_eq!(recovery, expected_recovery);
+            assert_eq!(recovery.outcome(), expected_outcome);
+        }
+    }
+
+    #[test]
+    fn surface_recreation_drops_the_old_surface_before_create() {
+        let drop_count = Cell::new(0);
+        let mut surface = Some(SurfaceDropProbe {
+            drop_count: &drop_count,
+        });
+
+        let recreated = recreate_configured_surface_slot(true, &mut surface, || {
+            assert_eq!(drop_count.get(), 1);
+            Ok::<_, ()>(SurfaceDropProbe {
+                drop_count: &drop_count,
+            })
+        })
+        .expect("surface recreation should succeed");
+
+        assert!(recreated);
+        assert!(surface.is_some());
+        assert_eq!(drop_count.get(), 1);
+    }
+
+    #[test]
+    fn failed_surface_recreation_leaves_an_empty_slot_and_can_retry() {
+        let drop_count = Cell::new(0);
+        let create_attempts = Cell::new(0);
+        let mut surface = Some(SurfaceDropProbe {
+            drop_count: &drop_count,
+        });
+
+        let first_attempt = recreate_configured_surface_slot(true, &mut surface, || {
+            create_attempts.set(create_attempts.get() + 1);
+            Err::<SurfaceDropProbe<'_>, _>("surface creation failed")
+        });
+
+        assert_eq!(first_attempt, Err("surface creation failed"));
+        assert!(surface.is_none());
+        assert_eq!(drop_count.get(), 1);
+
+        let recreated = recreate_configured_surface_slot(true, &mut surface, || {
+            create_attempts.set(create_attempts.get() + 1);
+            Ok::<_, &'static str>(SurfaceDropProbe {
+                drop_count: &drop_count,
+            })
+        })
+        .expect("a later surface recreation should succeed");
+
+        assert!(recreated);
+        assert!(surface.is_some());
+        assert_eq!(create_attempts.get(), 2);
+    }
+
+    #[test]
+    fn unconfigured_surface_slots_do_not_recreate_automatically() {
+        let drop_count = Cell::new(0);
+        let create_attempts = Cell::new(0);
+        let mut surface = None;
+
+        let recreated = recreate_configured_surface_slot(false, &mut surface, || {
+            create_attempts.set(create_attempts.get() + 1);
+            Ok::<_, ()>(SurfaceDropProbe {
+                drop_count: &drop_count,
+            })
+        })
+        .expect("an unconfigured surface should be skipped");
+
+        assert!(!recreated);
+        assert!(surface.is_none());
+        assert_eq!(create_attempts.get(), 0);
+        assert_eq!(drop_count.get(), 0);
+    }
 
     #[test]
     fn primitive_transform_has_wgsl_storage_layout() {

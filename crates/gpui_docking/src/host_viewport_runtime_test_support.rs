@@ -509,7 +509,7 @@ fn tabs_for_space(
 
 pub(crate) fn unfocused_viewport_window_options() -> WindowOptions {
     WindowOptions {
-        focus: false,
+        focus_on_appearing: false,
         ..viewport_window_options(360.0, 220.0)
     }
 }

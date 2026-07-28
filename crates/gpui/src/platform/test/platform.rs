@@ -3,9 +3,11 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHeadlessRenderer,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
     PlatformWindowMutationCapabilities, PromptButton, ScreenCaptureFrame, ScreenCaptureSource,
     ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow, ThermalState,
-    WindowAppearance, WindowCoordinateSpace, WindowMutationSupport, WindowParams, size,
+    WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
+    WindowMutationSupport, WindowParams, size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -30,8 +32,10 @@ pub(crate) struct TestPlatform {
     window_stack: RefCell<Option<Vec<TestWindow>>>,
     platform_viewport_windows: RefCell<bool>,
     pointer_input_mutation_supported: RefCell<bool>,
+    window_creation_capabilities_override: RefCell<Option<PlatformWindowCreationCapabilities>>,
     window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
     next_window_map_error: RefCell<Option<String>>,
+    next_window_creation_show_fact: RefCell<Option<bool>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -150,8 +154,10 @@ impl TestPlatform {
             window_stack: Default::default(),
             platform_viewport_windows: RefCell::new(true),
             pointer_input_mutation_supported: RefCell::new(true),
+            window_creation_capabilities_override: RefCell::new(None),
             window_mutation_capabilities_override: RefCell::new(None),
             next_window_map_error: RefCell::new(None),
+            next_window_creation_show_fact: RefCell::new(None),
             expect_restart: Default::default(),
             quit_requested: Default::default(),
             open_urls_callback: Default::default(),
@@ -183,6 +189,13 @@ impl TestPlatform {
         *self.window_mutation_capabilities_override.borrow_mut() = Some(capabilities);
     }
 
+    pub(crate) fn set_window_creation_capabilities(
+        &self,
+        capabilities: PlatformWindowCreationCapabilities,
+    ) {
+        *self.window_creation_capabilities_override.borrow_mut() = Some(capabilities);
+    }
+
     pub(crate) fn set_platform_viewport_windows(&self, supported: bool) {
         *self.platform_viewport_windows.borrow_mut() = supported;
     }
@@ -191,6 +204,12 @@ impl TestPlatform {
         self.next_window_map_error
             .borrow_mut()
             .replace(message.into());
+    }
+
+    pub(crate) fn set_next_window_creation_show_fact(&self, show: bool) {
+        self.next_window_creation_show_fact
+            .borrow_mut()
+            .replace(show);
     }
 
     pub(crate) fn simulate_new_path_selection(
@@ -591,33 +610,43 @@ impl Platform for TestPlatform {
         }
     }
 
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         _kind: &crate::WindowKind,
         _display_id: Option<crate::DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
-        if let Some(capabilities) = *self.window_mutation_capabilities_override.borrow() {
-            return capabilities;
-        }
-        PlatformWindowMutationCapabilities {
-            position: WindowMutationSupport::Live,
-            size: WindowMutationSupport::Live,
-            windowed: WindowMutationSupport::Live,
-            maximized: WindowMutationSupport::Live,
-            fullscreen: WindowMutationSupport::Live,
-            minimized: WindowMutationSupport::Live,
-            restore_bounds: WindowMutationSupport::Live,
-            pointer_input: if *self.pointer_input_mutation_supported.borrow() {
-                WindowMutationSupport::Live
-            } else {
-                WindowMutationSupport::Unsupported
-            },
-            focus_on_appearing: WindowMutationSupport::CreationOnly,
-            focus_on_click: WindowMutationSupport::Unsupported,
-            alpha: WindowMutationSupport::CreationOnly,
-            topmost: WindowMutationSupport::Unsupported,
-            taskbar_visibility: WindowMutationSupport::Unsupported,
-            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+    ) -> PlatformWindowCapabilities {
+        let mutations = self
+            .window_mutation_capabilities_override
+            .borrow()
+            .unwrap_or(PlatformWindowMutationCapabilities {
+                position: WindowMutationSupport::Live,
+                size: WindowMutationSupport::Live,
+                windowed: WindowMutationSupport::Live,
+                maximized: WindowMutationSupport::Live,
+                fullscreen: WindowMutationSupport::Live,
+                minimized: WindowMutationSupport::Live,
+                restore_bounds: WindowMutationSupport::Live,
+                pointer_input: if *self.pointer_input_mutation_supported.borrow() {
+                    WindowMutationSupport::Live
+                } else {
+                    WindowMutationSupport::Unsupported
+                },
+                activation_policy: WindowMutationSupport::Live,
+                alpha: WindowMutationSupport::CreationOnly,
+                topmost: WindowMutationSupport::Unsupported,
+                taskbar_visibility: WindowMutationSupport::Unsupported,
+                coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            });
+        PlatformWindowCapabilities {
+            creation: self
+                .window_creation_capabilities_override
+                .borrow()
+                .unwrap_or(PlatformWindowCreationCapabilities {
+                    focus_on_appearing: WindowCreationSupport::Supported,
+                    transient_for: WindowCreationSupport::Supported,
+                    initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
+                }),
+            mutations,
         }
     }
 
@@ -641,6 +670,7 @@ impl Platform for TestPlatform {
             self.active_display.clone(),
             renderer,
             self.next_window_map_error.borrow_mut().take(),
+            self.next_window_creation_show_fact.borrow_mut().take(),
         );
         Ok(Box::new(window))
     }

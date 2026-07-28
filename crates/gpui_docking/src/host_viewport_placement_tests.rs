@@ -540,7 +540,7 @@ mod runtime_suite {
                 runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
-                        focus: false,
+                        focus_on_appearing: false,
                         ..viewport_window_options(360.0, 220.0)
                     },
                     app,
@@ -626,7 +626,7 @@ mod runtime_suite {
                 runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
-                        focus: false,
+                        focus_on_appearing: false,
                         ..viewport_window_options(360.0, 220.0)
                     },
                     app,
@@ -1412,7 +1412,7 @@ mod runtime_suite {
             .expect("suggested bounds should produce window options");
         assert_eq!(options.window_bounds, Some(suggested));
         assert!(
-            !options.focus,
+            !options.focus_on_appearing,
             "tear-off windows must not take focus before graph commit and runtime activation"
         );
     }

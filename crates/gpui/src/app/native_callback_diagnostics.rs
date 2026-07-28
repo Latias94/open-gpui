@@ -88,6 +88,7 @@ pub enum NativeCallbackKind {
     AccessibilityDeactivated,
     AccessibilityAction,
     InitialPresentationCompleted,
+    InitialPresentationFailed,
     RequestFrame,
     ActiveChanged,
     ModifiersChanged,

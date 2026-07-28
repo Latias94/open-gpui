@@ -145,7 +145,7 @@ fn dispatch_pointer_input(
     accepts_pointer_input: bool,
 ) -> DockViewportPlatformSyncDispatchResult {
     let window_id = window.window_handle().window_id();
-    let support = window.window_mutation_capabilities().pointer_input;
+    let support = window.window_capabilities().mutations.pointer_input;
     let mut result = DockViewportPlatformSyncDispatchResult::new(window_id);
     let unsupported_reason = match support {
         WindowMutationSupport::CreationOnly => {
@@ -170,7 +170,7 @@ fn dispatch_background_appearance(
     background: WindowBackgroundAppearance,
 ) -> DockViewportPlatformSyncDispatchResult {
     let window_id = window.window_handle().window_id();
-    let support = window.window_mutation_capabilities().alpha;
+    let support = window.window_capabilities().mutations.alpha;
     let mut result = DockViewportPlatformSyncDispatchResult::new(window_id);
     let unsupported_reason = match support {
         WindowMutationSupport::CreationOnly => {
@@ -196,7 +196,7 @@ fn placement_unsupported_reason(
 ) -> DockViewportPlatformSyncUnsupportedReason {
     let request = WindowPlacementRequest::from_window_bounds(requested);
     let facts = window.platform_facts();
-    let capabilities = window.window_mutation_capabilities();
+    let capabilities = window.window_capabilities().mutations;
     let mut required_support = Vec::with_capacity(4);
 
     if request
@@ -325,11 +325,6 @@ pub(crate) fn sync_reused_viewport_window_with_request_gate(
     let window_id = window.window_handle().window_id();
     let mut result = DockViewportPlatformSyncDispatchResult::new(window_id);
 
-    if options.focus {
-        window.activate_window();
-        result.push_immediate(DockViewportPlatformSyncAction::Activate);
-    }
-
     if !options.show {
         result.push_unsupported(creation_only(DockViewportPlatformSyncRequest::Show {
             requested: options.show,
@@ -355,6 +350,26 @@ pub(crate) fn sync_reused_viewport_window_with_request_gate(
                 requested: options.is_minimizable,
             },
         ));
+    }
+
+    let activation_request = WindowMutationRequest::ActivationPolicy(options.activation_policy);
+    if should_dispatch(activation_request, window.platform_facts()) {
+        let support = window.window_capabilities().mutations.activation_policy;
+        let unsupported_reason = match support {
+            WindowMutationSupport::CreationOnly => {
+                DockViewportPlatformSyncUnsupportedReason::CreationOnly
+            }
+            WindowMutationSupport::Unsupported | WindowMutationSupport::Live => {
+                DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi
+            }
+        };
+        result.push_window_dispatch(
+            DockViewportPlatformSyncRequest::ActivationPolicy {
+                requested: options.activation_policy,
+            },
+            window.request_activation_policy(options.activation_policy),
+            unsupported_reason,
+        );
     }
 
     let pointer_request = WindowMutationRequest::PointerInput(options.accepts_pointer_input);

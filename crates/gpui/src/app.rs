@@ -50,12 +50,12 @@ use crate::{
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformViewportCapabilities, PlatformWindowMutationCapabilities,
-    PlatformWindowMutationProfile, Point, PointerCaptureHandle, Priority, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
-    WindowHandle, WindowId, WindowInvalidator, WindowKind,
+    PlatformViewportCapabilities, PlatformWindowCapabilities, PlatformWindowProfile, Point,
+    PointerCaptureHandle, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
+    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState,
+    Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
+    WindowKind, WindowTransientOwner,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -608,7 +608,7 @@ pub struct App {
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
-    pub(crate) window_mutation_profiles: FxHashMap<WindowId, PlatformWindowMutationProfile>,
+    pub(crate) window_profiles: FxHashMap<WindowId, PlatformWindowProfile>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
@@ -767,7 +767,7 @@ impl App {
                 windows: SlotMap::with_key(),
                 window_update_stack: Vec::new(),
                 window_handles: FxHashMap::default(),
-                window_mutation_profiles: FxHashMap::default(),
+                window_profiles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
                 keyboard_layout,
@@ -1197,37 +1197,46 @@ impl App {
         self.platform.viewport_capabilities()
     }
 
-    /// Returns property-specific support for creating or mutating platform windows.
-    ///
-    /// Creation callers may use [`crate::WindowMutationSupport::CreationOnly`] or
-    /// [`crate::WindowMutationSupport::Live`]. Requests against an already-open window require
-    /// [`crate::WindowMutationSupport::Live`].
-    pub fn window_mutation_capabilities(&self) -> PlatformWindowMutationCapabilities {
-        self.window_mutation_capabilities_for(&WindowKind::Normal, None)
+    /// Returns creation and mutation capabilities for ordinary platform windows.
+    pub fn window_capabilities(&self) -> PlatformWindowCapabilities {
+        self.window_capabilities_for(&WindowKind::Normal, None)
     }
 
-    /// Returns property-specific support for a platform window kind on the target display.
+    /// Returns creation and mutation capabilities for a platform window kind on the target display.
     ///
     /// `None` asks the backend about its primary or default display. An unavailable display id is
     /// resolved to that same default so capability projection matches window creation.
-    pub fn window_mutation_capabilities_for(
+    pub fn window_capabilities_for(
         &self,
         kind: &WindowKind,
         display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
+    ) -> PlatformWindowCapabilities {
         self.platform
-            .window_mutation_capabilities(kind, self.resolve_display_id(display_id))
+            .window_capabilities(kind, self.resolve_display_id(display_id))
     }
 
-    /// Returns the mutation profile captured for an opened window's actual kind.
+    /// Returns the capability profile captured for an opened window's actual kind.
     ///
     /// The profile remains readable while GPUI is updating the window and temporarily owns its
     /// mutable state outside the window registry. Closed or uncommitted handles return `None`.
-    pub fn window_mutation_profile(
+    pub fn window_profile(&self, window: AnyWindowHandle) -> Option<&PlatformWindowProfile> {
+        self.window_profiles.get(&window.window_id())
+    }
+
+    /// Creates an application-bound transient-owner token for a live committed window.
+    pub fn transient_window_owner(
         &self,
         window: AnyWindowHandle,
-    ) -> Option<&PlatformWindowMutationProfile> {
-        self.window_mutation_profiles.get(&window.window_id())
+    ) -> anyhow::Result<WindowTransientOwner> {
+        anyhow::ensure!(
+            self.window_handles.get(&window.window_id()) == Some(&window),
+            "transient owner must reference a live committed window"
+        );
+        anyhow::ensure!(
+            self.this.upgrade().is_some(),
+            "transient owner requires a live application"
+        );
+        Ok(WindowTransientOwner::new(self.this.clone(), window))
     }
 
     /// Returns the backend hovered-window signal for the current pointer snapshot.
@@ -1281,7 +1290,9 @@ impl App {
                     // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
                     // where DispatchTree::root_node_id asserts on empty nodes
                     let clear = window.draw(reservation.app_mut());
+                    let initial_presentation = window.prepare_initial_presentation();
                     clear.clear();
+                    initial_presentation?;
 
                     reservation.commit(window)?;
                     Ok(handle)
@@ -3113,7 +3124,7 @@ mod test {
         cx.read(|app| {
             assert!(!app.windows.contains_key(reserved_id));
             assert!(!app.window_handles.contains_key(&reserved_id));
-            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+            assert!(!app.window_profiles.contains_key(&reserved_id));
         });
         assert!(
             cx.app.dispatch_window_should_close(reserved_id),
@@ -3201,7 +3212,7 @@ mod test {
         cx.read(|app| {
             assert!(!app.windows.contains_key(reserved_id));
             assert!(!app.window_handles.contains_key(&reserved_id));
-            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+            assert!(!app.window_profiles.contains_key(&reserved_id));
         });
         assert!(cx.app.dispatch_window_should_close(reserved_id));
         assert!(
@@ -3264,7 +3275,7 @@ mod test {
         cx.read(|app| {
             assert!(!app.windows.contains_key(reserved_id));
             assert!(!app.window_handles.contains_key(&reserved_id));
-            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+            assert!(!app.window_profiles.contains_key(&reserved_id));
         });
         assert!(cx.app.dispatch_window_should_close(reserved_id));
         assert!(
@@ -3309,7 +3320,7 @@ mod test {
         cx.read(|app| {
             assert!(!app.windows.contains_key(reserved_id));
             assert!(!app.window_handles.contains_key(&reserved_id));
-            assert!(!app.window_mutation_profiles.contains_key(&reserved_id));
+            assert!(!app.window_profiles.contains_key(&reserved_id));
         });
         assert!(
             cx.app.dispatch_window_should_close(reserved_id),
@@ -3406,10 +3417,7 @@ mod test {
         cx.read(|app| {
             assert!(!app.windows.contains_key(window.window_id()));
             assert!(!app.window_handles.contains_key(&window.window_id()));
-            assert!(
-                !app.window_mutation_profiles
-                    .contains_key(&window.window_id())
-            );
+            assert!(!app.window_profiles.contains_key(&window.window_id()));
         });
         assert!(
             window.update(cx, |_, _, _| ()).is_err(),

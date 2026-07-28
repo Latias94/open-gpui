@@ -1,8 +1,10 @@
 //! DevTools adapters for `open-gpui-docking` public diagnostics.
 
 use open_gpui::{
-    PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowMutationRequest,
-    WindowMutationSupport, WindowPlacementState, WindowPlatformFacts,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowMutationRequest, WindowMutationSupport,
+    WindowPlacementState, WindowPlatformFacts,
 };
 use open_gpui_docking::advanced::{
     DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPayloadRecord,
@@ -12,7 +14,7 @@ use open_gpui_docking::advanced::{
     DockViewportRestoreReadinessRecord, DockViewportRouteRecord, DockViewportRouteSelectionRecord,
     DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntimeStatus,
     DockViewportStaleStatusReason, DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
-    DockViewportWindowMutationCapabilityRecord,
+    DockViewportWindowProfileRecord,
 };
 use serde::{Deserialize, Serialize};
 
@@ -46,8 +48,8 @@ pub struct DockingRuntimeInspection {
     pub summary: DockingRuntimeSummary,
     /// Platform capability facts, present only when the application supplied them.
     pub platform_capabilities: Option<DockingPlatformCapabilityRow>,
-    /// Property-specific support captured for each viewport's actual platform window kind.
-    pub window_mutation_capabilities: Vec<DockingViewportWindowMutationCapabilityRow>,
+    /// Creation and mutation capabilities captured for each viewport's actual platform window kind.
+    pub window_profiles: Vec<DockingViewportWindowProfileRow>,
     /// Saved-placement restore facts, present only after a restore check ran.
     pub placement_restore: Option<DockingPlacementRestoreRow>,
     /// Per-viewport lifecycle rows in deterministic runtime order.
@@ -71,8 +73,8 @@ pub struct DockingRuntimeSummary {
     pub placement_restore_present: bool,
     /// Number of registered viewport lifecycle rows.
     pub viewport_lifecycle_count: usize,
-    /// Number of viewport windows with an actual-kind mutation capability profile.
-    pub window_mutation_capability_count: usize,
+    /// Number of viewport windows with an actual-kind creation and mutation profile.
+    pub window_profile_count: usize,
     /// Number of lifecycle rows that are route-ready.
     pub route_ready_count: usize,
     /// Number of lifecycle rows with stale route facts.
@@ -104,6 +106,26 @@ pub struct DockingPlatformCapabilityRow {
     pub hovered_window_ignores_no_input: bool,
 }
 
+/// Complete creation and mutation capabilities for one platform window kind.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingWindowCapabilitiesRow {
+    /// Creation-only capabilities.
+    pub creation: DockingWindowCreationCapabilityRow,
+    /// Live and creation-only mutation capabilities.
+    pub mutations: DockingWindowMutationCapabilityRow,
+}
+
+/// Creation-only platform window capabilities.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingWindowCreationCapabilityRow {
+    /// Support for a non-activating first appearance.
+    pub focus_on_appearing: DockingWindowCreationSupport,
+    /// Support for a typed top-level transient owner relationship.
+    pub transient_for: DockingWindowCreationSupport,
+    /// Ordering required between first frame submission and native visibility.
+    pub initial_presentation_order: DockingWindowInitialPresentationOrder,
+}
+
 /// Property-specific platform window support relevant to viewport mutation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DockingWindowMutationCapabilityRow {
@@ -123,10 +145,8 @@ pub struct DockingWindowMutationCapabilityRow {
     pub restore_bounds: DockingWindowMutationSupport,
     /// Support for native pointer-input acceptance.
     pub pointer_input: DockingWindowMutationSupport,
-    /// Support for controlling focus when a window appears.
-    pub focus_on_appearing: DockingWindowMutationSupport,
-    /// Support for controlling focus on click.
-    pub focus_on_click: DockingWindowMutationSupport,
+    /// Support for coherently changing lifetime activation and click-focus policy.
+    pub activation_policy: DockingWindowMutationSupport,
     /// Support for alpha or transparent backgrounds.
     pub alpha: DockingWindowMutationSupport,
     /// Support for topmost windows.
@@ -137,17 +157,39 @@ pub struct DockingWindowMutationCapabilityRow {
     pub coordinate_space: DockingWindowCoordinateSpace,
 }
 
-/// Property-specific support captured for one docking viewport window.
+/// Complete platform profile captured for one docking viewport window.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DockingViewportWindowMutationCapabilityRow {
+pub struct DockingViewportWindowProfileRow {
     /// Logical dock space rendered by the viewport.
     pub space: String,
     /// GPUI window id bound to the logical space.
     pub window_id: u64,
     /// Stable label for the actual platform window kind used at creation.
     pub window_kind: String,
-    /// Property-specific mutation support for that kind.
-    pub capabilities: DockingWindowMutationCapabilityRow,
+    /// Creation and mutation support for that kind.
+    pub capabilities: DockingWindowCapabilitiesRow,
+}
+
+/// Support level for one creation-only platform window property.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DockingWindowCreationSupport {
+    /// The backend cannot represent the property.
+    Unsupported,
+    /// The backend can apply and report the property during creation.
+    Supported,
+}
+
+/// Required ordering between first frame submission and native visibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DockingWindowInitialPresentationOrder {
+    /// The first frame can be submitted before the native window becomes visible.
+    BeforeVisibility,
+    /// The native window must be visible before the first frame can be submitted.
+    AfterVisibility,
+    /// The first frame submission itself establishes native visibility or mapping.
+    PresentationEstablishesVisibility,
 }
 
 /// Support level for one platform window property.
@@ -470,10 +512,10 @@ pub fn docking_runtime_inspection(status: &DockViewportRuntimeStatus) -> Docking
         platform_capabilities: status
             .platform_capabilities
             .map(DockingPlatformCapabilityRow::from),
-        window_mutation_capabilities: status
-            .window_mutation_capabilities
+        window_profiles: status
+            .window_profiles
             .iter()
-            .map(DockingViewportWindowMutationCapabilityRow::from)
+            .map(DockingViewportWindowProfileRow::from)
             .collect(),
         placement_restore: status
             .placement_restore
@@ -508,7 +550,7 @@ impl DockingRuntimeSummary {
                 .map(|capabilities| capabilities.platform_viewport_windows),
             placement_restore_present: status.placement_restore.is_some(),
             viewport_lifecycle_count: status.viewport_lifecycle.len(),
-            window_mutation_capability_count: status.window_mutation_capabilities.len(),
+            window_profile_count: status.window_profiles.len(),
             route_ready_count: status
                 .viewport_lifecycle
                 .iter()
@@ -556,6 +598,25 @@ impl From<DockViewportPlatformCapabilityRecord> for DockingPlatformCapabilityRow
     }
 }
 
+impl From<PlatformWindowCapabilities> for DockingWindowCapabilitiesRow {
+    fn from(capabilities: PlatformWindowCapabilities) -> Self {
+        Self {
+            creation: capabilities.creation.into(),
+            mutations: capabilities.mutations.into(),
+        }
+    }
+}
+
+impl From<PlatformWindowCreationCapabilities> for DockingWindowCreationCapabilityRow {
+    fn from(capabilities: PlatformWindowCreationCapabilities) -> Self {
+        Self {
+            focus_on_appearing: capabilities.focus_on_appearing.into(),
+            transient_for: capabilities.transient_for.into(),
+            initial_presentation_order: capabilities.initial_presentation_order.into(),
+        }
+    }
+}
+
 impl From<PlatformWindowMutationCapabilities> for DockingWindowMutationCapabilityRow {
     fn from(capabilities: PlatformWindowMutationCapabilities) -> Self {
         Self {
@@ -567,8 +628,7 @@ impl From<PlatformWindowMutationCapabilities> for DockingWindowMutationCapabilit
             minimized: capabilities.minimized.into(),
             restore_bounds: capabilities.restore_bounds.into(),
             pointer_input: capabilities.pointer_input.into(),
-            focus_on_appearing: capabilities.focus_on_appearing.into(),
-            focus_on_click: capabilities.focus_on_click.into(),
+            activation_policy: capabilities.activation_policy.into(),
             alpha: capabilities.alpha.into(),
             topmost: capabilities.topmost.into(),
             taskbar_visibility: capabilities.taskbar_visibility.into(),
@@ -577,15 +637,34 @@ impl From<PlatformWindowMutationCapabilities> for DockingWindowMutationCapabilit
     }
 }
 
-impl From<&DockViewportWindowMutationCapabilityRecord>
-    for DockingViewportWindowMutationCapabilityRow
-{
-    fn from(record: &DockViewportWindowMutationCapabilityRecord) -> Self {
+impl From<&DockViewportWindowProfileRecord> for DockingViewportWindowProfileRow {
+    fn from(record: &DockViewportWindowProfileRecord) -> Self {
         Self {
             space: sanitize_sensitive_text(record.space.as_str()),
             window_id: record.window_id.as_u64(),
             window_kind: record.window_kind.as_str().to_string(),
-            capabilities: DockingWindowMutationCapabilityRow::from(record.capabilities),
+            capabilities: DockingWindowCapabilitiesRow::from(record.capabilities),
+        }
+    }
+}
+
+impl From<WindowCreationSupport> for DockingWindowCreationSupport {
+    fn from(support: WindowCreationSupport) -> Self {
+        match support {
+            WindowCreationSupport::Unsupported => Self::Unsupported,
+            WindowCreationSupport::Supported => Self::Supported,
+        }
+    }
+}
+
+impl From<WindowInitialPresentationOrder> for DockingWindowInitialPresentationOrder {
+    fn from(order: WindowInitialPresentationOrder) -> Self {
+        match order {
+            WindowInitialPresentationOrder::BeforeVisibility => Self::BeforeVisibility,
+            WindowInitialPresentationOrder::AfterVisibility => Self::AfterVisibility,
+            WindowInitialPresentationOrder::PresentationEstablishesVisibility => {
+                Self::PresentationEstablishesVisibility
+            }
         }
     }
 }
@@ -877,17 +956,17 @@ fn docking_runtime_tree(status: &DockViewportRuntimeStatus) -> SnapshotTree {
             platform_capability_payload(capabilities),
         ));
     }
-    for (index, capabilities) in status.window_mutation_capabilities.iter().enumerate() {
+    for (index, profile) in status.window_profiles.iter().enumerate() {
         let index_label = index.to_string();
         root = root.with_child(snapshot_node_with_payload(
             [
                 "docking",
                 "viewport-runtime",
-                "window-mutation-capabilities",
+                "window-profiles",
                 index_label.as_str(),
             ],
-            format!("Window mutation capabilities {index}"),
-            window_mutation_capability_payload(capabilities),
+            format!("Window profile {index}"),
+            window_profile_payload(profile),
         ));
     }
 
@@ -1096,7 +1175,7 @@ fn append_optional_node<T>(
 fn runtime_summary_payload(status: &DockViewportRuntimeStatus) -> serde_json::Value {
     serde_json::json!({
         "has_platform_capabilities": status.platform_capabilities.is_some(),
-        "window_mutation_capability_count": status.window_mutation_capabilities.len(),
+        "window_profile_count": status.window_profiles.len(),
         "has_placement_restore": status.placement_restore.is_some(),
         "viewport_lifecycle_count": status.viewport_lifecycle.len(),
         "has_last_route": status.last_route.is_some(),
@@ -1124,12 +1203,8 @@ fn platform_capability_payload(
     })
 }
 
-fn window_mutation_capability_payload(
-    capabilities: &DockViewportWindowMutationCapabilityRecord,
-) -> serde_json::Value {
-    serde_json::json!(DockingViewportWindowMutationCapabilityRow::from(
-        capabilities
-    ))
+fn window_profile_payload(profile: &DockViewportWindowProfileRecord) -> serde_json::Value {
+    serde_json::json!(DockingViewportWindowProfileRow::from(profile))
 }
 
 fn placement_restore_payload(restore: DockViewportRestoreReadinessRecord) -> serde_json::Value {
@@ -1312,6 +1387,11 @@ fn platform_sync_request_payload(request: &DockViewportPlatformSyncRequest) -> s
         DockViewportPlatformSyncRequest::PointerInput { requested } => {
             serde_json::json!({ "kind": "pointer-input", "requested": requested })
         }
+        DockViewportPlatformSyncRequest::ActivationPolicy { requested } => serde_json::json!({
+            "kind": "activation-policy",
+            "accepts_activation": requested.accepts_activation,
+            "focus_on_click": requested.focus_on_click,
+        }),
         DockViewportPlatformSyncRequest::BackgroundAppearance { requested } => {
             serde_json::json!({
                 "kind": "background-appearance",
@@ -1393,13 +1473,10 @@ fn window_mutation_request_payload(request: &WindowMutationRequest) -> serde_jso
             "kind": "pointer-input",
             "accepts_pointer_input": accepts_pointer_input,
         }),
-        WindowMutationRequest::FocusOnAppearing(focus) => serde_json::json!({
-            "kind": "focus-on-appearing",
-            "focus": focus,
-        }),
-        WindowMutationRequest::FocusOnClick(focus) => serde_json::json!({
-            "kind": "focus-on-click",
-            "focus": focus,
+        WindowMutationRequest::ActivationPolicy(policy) => serde_json::json!({
+            "kind": "activation-policy",
+            "accepts_activation": policy.accepts_activation,
+            "focus_on_click": policy.focus_on_click,
         }),
         WindowMutationRequest::Alpha(background) => serde_json::json!({
             "kind": "alpha",
@@ -1438,7 +1515,7 @@ fn window_platform_facts_payload(facts: &WindowPlatformFacts) -> serde_json::Val
         "scale_factor": facts.scale_factor,
         "display_id": facts.display_id.map(u64::from),
         "accepts_pointer_input": facts.accepts_pointer_input,
-        "focus_on_appearing": facts.focus_on_appearing,
+        "accepts_activation": facts.accepts_activation,
         "focus_on_click": facts.focus_on_click,
         "background_appearance": format!("{:?}", facts.background_appearance),
         "topmost": facts.topmost,

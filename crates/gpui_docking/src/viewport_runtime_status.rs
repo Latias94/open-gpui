@@ -13,10 +13,10 @@ use crate::{
     },
 };
 use open_gpui::{
-    DisplayId, Pixels, PlatformViewportCapabilities, PlatformWindowMutationCapabilities,
-    PlatformWindowMutationProfile, Point, Size, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowId, WindowKind, WindowMutationDomain, WindowMutationObservation,
-    WindowMutationOutcome, WindowMutationRequest, WindowPlatformFacts,
+    DisplayId, Pixels, PlatformViewportCapabilities, PlatformWindowCapabilities,
+    PlatformWindowProfile, Point, Size, WindowActivationPolicy, WindowBackgroundAppearance,
+    WindowBounds, WindowDecorations, WindowId, WindowKind, WindowMutationDomain,
+    WindowMutationObservation, WindowMutationOutcome, WindowMutationRequest, WindowPlatformFacts,
 };
 
 const PLATFORM_SYNC_OBSERVATION_HISTORY_LIMIT: usize = 16;
@@ -27,7 +27,7 @@ pub struct DockViewportRuntimeStatus {
     /// Platform viewport capabilities sampled by the caller, when available.
     pub platform_capabilities: Option<DockViewportPlatformCapabilityRecord>,
     /// Property-specific support captured for each registered viewport's actual window kind.
-    pub window_mutation_capabilities: Vec<DockViewportWindowMutationCapabilityRecord>,
+    pub window_profiles: Vec<DockViewportWindowProfileRecord>,
     /// Latest placement restore readiness check, when the caller requested one.
     pub placement_restore: Option<DockViewportRestoreReadinessRecord>,
     /// Current lifecycle/readiness records for registered platform viewports.
@@ -75,9 +75,9 @@ pub struct DockViewportPlatformCapabilityRecord {
     pub hovered_window_ignores_no_input: bool,
 }
 
-/// Mutation capabilities captured for one registered viewport window.
+/// Creation and mutation capabilities captured for one registered viewport window.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockViewportWindowMutationCapabilityRecord {
+pub struct DockViewportWindowProfileRecord {
     /// Logical dock space rendered by the viewport window.
     pub space: DockSpaceId,
     /// GPUI window bound to [`Self::space`].
@@ -85,7 +85,7 @@ pub struct DockViewportWindowMutationCapabilityRecord {
     /// Actual platform window kind used when the window was created.
     pub window_kind: WindowKind,
     /// Property-specific creation and live support for [`Self::window_kind`].
-    pub capabilities: PlatformWindowMutationCapabilities,
+    pub capabilities: PlatformWindowCapabilities,
 }
 
 /// Current route-facts and platform-request record for one registered viewport.
@@ -367,10 +367,8 @@ pub enum DockViewportPlatformSyncDomain {
     Placement,
     /// Native pointer-input routing is independent from placement.
     PointerInput,
-    /// Focus-on-appearing configuration.
-    FocusOnAppearing,
-    /// Focus-on-click configuration.
-    FocusOnClick,
+    /// Coherent lifetime activation and click-focus policy.
+    ActivationPolicy,
     /// Native background or alpha treatment.
     Alpha,
     /// Topmost-window configuration.
@@ -416,8 +414,7 @@ impl From<WindowMutationDomain> for DockViewportPlatformSyncDomain {
         match domain {
             WindowMutationDomain::Placement => Self::Placement,
             WindowMutationDomain::PointerInput => Self::PointerInput,
-            WindowMutationDomain::FocusOnAppearing => Self::FocusOnAppearing,
-            WindowMutationDomain::FocusOnClick => Self::FocusOnClick,
+            WindowMutationDomain::ActivationPolicy => Self::ActivationPolicy,
             WindowMutationDomain::Alpha => Self::Alpha,
             WindowMutationDomain::Topmost => Self::Topmost,
             WindowMutationDomain::TaskbarVisibility => Self::TaskbarVisibility,
@@ -464,8 +461,6 @@ pub struct DockViewportPlatformSyncObservedRecord {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockViewportPlatformSyncAction {
-    /// Focused and raised the platform window.
-    Activate,
     /// Updated the platform window title.
     Title {
         /// Requested title.
@@ -538,6 +533,11 @@ pub enum DockViewportPlatformSyncRequest {
     PointerInput {
         /// Requested pointer input state.
         requested: bool,
+    },
+    /// Requested coherent lifetime activation and click-focus policy.
+    ActivationPolicy {
+        /// Requested activation policy.
+        requested: WindowActivationPolicy,
     },
     /// Requested native background treatment differs from the already-open window.
     BackgroundAppearance {
@@ -666,11 +666,11 @@ impl DockViewportRuntimeStatus {
     }
 
     /// Attaches property-specific capability profiles for registered viewport windows.
-    pub fn with_window_mutation_capabilities(
+    pub fn with_window_profiles(
         mut self,
-        capabilities: impl IntoIterator<Item = DockViewportWindowMutationCapabilityRecord>,
+        profiles: impl IntoIterator<Item = DockViewportWindowProfileRecord>,
     ) -> Self {
-        self.window_mutation_capabilities = capabilities.into_iter().collect();
+        self.window_profiles = profiles.into_iter().collect();
         self
     }
 
@@ -838,11 +838,11 @@ impl DockViewportRuntimeStatus {
     }
 }
 
-impl DockViewportWindowMutationCapabilityRecord {
+impl DockViewportWindowProfileRecord {
     pub(crate) fn from_profile(
         space: DockSpaceId,
         window_id: WindowId,
-        profile: &PlatformWindowMutationProfile,
+        profile: &PlatformWindowProfile,
     ) -> Self {
         Self {
             space,
@@ -1223,9 +1223,8 @@ mod tests {
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{
-        PlatformViewportCapabilities, PlatformWindowMutationCapabilities, WindowBounds,
-        WindowCoordinateSpace, WindowKind, WindowMutationRequest, WindowMutationSupport,
-        WindowPlatformFacts, point, px,
+        PlatformViewportCapabilities, WindowBounds, WindowCoordinateSpace, WindowKind,
+        WindowMutationRequest, WindowMutationSupport, WindowPlatformFacts, point, px,
     };
     use slotmap::Key;
 
@@ -1257,14 +1256,17 @@ mod tests {
     }
 
     #[test]
-    fn runtime_status_attaches_window_mutation_capability_snapshot() {
-        let capabilities = PlatformWindowMutationCapabilities {
-            size: WindowMutationSupport::Live,
-            focus_on_appearing: WindowMutationSupport::CreationOnly,
-            alpha: WindowMutationSupport::CreationOnly,
+    fn runtime_status_attaches_window_profile_snapshot() {
+        let capabilities = PlatformWindowCapabilities {
+            mutations: open_gpui::PlatformWindowMutationCapabilities {
+                size: WindowMutationSupport::Live,
+                activation_policy: WindowMutationSupport::CreationOnly,
+                alpha: WindowMutationSupport::CreationOnly,
+                ..Default::default()
+            },
             ..Default::default()
         };
-        let record = DockViewportWindowMutationCapabilityRecord {
+        let record = DockViewportWindowProfileRecord {
             space: DockSpaceId::from("primary"),
             window_id: WindowId::from(7),
             window_kind: WindowKind::Floating,
@@ -1273,8 +1275,8 @@ mod tests {
 
         assert_eq!(
             DockViewportRuntimeStatus::default()
-                .with_window_mutation_capabilities([record.clone()])
-                .window_mutation_capabilities,
+                .with_window_profiles([record.clone()])
+                .window_profiles,
             vec![record]
         );
     }
@@ -1755,7 +1757,7 @@ mod tests {
                 is_maximized: false,
                 is_fullscreen: false,
                 accepts_pointer_input: true,
-                focus_on_appearing: true,
+                accepts_activation: true,
                 focus_on_click: true,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 topmost: false,

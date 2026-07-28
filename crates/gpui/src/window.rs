@@ -15,19 +15,21 @@ use crate::{
     KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    PlatformWindowCommand, PlatformWindowDispatch, PlatformWindowMutationCapabilities,
-    PlatformWindowMutationObservation, PlatformWindowMutationProfile, Point, PointerCancelEvent,
-    PointerCancelReason, PolychromeSprite, Primitive, PrimitiveTransform, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, RequestFrameOptions, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubpixelSprite, SubscriberSet, Subscription, SubtreeClip, SubtreeClipError,
-    SubtreePresentation, SubtreeTransform, SubtreeTransformError, SystemWindowTab,
-    SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowKind, WindowMutationDispatch,
-    WindowMutationDomain, WindowMutationOutcome, WindowMutationSupport, WindowOptions,
-    WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
+    PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
+    PlatformWindowMutationObservation, PlatformWindowPresentOutcome, PlatformWindowProfile, Point,
+    PointerCancelEvent, PointerCancelReason, PolychromeSprite, Primitive, PrimitiveTransform,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, RequestFrameOptions, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
+    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
+    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowCreationFacts, WindowDecorations, WindowInitialPresentationOrder,
+    WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
+    WindowMutationOutcome, WindowOptions, WindowParams, WindowPlacementRequest,
+    WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
     WindowTextSystem,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
@@ -133,17 +135,6 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
     width: Pixels(900.),
     height: Pixels(750.),
 };
-
-fn creation_focus_on_appearing_fact(
-    observed: bool,
-    requested: bool,
-    support: WindowMutationSupport,
-) -> bool {
-    match support {
-        WindowMutationSupport::CreationOnly => requested,
-        WindowMutationSupport::Unsupported | WindowMutationSupport::Live => observed,
-    }
-}
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -1321,6 +1312,15 @@ impl Drop for PrepaintCommitPhaseScopeGuard {
     }
 }
 
+#[derive(Default)]
+struct WindowPresentationState {
+    frame_accepted_generation: Option<u64>,
+    present_submitted_generation: Option<u64>,
+    non_empty_presented_generation: Option<u64>,
+    latest_present_attempt: Option<WindowPresentAttemptFacts>,
+    initial_presentation: WindowInitialPresentationStatus,
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -1331,9 +1331,11 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     platform_command_sink: PlatformWindowCommandSink,
     initial_presentation_command: Option<PlatformWindowCommand>,
+    creation_facts: WindowCreationFacts,
+    presentation_state: WindowPresentationState,
     platform_facts: WindowPlatformFacts,
     window_kind: WindowKind,
-    window_mutation_capabilities: PlatformWindowMutationCapabilities,
+    window_capabilities: PlatformWindowCapabilities,
     window_mutation_authority: Arc<WindowPlatformMutationAuthority>,
     window_mutations: WindowMutationState,
     display_id: Option<DisplayId>,
@@ -1898,8 +1900,10 @@ impl Window {
         let WindowOptions {
             window_bounds,
             titlebar,
-            focus,
+            focus_on_appearing,
+            activation_policy,
             show,
+            transient_for,
             kind,
             is_movable,
             is_resizable,
@@ -1919,6 +1923,25 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        let transient_for = transient_for
+            .map(|owner| {
+                anyhow::ensure!(
+                    owner.belongs_to(&cx.this),
+                    "transient owner belongs to a different application"
+                );
+                let owner = owner.window();
+                anyhow::ensure!(
+                    owner != handle,
+                    "a top-level window cannot be transient for itself"
+                );
+                anyhow::ensure!(
+                    cx.window_handles.get(&owner.window_id()) == Some(&owner),
+                    "transient owner is closed or its generation is stale"
+                );
+                Ok(owner)
+            })
+            .transpose()?;
+
         let requested_display_id = display_id;
         let display_id = cx.resolve_display_id(display_id);
         if let Some(requested_display_id) = requested_display_id
@@ -1931,7 +1954,27 @@ impl Window {
         }
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
         let window_kind = kind.clone();
-        let window_mutation_capabilities = cx.window_mutation_capabilities_for(&kind, display_id);
+        let window_capabilities = cx.window_capabilities_for(&kind, display_id);
+        anyhow::ensure!(
+            focus_on_appearing
+                || window_capabilities
+                    .creation
+                    .focus_on_appearing
+                    .is_supported(),
+            "platform does not support non-activating first appearance"
+        );
+        anyhow::ensure!(
+            transient_for.is_none() || window_capabilities.creation.transient_for.is_supported(),
+            "platform does not support transient top-level owners"
+        );
+        anyhow::ensure!(
+            activation_policy == WindowActivationPolicy::default()
+                || window_capabilities
+                    .mutations
+                    .activation_policy
+                    .is_available_at_creation(),
+            "platform does not support selecting a lifetime activation policy"
+        );
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
@@ -1943,7 +1986,9 @@ impl Window {
                 is_resizable,
                 is_minimizable,
                 accepts_pointer_input,
-                focus,
+                focus_on_appearing,
+                activation_policy,
+                transient_for,
                 show,
                 display_id,
                 window_min_size,
@@ -2136,13 +2181,45 @@ impl Window {
         // Mapping may resolve the actual display, scale, bounds, and native state. These coherent
         // post-map facts seed the root builder and first frame; presentation and activation still
         // wait for the exact registry commit.
-        let mut platform_facts = platform_window.platform_facts();
-        platform_facts.focus_on_appearing = creation_focus_on_appearing_fact(
-            platform_facts.focus_on_appearing,
-            focus,
-            window_mutation_capabilities.focus_on_appearing,
+        let creation_facts = platform_window.creation_facts();
+        anyhow::ensure!(
+            creation_facts.show == show,
+            "platform did not preserve the requested initial visibility"
         );
+        if window_capabilities
+            .creation
+            .focus_on_appearing
+            .is_supported()
+        {
+            anyhow::ensure!(
+                creation_facts.focus_on_appearing == focus_on_appearing,
+                "platform did not establish the requested first-appearance policy"
+            );
+        }
+        if window_capabilities.creation.transient_for.is_supported() {
+            anyhow::ensure!(
+                creation_facts.transient_for == transient_for,
+                "platform did not establish the requested transient owner"
+            );
+        } else {
+            anyhow::ensure!(
+                creation_facts.transient_for.is_none(),
+                "platform reported a transient owner despite unsupported capability"
+            );
+        }
+        let mut platform_facts = platform_window.platform_facts();
         platform_facts.background_appearance = platform_window.background_appearance();
+        if window_capabilities
+            .mutations
+            .activation_policy
+            .is_available_at_creation()
+        {
+            anyhow::ensure!(
+                platform_facts.accepts_activation == activation_policy.accepts_activation
+                    && platform_facts.focus_on_click == activation_policy.focus_on_click,
+                "platform did not establish the requested lifetime activation policy"
+            );
+        }
         let display_id = platform_facts.display_id;
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -2164,12 +2241,14 @@ impl Window {
             platform_command_sink,
             initial_presentation_command: Some(
                 PlatformWindowCommand::CompleteInitialPresentation {
-                    activate: show && focus,
+                    activate: show && focus_on_appearing && activation_policy.accepts_activation,
                 },
             ),
+            creation_facts,
+            presentation_state: WindowPresentationState::default(),
             platform_facts,
             window_kind,
-            window_mutation_capabilities,
+            window_capabilities,
             window_mutation_authority: Arc::default(),
             window_mutations: WindowMutationState::default(),
             display_id,
@@ -2279,6 +2358,27 @@ impl Window {
         !self.removed && self.removal_state == WindowRemovalState::Open
     }
 
+    pub(crate) fn prepare_initial_presentation(&mut self) -> Result<()> {
+        if self.window_capabilities.creation.initial_presentation_order
+            != WindowInitialPresentationOrder::BeforeVisibility
+        {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            !self.platform_window.is_visible(),
+            "platform window became visible before its first presentation"
+        );
+        anyhow::ensure!(
+            self.present() == PlatformWindowPresentOutcome::Submitted,
+            "platform rejected or deferred the initial frame submission"
+        );
+        anyhow::ensure!(
+            !self.platform_window.is_visible(),
+            "platform window became visible during its hidden first presentation"
+        );
+        Ok(())
+    }
+
     pub(crate) fn take_initial_presentation_command(
         &mut self,
     ) -> Option<(PlatformWindowCommandSink, PlatformWindowCommand)> {
@@ -2288,6 +2388,7 @@ impl Window {
     }
 
     pub(crate) fn initial_presentation_completed(&mut self, cx: &mut App) {
+        self.presentation_state.initial_presentation = WindowInitialPresentationStatus::Completed;
         let previous_facts = self.platform_facts.clone();
         self.refresh_platform_facts();
         let tab_bar_visible = self.platform_window.tab_bar_visible();
@@ -2314,6 +2415,10 @@ impl Window {
         if bounds_changed {
             self.notify_bounds_observers(cx);
         }
+    }
+
+    pub(crate) fn initial_presentation_failed(&mut self, _cx: &mut App) {
+        self.presentation_state.initial_presentation = WindowInitialPresentationStatus::Rejected;
     }
 
     pub(crate) fn new_focus_listener(
@@ -3825,14 +3930,12 @@ impl Window {
     }
 
     fn commit_platform_facts(&mut self, mut facts: WindowPlatformFacts) {
-        let capabilities = self.window_mutation_capabilities;
+        let capabilities = self.window_capabilities.mutations;
         if !capabilities.pointer_input.is_live() {
             facts.accepts_pointer_input = self.platform_facts.accepts_pointer_input;
         }
-        if !capabilities.focus_on_appearing.is_live() {
-            facts.focus_on_appearing = self.platform_facts.focus_on_appearing;
-        }
-        if !capabilities.focus_on_click.is_live() {
+        if !capabilities.activation_policy.is_live() {
+            facts.accepts_activation = self.platform_facts.accepts_activation;
             facts.focus_on_click = self.platform_facts.focus_on_click;
         }
         if !capabilities.alpha.is_live() {
@@ -3914,7 +4017,7 @@ impl Window {
     }
 
     fn placement_request_is_live(&self, request: WindowPlacementRequest) -> bool {
-        let capabilities = self.window_mutation_capabilities;
+        let capabilities = self.window_capabilities.mutations;
         let facts = &self.platform_facts;
 
         if request
@@ -3959,21 +4062,20 @@ impl Window {
         match request {
             WindowMutationRequest::Placement(request) => self.placement_request_is_live(request),
             WindowMutationRequest::PointerInput(_) => {
-                self.window_mutation_capabilities.pointer_input.is_live()
+                self.window_capabilities.mutations.pointer_input.is_live()
             }
-            WindowMutationRequest::FocusOnAppearing(_) => self
-                .window_mutation_capabilities
-                .focus_on_appearing
+            WindowMutationRequest::ActivationPolicy(_) => self
+                .window_capabilities
+                .mutations
+                .activation_policy
                 .is_live(),
-            WindowMutationRequest::FocusOnClick(_) => {
-                self.window_mutation_capabilities.focus_on_click.is_live()
-            }
-            WindowMutationRequest::Alpha(_) => self.window_mutation_capabilities.alpha.is_live(),
+            WindowMutationRequest::Alpha(_) => self.window_capabilities.mutations.alpha.is_live(),
             WindowMutationRequest::Topmost(_) => {
-                self.window_mutation_capabilities.topmost.is_live()
+                self.window_capabilities.mutations.topmost.is_live()
             }
             WindowMutationRequest::TaskbarVisibility(_) => self
-                .window_mutation_capabilities
+                .window_capabilities
+                .mutations
                 .taskbar_visibility
                 .is_live(),
         }
@@ -3995,15 +4097,33 @@ impl Window {
         &self.platform_facts
     }
 
-    /// Returns the capability-specific mutation support advertised by this window's platform.
-    pub fn window_mutation_capabilities(&self) -> PlatformWindowMutationCapabilities {
-        self.window_mutation_capabilities
+    /// Returns the immutable creation and mutation capabilities for this platform window.
+    pub fn window_capabilities(&self) -> PlatformWindowCapabilities {
+        self.window_capabilities
     }
 
-    pub(crate) fn window_mutation_profile(&self) -> PlatformWindowMutationProfile {
-        PlatformWindowMutationProfile {
+    pub(crate) fn window_profile(&self) -> PlatformWindowProfile {
+        PlatformWindowProfile {
             kind: self.window_kind.clone(),
-            capabilities: self.window_mutation_capabilities,
+            capabilities: self.window_capabilities,
+        }
+    }
+
+    /// Returns immutable facts established by the backend during creation.
+    pub fn creation_facts(&self) -> &WindowCreationFacts {
+        &self.creation_facts
+    }
+
+    /// Returns the latest committed presentation-stage facts.
+    pub fn presentation_facts(&self) -> WindowPresentationFacts {
+        WindowPresentationFacts {
+            native_created: true,
+            frame_accepted_generation: self.presentation_state.frame_accepted_generation,
+            present_submitted_generation: self.presentation_state.present_submitted_generation,
+            non_empty_presented_generation: self.presentation_state.non_empty_presented_generation,
+            latest_present_attempt: self.presentation_state.latest_present_attempt,
+            initial_presentation: self.presentation_state.initial_presentation,
+            native_visible: self.platform_window.is_visible(),
         }
     }
 
@@ -4195,14 +4315,12 @@ impl Window {
         self.request_window_mutation(WindowMutationRequest::PointerInput(accepts_pointer_input))
     }
 
-    /// Requests whether this window takes focus when it appears.
-    pub fn request_focus_on_appearing(&mut self, focus: bool) -> WindowMutationDispatch {
-        self.request_window_mutation(WindowMutationRequest::FocusOnAppearing(focus))
-    }
-
-    /// Requests whether clicking this window takes focus.
-    pub fn request_focus_on_click(&mut self, focus: bool) -> WindowMutationDispatch {
-        self.request_window_mutation(WindowMutationRequest::FocusOnClick(focus))
+    /// Requests one coherent lifetime activation policy.
+    pub fn request_activation_policy(
+        &mut self,
+        policy: crate::WindowActivationPolicy,
+    ) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::ActivationPolicy(policy))
     }
 
     /// Requests whether this window stays above ordinary application windows.
@@ -4906,6 +5024,7 @@ impl Window {
             });
         }
         self.needs_present.set(true);
+        self.presentation_state.frame_accepted_generation = Some(self.rendered_frame.generation);
 
         ArenaClearNeeded::new(&cx.element_arena)
     }
@@ -5010,12 +5129,30 @@ impl Window {
     }
 
     #[profiling::function]
-    fn present(&mut self) {
-        self.platform_window.draw(&self.rendered_frame.scene);
+    fn present(&mut self) -> PlatformWindowPresentOutcome {
+        let generation = self.rendered_frame.generation;
+        let non_empty = self.rendered_frame.scene.has_primitives();
+        let outcome = self.platform_window.draw(&self.rendered_frame.scene);
+        self.presentation_state.latest_present_attempt = Some(WindowPresentAttemptFacts {
+            generation,
+            outcome,
+            contained_valid_primitives: non_empty,
+        });
+        if outcome == PlatformWindowPresentOutcome::Submitted {
+            self.presentation_state.present_submitted_generation = Some(generation);
+            if non_empty {
+                self.presentation_state.non_empty_presented_generation = Some(generation);
+            }
+            self.needs_present.set(false);
+        } else {
+            self.needs_present.set(true);
+        }
         #[cfg(feature = "input-latency-histogram")]
-        self.input_latency_tracker.record_frame_presented();
-        self.needs_present.set(false);
+        if outcome == PlatformWindowPresentOutcome::Submitted {
+            self.input_latency_tracker.record_frame_presented();
+        }
         profiling::finish_frame!();
+        outcome
     }
 
     /// Returns a snapshot of the current input-latency histograms.
@@ -10547,29 +10684,5 @@ mod raster_projection_tests {
             Window::try_raster_local_stroke(ScaledPixels(1.0), 1.0, f32::MAX),
             Err(SubtreeTransformError::UnrepresentableResult)
         );
-    }
-}
-
-#[cfg(test)]
-mod window_creation_fact_tests {
-    use super::*;
-
-    #[test]
-    fn focus_on_appearing_seed_respects_backend_capability() {
-        assert!(creation_focus_on_appearing_fact(
-            false,
-            true,
-            WindowMutationSupport::CreationOnly
-        ));
-        assert!(!creation_focus_on_appearing_fact(
-            false,
-            true,
-            WindowMutationSupport::Unsupported
-        ));
-        assert!(!creation_focus_on_appearing_fact(
-            false,
-            true,
-            WindowMutationSupport::Live
-        ));
     }
 }

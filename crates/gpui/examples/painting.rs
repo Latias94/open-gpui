@@ -456,7 +456,7 @@ fn run_example() {
     application().run(|cx| {
         cx.open_window(
             WindowOptions {
-                focus: true,
+                focus_on_appearing: true,
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),

@@ -21,7 +21,7 @@
               "parent_id": null,
               "metadata": {
                 "has_platform_capabilities": true,
-                "window_mutation_capability_count": 1,
+                "window_profile_count": 1,
                 "has_placement_restore": true,
                 "viewport_lifecycle_count": 1,
                 "has_last_route": false,
@@ -63,7 +63,7 @@
             "label": "Docking runtime",
             "summary": {
               "has_platform_capabilities": true,
-              "window_mutation_capability_count": 1,
+              "window_profile_count": 1,
               "has_placement_restore": true,
               "viewport_lifecycle_count": 1,
               "has_last_route": false,
@@ -86,7 +86,7 @@
                     "label": "Viewport runtime",
                     "payload": {
                       "has_platform_capabilities": true,
-                      "window_mutation_capability_count": 1,
+                      "window_profile_count": 1,
                       "has_placement_restore": true,
                       "viewport_lifecycle_count": 1,
                       "has_last_route": false,
@@ -114,27 +114,33 @@
                         "children": []
                       },
                       {
-                        "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                        "label": "Window mutation capabilities 0",
+                        "id": "docking.viewport-runtime.window-profiles.0",
+                        "label": "Window profile 0",
                         "payload": {
                           "space": "docking-demo",
                           "window_id": 4294967307,
                           "window_kind": "normal",
                           "capabilities": {
-                            "position": "live",
-                            "size": "live",
-                            "windowed": "live",
-                            "maximized": "live",
-                            "fullscreen": "live",
-                            "minimized": "live",
-                            "restore_bounds": "live",
-                            "pointer_input": "live",
-                            "focus_on_appearing": "creation-only",
-                            "focus_on_click": "unsupported",
-                            "alpha": "creation-only",
-                            "topmost": "unsupported",
-                            "taskbar_visibility": "unsupported",
-                            "coordinate_space": "global-screen"
+                            "creation": {
+                              "focus_on_appearing": "supported",
+                              "transient_for": "supported",
+                              "initial_presentation_order": "before-visibility"
+                            },
+                            "mutations": {
+                              "position": "live",
+                              "size": "live",
+                              "windowed": "live",
+                              "maximized": "live",
+                              "fullscreen": "live",
+                              "minimized": "live",
+                              "restore_bounds": "live",
+                              "pointer_input": "live",
+                              "activation_policy": "live",
+                              "alpha": "creation-only",
+                              "topmost": "unsupported",
+                              "taskbar_visibility": "unsupported",
+                              "coordinate_space": "global-screen"
+                            }
                           }
                         },
                         "children": []
@@ -200,7 +206,7 @@
                   "label": "Viewport runtime",
                   "payload": {
                     "has_platform_capabilities": true,
-                    "window_mutation_capability_count": 1,
+                    "window_profile_count": 1,
                     "has_placement_restore": true,
                     "viewport_lifecycle_count": 1,
                     "has_last_route": false,
@@ -228,27 +234,33 @@
                       "children": []
                     },
                     {
-                      "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                      "label": "Window mutation capabilities 0",
+                      "id": "docking.viewport-runtime.window-profiles.0",
+                      "label": "Window profile 0",
                       "payload": {
                         "space": "docking-demo",
                         "window_id": 4294967307,
                         "window_kind": "normal",
                         "capabilities": {
-                          "position": "live",
-                          "size": "live",
-                          "windowed": "live",
-                          "maximized": "live",
-                          "fullscreen": "live",
-                          "minimized": "live",
-                          "restore_bounds": "live",
-                          "pointer_input": "live",
-                          "focus_on_appearing": "creation-only",
-                          "focus_on_click": "unsupported",
-                          "alpha": "creation-only",
-                          "topmost": "unsupported",
-                          "taskbar_visibility": "unsupported",
-                          "coordinate_space": "global-screen"
+                          "creation": {
+                            "focus_on_appearing": "supported",
+                            "transient_for": "supported",
+                            "initial_presentation_order": "before-visibility"
+                          },
+                          "mutations": {
+                            "position": "live",
+                            "size": "live",
+                            "windowed": "live",
+                            "maximized": "live",
+                            "fullscreen": "live",
+                            "minimized": "live",
+                            "restore_bounds": "live",
+                            "pointer_input": "live",
+                            "activation_policy": "live",
+                            "alpha": "creation-only",
+                            "topmost": "unsupported",
+                            "taskbar_visibility": "unsupported",
+                            "coordinate_space": "global-screen"
+                          }
                         }
                       },
                       "children": []
@@ -318,7 +330,7 @@
               "parent_id": null,
               "metadata": {
                 "has_platform_capabilities": true,
-                "window_mutation_capability_count": 2,
+                "window_profile_count": 2,
                 "has_placement_restore": true,
                 "viewport_lifecycle_count": 2,
                 "has_last_route": false,
@@ -412,7 +424,7 @@
             "label": "Docking runtime",
             "summary": {
               "has_platform_capabilities": true,
-              "window_mutation_capability_count": 2,
+              "window_profile_count": 2,
               "has_placement_restore": true,
               "viewport_lifecycle_count": 2,
               "has_last_route": false,
@@ -435,7 +447,7 @@
                     "label": "Viewport runtime",
                     "payload": {
                       "has_platform_capabilities": true,
-                      "window_mutation_capability_count": 2,
+                      "window_profile_count": 2,
                       "has_placement_restore": true,
                       "viewport_lifecycle_count": 2,
                       "has_last_route": false,
@@ -463,53 +475,65 @@
                         "children": []
                       },
                       {
-                        "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                        "label": "Window mutation capabilities 0",
+                        "id": "docking.viewport-runtime.window-profiles.0",
+                        "label": "Window profile 0",
                         "payload": {
                           "space": "docking-demo",
                           "window_id": 4294967308,
                           "window_kind": "normal",
                           "capabilities": {
-                            "position": "live",
-                            "size": "live",
-                            "windowed": "live",
-                            "maximized": "live",
-                            "fullscreen": "live",
-                            "minimized": "live",
-                            "restore_bounds": "live",
-                            "pointer_input": "live",
-                            "focus_on_appearing": "creation-only",
-                            "focus_on_click": "unsupported",
-                            "alpha": "creation-only",
-                            "topmost": "unsupported",
-                            "taskbar_visibility": "unsupported",
-                            "coordinate_space": "global-screen"
+                            "creation": {
+                              "focus_on_appearing": "supported",
+                              "transient_for": "supported",
+                              "initial_presentation_order": "before-visibility"
+                            },
+                            "mutations": {
+                              "position": "live",
+                              "size": "live",
+                              "windowed": "live",
+                              "maximized": "live",
+                              "fullscreen": "live",
+                              "minimized": "live",
+                              "restore_bounds": "live",
+                              "pointer_input": "live",
+                              "activation_policy": "live",
+                              "alpha": "creation-only",
+                              "topmost": "unsupported",
+                              "taskbar_visibility": "unsupported",
+                              "coordinate_space": "global-screen"
+                            }
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "docking.viewport-runtime.window-mutation-capabilities.1",
-                        "label": "Window mutation capabilities 1",
+                        "id": "docking.viewport-runtime.window-profiles.1",
+                        "label": "Window profile 1",
                         "payload": {
                           "space": "docking-preview",
                           "window_id": 4294967318,
                           "window_kind": "floating",
                           "capabilities": {
-                            "position": "creation-only",
-                            "size": "live",
-                            "windowed": "unsupported",
-                            "maximized": "unsupported",
-                            "fullscreen": "unsupported",
-                            "minimized": "unsupported",
-                            "restore_bounds": "unsupported",
-                            "pointer_input": "unsupported",
-                            "focus_on_appearing": "creation-only",
-                            "focus_on_click": "unsupported",
-                            "alpha": "creation-only",
-                            "topmost": "unsupported",
-                            "taskbar_visibility": "unsupported",
-                            "coordinate_space": "window-local"
+                            "creation": {
+                              "focus_on_appearing": "supported",
+                              "transient_for": "unsupported",
+                              "initial_presentation_order": "after-visibility"
+                            },
+                            "mutations": {
+                              "position": "creation-only",
+                              "size": "live",
+                              "windowed": "unsupported",
+                              "maximized": "unsupported",
+                              "fullscreen": "unsupported",
+                              "minimized": "unsupported",
+                              "restore_bounds": "unsupported",
+                              "pointer_input": "unsupported",
+                              "activation_policy": "creation-only",
+                              "alpha": "creation-only",
+                              "topmost": "unsupported",
+                              "taskbar_visibility": "unsupported",
+                              "coordinate_space": "window-local"
+                            }
                           }
                         },
                         "children": []
@@ -659,7 +683,7 @@
                                 "scale_factor": 1.25,
                                 "display_id": null,
                                 "accepts_pointer_input": true,
-                                "focus_on_appearing": true,
+                                "accepts_activation": true,
                                 "focus_on_click": true,
                                 "background_appearance": "Opaque",
                                 "topmost": false,
@@ -724,7 +748,7 @@
                               "scale_factor": 1.25,
                               "display_id": null,
                               "accepts_pointer_input": true,
-                              "focus_on_appearing": true,
+                              "accepts_activation": true,
                               "focus_on_click": true,
                               "background_appearance": "Opaque",
                               "topmost": false,
@@ -897,7 +921,7 @@
                     "scale_factor": 1.25,
                     "display_id": null,
                     "accepts_pointer_input": true,
-                    "focus_on_appearing": true,
+                    "accepts_activation": true,
                     "focus_on_click": true,
                     "background_appearance": "Opaque",
                     "topmost": false,
@@ -968,7 +992,7 @@
                   "scale_factor": 1.25,
                   "display_id": null,
                   "accepts_pointer_input": true,
-                  "focus_on_appearing": true,
+                  "accepts_activation": true,
                   "focus_on_click": true,
                   "background_appearance": "Opaque",
                   "topmost": false,
@@ -1021,7 +1045,7 @@
                   "label": "Viewport runtime",
                   "payload": {
                     "has_platform_capabilities": true,
-                    "window_mutation_capability_count": 2,
+                    "window_profile_count": 2,
                     "has_placement_restore": true,
                     "viewport_lifecycle_count": 2,
                     "has_last_route": false,
@@ -1049,53 +1073,65 @@
                       "children": []
                     },
                     {
-                      "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                      "label": "Window mutation capabilities 0",
+                      "id": "docking.viewport-runtime.window-profiles.0",
+                      "label": "Window profile 0",
                       "payload": {
                         "space": "docking-demo",
                         "window_id": 4294967308,
                         "window_kind": "normal",
                         "capabilities": {
-                          "position": "live",
-                          "size": "live",
-                          "windowed": "live",
-                          "maximized": "live",
-                          "fullscreen": "live",
-                          "minimized": "live",
-                          "restore_bounds": "live",
-                          "pointer_input": "live",
-                          "focus_on_appearing": "creation-only",
-                          "focus_on_click": "unsupported",
-                          "alpha": "creation-only",
-                          "topmost": "unsupported",
-                          "taskbar_visibility": "unsupported",
-                          "coordinate_space": "global-screen"
+                          "creation": {
+                            "focus_on_appearing": "supported",
+                            "transient_for": "supported",
+                            "initial_presentation_order": "before-visibility"
+                          },
+                          "mutations": {
+                            "position": "live",
+                            "size": "live",
+                            "windowed": "live",
+                            "maximized": "live",
+                            "fullscreen": "live",
+                            "minimized": "live",
+                            "restore_bounds": "live",
+                            "pointer_input": "live",
+                            "activation_policy": "live",
+                            "alpha": "creation-only",
+                            "topmost": "unsupported",
+                            "taskbar_visibility": "unsupported",
+                            "coordinate_space": "global-screen"
+                          }
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "docking.viewport-runtime.window-mutation-capabilities.1",
-                      "label": "Window mutation capabilities 1",
+                      "id": "docking.viewport-runtime.window-profiles.1",
+                      "label": "Window profile 1",
                       "payload": {
                         "space": "docking-preview",
                         "window_id": 4294967318,
                         "window_kind": "floating",
                         "capabilities": {
-                          "position": "creation-only",
-                          "size": "live",
-                          "windowed": "unsupported",
-                          "maximized": "unsupported",
-                          "fullscreen": "unsupported",
-                          "minimized": "unsupported",
-                          "restore_bounds": "unsupported",
-                          "pointer_input": "unsupported",
-                          "focus_on_appearing": "creation-only",
-                          "focus_on_click": "unsupported",
-                          "alpha": "creation-only",
-                          "topmost": "unsupported",
-                          "taskbar_visibility": "unsupported",
-                          "coordinate_space": "window-local"
+                          "creation": {
+                            "focus_on_appearing": "supported",
+                            "transient_for": "unsupported",
+                            "initial_presentation_order": "after-visibility"
+                          },
+                          "mutations": {
+                            "position": "creation-only",
+                            "size": "live",
+                            "windowed": "unsupported",
+                            "maximized": "unsupported",
+                            "fullscreen": "unsupported",
+                            "minimized": "unsupported",
+                            "restore_bounds": "unsupported",
+                            "pointer_input": "unsupported",
+                            "activation_policy": "creation-only",
+                            "alpha": "creation-only",
+                            "topmost": "unsupported",
+                            "taskbar_visibility": "unsupported",
+                            "coordinate_space": "window-local"
+                          }
                         }
                       },
                       "children": []
@@ -1245,7 +1281,7 @@
                               "scale_factor": 1.25,
                               "display_id": null,
                               "accepts_pointer_input": true,
-                              "focus_on_appearing": true,
+                              "accepts_activation": true,
                               "focus_on_click": true,
                               "background_appearance": "Opaque",
                               "topmost": false,
@@ -1310,7 +1346,7 @@
                             "scale_factor": 1.25,
                             "display_id": null,
                             "accepts_pointer_input": true,
-                            "focus_on_appearing": true,
+                            "accepts_activation": true,
                             "focus_on_click": true,
                             "background_appearance": "Opaque",
                             "topmost": false,
@@ -1383,7 +1419,7 @@
               "parent_id": null,
               "metadata": {
                 "has_platform_capabilities": true,
-                "window_mutation_capability_count": 1,
+                "window_profile_count": 1,
                 "has_placement_restore": true,
                 "viewport_lifecycle_count": 1,
                 "has_last_route": false,
@@ -1404,7 +1440,7 @@
               "parent_id": null,
               "metadata": {
                 "has_platform_capabilities": true,
-                "window_mutation_capability_count": 2,
+                "window_profile_count": 2,
                 "has_placement_restore": true,
                 "viewport_lifecycle_count": 2,
                 "has_last_route": false,
@@ -1552,7 +1588,7 @@
               "label": "Docking runtime",
               "summary": {
                 "has_platform_capabilities": true,
-                "window_mutation_capability_count": 1,
+                "window_profile_count": 1,
                 "has_placement_restore": true,
                 "viewport_lifecycle_count": 1,
                 "has_last_route": false,
@@ -1575,7 +1611,7 @@
                       "label": "Viewport runtime",
                       "payload": {
                         "has_platform_capabilities": true,
-                        "window_mutation_capability_count": 1,
+                        "window_profile_count": 1,
                         "has_placement_restore": true,
                         "viewport_lifecycle_count": 1,
                         "has_last_route": false,
@@ -1603,27 +1639,33 @@
                           "children": []
                         },
                         {
-                          "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                          "label": "Window mutation capabilities 0",
+                          "id": "docking.viewport-runtime.window-profiles.0",
+                          "label": "Window profile 0",
                           "payload": {
                             "space": "docking-demo",
                             "window_id": 4294967307,
                             "window_kind": "normal",
                             "capabilities": {
-                              "position": "live",
-                              "size": "live",
-                              "windowed": "live",
-                              "maximized": "live",
-                              "fullscreen": "live",
-                              "minimized": "live",
-                              "restore_bounds": "live",
-                              "pointer_input": "live",
-                              "focus_on_appearing": "creation-only",
-                              "focus_on_click": "unsupported",
-                              "alpha": "creation-only",
-                              "topmost": "unsupported",
-                              "taskbar_visibility": "unsupported",
-                              "coordinate_space": "global-screen"
+                              "creation": {
+                                "focus_on_appearing": "supported",
+                                "transient_for": "supported",
+                                "initial_presentation_order": "before-visibility"
+                              },
+                              "mutations": {
+                                "position": "live",
+                                "size": "live",
+                                "windowed": "live",
+                                "maximized": "live",
+                                "fullscreen": "live",
+                                "minimized": "live",
+                                "restore_bounds": "live",
+                                "pointer_input": "live",
+                                "activation_policy": "live",
+                                "alpha": "creation-only",
+                                "topmost": "unsupported",
+                                "taskbar_visibility": "unsupported",
+                                "coordinate_space": "global-screen"
+                              }
                             }
                           },
                           "children": []
@@ -1683,7 +1725,7 @@
               "label": "Docking runtime",
               "summary": {
                 "has_platform_capabilities": true,
-                "window_mutation_capability_count": 2,
+                "window_profile_count": 2,
                 "has_placement_restore": true,
                 "viewport_lifecycle_count": 2,
                 "has_last_route": false,
@@ -1706,7 +1748,7 @@
                       "label": "Viewport runtime",
                       "payload": {
                         "has_platform_capabilities": true,
-                        "window_mutation_capability_count": 2,
+                        "window_profile_count": 2,
                         "has_placement_restore": true,
                         "viewport_lifecycle_count": 2,
                         "has_last_route": false,
@@ -1734,53 +1776,65 @@
                           "children": []
                         },
                         {
-                          "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                          "label": "Window mutation capabilities 0",
+                          "id": "docking.viewport-runtime.window-profiles.0",
+                          "label": "Window profile 0",
                           "payload": {
                             "space": "docking-demo",
                             "window_id": 4294967308,
                             "window_kind": "normal",
                             "capabilities": {
-                              "position": "live",
-                              "size": "live",
-                              "windowed": "live",
-                              "maximized": "live",
-                              "fullscreen": "live",
-                              "minimized": "live",
-                              "restore_bounds": "live",
-                              "pointer_input": "live",
-                              "focus_on_appearing": "creation-only",
-                              "focus_on_click": "unsupported",
-                              "alpha": "creation-only",
-                              "topmost": "unsupported",
-                              "taskbar_visibility": "unsupported",
-                              "coordinate_space": "global-screen"
+                              "creation": {
+                                "focus_on_appearing": "supported",
+                                "transient_for": "supported",
+                                "initial_presentation_order": "before-visibility"
+                              },
+                              "mutations": {
+                                "position": "live",
+                                "size": "live",
+                                "windowed": "live",
+                                "maximized": "live",
+                                "fullscreen": "live",
+                                "minimized": "live",
+                                "restore_bounds": "live",
+                                "pointer_input": "live",
+                                "activation_policy": "live",
+                                "alpha": "creation-only",
+                                "topmost": "unsupported",
+                                "taskbar_visibility": "unsupported",
+                                "coordinate_space": "global-screen"
+                              }
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "docking.viewport-runtime.window-mutation-capabilities.1",
-                          "label": "Window mutation capabilities 1",
+                          "id": "docking.viewport-runtime.window-profiles.1",
+                          "label": "Window profile 1",
                           "payload": {
                             "space": "docking-preview",
                             "window_id": 4294967318,
                             "window_kind": "floating",
                             "capabilities": {
-                              "position": "creation-only",
-                              "size": "live",
-                              "windowed": "unsupported",
-                              "maximized": "unsupported",
-                              "fullscreen": "unsupported",
-                              "minimized": "unsupported",
-                              "restore_bounds": "unsupported",
-                              "pointer_input": "unsupported",
-                              "focus_on_appearing": "creation-only",
-                              "focus_on_click": "unsupported",
-                              "alpha": "creation-only",
-                              "topmost": "unsupported",
-                              "taskbar_visibility": "unsupported",
-                              "coordinate_space": "window-local"
+                              "creation": {
+                                "focus_on_appearing": "supported",
+                                "transient_for": "unsupported",
+                                "initial_presentation_order": "after-visibility"
+                              },
+                              "mutations": {
+                                "position": "creation-only",
+                                "size": "live",
+                                "windowed": "unsupported",
+                                "maximized": "unsupported",
+                                "fullscreen": "unsupported",
+                                "minimized": "unsupported",
+                                "restore_bounds": "unsupported",
+                                "pointer_input": "unsupported",
+                                "activation_policy": "creation-only",
+                                "alpha": "creation-only",
+                                "topmost": "unsupported",
+                                "taskbar_visibility": "unsupported",
+                                "coordinate_space": "window-local"
+                              }
                             }
                           },
                           "children": []
@@ -1930,7 +1984,7 @@
                                   "scale_factor": 1.25,
                                   "display_id": null,
                                   "accepts_pointer_input": true,
-                                  "focus_on_appearing": true,
+                                  "accepts_activation": true,
                                   "focus_on_click": true,
                                   "background_appearance": "Opaque",
                                   "topmost": false,
@@ -1995,7 +2049,7 @@
                                 "scale_factor": 1.25,
                                 "display_id": null,
                                 "accepts_pointer_input": true,
-                                "focus_on_appearing": true,
+                                "accepts_activation": true,
                                 "focus_on_click": true,
                                 "background_appearance": "Opaque",
                                 "topmost": false,
@@ -2161,7 +2215,7 @@
                       "scale_factor": 1.25,
                       "display_id": null,
                       "accepts_pointer_input": true,
-                      "focus_on_appearing": true,
+                      "accepts_activation": true,
                       "focus_on_click": true,
                       "background_appearance": "Opaque",
                       "topmost": false,
@@ -2269,7 +2323,7 @@
                     "scale_factor": 1.25,
                     "display_id": null,
                     "accepts_pointer_input": true,
-                    "focus_on_appearing": true,
+                    "accepts_activation": true,
                     "focus_on_click": true,
                     "background_appearance": "Opaque",
                     "topmost": false,
@@ -2335,7 +2389,7 @@
                     "label": "Viewport runtime",
                     "payload": {
                       "has_platform_capabilities": true,
-                      "window_mutation_capability_count": 1,
+                      "window_profile_count": 1,
                       "has_placement_restore": true,
                       "viewport_lifecycle_count": 1,
                       "has_last_route": false,
@@ -2363,27 +2417,33 @@
                         "children": []
                       },
                       {
-                        "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                        "label": "Window mutation capabilities 0",
+                        "id": "docking.viewport-runtime.window-profiles.0",
+                        "label": "Window profile 0",
                         "payload": {
                           "space": "docking-demo",
                           "window_id": 4294967307,
                           "window_kind": "normal",
                           "capabilities": {
-                            "position": "live",
-                            "size": "live",
-                            "windowed": "live",
-                            "maximized": "live",
-                            "fullscreen": "live",
-                            "minimized": "live",
-                            "restore_bounds": "live",
-                            "pointer_input": "live",
-                            "focus_on_appearing": "creation-only",
-                            "focus_on_click": "unsupported",
-                            "alpha": "creation-only",
-                            "topmost": "unsupported",
-                            "taskbar_visibility": "unsupported",
-                            "coordinate_space": "global-screen"
+                            "creation": {
+                              "focus_on_appearing": "supported",
+                              "transient_for": "supported",
+                              "initial_presentation_order": "before-visibility"
+                            },
+                            "mutations": {
+                              "position": "live",
+                              "size": "live",
+                              "windowed": "live",
+                              "maximized": "live",
+                              "fullscreen": "live",
+                              "minimized": "live",
+                              "restore_bounds": "live",
+                              "pointer_input": "live",
+                              "activation_policy": "live",
+                              "alpha": "creation-only",
+                              "topmost": "unsupported",
+                              "taskbar_visibility": "unsupported",
+                              "coordinate_space": "global-screen"
+                            }
                           }
                         },
                         "children": []
@@ -2433,7 +2493,7 @@
                     "label": "Viewport runtime",
                     "payload": {
                       "has_platform_capabilities": true,
-                      "window_mutation_capability_count": 2,
+                      "window_profile_count": 2,
                       "has_placement_restore": true,
                       "viewport_lifecycle_count": 2,
                       "has_last_route": false,
@@ -2461,53 +2521,65 @@
                         "children": []
                       },
                       {
-                        "id": "docking.viewport-runtime.window-mutation-capabilities.0",
-                        "label": "Window mutation capabilities 0",
+                        "id": "docking.viewport-runtime.window-profiles.0",
+                        "label": "Window profile 0",
                         "payload": {
                           "space": "docking-demo",
                           "window_id": 4294967308,
                           "window_kind": "normal",
                           "capabilities": {
-                            "position": "live",
-                            "size": "live",
-                            "windowed": "live",
-                            "maximized": "live",
-                            "fullscreen": "live",
-                            "minimized": "live",
-                            "restore_bounds": "live",
-                            "pointer_input": "live",
-                            "focus_on_appearing": "creation-only",
-                            "focus_on_click": "unsupported",
-                            "alpha": "creation-only",
-                            "topmost": "unsupported",
-                            "taskbar_visibility": "unsupported",
-                            "coordinate_space": "global-screen"
+                            "creation": {
+                              "focus_on_appearing": "supported",
+                              "transient_for": "supported",
+                              "initial_presentation_order": "before-visibility"
+                            },
+                            "mutations": {
+                              "position": "live",
+                              "size": "live",
+                              "windowed": "live",
+                              "maximized": "live",
+                              "fullscreen": "live",
+                              "minimized": "live",
+                              "restore_bounds": "live",
+                              "pointer_input": "live",
+                              "activation_policy": "live",
+                              "alpha": "creation-only",
+                              "topmost": "unsupported",
+                              "taskbar_visibility": "unsupported",
+                              "coordinate_space": "global-screen"
+                            }
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "docking.viewport-runtime.window-mutation-capabilities.1",
-                        "label": "Window mutation capabilities 1",
+                        "id": "docking.viewport-runtime.window-profiles.1",
+                        "label": "Window profile 1",
                         "payload": {
                           "space": "docking-preview",
                           "window_id": 4294967318,
                           "window_kind": "floating",
                           "capabilities": {
-                            "position": "creation-only",
-                            "size": "live",
-                            "windowed": "unsupported",
-                            "maximized": "unsupported",
-                            "fullscreen": "unsupported",
-                            "minimized": "unsupported",
-                            "restore_bounds": "unsupported",
-                            "pointer_input": "unsupported",
-                            "focus_on_appearing": "creation-only",
-                            "focus_on_click": "unsupported",
-                            "alpha": "creation-only",
-                            "topmost": "unsupported",
-                            "taskbar_visibility": "unsupported",
-                            "coordinate_space": "window-local"
+                            "creation": {
+                              "focus_on_appearing": "supported",
+                              "transient_for": "unsupported",
+                              "initial_presentation_order": "after-visibility"
+                            },
+                            "mutations": {
+                              "position": "creation-only",
+                              "size": "live",
+                              "windowed": "unsupported",
+                              "maximized": "unsupported",
+                              "fullscreen": "unsupported",
+                              "minimized": "unsupported",
+                              "restore_bounds": "unsupported",
+                              "pointer_input": "unsupported",
+                              "activation_policy": "creation-only",
+                              "alpha": "creation-only",
+                              "topmost": "unsupported",
+                              "taskbar_visibility": "unsupported",
+                              "coordinate_space": "window-local"
+                            }
                           }
                         },
                         "children": []
@@ -2657,7 +2729,7 @@
                                 "scale_factor": 1.25,
                                 "display_id": null,
                                 "accepts_pointer_input": true,
-                                "focus_on_appearing": true,
+                                "accepts_activation": true,
                                 "focus_on_click": true,
                                 "background_appearance": "Opaque",
                                 "topmost": false,
@@ -2722,7 +2794,7 @@
                               "scale_factor": 1.25,
                               "display_id": null,
                               "accepts_pointer_input": true,
-                              "focus_on_appearing": true,
+                              "accepts_activation": true,
                               "focus_on_click": true,
                               "background_appearance": "Opaque",
                               "topmost": false,

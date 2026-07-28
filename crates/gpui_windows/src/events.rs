@@ -583,10 +583,15 @@ impl WindowsWindowInner {
         lparam: LPARAM,
     ) -> LRESULT {
         let handled = match msg {
-            // eagerly activate the window, so calls to `active_window` will work correctly
             WM_MOUSEACTIVATE => {
-                unsafe { SetActiveWindow(handle).ok() };
-                None
+                let policy = self.state.activation_policy();
+                if !policy.focus_on_click {
+                    Some(MA_NOACTIVATE as isize)
+                } else {
+                    // Eager activation keeps `active_window` coherent during the click dispatch.
+                    unsafe { SetActiveWindow(handle).ok() };
+                    None
+                }
             }
             WM_ACTIVATE => self.handle_activate_msg(handle, wparam),
             WM_CREATE => self.handle_create_msg(handle),
@@ -1351,7 +1356,7 @@ impl WindowsWindowInner {
                         work_area.top,
                         width,
                         height,
-                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                        SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
                     )
                     .context("unable to set maximized window position after dpi has changed")
                     .log_err();
@@ -1378,7 +1383,7 @@ impl WindowsWindowInner {
                     rect.top,
                     width,
                     height,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
+                    SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
                 )
                 .context("unable to set window position after dpi has changed")
                 .log_err();

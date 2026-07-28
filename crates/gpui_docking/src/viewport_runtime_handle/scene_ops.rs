@@ -249,8 +249,7 @@ impl DockViewportRuntimeHandle {
                     Some(accepts_pointer_input)
                 }
                 WindowMutationRequest::Placement(_)
-                | WindowMutationRequest::FocusOnAppearing(_)
-                | WindowMutationRequest::FocusOnClick(_)
+                | WindowMutationRequest::ActivationPolicy(_)
                 | WindowMutationRequest::Alpha(_)
                 | WindowMutationRequest::Topmost(_)
                 | WindowMutationRequest::TaskbarVisibility(_) => None,

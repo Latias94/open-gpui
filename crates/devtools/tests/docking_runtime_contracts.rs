@@ -1,7 +1,9 @@
 #![cfg(feature = "docking")]
 
 use open_gpui::{
-    Bounds, PlatformWindowMutationCapabilities, WindowBounds, WindowCoordinateSpace, WindowId,
+    Bounds, PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, WindowActivationPolicy, WindowBounds,
+    WindowCoordinateSpace, WindowCreationSupport, WindowId, WindowInitialPresentationOrder,
     WindowKind, WindowMutationRequest, WindowMutationSupport, WindowPlatformFacts, point, px, size,
 };
 use open_gpui_devtools::{
@@ -24,7 +26,7 @@ use open_gpui_docking::{
         DockViewportRouteStatus, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
         DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord,
         DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
-        DockViewportWindowMutationCapabilityRecord, DockVisualAffordanceDebugLayer,
+        DockViewportWindowProfileRecord, DockVisualAffordanceDebugLayer,
         DockVisualAffordanceDebugSummary,
     },
 };
@@ -37,7 +39,7 @@ fn docking_runtime_inspection_projects_public_status_rows() {
     assert_eq!(inspection.summary.platform_capabilities_present, true);
     assert_eq!(inspection.summary.platform_viewport_windows, Some(false));
     assert_eq!(inspection.summary.viewport_lifecycle_count, 1);
-    assert_eq!(inspection.summary.window_mutation_capability_count, 1);
+    assert_eq!(inspection.summary.window_profile_count, 1);
     assert_eq!(inspection.summary.route_ready_count, 1);
     assert_eq!(inspection.summary.runtime_event_count, 2);
     assert_eq!(inspection.summary.visual_affordance_count, 1);
@@ -50,29 +52,45 @@ fn docking_runtime_inspection_projects_public_status_rows() {
         Some(false)
     );
     assert_eq!(
-        inspection.window_mutation_capabilities,
-        vec![docking::DockingViewportWindowMutationCapabilityRow {
+        inspection.window_profiles,
+        vec![docking::DockingViewportWindowProfileRow {
             space: "primary".to_string(),
             window_id: WindowId::from(7).as_u64(),
             window_kind: "floating".to_string(),
-            capabilities: docking::DockingWindowMutationCapabilityRow {
-                position: docking::DockingWindowMutationSupport::CreationOnly,
-                size: docking::DockingWindowMutationSupport::Live,
-                windowed: docking::DockingWindowMutationSupport::Live,
-                maximized: docking::DockingWindowMutationSupport::Live,
-                fullscreen: docking::DockingWindowMutationSupport::Live,
-                minimized: docking::DockingWindowMutationSupport::Unsupported,
-                restore_bounds: docking::DockingWindowMutationSupport::CreationOnly,
-                pointer_input: docking::DockingWindowMutationSupport::Live,
-                focus_on_appearing: docking::DockingWindowMutationSupport::CreationOnly,
-                focus_on_click: docking::DockingWindowMutationSupport::Unsupported,
-                alpha: docking::DockingWindowMutationSupport::CreationOnly,
-                topmost: docking::DockingWindowMutationSupport::Unsupported,
-                taskbar_visibility: docking::DockingWindowMutationSupport::Unsupported,
-                coordinate_space: docking::DockingWindowCoordinateSpace::WindowLocal,
+            capabilities: docking::DockingWindowCapabilitiesRow {
+                creation: docking::DockingWindowCreationCapabilityRow {
+                    focus_on_appearing: docking::DockingWindowCreationSupport::Supported,
+                    transient_for: docking::DockingWindowCreationSupport::Supported,
+                    initial_presentation_order:
+                        docking::DockingWindowInitialPresentationOrder::BeforeVisibility,
+                },
+                mutations: docking::DockingWindowMutationCapabilityRow {
+                    position: docking::DockingWindowMutationSupport::CreationOnly,
+                    size: docking::DockingWindowMutationSupport::Live,
+                    windowed: docking::DockingWindowMutationSupport::Live,
+                    maximized: docking::DockingWindowMutationSupport::Live,
+                    fullscreen: docking::DockingWindowMutationSupport::Live,
+                    minimized: docking::DockingWindowMutationSupport::Unsupported,
+                    restore_bounds: docking::DockingWindowMutationSupport::CreationOnly,
+                    pointer_input: docking::DockingWindowMutationSupport::Live,
+                    activation_policy: docking::DockingWindowMutationSupport::Live,
+                    alpha: docking::DockingWindowMutationSupport::CreationOnly,
+                    topmost: docking::DockingWindowMutationSupport::Unsupported,
+                    taskbar_visibility: docking::DockingWindowMutationSupport::Unsupported,
+                    coordinate_space: docking::DockingWindowCoordinateSpace::WindowLocal,
+                },
             },
         }]
     );
+    let inspection_json = serde_json::to_value(&inspection).unwrap();
+    let capabilities = &inspection_json["window_profiles"][0]["capabilities"];
+    assert_eq!(capabilities["creation"]["focus_on_appearing"], "supported");
+    assert_eq!(capabilities["creation"]["transient_for"], "supported");
+    assert_eq!(
+        capabilities["creation"]["initial_presentation_order"],
+        "before-visibility"
+    );
+    assert_eq!(capabilities["mutations"]["activation_policy"], "live");
     assert_eq!(
         inspection.placement_restore.as_ref().map(|placement| (
             placement.matched,
@@ -120,6 +138,24 @@ fn docking_runtime_inspection_projects_public_status_rows() {
 }
 
 #[test]
+fn docking_runtime_inspection_preserves_presentation_established_visibility() {
+    let mut status = runtime_status(true);
+    status.window_profiles[0]
+        .capabilities
+        .creation
+        .initial_presentation_order =
+        WindowInitialPresentationOrder::PresentationEstablishesVisibility;
+
+    let inspection = docking::docking_runtime_inspection(&status);
+    let inspection_json = serde_json::to_value(inspection).unwrap();
+
+    assert_eq!(
+        inspection_json["window_profiles"][0]["capabilities"]["creation"]["initial_presentation_order"],
+        "presentation-establishes-visibility"
+    );
+}
+
+#[test]
 fn docking_runtime_observations_preserve_typed_request_and_committed_facts() {
     let observed_bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(320.0), px(240.0)));
     let mut status = DockViewportRuntimeStatus::default();
@@ -128,9 +164,12 @@ fn docking_runtime_observations_preserve_typed_request_and_committed_facts() {
         .push(DockViewportPlatformSyncObservedRecord {
             window_id: WindowId::from(12),
             observation: DockViewportPlatformSyncObservation {
-                domain: DockViewportPlatformSyncDomain::PointerInput,
+                domain: DockViewportPlatformSyncDomain::ActivationPolicy,
                 generation: 7,
-                request: WindowMutationRequest::PointerInput(false),
+                request: WindowMutationRequest::ActivationPolicy(WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: true,
+                }),
                 outcome: DockViewportPlatformSyncObservationOutcome::Adjusted,
                 facts: WindowPlatformFacts {
                     bounds: observed_bounds,
@@ -144,7 +183,7 @@ fn docking_runtime_observations_preserve_typed_request_and_committed_facts() {
                     is_maximized: false,
                     is_fullscreen: false,
                     accepts_pointer_input: true,
-                    focus_on_appearing: true,
+                    accepts_activation: true,
                     focus_on_click: true,
                     background_appearance: open_gpui::WindowBackgroundAppearance::Opaque,
                     topmost: false,
@@ -163,14 +202,22 @@ fn docking_runtime_observations_preserve_typed_request_and_committed_facts() {
 
     assert_eq!(event.payload[0]["window_id"], WindowId::from(12).as_u64());
     assert_eq!(event.payload[0]["generation"], 7);
-    assert_eq!(event.payload[0]["request"]["kind"], "pointer-input");
-    assert_eq!(event.payload[0]["request"]["accepts_pointer_input"], false);
+    assert_eq!(event.payload[0]["request"]["kind"], "activation-policy");
+    assert_eq!(event.payload[0]["request"]["accepts_activation"], false);
+    assert_eq!(event.payload[0]["request"]["focus_on_click"], true);
     assert_eq!(event.payload[0]["outcome"], "Adjusted");
     assert_eq!(
         event.payload[0]["facts"]["coordinate_space"],
         "window-local"
     );
     assert_eq!(event.payload[0]["facts"]["accepts_pointer_input"], true);
+    assert_eq!(event.payload[0]["facts"]["accepts_activation"], true);
+    assert_eq!(event.payload[0]["facts"]["focus_on_click"], true);
+    assert!(
+        event.payload[0]["facts"]
+            .get("focus_on_appearing")
+            .is_none()
+    );
 }
 
 #[test]
@@ -179,8 +226,13 @@ fn docking_runtime_dispatches_preserve_structured_request_payloads() {
     status.last_platform_dispatch = Some(DockViewportPlatformSyncRecord {
         window_id: WindowId::from(18),
         dispatches: vec![DockViewportPlatformSyncDispatch::Queued {
-            request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
-            domain: DockViewportPlatformSyncDomain::PointerInput,
+            request: DockViewportPlatformSyncRequest::ActivationPolicy {
+                requested: WindowActivationPolicy {
+                    accepts_activation: true,
+                    focus_on_click: false,
+                },
+            },
+            domain: DockViewportPlatformSyncDomain::ActivationPolicy,
             generation: 11,
         }],
         observations: Vec::new(),
@@ -195,9 +247,10 @@ fn docking_runtime_dispatches_preserve_structured_request_payloads() {
     let dispatch = &event.payload["dispatches"][0];
 
     assert_eq!(dispatch["kind"], "queued");
-    assert_eq!(dispatch["request"]["kind"], "pointer-input");
-    assert_eq!(dispatch["request"]["requested"], false);
-    assert_eq!(dispatch["domain"], "PointerInput");
+    assert_eq!(dispatch["request"]["kind"], "activation-policy");
+    assert_eq!(dispatch["request"]["accepts_activation"], true);
+    assert_eq!(dispatch["request"]["focus_on_click"], false);
+    assert_eq!(dispatch["domain"], "ActivationPolicy");
     assert_eq!(dispatch["generation"], 11);
     assert!(
         dispatch["request"].is_object(),
@@ -319,23 +372,30 @@ fn runtime_status(platform_viewport_windows: bool) -> DockViewportRuntimeStatus 
         hovered_window_ignores_no_input: false,
     });
     status
-        .window_mutation_capabilities
-        .push(DockViewportWindowMutationCapabilityRecord {
+        .window_profiles
+        .push(DockViewportWindowProfileRecord {
             space: DockSpaceId::from("primary"),
             window_id: WindowId::from(7),
             window_kind: WindowKind::Floating,
-            capabilities: PlatformWindowMutationCapabilities {
-                position: WindowMutationSupport::CreationOnly,
-                size: WindowMutationSupport::Live,
-                windowed: WindowMutationSupport::Live,
-                maximized: WindowMutationSupport::Live,
-                fullscreen: WindowMutationSupport::Live,
-                restore_bounds: WindowMutationSupport::CreationOnly,
-                pointer_input: WindowMutationSupport::Live,
-                focus_on_appearing: WindowMutationSupport::CreationOnly,
-                alpha: WindowMutationSupport::CreationOnly,
-                coordinate_space: WindowCoordinateSpace::WindowLocal,
-                ..Default::default()
+            capabilities: PlatformWindowCapabilities {
+                creation: PlatformWindowCreationCapabilities {
+                    focus_on_appearing: WindowCreationSupport::Supported,
+                    transient_for: WindowCreationSupport::Supported,
+                    initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
+                },
+                mutations: PlatformWindowMutationCapabilities {
+                    position: WindowMutationSupport::CreationOnly,
+                    size: WindowMutationSupport::Live,
+                    windowed: WindowMutationSupport::Live,
+                    maximized: WindowMutationSupport::Live,
+                    fullscreen: WindowMutationSupport::Live,
+                    restore_bounds: WindowMutationSupport::CreationOnly,
+                    pointer_input: WindowMutationSupport::Live,
+                    activation_policy: WindowMutationSupport::Live,
+                    alpha: WindowMutationSupport::CreationOnly,
+                    coordinate_space: WindowCoordinateSpace::WindowLocal,
+                    ..Default::default()
+                },
             },
         });
     status.placement_restore = Some(DockViewportRestoreReadinessRecord {

@@ -116,6 +116,7 @@ impl WebWindowInner {
             self.register_pointer_enter(),
             self.register_pointer_leave_hover(),
         ];
+        listeners.extend(self.register_global_window_activation_change());
         listeners.extend(self.register_global_visibility_change());
         listeners.extend(self.register_global_appearance_change());
 
@@ -161,26 +162,23 @@ impl WebWindowInner {
         Some(WebEventListener::register(
             target,
             "visibilitychange",
-            move |_event: JsValue| {
-                let is_visible = this
-                    .browser_window
-                    .document()
-                    .map(|document| {
-                        js_sys::Reflect::get(&document, &"visibilityState".into())
-                            .ok()
-                            .and_then(|state| state.as_string())
-                            .as_deref()
-                            == Some("visible")
-                    })
-                    .unwrap_or(true);
-
-                if !is_visible {
-                    this.cleanup_pointer_capture(PointerCancelReason::WindowDeactivated);
-                }
-                this.state.borrow_mut().is_active = is_visible;
-                this.dispatch_active_status_change(is_visible);
-            },
+            move |_event: JsValue| this.sync_dom_activation(),
         ))
+    }
+
+    fn register_global_window_activation_change(self: &Rc<Self>) -> [WebEventListener; 2] {
+        let target: &web_sys::EventTarget = self.browser_window.as_ref();
+        let focused = Rc::clone(self);
+        let blurred = Rc::clone(self);
+
+        [
+            WebEventListener::register(target, "focus", move |_event: JsValue| {
+                focused.sync_dom_activation();
+            }),
+            WebEventListener::register(target, "blur", move |_event: JsValue| {
+                blurred.sync_dom_activation();
+            }),
+        ]
     }
 
     fn register_global_appearance_change(self: &Rc<Self>) -> Option<WebEventListener> {
@@ -243,7 +241,7 @@ impl WebWindowInner {
         self.listen("pointerdown", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
-            this.input_element.focus().ok();
+            this.focus_from_pointer();
 
             let event = WebPointerEventData {
                 pointer_id: event.pointer_id(),
@@ -593,25 +591,12 @@ impl WebWindowInner {
 
     fn register_focus(self: &Rc<Self>) -> WebEventListener {
         let this = Rc::clone(self);
-        self.listen_input("focus", move |_event: JsValue| {
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_active = true;
-            }
-            this.dispatch_active_status_change(true);
-        })
+        self.listen_input("focus", move |_event: JsValue| this.sync_dom_activation())
     }
 
     fn register_blur(self: &Rc<Self>) -> WebEventListener {
         let this = Rc::clone(self);
-        self.listen_input("blur", move |_event: JsValue| {
-            this.cleanup_pointer_capture(PointerCancelReason::WindowDeactivated);
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_active = false;
-            }
-            this.dispatch_active_status_change(false);
-        })
+        self.listen_input("blur", move |_event: JsValue| this.sync_dom_activation())
     }
 
     fn register_pointer_enter(self: &Rc<Self>) -> WebEventListener {

@@ -8,6 +8,7 @@ use crate::linux::headless::window::{HeadlessDisplay, HeadlessWindow};
 use crate::linux::{LinuxClient, LinuxCommon, LinuxKeyboardLayout};
 use open_gpui::{
     AnyWindowHandle, DisplayId, PlatformDisplay, PlatformKeyboardLayout, PlatformWindow,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities, WindowCreationSupport,
     WindowParams,
 };
 
@@ -96,6 +97,20 @@ impl LinuxClient for HeadlessClient {
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
+    }
+
+    fn window_capabilities(
+        &self,
+        _kind: &open_gpui::WindowKind,
+        _display_id: Option<DisplayId>,
+    ) -> PlatformWindowCapabilities {
+        PlatformWindowCapabilities {
+            creation: PlatformWindowCreationCapabilities {
+                focus_on_appearing: WindowCreationSupport::Supported,
+                ..PlatformWindowCreationCapabilities::default()
+            },
+            ..PlatformWindowCapabilities::default()
+        }
     }
 
     fn open_window(

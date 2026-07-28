@@ -1,6 +1,5 @@
 use std::{
     cell::{RefCell, RefMut},
-    hash::Hash,
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
     rc::{Rc, Weak},
@@ -74,7 +73,7 @@ use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
     display::WaylandDisplay,
-    window::{ImeInput, WaylandWindowStatePtr},
+    window::{ImeInput, WaylandTransientOwner, WaylandWindowStatePtr},
 };
 
 use crate::linux::{
@@ -97,9 +96,11 @@ use open_gpui::{
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow, PlatformInput,
     PlatformKeyboardLayout, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
     PlatformWindowMutationCapabilities, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size,
-    TouchPhase, WindowButtonLayout, WindowCoordinateSpace, WindowKind, WindowMutationSupport,
-    WindowParams, point, profiler, px, size,
+    TouchPhase, WindowButtonLayout, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowKind, WindowMutationSupport, WindowParams, point,
+    profiler, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -263,7 +264,8 @@ pub(crate) struct WaylandClientState {
     data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
-    pending_activation: Option<PendingActivation>,
+    pending_external_activations: HashMap<ObjectId, PendingExternalActivation>,
+    pending_window_activation: Option<(ObjectId, PendingWindowActivation)>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     pub common: LinuxCommon,
     ime_enabled: Option<bool>,
@@ -289,13 +291,45 @@ pub(crate) struct KeyRepeat {
     current_keycode: Option<xkb::Keycode>,
 }
 
-pub(crate) enum PendingActivation {
+enum PendingExternalActivation {
     /// URI to open in the web browser.
     Uri(String),
     /// Path to open in the file explorer.
     Path(PathBuf),
-    /// A window from ourselves to raise.
-    Window(ObjectId),
+}
+
+struct PendingWindowActivation {
+    surface: ObjectId,
+    handle: AnyWindowHandle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowActivationResolution {
+    Current,
+    Closed,
+    StaleGeneration,
+}
+
+fn resolve_window_activation<H: Eq>(
+    requested_handle: &H,
+    live_handle: Option<&H>,
+) -> WindowActivationResolution {
+    match live_handle {
+        Some(live_handle) if live_handle == requested_handle => WindowActivationResolution::Current,
+        Some(_) => WindowActivationResolution::StaleGeneration,
+        None => WindowActivationResolution::Closed,
+    }
+}
+
+fn take_matching_pending<K: Eq, V>(pending: &mut Option<(K, V)>, token: &K) -> Option<V> {
+    if pending
+        .as_ref()
+        .is_some_and(|(pending_token, _)| pending_token == token)
+    {
+        pending.take().map(|(_, value)| value)
+    } else {
+        None
+    }
 }
 
 /// This struct is required to conform to Rust's orphan rules, so we can dispatch on the state but hand the
@@ -314,9 +348,16 @@ impl WaylandClientStatePtr {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
 
-    pub fn set_pending_activation(&self, window: ObjectId) {
-        self.0.upgrade().unwrap().borrow_mut().pending_activation =
-            Some(PendingActivation::Window(window));
+    pub fn set_pending_window_activation(
+        &self,
+        token: ObjectId,
+        surface: ObjectId,
+        handle: AnyWindowHandle,
+    ) {
+        let client = self.0.upgrade().unwrap();
+        let mut state = client.borrow_mut();
+        state.pending_window_activation =
+            Some((token, PendingWindowActivation { surface, handle }));
     }
 
     pub fn enable_ime(&self) {
@@ -367,7 +408,7 @@ impl WaylandClientStatePtr {
         let Some(focused_window) = state.mouse_focused_window.clone() else {
             return;
         };
-        if !focused_window.ptr_eq(window) || focused_window.is_blocked() {
+        if !focused_window.ptr_eq(window) {
             return;
         }
 
@@ -445,6 +486,13 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         let closed_window = state.windows.remove(surface_id).unwrap();
+        if state
+            .pending_window_activation
+            .as_ref()
+            .is_some_and(|(_, pending)| &pending.surface == surface_id)
+        {
+            state.pending_window_activation = None;
+        }
         if let Some(window) = state.mouse_focused_window.take()
             && !window.ptr_eq(&closed_window)
         {
@@ -776,7 +824,8 @@ impl WaylandClient {
             data_offers: Vec::new(),
             primary_data_offer: None,
             cursor,
-            pending_activation: None,
+            pending_external_activations: HashMap::default(),
+            pending_window_activation: None,
             event_loop: Some(event_loop),
             ime_enabled: None,
         }));
@@ -789,8 +838,9 @@ impl WaylandClient {
     }
 }
 
-fn wayland_window_mutation_capabilities(kind: &WindowKind) -> PlatformWindowMutationCapabilities {
-    let mut capabilities = PlatformWindowMutationCapabilities {
+fn wayland_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
+    let layer_shell = matches!(kind, WindowKind::LayerShell(_));
+    let mut mutations = PlatformWindowMutationCapabilities {
         size: WindowMutationSupport::CreationOnly,
         windowed: WindowMutationSupport::CreationOnly,
         maximized: WindowMutationSupport::CreationOnly,
@@ -801,13 +851,25 @@ fn wayland_window_mutation_capabilities(kind: &WindowKind) -> PlatformWindowMuta
         coordinate_space: WindowCoordinateSpace::WindowLocal,
         ..Default::default()
     };
-    if matches!(kind, WindowKind::LayerShell(_)) {
-        capabilities.windowed = WindowMutationSupport::Unsupported;
-        capabilities.maximized = WindowMutationSupport::Unsupported;
-        capabilities.fullscreen = WindowMutationSupport::Unsupported;
-        capabilities.restore_bounds = WindowMutationSupport::Unsupported;
+    if layer_shell {
+        mutations.windowed = WindowMutationSupport::Unsupported;
+        mutations.maximized = WindowMutationSupport::Unsupported;
+        mutations.fullscreen = WindowMutationSupport::Unsupported;
+        mutations.restore_bounds = WindowMutationSupport::Unsupported;
     }
-    capabilities
+    PlatformWindowCapabilities {
+        creation: PlatformWindowCreationCapabilities {
+            focus_on_appearing: WindowCreationSupport::Unsupported,
+            transient_for: if layer_shell {
+                WindowCreationSupport::Unsupported
+            } else {
+                WindowCreationSupport::Supported
+            },
+            initial_presentation_order:
+                WindowInitialPresentationOrder::PresentationEstablishesVisibility,
+        },
+        mutations,
+    }
 }
 
 impl LinuxClient for WaylandClient {
@@ -876,7 +938,29 @@ impl LinuxClient for WaylandClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
-        let parent = state.keyboard_focused_window.clone();
+        let transient_owner = if matches!(&params.kind, WindowKind::LayerShell(_)) {
+            None
+        } else {
+            params
+                .transient_for
+                .map(|owner| {
+                    let owner_window = state
+                        .windows
+                        .values()
+                        .find(|window| window.handle() == owner)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Wayland transient owner is no longer open")
+                        })?;
+                    let toplevel = owner_window.toplevel().ok_or_else(|| {
+                        anyhow::anyhow!("Wayland transient owner has no XDG toplevel role")
+                    })?;
+                    Ok::<_, anyhow::Error>(WaylandTransientOwner {
+                        handle: owner,
+                        toplevel,
+                    })
+                })
+                .transpose()?
+        };
 
         let target_output = params.display_id.and_then(|display_id| {
             let target_protocol_id: u64 = display_id.into();
@@ -897,7 +981,7 @@ impl LinuxClient for WaylandClient {
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             appearance,
-            parent,
+            transient_owner,
             target_output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
@@ -919,8 +1003,10 @@ impl LinuxClient for WaylandClient {
             state.globals.activation.clone(),
             state.mouse_focused_window.clone(),
         ) {
-            state.pending_activation = Some(PendingActivation::Uri(uri.to_string()));
             let token = activation.get_activation_token(&state.globals.qh, ());
+            state
+                .pending_external_activations
+                .insert(token.id(), PendingExternalActivation::Uri(uri.to_string()));
             let serial = state.serial_tracker.get(SerialKind::MousePress);
             token.set_serial(serial, &state.wl_seat);
             token.set_surface(&window.surface());
@@ -937,8 +1023,10 @@ impl LinuxClient for WaylandClient {
             state.globals.activation.clone(),
             state.mouse_focused_window.clone(),
         ) {
-            state.pending_activation = Some(PendingActivation::Path(path));
             let token = activation.get_activation_token(&state.globals.qh, ());
+            state
+                .pending_external_activations
+                .insert(token.id(), PendingExternalActivation::Path(path));
             let serial = state.serial_tracker.get(SerialKind::MousePress);
             token.set_serial(serial, &state.wl_seat);
             token.set_surface(&window.surface());
@@ -1045,12 +1133,12 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         kind: &WindowKind,
         _display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
-        wayland_window_mutation_capabilities(kind)
+    ) -> PlatformWindowCapabilities {
+        wayland_window_capabilities(kind)
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -1407,21 +1495,47 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
         let client = this.get_client();
         let mut state = client.borrow_mut();
 
-        if let xdg_activation_token_v1::Event::Done { token } = event {
-            let executor = state.common.background_executor.clone();
-            match state.pending_activation.take() {
-                Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
-                Some(PendingActivation::Path(path)) => {
-                    reveal_path_internal(executor, path, Some(token))
+        if let xdg_activation_token_v1::Event::Done {
+            token: activation_token,
+        } = event
+        {
+            let token_id = token.id();
+            if let Some(PendingWindowActivation { surface, handle }) =
+                take_matching_pending(&mut state.pending_window_activation, &token_id)
+            {
+                let window = get_window(&mut state, &surface);
+                let live_handle = window.as_ref().map(WaylandWindowStatePtr::handle);
+
+                match resolve_window_activation(&handle, live_handle.as_ref()) {
+                    WindowActivationResolution::Current => {
+                        if let (Some(window), Some(activation)) =
+                            (window, state.globals.activation.as_ref())
+                        {
+                            activation.activate(activation_token, &window.surface());
+                        } else {
+                            log::error!(
+                                "current Wayland window activation lost its live protocol state"
+                            );
+                        }
+                    }
+                    WindowActivationResolution::Closed => {
+                        log::warn!("discarding Wayland activation token for a closed window")
+                    }
+                    WindowActivationResolution::StaleGeneration => log::warn!(
+                        "discarding Wayland activation token for a stale window generation"
+                    ),
                 }
-                Some(PendingActivation::Window(window)) => {
-                    let Some(window) = get_window(&mut state, &window) else {
-                        return;
-                    };
-                    let activation = state.globals.activation.as_ref().unwrap();
-                    activation.activate(token, &window.surface());
+            } else {
+                let executor = state.common.background_executor.clone();
+                match state.pending_external_activations.remove(&token_id) {
+                    Some(PendingExternalActivation::Uri(uri)) => {
+                        open_uri_internal(executor, &uri, Some(activation_token))
+                    }
+                    Some(PendingExternalActivation::Path(path)) => {
+                        reveal_path_internal(executor, path, Some(activation_token))
+                    }
+                    None => log::warn!("activation token received with no matching request"),
                 }
-                None => log::error!("activation token received with no pending activation"),
             }
         }
 
@@ -1901,30 +2015,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.restore_cursor_after_hide();
 
                 if let Some(window) = state.mouse_focused_window.clone() {
-                    if window.is_blocked() {
-                        let default_style = CursorStyle::Arrow;
-                        if state.cursor_style != Some(default_style) {
-                            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
-                            state.cursor_style = Some(default_style);
-
-                            if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                                cursor_shape_device.set_shape(serial, to_shape(default_style));
-                            } else {
-                                // cursor-shape-v1 isn't supported, set the cursor using a surface.
-                                let wl_pointer = state
-                                    .wl_pointer
-                                    .clone()
-                                    .expect("window is focused by pointer");
-                                let scale = window.primary_output_scale();
-                                state.cursor.set_icon(
-                                    &wl_pointer,
-                                    serial,
-                                    cursor_style_to_icon_names(default_style),
-                                    scale,
-                                );
-                            }
-                        }
-                    }
                     if state
                         .keyboard_focused_window
                         .as_ref()
@@ -2613,7 +2703,60 @@ impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
 }
 
 #[cfg(test)]
-mod window_mutation_capability_tests {
+mod activation_routing_tests {
+    use super::*;
+
+    #[test]
+    fn activation_results_are_consumed_by_their_own_token() {
+        let mut pending = HashMap::default();
+        pending.insert(11_u64, PendingExternalActivation::Uri("first".to_owned()));
+        pending.insert(22_u64, PendingExternalActivation::Uri("second".to_owned()));
+
+        let Some(PendingExternalActivation::Uri(second)) = pending.remove(&22) else {
+            panic!("second token must retain its own request");
+        };
+        assert_eq!(second, "second");
+
+        let Some(PendingExternalActivation::Uri(first)) = pending.remove(&11) else {
+            panic!("first token must remain pending independently");
+        };
+        assert_eq!(first, "first");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn newer_window_token_replaces_and_protects_the_latest_activation_intent() {
+        let mut pending = Some((1_u64, "window-a"));
+        assert_eq!(pending.replace((2, "window-b")), Some((1, "window-a")));
+
+        assert_eq!(take_matching_pending(&mut pending, &1), None);
+        assert_eq!(pending, Some((2, "window-b")));
+        assert_eq!(take_matching_pending(&mut pending, &2), Some("window-b"));
+        assert_eq!(pending, None);
+    }
+
+    #[test]
+    fn current_window_token_requires_a_live_full_generation_handle() {
+        let requested_handle = (7_u64, 3_u64);
+        let replacement_generation = (7_u64, 4_u64);
+
+        assert_eq!(
+            resolve_window_activation(&requested_handle, None),
+            WindowActivationResolution::Closed
+        );
+        assert_eq!(
+            resolve_window_activation(&requested_handle, Some(&replacement_generation)),
+            WindowActivationResolution::StaleGeneration
+        );
+        assert_eq!(
+            resolve_window_activation(&requested_handle, Some(&requested_handle)),
+            WindowActivationResolution::Current
+        );
+    }
+}
+
+#[cfg(test)]
+mod window_capability_tests {
     use super::*;
     use open_gpui::layer_shell::LayerShellOptions;
 
@@ -2632,8 +2775,7 @@ mod window_mutation_capability_tests {
             minimized: WindowMutationSupport::Unsupported,
             restore_bounds: toplevel_state,
             pointer_input: WindowMutationSupport::Unsupported,
-            focus_on_appearing: WindowMutationSupport::Unsupported,
-            focus_on_click: WindowMutationSupport::Unsupported,
+            activation_policy: WindowMutationSupport::Unsupported,
             alpha: WindowMutationSupport::CreationOnly,
             topmost: WindowMutationSupport::Unsupported,
             taskbar_visibility: WindowMutationSupport::Unsupported,
@@ -2644,26 +2786,56 @@ mod window_mutation_capability_tests {
     #[test]
     fn capabilities_match_exact_kind_specific_creation_paths() {
         assert_eq!(
-            wayland_window_mutation_capabilities(&WindowKind::Normal),
+            wayland_window_capabilities(&WindowKind::Normal).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_mutation_capabilities(&WindowKind::PopUp),
+            wayland_window_capabilities(&WindowKind::PopUp).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_mutation_capabilities(&WindowKind::Floating),
+            wayland_window_capabilities(&WindowKind::Floating).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_mutation_capabilities(&WindowKind::Dialog),
+            wayland_window_capabilities(&WindowKind::Dialog).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_mutation_capabilities(&WindowKind::LayerShell(
-                LayerShellOptions::default(),
-            )),
+            wayland_window_capabilities(&WindowKind::LayerShell(LayerShellOptions::default()))
+                .mutations,
             expected_wayland_capabilities(true)
+        );
+    }
+
+    #[test]
+    fn xdg_owner_is_supported_but_initial_focus_policy_is_not() {
+        for kind in [
+            WindowKind::Normal,
+            WindowKind::PopUp,
+            WindowKind::Floating,
+            WindowKind::Dialog,
+        ] {
+            let creation = wayland_window_capabilities(&kind).creation;
+            assert_eq!(
+                creation.focus_on_appearing,
+                WindowCreationSupport::Unsupported
+            );
+            assert_eq!(creation.transient_for, WindowCreationSupport::Supported);
+            assert_eq!(
+                creation.initial_presentation_order,
+                WindowInitialPresentationOrder::PresentationEstablishesVisibility
+            );
+        }
+
+        let layer =
+            wayland_window_capabilities(&WindowKind::LayerShell(LayerShellOptions::default()))
+                .creation;
+        assert_eq!(layer.focus_on_appearing, WindowCreationSupport::Unsupported);
+        assert_eq!(layer.transient_for, WindowCreationSupport::Unsupported);
+        assert_eq!(
+            layer.initial_presentation_order,
+            WindowInitialPresentationOrder::PresentationEstablishesVisibility
         );
     }
 }

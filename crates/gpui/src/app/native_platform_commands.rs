@@ -48,6 +48,12 @@ pub(super) struct NativePlatformCommand {
     attempt: u8,
 }
 
+pub(super) enum NativePlatformCommandRejection {
+    Retry(NativePlatformCommand),
+    InitialPresentationFailed,
+    Terminal,
+}
+
 impl NativePlatformCommand {
     pub(super) fn new(
         window_id: WindowId,
@@ -97,13 +103,14 @@ impl NativePlatformCommand {
         self.dispatcher.dispatch(self.command)
     }
 
-    pub(super) fn retry_after_rejection(mut self) -> Option<Self> {
-        if !self.completes_initial_presentation()
-            || self.attempt >= MAX_INITIAL_PRESENTATION_COMMAND_ATTEMPTS
-        {
-            return None;
+    pub(super) fn settle_rejection(mut self) -> NativePlatformCommandRejection {
+        if !self.completes_initial_presentation() {
+            return NativePlatformCommandRejection::Terminal;
+        }
+        if self.attempt >= MAX_INITIAL_PRESENTATION_COMMAND_ATTEMPTS {
+            return NativePlatformCommandRejection::InitialPresentationFailed;
         }
         self.attempt += 1;
-        Some(self)
+        NativePlatformCommandRejection::Retry(self)
     }
 }

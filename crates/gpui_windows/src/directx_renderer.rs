@@ -310,13 +310,18 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    /// Defers the frame when device recovery invalidated its texture resources.
     pub(crate) fn draw(
         &mut self,
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
-    ) -> Result<()> {
+    ) -> Result<PlatformWindowPresentOutcome> {
+        if self.skip_draws {
+            return Ok(PlatformWindowPresentOutcome::Deferred);
+        }
         self.draw_scene_to_target(scene, background_appearance)?;
-        self.present()
+        self.present()?;
+        Ok(PlatformWindowPresentOutcome::Submitted)
     }
 
     fn draw_scene_to_target(

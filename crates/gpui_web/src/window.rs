@@ -14,9 +14,11 @@ use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PointerCancelReason, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
+    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowControls, WindowCoordinateSpace, WindowCreationFacts,
+    WindowDecorations, WindowParams, WindowPlatformFacts, px,
 };
 use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use wasm_bindgen::prelude::*;
@@ -68,7 +70,9 @@ pub(crate) struct WebWindowInner {
     pub(crate) cursor_visible: Rc<Cell<bool>>,
     pub(crate) last_cursor_css: Rc<Cell<&'static str>>,
     active_window: Weak<RefCell<Option<AnyWindowHandle>>>,
-    initially_shown: bool,
+    creation_facts: WindowCreationFacts,
+    activation_policy: WindowActivationPolicy,
+    accepts_pointer_input: bool,
     is_mapped: Cell<bool>,
     initial_presentation_completed: Cell<bool>,
     raf_running: Cell<bool>,
@@ -118,6 +122,11 @@ impl WebWindow {
         root_style
             .set_property("overflow", "hidden")
             .map_err(|e| anyhow::anyhow!("Failed to set root overflow style: {e:?}"))?;
+        if !params.accepts_pointer_input {
+            root_style
+                .set_property("pointer-events", "none")
+                .map_err(|e| anyhow::anyhow!("Failed to disable root pointer input: {e:?}"))?;
+        }
 
         let canvas: web_sys::HtmlCanvasElement = document
             .create_element("canvas")
@@ -158,6 +167,7 @@ impl WebWindow {
             .dyn_into()
             .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
         let input_style = input_element.style();
+        input_element.set_tab_index(-1);
         input_style.set_property("position", "fixed").ok();
         input_style.set_property("top", "0").ok();
         input_style.set_property("left", "0").ok();
@@ -223,7 +233,13 @@ impl WebWindow {
             cursor_visible,
             last_cursor_css,
             active_window,
-            initially_shown: params.show,
+            creation_facts: WindowCreationFacts {
+                show: params.show,
+                focus_on_appearing: params.focus_on_appearing,
+                transient_for: None,
+            },
+            activation_policy: params.activation_policy,
+            accepts_pointer_input: params.accepts_pointer_input,
             is_mapped: Cell::new(false),
             initial_presentation_completed: Cell::new(false),
             raf_running: Cell::new(false),
@@ -393,8 +409,7 @@ impl WebWindowInner {
         }
     }
 
-    pub(crate) fn dispatch_active_status_change(&self, is_active: bool) {
-        self.update_active_window(is_active);
+    fn dispatch_active_status_change(&self, is_active: bool) {
         let mut callback = {
             let mut callbacks = self.callbacks.borrow_mut();
             callbacks.active_status_change.take()
@@ -409,6 +424,40 @@ impl WebWindowInner {
         }
     }
 
+    pub(crate) fn sync_dom_activation(&self) {
+        let is_active = self.browser_window.document().is_some_and(|document| {
+            let is_visible = js_sys::Reflect::get(&document, &"visibilityState".into())
+                .ok()
+                .and_then(|state| state.as_string())
+                .as_deref()
+                == Some("visible");
+            let document_has_focus = document.has_focus().unwrap_or(false);
+            let input_element: &web_sys::Element = self.input_element.as_ref();
+            let input_has_focus = document.active_element().as_ref() == Some(input_element);
+
+            is_visible && document_has_focus && input_has_focus
+        });
+
+        let changed = {
+            let mut state = self.state.borrow_mut();
+            if state.is_active == is_active {
+                false
+            } else {
+                state.is_active = is_active;
+                true
+            }
+        };
+        if !changed {
+            return;
+        }
+
+        self.update_active_window(is_active);
+        if !is_active {
+            self.cleanup_pointer_capture(PointerCancelReason::WindowDeactivated);
+        }
+        self.dispatch_active_status_change(is_active);
+    }
+
     fn update_active_window(&self, is_active: bool) {
         let Some(active_window) = self.active_window.upgrade() else {
             return;
@@ -421,25 +470,35 @@ impl WebWindowInner {
         }
     }
 
-    fn focus_input(&self) {
+    fn focus_input(&self) -> bool {
         if !self.is_mapped.get() {
-            return;
+            return false;
         }
         if let Err(error) = self.input_element.focus() {
             log::warn!("failed to focus GPUI web input: {error:?}");
-            return;
+            return false;
         }
 
-        self.state.borrow_mut().is_active = true;
-        self.update_active_window(true);
+        self.sync_dom_activation();
+        true
+    }
+
+    fn activate(&self) -> bool {
+        self.activation_policy.accepts_activation && self.focus_input()
+    }
+
+    pub(crate) fn focus_from_pointer(&self) {
+        if self.activation_policy.focus_on_click {
+            let _ = self.focus_input();
+        }
     }
 
     fn complete_initial_presentation(&self, activate: bool) {
         if self.initial_presentation_completed.replace(true) {
             return;
         }
-        if self.initially_shown && activate {
-            self.focus_input();
+        if self.creation_facts.show && self.creation_facts.focus_on_appearing && activate {
+            let _ = self.activate();
         }
     }
 
@@ -714,8 +773,11 @@ impl PlatformWindow for WebWindow {
                     PlatformWindowCommandOutcome::Accepted
                 }
                 PlatformWindowCommand::Activate => {
-                    inner.focus_input();
-                    PlatformWindowCommandOutcome::Accepted
+                    if inner.activate() {
+                        PlatformWindowCommandOutcome::Accepted
+                    } else {
+                        PlatformWindowCommandOutcome::Rejected
+                    }
                 }
                 PlatformWindowCommand::ShowWindowMenu(_)
                 | PlatformWindowCommand::StartWindowMove
@@ -731,7 +793,7 @@ impl PlatformWindow for WebWindow {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
-        if !self.inner.initially_shown || self.inner.is_mapped.get() {
+        if !self.inner.creation_facts.show || self.inner.is_mapped.get() {
             return Ok(());
         }
 
@@ -760,6 +822,41 @@ impl PlatformWindow for WebWindow {
 
     fn is_maximized(&self) -> bool {
         false
+    }
+
+    fn accepts_pointer_input(&self) -> bool {
+        self.inner.accepts_pointer_input
+    }
+
+    fn creation_facts(&self) -> WindowCreationFacts {
+        self.inner.creation_facts.clone()
+    }
+
+    fn is_visible(&self) -> bool {
+        self.inner.is_mapped.get()
+    }
+
+    fn platform_facts(&self) -> WindowPlatformFacts {
+        let state = self.inner.state.borrow();
+        WindowPlatformFacts {
+            bounds: state.bounds,
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
+            window_bounds: WindowBounds::Windowed(state.bounds),
+            inner_window_bounds: WindowBounds::Windowed(state.bounds),
+            content_size: state.bounds.size,
+            scale_factor: state.scale_factor,
+            display_id: Some(self.display.id()),
+            is_minimized: false,
+            is_maximized: false,
+            is_fullscreen: state.is_fullscreen,
+            accepts_pointer_input: self.inner.accepts_pointer_input,
+            accepts_activation: self.inner.activation_policy.accepts_activation,
+            focus_on_click: self.inner.activation_policy.focus_on_click,
+            background_appearance: WindowBackgroundAppearance::Opaque,
+            topmost: false,
+            taskbar_visible: false,
+            is_active: state.is_active,
+        }
     }
 
     fn window_bounds(&self) -> WindowBounds {
@@ -889,9 +986,9 @@ impl PlatformWindow for WebWindow {
         self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
         if !self.inner.is_mapped.get() {
-            return;
+            return PlatformWindowPresentOutcome::Deferred;
         }
 
         if let Some((width, height)) = self.inner.pending_physical_size.take() {
@@ -908,7 +1005,11 @@ impl PlatformWindow for WebWindow {
             drop(state);
         }
 
-        self.inner.state.borrow_mut().renderer.draw(scene);
+        let mut state = self.inner.state.borrow_mut();
+        if state.renderer.device_lost() {
+            return PlatformWindowPresentOutcome::Rejected;
+        }
+        state.renderer.draw(scene)
     }
 
     fn completed_frame(&self) {

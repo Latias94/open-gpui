@@ -36,13 +36,15 @@ pub(crate) type RegisteredWindows = RwLock<SmallVec<[RegisteredWindow; 4]>>;
 pub(crate) struct RegisteredWindow {
     hwnd: SafeHwnd,
     generation: usize,
+    window_id: WindowId,
 }
 
 impl RegisteredWindow {
-    pub(crate) fn new(hwnd: HWND, generation: usize) -> Self {
+    pub(crate) fn new(hwnd: HWND, generation: usize, window_id: WindowId) -> Self {
         Self {
             hwnd: hwnd.into(),
             generation,
+            window_id,
         }
     }
 
@@ -54,8 +56,14 @@ impl RegisteredWindow {
         self.generation
     }
 
+    fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
     pub(crate) fn matches(self, other: Self) -> bool {
-        self.hwnd.as_raw() == other.hwnd.as_raw() && self.generation == other.generation
+        self.hwnd.as_raw() == other.hwnd.as_raw()
+            && self.generation == other.generation
+            && self.window_id == other.window_id
     }
 }
 
@@ -380,6 +388,30 @@ impl WindowsPlatform {
         window.registration.matches(registered).then_some(window)
     }
 
+    fn native_owner_for(&self, owner: AnyWindowHandle) -> Result<HWND> {
+        let registered = {
+            let registered_windows = self.raw_window_handles.read();
+            registered_windows
+                .iter()
+                .find(|entry| entry.window_id() == owner.window_id())
+                .copied()
+        }
+        .context("transient owner is not a live Windows platform window")?;
+        let hwnd = registered.as_raw();
+        anyhow::ensure!(
+            unsafe { IsWindow(Some(hwnd)).as_bool() },
+            "transient owner HWND is no longer live"
+        );
+        let window =
+            window_from_hwnd(hwnd).context("transient owner HWND has no live GPUI window state")?;
+        anyhow::ensure!(
+            window.registration.matches(registered)
+                && window.handle.window_id() == owner.window_id(),
+            "transient owner no longer matches its registered window generation"
+        );
+        Ok(hwnd)
+    }
+
     fn generate_creation_info(&self) -> WindowCreationInfo {
         WindowCreationInfo {
             icon: self.icon,
@@ -545,22 +577,28 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     (result.0 == 0).then_some(())
 }
 
-fn windows_window_mutation_capabilities() -> PlatformWindowMutationCapabilities {
-    PlatformWindowMutationCapabilities {
-        position: WindowMutationSupport::CreationOnly,
-        size: WindowMutationSupport::Live,
-        windowed: WindowMutationSupport::Live,
-        maximized: WindowMutationSupport::Live,
-        fullscreen: WindowMutationSupport::Live,
-        minimized: WindowMutationSupport::Unsupported,
-        restore_bounds: WindowMutationSupport::CreationOnly,
-        pointer_input: WindowMutationSupport::Live,
-        focus_on_appearing: WindowMutationSupport::CreationOnly,
-        focus_on_click: WindowMutationSupport::Unsupported,
-        alpha: WindowMutationSupport::CreationOnly,
-        topmost: WindowMutationSupport::Unsupported,
-        taskbar_visibility: WindowMutationSupport::Unsupported,
-        coordinate_space: WindowCoordinateSpace::WindowLocal,
+fn windows_window_capabilities() -> PlatformWindowCapabilities {
+    PlatformWindowCapabilities {
+        creation: PlatformWindowCreationCapabilities {
+            focus_on_appearing: WindowCreationSupport::Supported,
+            transient_for: WindowCreationSupport::Supported,
+            initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
+        },
+        mutations: PlatformWindowMutationCapabilities {
+            position: WindowMutationSupport::CreationOnly,
+            size: WindowMutationSupport::Live,
+            windowed: WindowMutationSupport::Live,
+            maximized: WindowMutationSupport::Live,
+            fullscreen: WindowMutationSupport::Live,
+            minimized: WindowMutationSupport::Unsupported,
+            restore_bounds: WindowMutationSupport::CreationOnly,
+            pointer_input: WindowMutationSupport::Live,
+            activation_policy: WindowMutationSupport::Live,
+            alpha: WindowMutationSupport::CreationOnly,
+            topmost: WindowMutationSupport::Unsupported,
+            taskbar_visibility: WindowMutationSupport::Unsupported,
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
+        },
     }
 }
 
@@ -754,12 +792,12 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         _kind: &WindowKind,
         _display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
-        windows_window_mutation_capabilities()
+    ) -> PlatformWindowCapabilities {
+        windows_window_capabilities()
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -778,7 +816,16 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
+        let transient_owner_hwnd = options
+            .transient_for
+            .map(|owner| self.native_owner_for(owner))
+            .transpose()?;
+        let window = WindowsWindow::new(
+            handle,
+            options,
+            transient_owner_hwnd,
+            self.generate_creation_info(),
+        )?;
         self.raw_window_handles.write().push(window.0.registration);
 
         Ok(Box::new(window))
@@ -1726,10 +1773,13 @@ mod tests {
     use crate::{read_from_clipboard, write_to_clipboard};
     use open_gpui::{
         AppContext as _, Application, ClipboardItem, Empty, Platform as _,
-        PlatformWindowMutationCapabilities, WindowBounds, WindowCoordinateSpace, WindowHandle,
-        WindowKind, WindowMutationDispatch, WindowMutationObservation, WindowMutationOutcome,
-        WindowMutationRequest, WindowMutationSupport, WindowOptions, WindowPlacementRequest,
-        WindowPlacementState, WindowPlatformFacts, px, size,
+        PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+        PlatformWindowMutationCapabilities, WindowActivationPolicy, WindowBounds,
+        WindowCoordinateSpace, WindowCreationSupport, WindowHandle, WindowId,
+        WindowInitialPresentationOrder, WindowKind, WindowMutationDispatch,
+        WindowMutationObservation, WindowMutationOutcome, WindowMutationRequest,
+        WindowMutationSupport, WindowOptions, WindowPlacementRequest, WindowPlacementState,
+        WindowPlatformFacts, px, size,
     };
     use std::{
         rc::Rc,
@@ -1820,7 +1870,8 @@ mod tests {
 
     #[test]
     fn registered_window_dispatch_releases_registry_lock_and_observes_concurrent_removal() {
-        let registered_window = super::RegisteredWindow::new(HWND::default(), 7);
+        let window_id = WindowId::from(7_u64);
+        let registered_window = super::RegisteredWindow::new(HWND::default(), 7, window_id);
         let mut entries: smallvec::SmallVec<[super::RegisteredWindow; 4]> =
             smallvec::SmallVec::new();
         entries.push(registered_window);
@@ -1886,30 +1937,36 @@ mod tests {
     }
 
     #[test]
-    fn window_mutation_capabilities_match_observable_windows_paths() {
+    fn window_capabilities_match_observable_windows_paths() {
         assert_eq!(
-            super::windows_window_mutation_capabilities(),
-            PlatformWindowMutationCapabilities {
-                position: WindowMutationSupport::CreationOnly,
-                size: WindowMutationSupport::Live,
-                windowed: WindowMutationSupport::Live,
-                maximized: WindowMutationSupport::Live,
-                fullscreen: WindowMutationSupport::Live,
-                minimized: WindowMutationSupport::Unsupported,
-                restore_bounds: WindowMutationSupport::CreationOnly,
-                pointer_input: WindowMutationSupport::Live,
-                focus_on_appearing: WindowMutationSupport::CreationOnly,
-                focus_on_click: WindowMutationSupport::Unsupported,
-                alpha: WindowMutationSupport::CreationOnly,
-                topmost: WindowMutationSupport::Unsupported,
-                taskbar_visibility: WindowMutationSupport::Unsupported,
-                coordinate_space: WindowCoordinateSpace::WindowLocal,
+            super::windows_window_capabilities(),
+            PlatformWindowCapabilities {
+                creation: PlatformWindowCreationCapabilities {
+                    focus_on_appearing: WindowCreationSupport::Supported,
+                    transient_for: WindowCreationSupport::Supported,
+                    initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
+                },
+                mutations: PlatformWindowMutationCapabilities {
+                    position: WindowMutationSupport::CreationOnly,
+                    size: WindowMutationSupport::Live,
+                    windowed: WindowMutationSupport::Live,
+                    maximized: WindowMutationSupport::Live,
+                    fullscreen: WindowMutationSupport::Live,
+                    minimized: WindowMutationSupport::Unsupported,
+                    restore_bounds: WindowMutationSupport::CreationOnly,
+                    pointer_input: WindowMutationSupport::Live,
+                    activation_policy: WindowMutationSupport::Live,
+                    alpha: WindowMutationSupport::CreationOnly,
+                    topmost: WindowMutationSupport::Unsupported,
+                    taskbar_visibility: WindowMutationSupport::Unsupported,
+                    coordinate_space: WindowCoordinateSpace::WindowLocal,
+                },
             }
         );
     }
 
     #[test]
-    fn popup_creation_facts_drive_creation_only_request_classification() {
+    fn nonactivating_first_appearance_preserves_lifetime_activation() {
         let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
         let mut app = Application::with_platform(platform.clone());
         let window = app
@@ -1918,7 +1975,7 @@ mod tests {
                     WindowOptions {
                         kind: WindowKind::PopUp,
                         window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                        focus: false,
+                        focus_on_appearing: false,
                         show: true,
                         ..WindowOptions::default()
                     },
@@ -1939,19 +1996,23 @@ mod tests {
             .expect("popup creation facts should remain readable from Win32");
         let committed_facts = committed_window_facts(&mut app, window);
 
+        let creation_facts = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| window.creation_facts().clone())
+                .expect("popup test window should remain open")
+        });
+
         assert_eq!(committed_facts, native_facts);
-        assert!(!committed_facts.focus_on_appearing);
-        assert!(!committed_facts.focus_on_click);
+        assert!(!creation_facts.focus_on_appearing);
+        assert!(committed_facts.accepts_activation);
+        assert!(committed_facts.focus_on_click);
         assert!(!committed_facts.taskbar_visible);
 
         let dispatches = app.update_for_test(|cx| {
             window
                 .update(cx, |_, window, _| {
                     [
-                        window.request_focus_on_appearing(false),
-                        window.request_focus_on_appearing(true),
-                        window.request_focus_on_click(false),
-                        window.request_focus_on_click(true),
+                        window.request_activation_policy(WindowActivationPolicy::default()),
                         window.request_taskbar_visibility(false),
                         window.request_taskbar_visibility(true),
                     ]
@@ -1959,11 +2020,8 @@ mod tests {
                 .expect("popup test window should remain open")
         });
         assert!(matches!(dispatches[0], WindowMutationDispatch::Unchanged));
-        assert!(matches!(dispatches[1], WindowMutationDispatch::Unsupported));
-        assert!(matches!(dispatches[2], WindowMutationDispatch::Unchanged));
-        assert!(matches!(dispatches[3], WindowMutationDispatch::Unsupported));
-        assert!(matches!(dispatches[4], WindowMutationDispatch::Unchanged));
-        assert!(matches!(dispatches[5], WindowMutationDispatch::Unsupported));
+        assert!(matches!(dispatches[1], WindowMutationDispatch::Unchanged));
+        assert!(matches!(dispatches[2], WindowMutationDispatch::Unsupported));
 
         let window = open_gpui::AnyWindowHandle::from(window);
         app.update_for_test(|cx| {
@@ -1984,7 +2042,7 @@ mod tests {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
-                        focus: false,
+                        focus_on_appearing: false,
                         show: true,
                         ..WindowOptions::default()
                     },
@@ -2089,6 +2147,41 @@ mod tests {
             assert_eq!(committed_window_facts(&mut app, window), observed.facts);
         }
 
+        for activation_policy in [
+            WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: false,
+            },
+            WindowActivationPolicy {
+                accepts_activation: true,
+                focus_on_click: false,
+            },
+            WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: true,
+            },
+            WindowActivationPolicy::default(),
+        ] {
+            let observed = observe_native_mutation(
+                &platform,
+                &mut app,
+                window,
+                WindowMutationRequest::ActivationPolicy(activation_policy),
+            );
+            assert_eq!(observed.outcome, WindowMutationOutcome::Exact);
+            assert_eq!(
+                (
+                    observed.facts.accepts_activation,
+                    observed.facts.focus_on_click,
+                ),
+                (
+                    activation_policy.accepts_activation,
+                    activation_policy.focus_on_click,
+                )
+            );
+            assert_eq!(committed_window_facts(&mut app, window), observed.facts);
+        }
+
         let window = open_gpui::AnyWindowHandle::from(window);
         app.update_for_test(|cx| {
             window
@@ -2107,7 +2200,7 @@ mod tests {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                        focus: false,
+                        focus_on_appearing: false,
                         show: true,
                         ..WindowOptions::default()
                     },
@@ -2147,6 +2240,26 @@ mod tests {
             "native style rollback and committed facts must remain coherent"
         );
 
+        native_window_state
+            .state
+            .fail_next_activation_policy_frame_change
+            .set(true);
+        let activation_observation = observe_native_mutation(
+            &platform,
+            &mut app,
+            window,
+            WindowMutationRequest::ActivationPolicy(WindowActivationPolicy {
+                accepts_activation: !initial.accepts_activation,
+                focus_on_click: !initial.focus_on_click,
+            }),
+        );
+        assert_eq!(
+            activation_observation.outcome,
+            WindowMutationOutcome::Rejected
+        );
+        assert_eq!(activation_observation.facts, initial);
+        assert_eq!(committed_window_facts(&mut app, window), initial);
+
         let window = open_gpui::AnyWindowHandle::from(window);
         app.update_for_test(|cx| {
             window
@@ -2165,7 +2278,7 @@ mod tests {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                        focus: false,
+                        focus_on_appearing: false,
                         show: true,
                         ..WindowOptions::default()
                     },
@@ -2231,7 +2344,7 @@ mod tests {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                        focus: false,
+                        focus_on_appearing: false,
                         show: true,
                         ..WindowOptions::default()
                     },
@@ -2301,7 +2414,7 @@ mod tests {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
-                        focus: false,
+                        focus_on_appearing: false,
                         show: false,
                         ..WindowOptions::default()
                     },

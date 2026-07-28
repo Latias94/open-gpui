@@ -2291,7 +2291,7 @@ mod runtime_suite {
             &source_space,
             WindowOptions {
                 window_bounds: Some(source_window_bounds),
-                focus: false,
+                focus_on_appearing: false,
                 ..Default::default()
             },
         );
@@ -2300,7 +2300,7 @@ mod runtime_suite {
             &target_space,
             WindowOptions {
                 window_bounds: Some(target_window_bounds),
-                focus: false,
+                focus_on_appearing: false,
                 ..Default::default()
             },
         );
@@ -2309,7 +2309,7 @@ mod runtime_suite {
             &decoy_space,
             WindowOptions {
                 window_bounds: Some(decoy_window_bounds),
-                focus: false,
+                focus_on_appearing: false,
                 ..Default::default()
             },
         );
@@ -2396,7 +2396,7 @@ mod runtime_suite {
             window_bounds: Some(WindowBounds::Windowed(floating_bounds(
                 100.0, 100.0, 360.0, 220.0,
             ))),
-            focus: false,
+            focus_on_appearing: false,
             ..Default::default()
         };
 
@@ -2514,7 +2514,7 @@ mod runtime_suite {
             &source_space,
             WindowOptions {
                 window_bounds: Some(source_window_bounds),
-                focus: false,
+                focus_on_appearing: false,
                 ..Default::default()
             },
         );
@@ -2523,7 +2523,7 @@ mod runtime_suite {
             &target_space,
             WindowOptions {
                 window_bounds: Some(target_window_bounds),
-                focus: false,
+                focus_on_appearing: false,
                 ..Default::default()
             },
         );
@@ -2663,7 +2663,7 @@ mod runtime_suite {
         let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let open_options = || WindowOptions {
             window_bounds: Some(window_bounds),
-            focus: false,
+            focus_on_appearing: false,
             ..Default::default()
         };
 

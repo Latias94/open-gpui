@@ -1951,24 +1951,31 @@ Current docking multi-viewport capability states:
   bounds remain in window/display coordinates. The viewport snapshot retains GPUI's opaque
   committed `ElementGeometry` to convert between them; a transform-only frame advances route facts
   so a proof captured under old displayed geometry cannot authorize a later release.
-- Viewport flags and reused-window placement are capability-gated platform sync requests.
-  `Window::window_mutation_capabilities()` is the sole tri-state matrix for placement, pointer
-  input, focus-on-appearing/click, alpha, topmost, taskbar visibility, and coordinate space; there
-  is no Dock-local flag capability mirror. Runtime diagnostics resolve
-  `App::window_mutation_profile` for every registered viewport, preserving its actual
-  `WindowKind` and target-display-resolved matrix instead of projecting the backend's normal-window
-  or primary-display answer. Readiness uses the requested viewport display before opening, so X11
+- Viewport creation and reused-window placement are capability-gated platform operations.
+  `Window::window_capabilities()` is the sole profile: its `creation` half reports first-appearance,
+  typed-owner, and first-presentation ordering support, while its `mutations` half reports
+  placement, pointer input, coherent activation policy, alpha, topmost, taskbar visibility, and
+  coordinate space. There is no Dock-local flag capability mirror. Runtime diagnostics resolve
+  `App::window_profile` for every registered viewport, preserving its actual `WindowKind` and
+  target-display-resolved profile instead of projecting the backend's normal-window or
+  primary-display answer. Readiness uses the requested viewport display before opening, so X11
   alpha support reflects that screen's transparent visual; an unavailable saved display id falls
   back to the current default before readiness, projection, and window creation. A queued request
-  is not an applied native fact.
+  is not an applied native fact. Initial presentation records whether submission occurs before
+  visibility, after visibility, or establishes visibility as part of the first buffer commit;
+  Wayland uses the third state rather than claiming either impossible ordering.
   Terminal observations retain the typed request and committed facts, and terminal failures are
   not retried each frame until the target or relevant committed facts change, including reused
   windows that remain pending or retain an adjusted/rejected/unsupported terminal barrier. The
   native runtime panel reports per-window capability profiles, last request/dispatch, and terminal
-  observations separately.
+  observations separately. Detached viewport options request no activation on first appearance,
+  retain normal lifetime activation and click focus, accept pointer input, and bind a typed current
+  surface owner when an exact anchor handle is available. Reusing that window never replays the
+  one-shot appearance request as programmatic activation.
   Owning-platform CI also proves the native boundary: Windows compares creation facts with
   independent Win32 readback, exercises each advertised live domain, and injects a partial
-  pointer-style failure to verify native rollback and terminal rejection. macOS, X11, and Wayland
+  pointer- and activation-policy failures to verify native rollback and terminal rejection. macOS,
+  X11, and Wayland
   test kind-specific creation projections that are shared with their production constructors,
   including Wayland's XDG-versus-LayerShell split. A backend may only promote a property to `Live`
   when its owning runner covers dispatch, native failure, and terminal observation.

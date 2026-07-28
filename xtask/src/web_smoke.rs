@@ -189,6 +189,26 @@ pub(crate) fn web_smoke(root: &Path) -> Result<(), ()> {
         eprintln!("{error}");
     })?;
 
+    for (mode, accepts_activation, focus_on_click) in [
+        ("programmatic-only", true, false),
+        ("click-only", false, true),
+    ] {
+        let policy_url = format!("{url}&activation={mode}");
+        cdp.call("Page.navigate", json!({ "url": policy_url }))
+            .map_err(|error| {
+                eprintln!("{error}");
+            })?;
+        run_activation_policy_smoke(&mut cdp, mode, accepts_activation, focus_on_click).map_err(
+            |error| {
+                eprintln!("{error}");
+            },
+        )?;
+    }
+
+    println!(
+        "web smoke passed: default input and activation flow, independent programmatic-only and click-only activation policies, platform viewport capability gate, and DockSurface unsupported path"
+    );
+
     Ok(())
 }
 
@@ -401,7 +421,75 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
     cdp.mouse_up(outside_x, outside_y)?;
 
     cdp.mouse_down(center_x, center_y)?;
-    wait_for_state(cdp, "pointer capture before document hide", |state| {
+    wait_for_state(
+        cdp,
+        "pointer capture before repeated window blur",
+        |state| {
+            state
+                .pointer("/canvas/mousePointerCaptured")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && state
+                    .pointer("/probe/pointerCaptureRequests")
+                    .and_then(Value::as_u64)
+                    == Some(4)
+                && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
+        },
+    )?;
+    cdp.evaluate(
+        r#"(() => {
+            Object.defineProperty(document, "hasFocus", {
+                configurable: true,
+                value: () => false,
+            });
+            window.dispatchEvent(new Event("blur"));
+            window.dispatchEvent(new Event("blur"));
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(
+        cdp,
+        "repeated window blur emits one deactivation edge",
+        |state| {
+            state
+                .pointer("/canvas/mousePointerCaptured")
+                .and_then(Value::as_bool)
+                == Some(false)
+                && state
+                    .pointer("/probe/pointerCancelEvents")
+                    .and_then(Value::as_u64)
+                    == Some(3)
+                && state
+                    .pointer("/probe/platformCaptureLostEvents")
+                    .and_then(Value::as_u64)
+                    == Some(1)
+                && state
+                    .pointer("/probe/windowDeactivatedEvents")
+                    .and_then(Value::as_u64)
+                    == Some(2)
+        },
+    )?;
+    cdp.mouse_up(outside_x, outside_y)?;
+
+    cdp.evaluate(
+        r#"(async () => {
+            delete document.hasFocus;
+            delete document.visibilityState;
+            window.dispatchEvent(new Event("focus"));
+            const input = document.querySelector("input");
+            if (!document.hasFocus()
+                || document.visibilityState !== "visible"
+                || document.activeElement !== input) {
+                throw new Error("window focus recovery did not restore DOM activation facts");
+            }
+            await new Promise((resolve) => {
+                requestAnimationFrame(() => requestAnimationFrame(resolve));
+            });
+            return true;
+        })()"#,
+    )?;
+    cdp.mouse_down(center_x, center_y)?;
+    wait_for_state(cdp, "capture after window focus recovery", |state| {
         state
             .pointer("/canvas/mousePointerCaptured")
             .and_then(Value::as_bool)
@@ -409,7 +497,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
             && state
                 .pointer("/probe/pointerCaptureRequests")
                 .and_then(Value::as_u64)
-                == Some(4)
+                == Some(5)
     })?;
     cdp.evaluate(
         r#"(() => {
@@ -417,16 +505,152 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
                 configurable: true,
                 get: () => "hidden",
             });
-            try {
-                document.dispatchEvent(new Event("visibilitychange"));
-                document.dispatchEvent(new Event("visibilitychange"));
-            } finally {
-                delete document.visibilityState;
+            document.dispatchEvent(new Event("visibilitychange"));
+            document.dispatchEvent(new Event("visibilitychange"));
+            Object.defineProperty(document, "hasFocus", {
+                configurable: true,
+                value: () => false,
+            });
+            window.dispatchEvent(new Event("blur"));
+            window.dispatchEvent(new Event("blur"));
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(
+        cdp,
+        "hidden and blur signals emit one deactivation edge",
+        |state| {
+            state
+                .pointer("/canvas/mousePointerCaptured")
+                .and_then(Value::as_bool)
+                == Some(false)
+                && state
+                    .pointer("/probe/pointerCancelEvents")
+                    .and_then(Value::as_u64)
+                    == Some(4)
+                && state
+                    .pointer("/probe/windowDeactivatedEvents")
+                    .and_then(Value::as_u64)
+                    == Some(3)
+        },
+    )?;
+    cdp.mouse_up(outside_x, outside_y)?;
+
+    cdp.evaluate(
+        r#"(async () => {
+            delete document.hasFocus;
+            delete document.visibilityState;
+            document.dispatchEvent(new Event("visibilitychange"));
+            window.dispatchEvent(new Event("focus"));
+            const input = document.querySelector("input");
+            if (!document.hasFocus()
+                || document.visibilityState !== "visible"
+                || document.activeElement !== input) {
+                throw new Error("visible recovery did not restore DOM activation facts");
+            }
+            await new Promise((resolve) => {
+                requestAnimationFrame(() => requestAnimationFrame(resolve));
+            });
+            return true;
+        })()"#,
+    )?;
+    cdp.mouse_down(center_x, center_y)?;
+    wait_for_state(cdp, "capture after visible recovery", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && state
+                .pointer("/probe/pointerCaptureRequests")
+                .and_then(Value::as_u64)
+                == Some(6)
+    })?;
+    cdp.evaluate(
+        r#"(() => {
+            Object.defineProperty(document, "hasFocus", {
+                configurable: true,
+                value: () => false,
+            });
+            window.dispatchEvent(new Event("blur"));
+            window.dispatchEvent(new Event("blur"));
+            Object.defineProperty(document, "visibilityState", {
+                configurable: true,
+                get: () => "hidden",
+            });
+            document.dispatchEvent(new Event("visibilitychange"));
+            document.dispatchEvent(new Event("visibilitychange"));
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(
+        cdp,
+        "blur and hidden signals emit one deactivation edge",
+        |state| {
+            state
+                .pointer("/canvas/mousePointerCaptured")
+                .and_then(Value::as_bool)
+                == Some(false)
+                && state
+                    .pointer("/probe/pointerCancelEvents")
+                    .and_then(Value::as_u64)
+                    == Some(5)
+                && state
+                    .pointer("/probe/windowDeactivatedEvents")
+                    .and_then(Value::as_u64)
+                    == Some(4)
+        },
+    )?;
+    cdp.mouse_up(outside_x, outside_y)?;
+
+    cdp.evaluate(
+        r#"(() => {
+            delete document.hasFocus;
+            delete document.visibilityState;
+            const restored = document.hasFocus()
+                && document.visibilityState === "visible"
+                && document.activeElement === document.querySelector("input");
+            if (!restored) {
+                throw new Error("already-focused reactivation prerequisites were not restored");
             }
             return true;
         })()"#,
     )?;
-    wait_for_state(cdp, "document hide pointer cancellation", |state| {
+    cdp.mouse_down(center_x, center_y)?;
+    wait_for_state(cdp, "already-focused input reactivation", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && state
+                .pointer("/probe/pointerCaptureRequests")
+                .and_then(Value::as_u64)
+                == Some(7)
+            && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
+    })?;
+    cdp.evaluate(
+        r#"(() => {
+            const input = document.querySelector("input");
+            if (!input) {
+                throw new Error("web smoke input is missing");
+            }
+            input.blur();
+            input.dispatchEvent(new Event("blur"));
+            Object.defineProperty(document, "visibilityState", {
+                configurable: true,
+                get: () => "hidden",
+            });
+            document.dispatchEvent(new Event("visibilitychange"));
+            Object.defineProperty(document, "hasFocus", {
+                configurable: true,
+                value: () => false,
+            });
+            window.dispatchEvent(new Event("blur"));
+            delete document.hasFocus;
+            delete document.visibilityState;
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(cdp, "reactivated input blur", |state| {
         state
             .pointer("/canvas/mousePointerCaptured")
             .and_then(Value::as_bool)
@@ -434,26 +658,23 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
             && state
                 .pointer("/probe/pointerCancelEvents")
                 .and_then(Value::as_u64)
-                == Some(3)
-            && state
-                .pointer("/probe/platformCaptureLostEvents")
-                .and_then(Value::as_u64)
-                == Some(1)
+                == Some(6)
             && state
                 .pointer("/probe/windowDeactivatedEvents")
                 .and_then(Value::as_u64)
-                == Some(2)
+                == Some(5)
     })?;
     cdp.mouse_up(outside_x, outside_y)?;
-    let final_state = wait_for_state(cdp, "deactivation cancellation remains unique", |state| {
+
+    let final_state = wait_for_state(cdp, "DOM activation edges remain unique", |state| {
         state
             .pointer("/probe/pointerCancelEvents")
             .and_then(Value::as_u64)
-            == Some(3)
+            == Some(6)
             && state
                 .pointer("/probe/windowDeactivatedEvents")
                 .and_then(Value::as_u64)
-                == Some(2)
+                == Some(5)
             && state.pointer("/probe/clickEvents").and_then(Value::as_u64) == Some(1)
     })?;
 
@@ -509,9 +730,87 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
         );
     }
 
-    println!(
-        "web smoke passed: app ready, canvas initialized, keyboard/click delivered, capture loss/blur/visibility cancellation wired exactly once, platform viewports unsupported, DockSurface viewport gate typed unsupported"
-    );
+    Ok(())
+}
+
+fn run_activation_policy_smoke(
+    cdp: &mut CdpClient,
+    mode: &str,
+    accepts_activation: bool,
+    focus_on_click: bool,
+) -> Result<(), String> {
+    let ready = wait_for_state(cdp, &format!("{mode} activation policy"), |state| {
+        canvas_ready(state)
+            && state.pointer("/input/count").and_then(Value::as_u64) == Some(1)
+            && state
+                .pointer("/probe/activationMode")
+                .and_then(Value::as_str)
+                == Some(mode)
+            && state
+                .pointer("/probe/requestedAcceptsActivation")
+                .and_then(Value::as_bool)
+                == Some(accepts_activation)
+            && state
+                .pointer("/probe/requestedFocusOnClick")
+                .and_then(Value::as_bool)
+                == Some(focus_on_click)
+            && state
+                .pointer("/probe/creationFocusOnAppearing")
+                .and_then(Value::as_bool)
+                == Some(false)
+            && state
+                .pointer("/probe/observedAcceptsActivation")
+                .and_then(Value::as_bool)
+                == Some(accepts_activation)
+            && state
+                .pointer("/probe/observedFocusOnClick")
+                .and_then(Value::as_bool)
+                == Some(focus_on_click)
+            && state
+                .pointer("/probe/programmaticActivationAttempted")
+                .and_then(Value::as_bool)
+                == Some(true)
+            && state.pointer("/input/focused").and_then(Value::as_bool) == Some(accepts_activation)
+            && state
+                .pointer("/probe/observedActive")
+                .and_then(Value::as_bool)
+                == Some(accepts_activation)
+    })?;
+
+    let rect = ready
+        .pointer("/canvas/rect")
+        .ok_or_else(|| format!("{mode} activation probe did not include canvas bounds"))?;
+    let center_x = number_field(rect, "left")? + number_field(rect, "width")? / 2.0;
+    let center_y = number_field(rect, "top")? + number_field(rect, "height")? / 2.0;
+
+    cdp.evaluate(
+        r#"(() => {
+            const input = document.querySelector("input");
+            if (!input) {
+                throw new Error("activation probe input is missing");
+            }
+            input.blur();
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(cdp, &format!("{mode} input blur"), |state| {
+        state.pointer("/input/focused").and_then(Value::as_bool) == Some(false)
+            && state
+                .pointer("/probe/observedActive")
+                .and_then(Value::as_bool)
+                == Some(false)
+    })?;
+
+    cdp.mouse_click(center_x, center_y)?;
+    wait_for_state(cdp, &format!("{mode} click focus"), |state| {
+        state.pointer("/probe/clickEvents").and_then(Value::as_u64) == Some(1)
+            && state.pointer("/input/focused").and_then(Value::as_bool) == Some(focus_on_click)
+            && state
+                .pointer("/probe/observedActive")
+                .and_then(Value::as_bool)
+                == Some(focus_on_click)
+    })?;
+
     Ok(())
 }
 

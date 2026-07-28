@@ -10,8 +10,8 @@ use image::RgbaImage;
 use objc2_foundation::NSUInteger;
 use open_gpui::{
     AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, MonochromeSprite,
-    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad,
-    ScaledPixels, Scene, Shadow, Size, Underline, point, size,
+    PaintSurface, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite, PrimitiveBatch,
+    PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, Underline, point, size,
 };
 
 use objc2_core_video::{
@@ -161,7 +161,9 @@ impl MetalRenderer {
         // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
         #[cfg(any(test, feature = "test-support"))]
         layer.set_framebuffer_only(false);
-        layer.set_allows_next_drawable_timeout(false);
+        // A missing drawable must settle as Deferred instead of blocking the AppKit thread
+        // indefinitely while the native surface is temporarily unavailable.
+        layer.set_allows_next_drawable_timeout(true);
         layer.set_needs_display_on_bounds_change(true);
         layer.set_autoresizes_with_superlayer();
 
@@ -424,10 +426,10 @@ impl MetalRenderer {
         // nothing to do
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene) -> PlatformWindowPresentOutcome {
         if let Err(error) = validate_scene_clip_envelopes(scene) {
             log::error!("refusing to draw a scene with invalid clip geometry: {error}");
-            return;
+            return PlatformWindowPresentOutcome::Rejected;
         }
         let layer = match &self.layer {
             Some(l) => l.clone(),
@@ -435,7 +437,7 @@ impl MetalRenderer {
                 log::error!(
                     "draw() called on headless renderer - use render_scene_to_image() instead"
                 );
-                return;
+                return PlatformWindowPresentOutcome::Rejected;
             }
         };
         let viewport_size = layer.drawable_size();
@@ -446,11 +448,11 @@ impl MetalRenderer {
         let drawable = if let Some(drawable) = layer.next_drawable() {
             drawable
         } else {
-            log::error!(
-                "failed to retrieve next drawable, drawable size: {:?}",
+            log::debug!(
+                "deferred draw because no drawable is available, drawable size: {:?}",
                 viewport_size
             );
-            return;
+            return PlatformWindowPresentOutcome::Deferred;
         };
 
         loop {
@@ -481,7 +483,7 @@ impl MetalRenderer {
                         command_buffer.present_drawable(&drawable);
                         command_buffer.commit();
                     }
-                    return;
+                    return PlatformWindowPresentOutcome::Submitted;
                 }
                 Err(err) => {
                     log::error!(
@@ -492,7 +494,7 @@ impl MetalRenderer {
                     let buffer_size = instance_buffer_pool.buffer_size;
                     if buffer_size >= 256 * 1024 * 1024 {
                         log::error!("instance buffer size grew too large: {}", buffer_size);
-                        break;
+                        return PlatformWindowPresentOutcome::Rejected;
                     }
                     instance_buffer_pool.reset(buffer_size * 2);
                     log::info!(

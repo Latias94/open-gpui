@@ -141,6 +141,7 @@ fn secondary_window_options(cx: &App) -> WindowOptions {
     let bounds = Bounds::centered(None, size(px(560.0), px(420.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        focus_on_appearing: false,
         titlebar: Some(TitlebarOptions {
             title: Some("Open GPUI Docking Secondary".into()),
             appears_transparent: false,
@@ -177,27 +178,30 @@ fn handle_secondary_open_outcome(outcome: DockSurfaceViewportOpenOutcome) {
 
 fn log_platform_window_contract(surface: &DockSurface, cx: &App) {
     let status = surface.viewports().runtime_status(cx);
-    for viewport in status.window_mutation_capabilities {
-        let capabilities = viewport.capabilities;
+    for viewport in status.window_profiles {
+        let creation = viewport.capabilities.creation;
+        let mutations = viewport.capabilities.mutations;
         log::info!(
-            "window mutation capabilities: space={} window={} kind={} position={:?} size={:?} windowed={:?} maximized={:?} fullscreen={:?} minimized={:?} restore={:?} pointer={:?} focus-appear={:?} focus-click={:?} alpha={:?} topmost={:?} taskbar={:?} coordinates={:?}",
+            "window profile: space={} window={} kind={} nonactivating-appear={:?} transient-owner={:?} first-present={:?} position={:?} size={:?} windowed={:?} maximized={:?} fullscreen={:?} minimized={:?} restore={:?} pointer={:?} activation-policy={:?} alpha={:?} topmost={:?} taskbar={:?} coordinates={:?}",
             viewport.space,
             viewport.window_id.as_u64(),
             viewport.window_kind.as_str(),
-            capabilities.position,
-            capabilities.size,
-            capabilities.windowed,
-            capabilities.maximized,
-            capabilities.fullscreen,
-            capabilities.minimized,
-            capabilities.restore_bounds,
-            capabilities.pointer_input,
-            capabilities.focus_on_appearing,
-            capabilities.focus_on_click,
-            capabilities.alpha,
-            capabilities.topmost,
-            capabilities.taskbar_visibility,
-            capabilities.coordinate_space,
+            creation.focus_on_appearing,
+            creation.transient_for,
+            creation.initial_presentation_order,
+            mutations.position,
+            mutations.size,
+            mutations.windowed,
+            mutations.maximized,
+            mutations.fullscreen,
+            mutations.minimized,
+            mutations.restore_bounds,
+            mutations.pointer_input,
+            mutations.activation_policy,
+            mutations.alpha,
+            mutations.topmost,
+            mutations.taskbar_visibility,
+            mutations.coordinate_space,
         );
     }
     if let Some(dispatch) = status.last_platform_dispatch {

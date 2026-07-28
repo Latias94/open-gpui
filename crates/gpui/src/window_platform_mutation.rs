@@ -1,7 +1,7 @@
 use crate::{
     Pixels, PlatformWindowDispatch, PlatformWindowMutationTerminal, Point, Size, Subscription,
-    WindowBackgroundAppearance, WindowMutationDomain, WindowPlacementRequest, WindowPlacementState,
-    WindowPlatformFacts,
+    WindowActivationPolicy, WindowBackgroundAppearance, WindowMutationDomain,
+    WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
 };
 use std::{
     any::Any,
@@ -20,10 +20,8 @@ pub enum WindowMutationRequest {
     Placement(WindowPlacementRequest),
     /// A pointer-input acceptance request.
     PointerInput(bool),
-    /// A focus-on-appearing request.
-    FocusOnAppearing(bool),
-    /// A focus-on-click request.
-    FocusOnClick(bool),
+    /// A coherent lifetime activation-policy request.
+    ActivationPolicy(WindowActivationPolicy),
     /// A native background or alpha-treatment request.
     Alpha(WindowBackgroundAppearance),
     /// A topmost-window request.
@@ -38,8 +36,7 @@ impl WindowMutationRequest {
         match self {
             Self::Placement(_) => WindowMutationDomain::Placement,
             Self::PointerInput(_) => WindowMutationDomain::PointerInput,
-            Self::FocusOnAppearing(_) => WindowMutationDomain::FocusOnAppearing,
-            Self::FocusOnClick(_) => WindowMutationDomain::FocusOnClick,
+            Self::ActivationPolicy(_) => WindowMutationDomain::ActivationPolicy,
             Self::Alpha(_) => WindowMutationDomain::Alpha,
             Self::Topmost(_) => WindowMutationDomain::Topmost,
             Self::TaskbarVisibility(_) => WindowMutationDomain::TaskbarVisibility,
@@ -50,8 +47,10 @@ impl WindowMutationRequest {
         match self {
             Self::Placement(request) => placement_request_matches_facts(request, facts),
             Self::PointerInput(requested) => facts.accepts_pointer_input == requested,
-            Self::FocusOnAppearing(requested) => facts.focus_on_appearing == requested,
-            Self::FocusOnClick(requested) => facts.focus_on_click == requested,
+            Self::ActivationPolicy(requested) => {
+                facts.accepts_activation == requested.accepts_activation
+                    && facts.focus_on_click == requested.focus_on_click
+            }
             Self::Alpha(requested) => facts.background_appearance == requested,
             Self::Topmost(requested) => facts.topmost == requested,
             Self::TaskbarVisibility(requested) => facts.taskbar_visible == requested,

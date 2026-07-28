@@ -265,21 +265,41 @@ impl WindowPlacementRequest {
     }
 }
 
+/// Lifetime activation policy for a top-level window.
+///
+/// Programmatic activation and click-triggered focus are independent facts, but they mutate as one
+/// coherent policy so a backend can never publish a partially applied pair.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WindowActivationPolicy {
+    /// Whether GPUI may activate the window programmatically during its lifetime.
+    pub accepts_activation: bool,
+    /// Whether clicking the window may activate it.
+    pub focus_on_click: bool,
+}
+
+impl Default for WindowActivationPolicy {
+    fn default() -> Self {
+        Self {
+            accepts_activation: true,
+            focus_on_click: true,
+        }
+    }
+}
+
 /// A conflict domain for mutations of an already-open window.
 ///
 /// Placement deliberately groups position, size, state, and restore bounds because native state
-/// transitions can change all of those facts together. Pointer input, focus-on-appearing,
-/// focus-on-click, alpha, topmost, and taskbar visibility each remain independent.
+/// transitions can change all of those facts together. Lifetime activation is also coherent:
+/// `accepts_activation` and `focus_on_click` share one generation and terminal observation.
+/// Pointer input, alpha, topmost, and taskbar visibility remain independent.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WindowMutationDomain {
     /// Window position, size, state, and restore bounds.
     Placement,
     /// Whether the window accepts pointer input.
     PointerInput,
-    /// Whether the window takes focus when it first appears.
-    FocusOnAppearing,
-    /// Whether clicking the window takes focus.
-    FocusOnClick,
+    /// The coherent lifetime activation policy.
+    ActivationPolicy,
     /// The native window background or alpha treatment.
     Alpha,
     /// Whether the window stays above ordinary application windows.
@@ -290,15 +310,57 @@ pub enum WindowMutationDomain {
 
 impl WindowMutationDomain {
     /// Every independently generated mutation domain.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 6] = [
         Self::Placement,
         Self::PointerInput,
-        Self::FocusOnAppearing,
-        Self::FocusOnClick,
+        Self::ActivationPolicy,
         Self::Alpha,
         Self::Topmost,
         Self::TaskbarVisibility,
     ];
+}
+
+/// Whether a backend can honor a property during top-level window creation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WindowCreationSupport {
+    /// The backend cannot represent the property.
+    #[default]
+    Unsupported,
+    /// The backend can apply and report the property during creation.
+    Supported,
+}
+
+impl WindowCreationSupport {
+    /// Returns whether the creation property is supported.
+    pub const fn is_supported(self) -> bool {
+        matches!(self, Self::Supported)
+    }
+}
+
+/// Ordering constraint for the first submitted frame and native visibility.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WindowInitialPresentationOrder {
+    /// The backend can submit the first frame while the native window remains hidden.
+    BeforeVisibility,
+    /// The backend must make the native surface visible or mapped before submitting a frame.
+    #[default]
+    AfterVisibility,
+    /// Submitting the first native frame establishes visibility or mapping.
+    ///
+    /// This is used by protocols such as Wayland where a toplevel cannot become mapped before its
+    /// first buffer commit, while that buffer also cannot be submitted before initial configure.
+    PresentationEstablishesVisibility,
+}
+
+/// Creation-only capabilities for a top-level platform window.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PlatformWindowCreationCapabilities {
+    /// Support for a non-activating first appearance.
+    pub focus_on_appearing: WindowCreationSupport,
+    /// Support for a typed top-level transient owner relationship.
+    pub transient_for: WindowCreationSupport,
+    /// Required ordering of the first submitted frame and native visibility.
+    pub initial_presentation_order: WindowInitialPresentationOrder,
 }
 
 /// Capability-specific support for applying platform window properties.
@@ -306,7 +368,7 @@ impl WindowMutationDomain {
 /// Support may be limited to window creation or extend to an already-open window. Placement is
 /// deliberately split into its observable properties. A caller must not infer that position is
 /// mutable merely because a backend can resize a window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlatformWindowMutationCapabilities {
     /// Support for changing a window's desktop position.
     pub position: WindowMutationSupport,
@@ -324,10 +386,8 @@ pub struct PlatformWindowMutationCapabilities {
     pub restore_bounds: WindowMutationSupport,
     /// Support for changing whether a window accepts pointer input.
     pub pointer_input: WindowMutationSupport,
-    /// Support for controlling whether a newly opened window takes focus when it appears.
-    pub focus_on_appearing: WindowMutationSupport,
-    /// Support for controlling whether a window takes focus when clicked.
-    pub focus_on_click: WindowMutationSupport,
+    /// Support for coherently changing lifetime activation and click-focus policy.
+    pub activation_policy: WindowMutationSupport,
     /// Support for window alpha or a transparent/blurred background.
     pub alpha: WindowMutationSupport,
     /// Support for keeping a window above ordinary application windows.
@@ -338,37 +398,81 @@ pub struct PlatformWindowMutationCapabilities {
     pub coordinate_space: WindowCoordinateSpace,
 }
 
-impl Default for PlatformWindowMutationCapabilities {
-    fn default() -> Self {
-        Self {
-            position: WindowMutationSupport::Unsupported,
-            size: WindowMutationSupport::Unsupported,
-            windowed: WindowMutationSupport::Unsupported,
-            maximized: WindowMutationSupport::Unsupported,
-            fullscreen: WindowMutationSupport::Unsupported,
-            minimized: WindowMutationSupport::Unsupported,
-            restore_bounds: WindowMutationSupport::Unsupported,
-            pointer_input: WindowMutationSupport::Unsupported,
-            focus_on_appearing: WindowMutationSupport::Unsupported,
-            focus_on_click: WindowMutationSupport::Unsupported,
-            alpha: WindowMutationSupport::Unsupported,
-            topmost: WindowMutationSupport::Unsupported,
-            taskbar_visibility: WindowMutationSupport::Unsupported,
-            coordinate_space: WindowCoordinateSpace::WindowLocal,
-        }
-    }
+/// Complete capabilities for a top-level platform window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlatformWindowCapabilities {
+    /// Creation-only capabilities.
+    pub creation: PlatformWindowCreationCapabilities,
+    /// Live and creation-only mutation capabilities.
+    pub mutations: PlatformWindowMutationCapabilities,
 }
 
-/// Mutation capabilities captured for the actual kind of an opened platform window.
+/// Capabilities captured for the actual kind of an opened platform window.
 ///
 /// The profile is fixed when GPUI creates the window. It therefore remains an honest description
 /// of that window even if a backend supports different properties for another [`WindowKind`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PlatformWindowMutationProfile {
+pub struct PlatformWindowProfile {
     /// The platform window kind used at creation.
     pub kind: WindowKind,
-    /// Property-specific creation and live mutation support for [`Self::kind`].
-    pub capabilities: PlatformWindowMutationCapabilities,
+    /// Creation and mutation support for [`Self::kind`].
+    pub capabilities: PlatformWindowCapabilities,
+}
+
+/// Immutable facts established by the backend for one committed window creation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowCreationFacts {
+    /// Whether the native window was requested to become visible after its first presentation gate.
+    pub show: bool,
+    /// Whether the backend accepted an activating first-appearance policy.
+    ///
+    /// This records the applied show policy, not whether the operating system ultimately granted
+    /// foreground ownership.
+    pub focus_on_appearing: bool,
+    /// The applied top-level transient owner, if the backend supports and established one.
+    pub transient_for: Option<AnyWindowHandle>,
+}
+
+/// Observable stages of a window's first and latest presentation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WindowPresentationFacts {
+    /// The native top-level window has been created.
+    pub native_created: bool,
+    /// Latest frame generation accepted by GPUI's frame journal.
+    pub frame_accepted_generation: Option<u64>,
+    /// Latest frame generation submitted to a platform renderer.
+    pub present_submitted_generation: Option<u64>,
+    /// Latest submitted generation containing at least one valid paint primitive.
+    pub non_empty_presented_generation: Option<u64>,
+    /// Latest attempt to submit an accepted frame to the platform renderer.
+    pub latest_present_attempt: Option<WindowPresentAttemptFacts>,
+    /// Terminal state of the bounded native initial-presentation command.
+    pub initial_presentation: WindowInitialPresentationStatus,
+    /// Whether the backend currently reports the native window as visible.
+    pub native_visible: bool,
+}
+
+/// Facts for one renderer submission attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowPresentAttemptFacts {
+    /// Accepted framework frame generation handed to the renderer.
+    pub generation: u64,
+    /// Renderer or native-surface outcome for this exact attempt.
+    pub outcome: PlatformWindowPresentOutcome,
+    /// Whether the submitted scene contained at least one valid paint primitive.
+    pub contained_valid_primitives: bool,
+}
+
+/// Terminal state of the bounded native initial-presentation command.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WindowInitialPresentationStatus {
+    /// The command has not yet settled.
+    #[default]
+    Pending,
+    /// The backend accepted the command and GPUI observed its completion event.
+    Completed,
+    /// The backend rejected both bounded command attempts.
+    Rejected,
 }
 
 /// A coherent snapshot of facts observed from a platform window.
@@ -399,8 +503,8 @@ pub struct WindowPlatformFacts {
     pub is_fullscreen: bool,
     /// Whether the window currently accepts pointer input.
     pub accepts_pointer_input: bool,
-    /// Whether the window is configured to take focus when it appears.
-    pub focus_on_appearing: bool,
+    /// Whether the window accepts programmatic activation.
+    pub accepts_activation: bool,
     /// Whether the window is configured to take focus when clicked.
     pub focus_on_click: bool,
     /// The committed native window background treatment.
@@ -625,12 +729,12 @@ pub trait Platform: 'static {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
     }
-    fn window_mutation_capabilities(
+    fn window_capabilities(
         &self,
         _kind: &WindowKind,
         _display_id: Option<DisplayId>,
-    ) -> PlatformWindowMutationCapabilities {
-        PlatformWindowMutationCapabilities::default()
+    ) -> PlatformWindowCapabilities {
+        PlatformWindowCapabilities::default()
     }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None
@@ -1510,6 +1614,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn accepts_pointer_input(&self) -> bool {
         true
     }
+    /// Returns immutable facts established by the backend during window creation.
+    fn creation_facts(&self) -> WindowCreationFacts;
+    /// Returns whether the native window is currently visible or mapped.
+    fn is_visible(&self) -> bool;
     /// Returns one coherent snapshot of the facts currently observed by this backend.
     ///
     /// Backends that can report a shared desktop coordinate system should override this method
@@ -1528,7 +1636,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
             is_maximized: self.is_maximized(),
             is_fullscreen: self.is_fullscreen(),
             accepts_pointer_input: self.accepts_pointer_input(),
-            focus_on_appearing: true,
+            accepts_activation: true,
             focus_on_click: true,
             background_appearance: self.background_appearance(),
             topmost: false,
@@ -1600,7 +1708,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
-    fn draw(&self, scene: &Scene);
+    /// Submits one frame to the platform renderer.
+    ///
+    /// A deferred or rejected submission must not be reported as presented by GPUI.
+    fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome;
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
@@ -1677,6 +1788,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn render_to_image(&self, _scene: &Scene) -> Result<RgbaImage> {
         anyhow::bail!("render_to_image not implemented for this platform")
     }
+}
+
+/// Result of handing a rendered scene to a platform window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformWindowPresentOutcome {
+    /// The renderer submitted the frame to its presentation path.
+    Submitted,
+    /// The native surface is temporarily unable to accept a frame.
+    Deferred,
+    /// The renderer or native surface rejected the frame.
+    Rejected,
 }
 
 /// A renderer for headless windows that can produce real rendered output.
@@ -2787,6 +2909,39 @@ pub trait InputHandler: 'static {
     }
 }
 
+/// An application-bound, generation-safe reference to a live top-level owner window.
+///
+/// This token does not keep the owner alive. GPUI validates the application identity and full
+/// window generation again when opening the transient window.
+#[derive(Clone)]
+pub struct WindowTransientOwner {
+    app: Weak<AppCell>,
+    window: AnyWindowHandle,
+}
+
+impl WindowTransientOwner {
+    pub(crate) fn new(app: Weak<AppCell>, window: AnyWindowHandle) -> Self {
+        Self { app, window }
+    }
+
+    pub(crate) fn belongs_to(&self, app: &Weak<AppCell>) -> bool {
+        Weak::ptr_eq(&self.app, app)
+    }
+
+    /// Returns the referenced owner handle.
+    pub fn window(&self) -> AnyWindowHandle {
+        self.window
+    }
+}
+
+impl Debug for WindowTransientOwner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WindowTransientOwner")
+            .field("window", &self.window)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
@@ -2798,11 +2953,21 @@ pub struct WindowOptions {
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
 
-    /// Whether the window should be focused when created
-    pub focus: bool,
+    /// Whether the window should request focus when it first appears.
+    ///
+    /// This is a one-shot creation policy and does not affect later activation.
+    pub focus_on_appearing: bool,
+
+    /// Lifetime activation and click-focus policy.
+    pub activation_policy: WindowActivationPolicy,
 
     /// Whether the window should be shown when created
     pub show: bool,
+
+    /// Typed top-level owner relationship for native grouping and z-order behavior.
+    ///
+    /// Native ownership does not imply application lifecycle ownership.
+    pub transient_for: Option<WindowTransientOwner>,
 
     /// The kind of window to create
     pub kind: WindowKind,
@@ -2884,11 +3049,11 @@ pub struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub accepts_pointer_input: bool,
 
-    #[cfg_attr(
-        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
-        allow(dead_code)
-    )]
-    pub focus: bool,
+    pub focus_on_appearing: bool,
+
+    pub activation_policy: WindowActivationPolicy,
+
+    pub transient_for: Option<AnyWindowHandle>,
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub show: bool,
@@ -2949,8 +3114,10 @@ impl Default for WindowOptions {
                 appears_transparent: Default::default(),
                 traffic_light_position: Default::default(),
             }),
-            focus: true,
+            focus_on_appearing: true,
+            activation_policy: WindowActivationPolicy::default(),
             show: true,
+            transient_for: None,
             kind: WindowKind::Normal,
             is_movable: true,
             is_resizable: true,
