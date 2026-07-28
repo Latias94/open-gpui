@@ -1705,6 +1705,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
+    /// Registers the single-shot terminal callback for this platform-window authority.
+    ///
+    /// Every backend must invoke it exactly once after its native surface or drop-only window
+    /// authority can no longer produce events. Backends without an external window server invoke
+    /// it while dropping their platform-window owner.
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}

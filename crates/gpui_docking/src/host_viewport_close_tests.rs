@@ -1304,7 +1304,7 @@ mod runtime_suite {
         let commits = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         runtime.install_surface_commit_sink({
             let commits = commits.clone();
-            move |_, categories, _| commits.borrow_mut().push(categories.to_vec())
+            move |_, _, categories, _| commits.borrow_mut().push(categories.to_vec())
         });
         let target_window = handle(44);
         let closing_window = handle(45);
@@ -2649,12 +2649,13 @@ mod handle_suite {
     use crate::{
         DockAction, DockActionApplyError, DockController, DockDropDelivery, DockGraph,
         DockGraphDropTarget, DockItemId, DockNode, DockNodeId, DockPanel, DockPolicy, DockSpaceId,
-        DockSurface, DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropOutcomeKind,
-        DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
-        DockViewportDropRouteRequest, DockViewportFocusCommand, DockViewportFocusRequest,
-        DockViewportInputStatus, DockViewportOpenStatus, DockViewportPlatformSignals,
-        DockViewportRouteStatus, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-        DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
+        DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockViewportClosePolicy,
+        DockViewportCloseStatus, DockViewportDropOutcomeKind, DockViewportDropPayload,
+        DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+        DockViewportFocusCommand, DockViewportFocusRequest, DockViewportInputStatus,
+        DockViewportOpenStatus, DockViewportPlatformSignals, DockViewportRouteStatus,
+        DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
+        DockViewportTargetContext, DockViewportTearOffBeginOutcome,
         DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome,
         DockViewportTearOffRequest, DockViewportWindowCloseEffect, DockViewportWindowFacts,
         DockWorkspace, DropZone, SplitAxis,
@@ -2748,7 +2749,7 @@ mod handle_suite {
         let reentered = std::rc::Rc::new(std::cell::Cell::new(false));
         let replacement_window = handle(946);
 
-        let (surface, runtime, opened, _change_subscription) = cx.update(|app| {
+        let (surface, runtime, opened, _change_subscription, _primary) = cx.update(|app| {
             let surface = DockSurface::from_controller_with_close_policy_and_visual_style_resolver(
                 controller.clone(),
                 DockViewportClosePolicy::MergeBack {
@@ -2757,6 +2758,10 @@ mod handle_suite {
                 None,
                 app,
             );
+            let primary = match surface.open_primary_window(WindowOptions::default(), app) {
+                DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+                outcome => panic!("surface primary should open, got {outcome:?}"),
+            };
             let runtime = surface.viewport_runtime(app);
             let opened = runtime
                 .open_viewport_unchecked_policy(
@@ -2770,7 +2775,7 @@ mod handle_suite {
             let change_subscription = surface.subscribe_changes(app, move |event, _| {
                 observed_changes.borrow_mut().push(event.clone());
             });
-            (surface, runtime, opened, change_subscription)
+            (surface, runtime, opened, change_subscription, primary)
         });
 
         cx.run_until_parked();
@@ -4469,16 +4474,21 @@ mod handle_suite {
             .expect("secondary viewport should open through runtime handle");
         let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
-        assert!(
-            visual.simulate_close(),
-            "RetainLayout policy should allow GPUI should-close to continue"
-        );
         assert_eq!(
             cx.update(
                 |app| runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
             )
             .status,
             DockViewportShouldCloseStatus::Allowed
+        );
+        assert!(
+            visual.simulate_close(),
+            "RetainLayout policy should allow GPUI should-close to continue"
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            runtime.registered_viewport_spaces(),
+            Vec::<DockSpaceId>::new()
         );
     }
 }

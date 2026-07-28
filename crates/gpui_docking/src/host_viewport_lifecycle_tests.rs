@@ -96,7 +96,7 @@ mod runtime_suite {
         let window = handle(91);
         let open_attempt = runtime
             .borrow_mut()
-            .begin_window_open_attempt(window.window_id())
+            .begin_window_open_attempt(window, crate::DockViewportRuntimeLineage::Unmanaged)
             .expect("unowned first-frame window should begin an open attempt");
 
         assert!(
@@ -1244,7 +1244,7 @@ mod runtime_suite {
         };
         assert!(runtime.bind_tear_off_target_window(&pending, opening_window));
         let open_attempt = runtime
-            .begin_window_open_attempt(opening_window.window_id())
+            .begin_window_open_attempt(opening_window, crate::DockViewportRuntimeLineage::Unmanaged)
             .expect("fresh tear-off window should own one open attempt");
 
         let target_claim = runtime
@@ -1308,7 +1308,7 @@ mod runtime_suite {
         };
         assert!(runtime.bind_tear_off_target_window(&pending, opening_window));
         let open_attempt = runtime
-            .begin_window_open_attempt(opening_window.window_id())
+            .begin_window_open_attempt(opening_window, crate::DockViewportRuntimeLineage::Unmanaged)
             .expect("fresh tear-off window should own one open attempt");
         let prepared_claim = runtime
             .prepare_tear_off_target_claim(&pending, opening_window, open_attempt)
@@ -1390,7 +1390,7 @@ mod runtime_suite {
             let runtime = runtime.downgrade_runtime_for_test();
             let target_space = target_space.clone();
             let published = published.clone();
-            move |_, _, _| {
+            move |_, _, _, _| {
                 if !published.replace(true)
                     && let Some(runtime) = runtime.upgrade()
                 {
@@ -2873,7 +2873,7 @@ mod handle_suite {
             let space = space.clone();
             let published = published.clone();
             let issued_window = issued_window.clone();
-            move |_, _, _| {
+            move |_, _, _, _| {
                 if published.replace(true) {
                     return;
                 }
@@ -3325,6 +3325,10 @@ mod handle_suite {
                     .prepare_rendered_viewport_host_scene_draft(
                         draft,
                         expected_registration.as_ref(),
+                        crate::DockViewportRuntimeWorkContext::new(
+                            crate::DockViewportRuntimeLineage::Unmanaged,
+                            None,
+                        ),
                         window,
                         cx,
                     )

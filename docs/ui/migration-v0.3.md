@@ -300,6 +300,61 @@ inference. Docking intentionally has no persistence timer, built-in debounce dur
 setting, or file writer. See
 [ADR 0028](../adr/0028-open-gpui-dock-surface-change-and-activation-authority.md).
 
+## Dock Surface Window Sessions
+
+Facade-managed native Dock windows now belong to one exact-generation surface session. Rename
+`DockSurfaceViewportSession` to `DockSurfaceViewports`, replace `viewport_session()` with
+`viewports()`, and stop treating `open_primary_window` as a bare GPUI window-open result:
+
+```rust
+use open_gpui_docking::prelude::{
+    DockSurfacePrimaryWindowOpenOutcome, DockSurfaceViewportOpenOutcome,
+    DockSurfaceViewportUnavailable,
+};
+
+let primary = match surface.open_primary_window(primary_options, cx) {
+    DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+    DockSurfacePrimaryWindowOpenOutcome::Unavailable(reason) => {
+        return Err(format!("Dock anchor unavailable: {reason:?}"));
+    }
+};
+
+let viewport = match surface.viewports().open("preview", preview_options, cx) {
+    DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+    DockSurfaceViewportOpenOutcome::Unavailable(
+        DockSurfaceViewportUnavailable::SessionInactive { status },
+    ) => {
+        return Err(format!("Dock session is not active: {:?}", status.phase()));
+    }
+    DockSurfaceViewportOpenOutcome::Unavailable(reason) => {
+        return Err(format!("Dock viewport unavailable: {reason:?}"));
+    }
+};
+```
+
+The primary outcome exposes the exact committed window and session generation. Managed viewport
+open, restore, registration, activation, drag, route, mutation, and observation work is admitted
+only for that generation. `DockSurface::window_session_status` reports `Vacant`, `Opening`,
+`Active`, `ShuttingDown`, or `Closed`, plus the anchor, rollback/shutdown reason, terminal ticket
+counts, and runtime convergence.
+
+Delete application close observers that call `App::quit` when the Dock primary closes. The first
+ordinary anchor close request freezes the surface, force-retires that surface's dependent windows
+before removing the anchor, and bypasses per-viewport `Prevent` or `MergeBack` policy. It does not
+close another `DockSurface`, an unmanaged low-level runtime, or an unrelated application window.
+GPUI's last-window policy remains the application-exit authority. Reopening a surface is rejected
+until the previous exact generation reaches `Closed`. Do not treat a close dispatch or disappearance
+from GPUI's logical window registry as native completion. Ordinary teardown settles from the exact
+platform `Closed` callback; only App shutdown may confirm missing terminals after registry clear.
+
+An embedded `surface.host_view(cx)` remains outside this managed lifecycle and never invents an
+anchor or registers managed route and activation authority. It is a rendering path for content in
+an application-owned window; facade activation reports `Unavailable` until a managed host exists.
+Use `surface.open_primary_window(...)` before `surface.viewports()` when Dock should own the native
+window tree. Applications that need custom window ownership must explicitly construct the low-level
+runtime and host from `open_gpui_docking::runtime` rather than borrowing a facade session. See
+[ADR 0030](../adr/0030-open-gpui-dock-surface-window-session-authority.md).
+
 ## Platform Window Mutation Authority
 
 Already-open native windows now use a capability-specific request and observation contract.

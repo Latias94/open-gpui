@@ -736,7 +736,7 @@ impl Drop for WebWindow {
         }
         self.inner.mql_handle.borrow_mut().take();
 
-        {
+        let close_callback = {
             let mut callbacks = self.inner.callbacks.borrow_mut();
             callbacks.request_frame = None;
             callbacks.active_status_change = None;
@@ -744,10 +744,10 @@ impl Drop for WebWindow {
             callbacks.resize = None;
             callbacks.moved = None;
             callbacks.should_close = None;
-            callbacks.close = None;
             callbacks.appearance_changed = None;
             callbacks.hit_test_window_control = None;
-        }
+            callbacks.close.take()
+        };
         self.inner.state.borrow_mut().is_active = false;
         self.inner.update_active_window(false);
 
@@ -756,6 +756,9 @@ impl Drop for WebWindow {
         }
         self.inner.is_mapped.set(false);
         self.event_listeners.take();
+        if let Some(callback) = close_callback {
+            callback();
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::{
     DockDropGuideVisualState, DockHost, DockNode, DockNodeId, DockRoutePreviewVisualState,
     DockSpaceId, DockSplitterVisualState, DockSplitterVisualStyle, DockTargetPreviewVisualState,
-    DockViewportHostGeometry, DockViewportRuntimeHandle, DropZone,
+    DockViewportHostGeometry, DockViewportRuntimeHandle, DockViewportRuntimeWorkContext, DropZone,
     accessibility_scene::DockAccessibilityScene,
     debug::DockDebugRegion,
     divider_hit_map::{DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget},
@@ -42,6 +42,7 @@ pub(crate) struct DockViewportHostSceneCandidate {
     pub(crate) draft: DockViewportHostSceneDraft,
     host_binding: DockHostWindowBinding,
     expected_registration: Option<DockViewportRegistrationKey>,
+    work_context: DockViewportRuntimeWorkContext,
     pub(crate) presentation_scene: DockPresentationScene,
 }
 
@@ -106,11 +107,18 @@ fn clear_viewport_host_scene_publication(
     window_id: WindowId,
     host_binding: DockHostWindowBinding,
     expected_registration: Option<&DockViewportRegistrationKey>,
+    work_context: DockViewportRuntimeWorkContext,
     window: &mut Window,
     app: &mut App,
 ) -> bool {
-    let host_is_current = entity.update(app, |host, _| {
-        host.accepts_viewport_scene_candidate(host_binding, expected_registration, window_id)
+    let host_is_current = entity.update(app, |host, cx| {
+        host.accepts_viewport_scene_candidate(
+            host_binding,
+            expected_registration,
+            work_context,
+            window_id,
+            cx,
+        )
     });
     if !host_is_current {
         return false;
@@ -140,6 +148,7 @@ fn record_viewport_host_scene_transaction(
     window_id: WindowId,
     host_binding: DockHostWindowBinding,
     expected_registration: Option<DockViewportRegistrationKey>,
+    work_context: DockViewportRuntimeWorkContext,
     passthrough_pointer_input: bool,
 ) {
     let discard_frame_slot = frame_slot.clone();
@@ -159,6 +168,7 @@ fn record_viewport_host_scene_transaction(
                     window_id,
                     host_binding,
                     expected_registration.as_ref(),
+                    work_context,
                     window,
                     app,
                 ) {
@@ -170,13 +180,16 @@ fn record_viewport_host_scene_transaction(
                 draft,
                 host_binding: candidate_host_binding,
                 expected_registration: candidate_registration,
+                work_context: candidate_work_context,
                 presentation_scene,
             } = candidate;
-            if !entity.update(app, |host, _| {
+            if !entity.update(app, |host, cx| {
                 host.accepts_viewport_scene_candidate(
                     candidate_host_binding,
                     candidate_registration.as_ref(),
+                    candidate_work_context,
                     window_id,
+                    cx,
                 )
             }) {
                 frame_slot.borrow_mut().discard();
@@ -186,6 +199,7 @@ fn record_viewport_host_scene_transaction(
             let Some(preparation) = runtime.prepare_rendered_viewport_host_scene_draft(
                 draft,
                 candidate_registration.as_ref(),
+                candidate_work_context,
                 window,
                 app,
             ) else {
@@ -197,6 +211,7 @@ fn record_viewport_host_scene_transaction(
                     window_id,
                     candidate_host_binding,
                     candidate_registration.as_ref(),
+                    candidate_work_context,
                     window,
                     app,
                 ) {
@@ -204,11 +219,13 @@ fn record_viewport_host_scene_transaction(
                 }
                 return;
             };
-            if !entity.update(app, |host, _| {
+            if !entity.update(app, |host, cx| {
                 host.accepts_viewport_scene_candidate(
                     candidate_host_binding,
                     candidate_registration.as_ref(),
+                    candidate_work_context,
                     window_id,
+                    cx,
                 )
             }) {
                 let changed = preparation.changed();
@@ -229,6 +246,7 @@ fn record_viewport_host_scene_transaction(
                     window_id,
                     candidate_host_binding,
                     candidate_registration.as_ref(),
+                    candidate_work_context,
                     window,
                     app,
                 );
@@ -244,15 +262,18 @@ fn record_viewport_host_scene_transaction(
                 draft: committed_draft,
                 host_binding: candidate_host_binding,
                 expected_registration: Some(frame_registration.clone()),
+                work_context: candidate_work_context,
                 presentation_scene: presentation_scene.clone(),
             };
             let (publication_accepted, interaction_frame_changed) =
-                entity.update(app, |host, _| {
+                entity.update(app, |host, cx| {
                     if !host.adopt_viewport_scene_registration(
                         candidate_host_binding,
                         candidate_registration.as_ref(),
                         frame_registration.clone(),
+                        candidate_work_context,
                         window_id,
+                        cx,
                     ) {
                         return (false, false);
                     }
@@ -297,6 +318,7 @@ fn record_viewport_host_scene_transaction(
                 window_id,
                 host_binding,
                 discard_expected_registration.as_ref(),
+                work_context,
                 window,
                 app,
             ) {
@@ -322,11 +344,20 @@ struct DockDropPreviewPayloadTab {
 impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
-        self.ensure_surface_activation_host_registration(window, cx);
-        self.ensure_viewport_activation_subscription(window, cx);
-        self.ensure_viewport_bounds_subscription(window, cx);
-        self.ensure_viewport_release_subscription(window, cx);
-        self.prepare_pending_focus_selection_from_render(window, cx);
+        self.ensure_window_binding(window, cx);
+        let runtime_work_context = self.runtime_work_context(cx);
+        let runtime_publication_admitted = runtime_work_context.is_some();
+        if runtime_publication_admitted {
+            self.ensure_surface_activation_host_registration(
+                runtime_work_context.expect("admitted runtime publication requires a context"),
+                window,
+                cx,
+            );
+            self.ensure_viewport_activation_subscription(window, cx);
+            self.ensure_viewport_bounds_subscription(window, cx);
+            self.ensure_viewport_release_subscription(window, cx);
+            self.prepare_pending_focus_selection_from_render(window, cx);
+        }
         let raw_drag_pointer_capture = self.ensure_pointer_session(window);
         let window_binding = self.current_window_binding();
         let visual_style = self.resolve_visual_style(window, cx);
@@ -480,13 +511,16 @@ impl Render for DockHost {
             host = host.bg(session.visual_style().host.background);
         }
 
-        host = host.child(self.render_viewport_host_scene_probe(
-            &viewport_host_scene_frame,
-            &session,
-            session.drop_guide_metrics(),
-            session.empty_central_requests_platform_pointer_passthrough(),
-            cx,
-        ));
+        if runtime_publication_admitted {
+            host = host.child(self.render_viewport_host_scene_probe(
+                &viewport_host_scene_frame,
+                &session,
+                session.drop_guide_metrics(),
+                session.empty_central_requests_platform_pointer_passthrough(),
+                runtime_work_context.expect("admitted runtime publication requires a context"),
+                cx,
+            ));
+        }
 
         if let Some(root) = session.root() {
             host = host.child(self.render_root_node(
@@ -540,7 +574,9 @@ impl Render for DockHost {
             host = host.child(preview);
         }
 
-        self.apply_pending_focus_from_render(&session, window, cx);
+        if runtime_publication_admitted {
+            self.apply_pending_focus_from_render(&session, window, cx);
+        }
 
         host
     }
@@ -1743,6 +1779,7 @@ impl DockHost {
         session: &DockHostRenderSession,
         drop_guide_metrics: geometry::DockDropGuideMetrics,
         passthrough_pointer_input: bool,
+        work_context: DockViewportRuntimeWorkContext,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entity = cx.entity();
@@ -1769,6 +1806,7 @@ impl DockHost {
                     window_id,
                     host_binding,
                     expected_registration.clone(),
+                    work_context,
                     passthrough_pointer_input,
                 );
                 let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
@@ -1798,6 +1836,7 @@ impl DockHost {
                         draft,
                         host_binding,
                         expected_registration: expected_registration.clone(),
+                        work_context,
                         presentation_scene: scene,
                     });
             },

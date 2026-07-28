@@ -34,6 +34,41 @@ impl AsyncApp {
             .expect("app was released before async operation completed")
     }
 
+    // Native modal loops may poll GPUI-owned foreground tasks while their initiating App update
+    // still owns the RefCell borrow. Wait for distinct releases instead of spinning or discarding
+    // the one-shot window update.
+    pub(crate) async fn update_window_when_available<T, F>(
+        &mut self,
+        window: AnyWindowHandle,
+        update: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut Window, &mut App) -> T,
+    {
+        let mut update = Some(update);
+        loop {
+            let app = self.app.upgrade().context("app was released")?;
+            let borrow_released = match app.try_borrow_mut() {
+                Ok(mut app) => {
+                    if app.quitting {
+                        bail!("app is quitting");
+                    }
+                    return app.update_window(
+                        window,
+                        update
+                            .take()
+                            .expect("async window update must execute exactly once"),
+                    );
+                }
+                Err(_) => app.wait_for_app_borrow_release(),
+            };
+            drop(app);
+            borrow_released
+                .await
+                .context("app was released while waiting for its active borrow")?;
+        }
+    }
+
     pub(crate) fn enqueue_window_mutation_observation(
         &self,
         window_id: WindowId,
@@ -490,6 +525,15 @@ impl AsyncWindowContext {
     pub fn update<R>(&mut self, update: impl FnOnce(&mut Window, &mut App) -> R) -> Result<R> {
         self.app
             .update_window(self.window, |_, window, cx| update(window, cx))
+    }
+
+    pub(crate) async fn update_when_available<R>(
+        &mut self,
+        update: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Result<R> {
+        self.app
+            .update_window_when_available(self.window, |_, window, cx| update(window, cx))
+            .await
     }
 
     pub(crate) fn update_native_input_handler<R>(

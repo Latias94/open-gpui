@@ -70,6 +70,31 @@ impl From<DispatchEventResult> for TestInputDispatchSnapshot {
     }
 }
 
+/// Holds a TestPlatform native close callback after GPUI has removed the logical window.
+///
+/// Call [`Self::release`] to deliver the terminal native `Closed` event at a controlled point.
+/// Dropping the hold also releases the callback so a failed test cannot retain terminal work.
+pub struct TestWindowNativeTerminalHold {
+    window: Option<TestWindow>,
+}
+
+impl TestWindowNativeTerminalHold {
+    /// Delivers the held native `Closed` event.
+    pub fn release(mut self) -> bool {
+        self.window
+            .take()
+            .is_some_and(|window| window.release_deferred_native_terminal())
+    }
+}
+
+impl Drop for TestWindowNativeTerminalHold {
+    fn drop(&mut self) {
+        if let Some(window) = self.window.take() {
+            let _ = window.release_deferred_native_terminal();
+        }
+    }
+}
+
 /// A TestAppContext is provided to tests created with `#[open_gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
 #[derive(Clone)]
@@ -662,37 +687,14 @@ impl TestAppContext {
     /// from the app. This exercises the same App-side removal path that
     /// `QuitMode::LastWindowClosed` observes.
     pub fn simulate_window_close(&mut self, window: AnyWindowHandle) -> bool {
-        let handler = self
-            .update_window(window, |_, window, _| {
-                window
-                    .platform_window
-                    .as_test()
-                    .unwrap()
-                    .0
-                    .lock()
-                    .should_close_handler
-                    .take()
-            })
-            .unwrap();
-
-        let should_close = if let Some(mut handler) = handler {
-            let should_close = handler();
-            self.update_window(window, |_, window, _| {
-                window.platform_window.on_should_close(handler);
-            })
-            .unwrap();
-            should_close
-        } else {
-            true
-        };
-
-        if should_close {
-            self.update_window(window, |_, window, cx| window.remove_window(cx))
-                .unwrap();
-            self.background_executor.run_until_parked();
+        let platform_window = self.test_window(window);
+        if !platform_window.should_close() {
+            return false;
         }
 
-        should_close
+        let closed = !self.windows().contains(&window) || platform_window.simulate_close();
+        self.background_executor.run_until_parked();
+        closed
     }
 
     /// Run the given task on the main thread.
@@ -841,9 +843,43 @@ impl TestAppContext {
         self.test_platform.fail_next_window_map(message);
     }
 
+    /// Makes the next TestPlatform window synchronously close during `PlatformWindow::map_window`.
+    pub fn close_next_window_during_map(&self) {
+        self.test_platform.close_next_window_during_map();
+    }
+
     /// Overrides the immutable creation visibility fact reported by the next test window.
     pub fn set_next_window_creation_show_fact(&self, show: bool) {
         self.test_platform.set_next_window_creation_show_fact(show);
+    }
+
+    /// Makes the next TestPlatform window reject both initial-presentation command attempts.
+    pub fn reject_next_window_initial_presentation(&self) {
+        self.test_platform.reject_next_window_initial_presentation();
+    }
+
+    /// Makes the next TestPlatform window synchronously close during its hidden first present.
+    pub fn close_next_window_during_initial_presentation(&self) {
+        self.test_platform
+            .close_next_window_during_initial_presentation();
+    }
+
+    /// Holds the native terminal callback for `window` after its logical GPUI removal.
+    ///
+    /// This models backends whose owning platform window closes asynchronously. The returned
+    /// hold must remain alive until the test is ready to deliver the native `Closed` event.
+    pub fn hold_window_native_terminal(
+        &self,
+        window: AnyWindowHandle,
+    ) -> TestWindowNativeTerminalHold {
+        let platform_window = self.test_window(window);
+        assert!(
+            platform_window.defer_native_terminal(),
+            "native terminal can only be held for a live TestPlatform window"
+        );
+        TestWindowNativeTerminalHold {
+            window: Some(platform_window),
+        }
     }
 
     /// Simulate dispatching an action to the currently focused node in the window.
@@ -1533,30 +1569,14 @@ impl VisualTestContext {
     /// Simulates the user closing the window.
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
-        let handler = self
-            .cx
-            .update_window(self.window, |_, window, _| {
-                window
-                    .platform_window
-                    .as_test()
-                    .unwrap()
-                    .0
-                    .lock()
-                    .should_close_handler
-                    .take()
-            })
-            .unwrap();
-        if let Some(mut handler) = handler {
-            let should_close = handler();
-            self.cx
-                .update_window(self.window, |_, window, _| {
-                    window.platform_window.on_should_close(handler);
-                })
-                .unwrap();
-            should_close
-        } else {
-            false
+        let platform_window = self.cx.test_window(self.window);
+        if !platform_window.should_close() {
+            return false;
         }
+
+        let closed = !self.cx.windows().contains(&self.window) || platform_window.simulate_close();
+        self.background_executor.run_until_parked();
+        closed
     }
 
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).
@@ -2832,6 +2852,71 @@ mod tests {
         assert!(cx.simulate_window_close(window));
         assert!(cx.windows().is_empty());
         assert!(cx.did_quit());
+    }
+
+    #[open_gpui::test]
+    fn simulate_window_close_tolerates_handler_removing_window(cx: &mut TestAppContext) {
+        let window = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let platform_window = cx.test_window(window);
+        let close_count = Rc::new(Cell::new(0usize));
+        cx.update(|app| {
+            let close_count = close_count.clone();
+            app.on_window_closed(move |_, closed_window| {
+                assert_eq!(closed_window, window.window_id());
+                close_count.set(close_count.get() + 1);
+            })
+            .detach();
+        });
+        cx.update_window(window, |_, window, app| {
+            window.on_window_should_close(app, |window, app| {
+                window.remove_window(app);
+                true
+            });
+        })
+        .expect("the window must exist before its close request");
+
+        assert!(cx.simulate_window_close(window));
+        assert!(cx.windows().is_empty());
+        assert_eq!(close_count.get(), 1);
+        assert!(
+            !platform_window.simulate_close(),
+            "the native close callback must be consumed exactly once"
+        );
+    }
+
+    #[open_gpui::test]
+    fn visual_simulate_close_tolerates_handler_removing_window(cx: &mut TestAppContext) {
+        let window = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let platform_window = cx.test_window(window);
+        let close_count = Rc::new(Cell::new(0usize));
+        cx.update(|app| {
+            let close_count = close_count.clone();
+            app.on_window_closed(move |_, closed_window| {
+                assert_eq!(closed_window, window.window_id());
+                close_count.set(close_count.get() + 1);
+            })
+            .detach();
+        });
+        cx.update_window(window, |_, window, app| {
+            window.on_window_should_close(app, |window, app| {
+                window.remove_window(app);
+                true
+            });
+        })
+        .expect("the window must exist before its close request");
+        let mut visual = VisualTestContext::from_window(window, cx);
+
+        assert!(visual.simulate_close());
+        assert!(visual.windows().is_empty());
+        assert_eq!(close_count.get(), 1);
+        assert!(
+            !platform_window.simulate_close(),
+            "the native close callback must be consumed exactly once"
+        );
     }
 
     #[open_gpui::test]

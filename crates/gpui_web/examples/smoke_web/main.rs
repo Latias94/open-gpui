@@ -8,8 +8,9 @@ use open_gpui::{
     rgb, size,
 };
 use open_gpui_docking::prelude::{
-    DockPanelPlacement, DockSurface, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportReadinessStatus, DockSurfaceViewportUnavailable,
+    DockPanelPlacement, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
+    DockSurfaceViewportOpenOutcome, DockSurfaceViewportReadinessStatus,
+    DockSurfaceViewportUnavailable,
 };
 use wasm_bindgen::JsValue;
 
@@ -254,10 +255,7 @@ impl SmokeWeb {
                     "observedAcceptsActivation",
                     activation.observed_accepts_activation,
                 ),
-                (
-                    "observedFocusOnClick",
-                    activation.observed_focus_on_click,
-                ),
+                ("observedFocusOnClick", activation.observed_focus_on_click),
                 ("observedActive", activation.observed_active),
             ] {
                 if let Some(value) = value {
@@ -391,13 +389,23 @@ fn docking_probe(cx: &mut App) -> DockingProbe {
         .allow_platform_viewports(true)
         .build(cx)
         .expect("smoke docking surface should validate");
-    let spec = open_gpui_docking::prelude::DockSurfaceViewportSpec::new(
-        "main",
-        WindowOptions::default(),
-    );
+    let _primary = match surface.open_primary_window(
+        WindowOptions {
+            focus_on_appearing: false,
+            show: false,
+            ..Default::default()
+        },
+        cx,
+    ) {
+        DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+        outcome => panic!("smoke docking primary should open: {outcome:?}"),
+    };
+    let spec =
+        open_gpui_docking::prelude::DockSurfaceViewportSpec::new("main", WindowOptions::default());
     let readiness = surface.viewports().readiness(&spec, cx);
     let readiness = match readiness.status() {
         DockSurfaceViewportReadinessStatus::Openable => "openable",
+        DockSurfaceViewportReadinessStatus::SessionInactive { .. } => "session_inactive",
         DockSurfaceViewportReadinessStatus::PolicyDisabled(_) => "policy_disabled",
         DockSurfaceViewportReadinessStatus::BackendUnsupported => "backend_unsupported",
         DockSurfaceViewportReadinessStatus::FlagUnsupported { .. } => "flag_unsupported",
@@ -411,6 +419,9 @@ fn docking_probe(cx: &mut App) -> DockingProbe {
     let outcome = match outcome {
         DockSurfaceViewportOpenOutcome::Opened(_) => "opened",
         DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::SessionInactive { .. },
+        ) => "session_inactive",
+        DockSurfaceViewportOpenOutcome::Unavailable(
             DockSurfaceViewportUnavailable::PolicyDisabled(_),
         ) => "policy_disabled",
         DockSurfaceViewportOpenOutcome::Unavailable(
@@ -422,9 +433,9 @@ fn docking_probe(cx: &mut App) -> DockingProbe {
         DockSurfaceViewportOpenOutcome::Unavailable(
             DockSurfaceViewportUnavailable::InvalidPlacement { .. },
         ) => "invalid_placement",
-        DockSurfaceViewportOpenOutcome::Unavailable(DockSurfaceViewportUnavailable::OpenFailed(
-            _,
-        )) => "open_failed",
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::OpenFailed(_),
+        ) => "open_failed",
     };
 
     DockingProbe {
@@ -460,12 +471,10 @@ fn activation_probe_config() -> Option<ActivationProbeConfig> {
 
 fn main() {
     open_gpui_platform::web_init();
-    open_gpui_platform::single_threaded_web_with_options(
-        open_gpui_platform::WebPlatformOptions {
-            force_fallback_adapter: true,
-            ..Default::default()
-        },
-    )
+    open_gpui_platform::single_threaded_web_with_options(open_gpui_platform::WebPlatformOptions {
+        force_fallback_adapter: true,
+        ..Default::default()
+    })
     .run(|cx: &mut App| {
         let platform_viewport_windows = cx.viewport_capabilities().platform_viewport_windows;
         let docking_probe = docking_probe(cx);

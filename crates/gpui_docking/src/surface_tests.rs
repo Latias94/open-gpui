@@ -1,20 +1,21 @@
 use crate::{
-    DockController, DockItemId, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
-    DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange,
-    DockSurfaceChangeCategory, DockSurfacePanelError, DockSurfacePanelLocationKind,
-    DockSurfacePanelOutcome, DockSurfaceSnapshot, DockSurfaceViewportCloseStatus,
-    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportReadinessStatus, DockSurfaceViewportShouldCloseStatus,
-    DockSurfaceViewportSpec, DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag,
-    DockSurfaceViewports, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportRestoreReadiness, DockViewportWindowBounds,
-    DockViewportWindowState,
+    DockController, DockDropGuideMetrics, DockHost, DockItemId, DockLayout, DockLayoutRect,
+    DockPanelOpenPlacementSource, DockPanelPlacement, DockPanelPlacementTarget, DockSpaceId,
+    DockSurface, DockSurfaceChange, DockSurfaceChangeCategory, DockSurfacePanelError,
+    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePrimaryWindowOpenOutcome,
+    DockSurfaceSnapshot, DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome,
+    DockSurfaceViewportOpenStatus, DockSurfaceViewportReadinessStatus,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
+    DockSurfaceViewportUnsupportedFlag, DockSurfaceViewports, DockSurfaceWindowSessionPhase,
+    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
     model::{DockLayoutNode, DockLayoutSpace},
+    viewport_drop_scene::DockViewportHostSceneDraft,
 };
 use open_gpui::{
-    App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window,
+    AnyWindowHandle, App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window,
     WindowBackgroundAppearance, WindowBounds, WindowMutationDomain, WindowMutationSupport,
-    WindowOptions, div, px, size,
+    WindowOptions, div, point, px, size,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -32,6 +33,13 @@ impl Render for TestPanel {
 
 fn test_panel(cx: &mut App) -> open_gpui::AnyView {
     cx.new(|_| TestPanel).into()
+}
+
+fn open_primary(surface: &DockSurface, cx: &mut App) -> AnyWindowHandle {
+    match surface.open_primary_window(viewport_options(), cx) {
+        DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+        outcome => panic!("expected the surface primary to open, got {outcome:?}"),
+    }
 }
 
 #[open_gpui::test]
@@ -345,6 +353,47 @@ fn surface_viewport_spec_applies_saved_placement(cx: &mut open_gpui::TestAppCont
 }
 
 #[open_gpui::test]
+fn surface_viewport_readiness_reports_exact_inactive_window_session(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let before_windows = cx.windows().len();
+        let spec = DockSurfaceViewportSpec::new("secondary", viewport_options());
+
+        let readiness = surface.viewports().check_open_readiness(&spec, cx);
+
+        assert!(!readiness.is_openable());
+        assert!(readiness.status().is_session_inactive());
+        let status = readiness
+            .status()
+            .window_session_status()
+            .expect("inactive readiness should expose its exact session snapshot");
+        assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Vacant);
+        assert_eq!(status.generation(), 0);
+        assert!(matches!(
+            readiness.unavailable_reason(),
+            Some(DockSurfaceViewportUnavailable::SessionInactive { status })
+                if status.phase() == DockSurfaceWindowSessionPhase::Vacant
+                    && status.generation() == 0
+        ));
+
+        let outcome = surface.open_viewport_spec(spec, cx);
+        let unavailable = outcome
+            .unavailable()
+            .expect("inactive session must reject managed viewport opening");
+        assert!(unavailable.is_session_inactive());
+        assert_eq!(unavailable.window_session_status(), Some(status));
+        assert_eq!(cx.windows().len(), before_windows);
+    });
+}
+
+#[open_gpui::test]
 fn surface_open_viewport_reports_policy_disabled(cx: &mut open_gpui::TestAppContext) {
     cx.update(|cx| {
         let surface = DockSurface::builder("main")
@@ -352,6 +401,7 @@ fn surface_open_viewport_reports_policy_disabled(cx: &mut open_gpui::TestAppCont
             .panel_factory("editor", "Editor", test_panel)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let before_windows = cx.windows().len();
 
         let outcome = surface.open_viewport("main", viewport_options(), cx);
@@ -375,6 +425,7 @@ fn surface_viewport_readiness_reports_policy_disabled(cx: &mut open_gpui::TestAp
             .panel_factory("editor", "Editor", test_panel)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let spec = DockSurfaceViewportSpec::new("main", viewport_options());
 
         let readiness = surface.viewports().check_open_readiness(&spec, cx);
@@ -403,6 +454,7 @@ fn surface_open_viewports_reports_policy_disabled_for_each_batch_spec(
             .panel_factory("editor", "Editor", test_panel)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let before_windows = cx.windows().len();
 
         let report = surface.open_viewports(
@@ -441,6 +493,7 @@ fn surface_open_viewport_reports_backend_unsupported_without_registration(
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let before_windows = cx.windows().len();
 
         let outcome = surface.open_viewport("main", viewport_options(), cx);
@@ -467,6 +520,7 @@ fn surface_viewport_readiness_reports_backend_unsupported(cx: &mut open_gpui::Te
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let spec = DockSurfaceViewportSpec::new("main", viewport_options());
 
         let readiness = surface.check_viewport_open_readiness(&spec, cx);
@@ -499,6 +553,7 @@ fn surface_viewport_readiness_reports_unsupported_flags_without_opening(
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let before_windows = cx.windows().len();
         let mut options = viewport_options();
         options.accepts_pointer_input = false;
@@ -550,6 +605,7 @@ fn surface_open_viewports_reports_backend_unsupported_for_each_batch_spec(
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let before_windows = cx.windows().len();
 
         let report = surface.open_viewports(
@@ -584,6 +640,7 @@ fn surface_open_viewport_opens_and_reuses_supported_backend(cx: &mut open_gpui::
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
 
         let opened = surface.open_viewport("main", viewport_options(), cx);
         let opened = match opened {
@@ -617,6 +674,7 @@ fn surface_revisions_only_observed_platform_placement_not_queued_dispatch(
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let subscription = surface.subscribe_changes(cx, move |event, _| {
             observed.borrow_mut().push(event.clone());
         });
@@ -680,14 +738,132 @@ fn surface_revisions_only_observed_platform_placement_not_queued_dispatch(
     ));
     assert_eq!(
         cx.read(|cx| surface.revision(cx)),
-        revision_before_dispatch + 1,
-        "one observed terminal placement must create one durable surface revision"
+        revision_before_dispatch + 2,
+        "the platform observation and resulting host layout are separate durable facts"
     );
     let changes = changes.borrow();
-    assert_eq!(changes.len(), 1);
+    assert_eq!(changes.len(), 2);
+    for change in changes.iter() {
+        assert_eq!(
+            change.categories(),
+            &[DockSurfaceChangeCategory::ObservedViewportPlacement]
+        );
+    }
+    assert_eq!(changes[0].revision(), revision_before_dispatch + 1);
+    assert_eq!(changes[1].revision(), revision_before_dispatch + 2);
+}
+
+#[open_gpui::test]
+fn rendered_host_bounds_publish_one_persistent_placement_revision(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let observed = changes.clone();
+    let (surface, primary, _subscription) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .build(cx)
+            .expect("surface layout should validate");
+        let primary = open_primary(&surface, cx);
+        let subscription = surface.subscribe_changes(cx, move |event, _| {
+            observed.borrow_mut().push(event.clone());
+        });
+        (surface, primary, subscription)
+    });
+    cx.run_until_parked();
+    changes.borrow_mut().clear();
+
+    let (runtime, space, registration, work_context) = cx.update(|app| {
+        let host = primary
+            .downcast::<DockHost>()
+            .expect("the primary window should retain a DockHost root")
+            .entity(app)
+            .expect("the primary DockHost should remain live");
+        host.update(app, |host, host_cx| {
+            (
+                host.viewport_runtime().clone(),
+                host.space().clone(),
+                host.current_viewport_registration()
+                    .expect("the rendered primary should own a viewport registration"),
+                host.runtime_work_context(host_cx)
+                    .expect("the rendered primary should retain its active surface lease"),
+            )
+        })
+    });
+    let revision_before = cx.read(|app| surface.revision(app));
+    let observed_host_bounds = Bounds::new(point(px(14.0), px(18.0)), size(px(280.0), px(190.0)));
+    let primary_window_id = primary.window_id();
+
+    let first_published = primary
+        .update(cx, |_, window, app| {
+            let preparation = runtime
+                .prepare_rendered_viewport_host_scene_draft(
+                    DockViewportHostSceneDraft::new(
+                        space.clone(),
+                        primary_window_id,
+                        crate::DockViewportWindowFacts::from_window(window, app).current_bounds,
+                        observed_host_bounds,
+                        observed_host_bounds.origin,
+                        DockDropGuideMetrics::default(),
+                    ),
+                    Some(&registration),
+                    work_context,
+                    window,
+                    app,
+                )
+                .expect("the exact primary registration should prepare its host scene");
+            let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
+            runtime.publish_rendered_viewport_host_scene_commit_from_window(commit, window, app)
+        })
+        .expect("the primary window should remain live");
+    assert!(first_published);
+    assert_eq!(cx.read(|app| surface.revision(app)), revision_before + 1);
+    assert_eq!(changes.borrow().len(), 1);
     assert_eq!(
-        changes[0].categories(),
+        changes.borrow()[0].categories(),
         &[DockSurfaceChangeCategory::ObservedViewportPlacement]
+    );
+    assert_eq!(
+        cx.read(|app| {
+            surface
+                .export_snapshot(app)
+                .viewport_placement()
+                .placement_for_space(&space)
+                .and_then(|placement| placement.host_bounds)
+        }),
+        Some(DockLayoutRect::from_bounds(observed_host_bounds)),
+        "the revision must expose the same host bounds through the durable snapshot"
+    );
+
+    let second_published = primary
+        .update(cx, |_, window, app| {
+            let preparation = runtime
+                .prepare_rendered_viewport_host_scene_draft(
+                    DockViewportHostSceneDraft::new(
+                        space.clone(),
+                        primary_window_id,
+                        crate::DockViewportWindowFacts::from_window(window, app).current_bounds,
+                        observed_host_bounds,
+                        observed_host_bounds.origin,
+                        DockDropGuideMetrics::default(),
+                    ),
+                    Some(&registration),
+                    work_context,
+                    window,
+                    app,
+                )
+                .expect("the unchanged primary registration should prepare again");
+            let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
+            runtime.publish_rendered_viewport_host_scene_commit_from_window(commit, window, app)
+        })
+        .expect("the primary window should remain live");
+    assert!(!second_published, "an identical scene must be a no-op");
+    assert_eq!(cx.read(|app| surface.revision(app)), revision_before + 1);
+    assert_eq!(
+        changes.borrow().len(),
+        1,
+        "an identical host-bounds observation must not publish another revision"
     );
 }
 
@@ -707,6 +883,7 @@ fn surface_viewports_facade_opens_detached_panel_space(cx: &mut open_gpui::TestA
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let viewports: DockSurfaceViewports = surface.viewports();
 
         let detached = surface
@@ -761,6 +938,7 @@ fn surface_snapshot_roundtrips_layout_and_viewport_placement(cx: &mut open_gpui:
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let viewports = surface.viewports();
         surface
             .detach_panel_to_space("main", "preview", child_space.clone(), cx)
@@ -785,6 +963,7 @@ fn surface_snapshot_roundtrips_layout_and_viewport_placement(cx: &mut open_gpui:
             .allow_platform_viewports(true)
             .build(cx)
             .expect("restored surface should validate");
+        let _restored_primary = open_primary(&restored, cx);
         let restored_layout = restored.export_layout(cx);
         assert_eq!(&restored_layout, snapshot.layout());
 
@@ -814,6 +993,7 @@ fn surface_exports_and_checks_viewport_placement_restore(cx: &mut open_gpui::Tes
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let opened = match surface.open_viewport("main", viewport_options(), cx) {
             DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
             other => panic!("expected viewport to open, got {other:?}"),
@@ -868,6 +1048,7 @@ fn surface_opens_viewports_from_saved_placement_with_keyed_report(
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let placement = DockViewportPlacementLayout::new(vec![
             DockViewportPlacement {
                 space: main.clone(),
@@ -1028,6 +1209,7 @@ fn surface_open_viewports_reports_ordered_batch_outcomes(cx: &mut open_gpui::Tes
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
 
         let report = surface.open_viewports(
             [
@@ -1069,6 +1251,7 @@ fn surface_viewport_close_policy_can_be_changed_without_runtime_import(
             .allow_platform_viewports(true)
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let opened = match surface.open_viewport("main", viewport_options(), cx) {
             DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
             other => panic!("expected viewport to open, got {other:?}"),
@@ -1108,6 +1291,7 @@ fn surface_viewport_merge_back_close_moves_content_to_fallback(cx: &mut open_gpu
             })
             .build(cx)
             .expect("surface layout should validate");
+        let _primary = open_primary(&surface, cx);
         let opened = match surface.open_viewport(detached.clone(), viewport_options(), cx) {
             DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
             other => panic!("expected detached viewport to open, got {other:?}"),
@@ -1168,10 +1352,8 @@ fn surface_viewport_lifecycle_commits_one_typed_event_per_root_operation(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let changes = Rc::new(RefCell::new(Vec::new()));
-    let observed = changes.clone();
-    let (surface, opened, _subscription) = cx.update(|cx| {
+    let (surface, _primary) = cx.update(|cx| {
         let main = DockSpaceId::from("main");
-        let detached = DockSpaceId::from("detached");
         let surface = DockSurface::builder(main.clone())
             .try_layout(&two_space_layout())
             .expect("test layout should validate")
@@ -1183,14 +1365,22 @@ fn surface_viewport_lifecycle_commits_one_typed_event_per_root_operation(
             })
             .build(cx)
             .expect("surface layout should validate");
+        let primary = open_primary(&surface, cx);
+        (surface, primary)
+    });
+    cx.run_until_parked();
+    let baseline_revision = cx.read(|cx| surface.revision(cx));
+
+    let observed = changes.clone();
+    let (opened, _subscription) = cx.update(|cx| {
         let subscription = surface.subscribe_changes(cx, move |event, _| {
             observed.borrow_mut().push(event.clone());
         });
-        let opened = match surface.open_viewport(detached, viewport_options(), cx) {
+        let opened = match surface.open_viewport("detached", viewport_options(), cx) {
             DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
             other => panic!("expected detached viewport to open, got {other:?}"),
         };
-        (surface, opened, subscription)
+        (opened, subscription)
     });
 
     let _ = cx.update(|cx| {
@@ -1202,13 +1392,17 @@ fn surface_viewport_lifecycle_commits_one_typed_event_per_root_operation(
     cx.run_until_parked();
 
     let changes = changes.borrow();
-    assert_eq!(changes.len(), 2);
+    assert_eq!(changes.len(), 3);
     assert_eq!(
         changes[0].categories(),
         &[DockSurfaceChangeCategory::ViewportTopology]
     );
     assert_eq!(
         changes[1].categories(),
+        &[DockSurfaceChangeCategory::ObservedViewportPlacement]
+    );
+    assert_eq!(
+        changes[2].categories(),
         &[
             DockSurfaceChangeCategory::Layout,
             DockSurfaceChangeCategory::Selection,
@@ -1216,7 +1410,10 @@ fn surface_viewport_lifecycle_commits_one_typed_event_per_root_operation(
             DockSurfaceChangeCategory::ViewportTopology,
         ]
     );
-    assert_eq!(cx.read(|cx| surface.revision(cx)), 2);
+    assert_eq!(changes[0].revision(), baseline_revision + 1);
+    assert_eq!(changes[1].revision(), baseline_revision + 2);
+    assert_eq!(changes[2].revision(), baseline_revision + 3);
+    assert_eq!(cx.read(|cx| surface.revision(cx)), baseline_revision + 3);
 }
 
 #[open_gpui::test]

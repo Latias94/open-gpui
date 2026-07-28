@@ -1,6 +1,7 @@
 use crate::{
-    DockSpaceId, DockViewportAdapter, DockViewportUnregisterOutcome, DockViewportUnregisterReason,
-    viewport_registry::DockViewportRegistrationKey,
+    DockSpaceId, DockViewportAdapter, DockViewportRuntimeLineage, DockViewportUnregisterOutcome,
+    DockViewportUnregisterReason,
+    viewport_registry::{DockViewportRegistrationConflict, DockViewportRegistrationKey},
 };
 use open_gpui::AnyWindowHandle;
 
@@ -45,12 +46,13 @@ impl DockViewportAdapter {
         &mut self,
         space: impl Into<DockSpaceId>,
         window: impl Into<AnyWindowHandle>,
-    ) -> DockViewportRegisterOutcome {
+        lineage: DockViewportRuntimeLineage,
+    ) -> Result<DockViewportRegisterOutcome, DockViewportRegistrationConflict> {
         let space = space.into();
         let window = window.into();
         let replaced = self
             .registry
-            .register_with_replacements(space.clone(), window)
+            .register_with_replacements(space.clone(), window, lineage)?
             .into_iter()
             .map(|(space, snapshot)| DockViewportUnregisterOutcome {
                 space,
@@ -63,11 +65,11 @@ impl DockViewportAdapter {
             .registration_key(&space)
             .expect("a successful viewport registration must issue an exact key");
 
-        DockViewportRegisterOutcome {
+        Ok(DockViewportRegisterOutcome {
             space,
             window,
             registration_key,
             replaced,
-        }
+        })
     }
 }

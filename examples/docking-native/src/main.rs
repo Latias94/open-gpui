@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use open_gpui::{
     App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
@@ -15,8 +19,9 @@ use open_gpui_devtools::{
     DevtoolsWorkbench, ProbeSnapshotError,
 };
 use open_gpui_docking::{
-    DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
-    DockPanelPlacement, DockSpaceId, DockViewportPlacement, DockViewportPlacementLayout,
+    DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockSpaceId,
+    DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceViewportOpenOutcome,
+    DockSurfaceWindowSessionStatus, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportWindowBounds, DockVisualPalette, DockVisualStyle, DockVisualStyleResolver,
     advanced::{
         DockViewportCoordinateSpaceRecord, DockViewportCoordinateStatusRecord,
@@ -34,10 +39,14 @@ use open_gpui_docking::{
         DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary,
     },
     model::{
-        DockActionApplyError, DockController, DockLayoutCentralRegion, DockLayoutSpace,
-        layout_from_raw_parts, layout_into_raw_parts,
+        DockController, DockLayoutCentralRegion, DockLayoutSpace, layout_from_raw_parts,
+        layout_into_raw_parts,
     },
-    runtime::{DockViewportClosePolicy, DockViewportRuntimeHandle},
+    runtime::DockViewportClosePolicy,
+};
+#[cfg(test)]
+use open_gpui_docking::{
+    DockPanelOpenOutcome, model::DockActionApplyError, runtime::DockViewportRuntimeHandle,
 };
 use open_gpui_platform::application;
 use open_gpui_ui_components::{
@@ -67,9 +76,17 @@ struct DemoPanel {
     lines: &'static [&'static str],
 }
 
+enum RuntimePanelAuthority {
+    Managed(DockSurface),
+    #[cfg(test)]
+    Unmanaged {
+        runtime: DockViewportRuntimeHandle,
+        controller: Entity<DockController>,
+    },
+}
+
 struct RuntimeStatusPanel {
-    runtime: DockViewportRuntimeHandle,
-    controller: Entity<DockController>,
+    authority: RuntimePanelAuthority,
     devtools_panel: DockingDevtoolsPanel,
     placement: DockViewportPlacementLayout,
     primary_bounds: Bounds<Pixels>,
@@ -78,19 +95,29 @@ struct RuntimeStatusPanel {
     last_operation: Option<String>,
 }
 
+#[derive(Clone)]
+struct DockingDevtoolsStatus {
+    window_session: Option<DockSurfaceWindowSessionStatus>,
+    runtime: DockViewportRuntimeStatus,
+}
+
 struct DockingDevtoolsPanel {
     workbench: DevtoolsWorkbench,
-    status: Arc<Mutex<DockViewportRuntimeStatus>>,
+    status: Arc<Mutex<DockingDevtoolsStatus>>,
     inspector: Entity<DevtoolsInspectorController>,
 }
 
 impl DockingDevtoolsPanel {
     fn new(
         initial_status: DockViewportRuntimeStatus,
+        window_session: Option<DockSurfaceWindowSessionStatus>,
         cx: &mut Context<RuntimeStatusPanel>,
     ) -> Self {
-        let status = Arc::new(Mutex::new(initial_status));
-        let mut session = docking_runtime_devtools_session(Arc::clone(&status));
+        let status = Arc::new(Mutex::new(DockingDevtoolsStatus {
+            window_session,
+            runtime: initial_status,
+        }));
+        let mut session = docking_panel_devtools_session(Arc::clone(&status));
         let frame = session
             .refresh()
             .expect("docking devtools initial capture should succeed");
@@ -115,6 +142,7 @@ impl DockingDevtoolsPanel {
     fn refresh(
         &mut self,
         status: DockViewportRuntimeStatus,
+        window_session: Option<DockSurfaceWindowSessionStatus>,
         cx: &mut Context<RuntimeStatusPanel>,
     ) -> Result<DevtoolsSessionFrame, DevtoolsSessionError> {
         {
@@ -122,7 +150,10 @@ impl DockingDevtoolsPanel {
                 .status
                 .lock()
                 .expect("docking runtime status lock should not be poisoned");
-            *status_slot = status;
+            *status_slot = DockingDevtoolsStatus {
+                window_session,
+                runtime: status,
+            };
         }
 
         match self.workbench.refresh() {
@@ -166,6 +197,7 @@ impl DockingDevtoolsPanel {
 }
 
 impl RuntimeStatusPanel {
+    #[cfg(test)]
     fn new(
         runtime: DockViewportRuntimeHandle,
         controller: Entity<DockController>,
@@ -176,11 +208,36 @@ impl RuntimeStatusPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let initial_status = runtime.runtime_status_for_app(cx);
-        let devtools_panel = DockingDevtoolsPanel::new(initial_status, cx);
+        let devtools_panel = DockingDevtoolsPanel::new(initial_status, None, cx);
 
         Self {
-            runtime,
-            controller,
+            authority: RuntimePanelAuthority::Unmanaged {
+                runtime,
+                controller,
+            },
+            devtools_panel,
+            placement,
+            primary_bounds,
+            secondary_bounds,
+            central_bounds,
+            last_operation: None,
+        }
+    }
+
+    fn new_managed(
+        surface: DockSurface,
+        placement: DockViewportPlacementLayout,
+        primary_bounds: Bounds<Pixels>,
+        secondary_bounds: Bounds<Pixels>,
+        central_bounds: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let initial_status = surface.viewports().runtime_status(cx);
+        let window_session = surface.window_session_status(cx);
+        let devtools_panel = DockingDevtoolsPanel::new(initial_status, Some(window_session), cx);
+
+        Self {
+            authority: RuntimePanelAuthority::Managed(surface),
             devtools_panel,
             placement,
             primary_bounds,
@@ -196,70 +253,221 @@ impl RuntimeStatusPanel {
     }
 
     fn set_close_policy(&mut self, policy: DockViewportClosePolicy, cx: &mut Context<Self>) {
-        self.runtime.set_close_policy(policy.clone());
+        match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => {
+                surface.viewports().set_close_policy(policy.clone(), cx)
+            }
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { runtime, .. } => {
+                runtime.set_close_policy(policy.clone())
+            }
+        }
         self.set_operation_log(format!("set close policy: {policy:?}"), cx);
     }
 
-    fn open_demo_viewport(&mut self, space: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_demo_viewport(&mut self, space: &str, _window: &mut Window, cx: &mut Context<Self>) {
         let space_id = DockSpaceId::from(space);
         let fallback_bounds = self.fallback_bounds(&space_id);
         let options = restored_viewport_options(&self.placement, space_id.clone(), fallback_bounds);
-        match self
-            .runtime
-            .open_viewport_from_window(space_id.clone(), options, window, cx)
-        {
-            Ok(outcome) => self.set_operation_log(
-                format!(
-                    "opened viewport {}: {:?}",
-                    outcome.space().as_str(),
-                    outcome.status()
-                ),
-                cx,
-            ),
-            Err(error) => self.set_operation_log(
-                format!("open viewport {} failed: {error}", space_id.as_str()),
-                cx,
-            ),
-        }
+        let message = match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => {
+                match surface.viewports().open(space_id.clone(), options, cx) {
+                    DockSurfaceViewportOpenOutcome::Opened(outcome) => format!(
+                        "opened managed viewport {}: {:?}",
+                        outcome.space().as_str(),
+                        outcome.status()
+                    ),
+                    DockSurfaceViewportOpenOutcome::Unavailable(error) => format!(
+                        "open managed viewport {} failed: {error:?}",
+                        space_id.as_str()
+                    ),
+                }
+            }
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { runtime, .. } => {
+                match runtime.open_viewport_from_window(space_id.clone(), options, _window, cx) {
+                    Ok(outcome) => format!(
+                        "opened viewport {}: {:?}",
+                        outcome.space().as_str(),
+                        outcome.status()
+                    ),
+                    Err(error) => {
+                        format!("open viewport {} failed: {error}", space_id.as_str())
+                    }
+                }
+            }
+        };
+        self.set_operation_log(message, cx);
     }
 
     fn check_saved_placement_restore(&mut self, cx: &mut Context<Self>) {
-        match self.runtime.check_placement_restore(&self.placement) {
-            Ok(readiness) => {
-                self.set_operation_log(format!("placement restore readiness: {readiness:?}"), cx)
+        let message = match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => {
+                match surface.viewports().check_restore(&self.placement, cx) {
+                    Ok(readiness) => format!("placement restore readiness: {readiness:?}"),
+                    Err(error) => format!("check placement failed: {error}"),
+                }
             }
-            Err(error) => self.set_operation_log(format!("check placement failed: {error}"), cx),
-        }
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { runtime, .. } => {
+                match runtime.check_placement_restore(&self.placement) {
+                    Ok(readiness) => format!("placement restore readiness: {readiness:?}"),
+                    Err(error) => format!("check placement failed: {error}"),
+                }
+            }
+        };
+        self.set_operation_log(message, cx);
     }
 
     fn restore_secondary_panels(&mut self, cx: &mut Context<Self>) {
-        let message = self
-            .controller
-            .update(cx, |controller, _| restore_secondary_panels(controller));
+        let message = match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => {
+                restore_secondary_panels_on_surface(surface, cx)
+            }
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { controller, .. } => {
+                controller.update(cx, |controller, _| restore_secondary_panels(controller))
+            }
+        };
         self.set_operation_log(message, cx);
     }
 
     fn restore_outline_panel(&mut self, cx: &mut Context<Self>) {
-        let message = self
-            .controller
-            .update(cx, |controller, _| restore_outline_panel(controller));
+        let message = match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => {
+                restore_outline_panel_on_surface(surface, cx)
+            }
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { controller, .. } => {
+                controller.update(cx, |controller, _| restore_outline_panel(controller))
+            }
+        };
         self.set_operation_log(message, cx);
     }
 
     fn restore_central_note_panel(&mut self, cx: &mut Context<Self>) {
-        let message = self
-            .controller
-            .update(cx, |controller, _| restore_central_note_panel(controller));
+        let message = match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => {
+                restore_central_note_panel_on_surface(surface, cx)
+            }
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { controller, .. } => {
+                controller.update(cx, |controller, _| restore_central_note_panel(controller))
+            }
+        };
         self.set_operation_log(message, cx);
     }
 
     fn current_runtime_status(&self, cx: &mut Context<Self>) -> DockViewportRuntimeStatus {
-        self.runtime.runtime_status_for_app(cx)
+        match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => surface.viewports().runtime_status(cx),
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { runtime, .. } => runtime.runtime_status_for_app(cx),
+        }
+    }
+
+    fn current_window_session_status(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<DockSurfaceWindowSessionStatus> {
+        match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => Some(surface.window_session_status(cx)),
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { .. } => None,
+        }
+    }
+
+    fn runtime_overview(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> (
+        DockViewportClosePolicy,
+        Vec<String>,
+        DockViewportPlacementLayout,
+    ) {
+        match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => {
+                let viewports = surface.viewports();
+                let spaces = viewports
+                    .registered_spaces(cx)
+                    .into_iter()
+                    .map(|space| {
+                        let status = if viewports.is_open(&space, cx) {
+                            "open"
+                        } else {
+                            "missing"
+                        };
+                        format!("{}: {status}", space.as_str())
+                    })
+                    .collect();
+                (
+                    viewports.close_policy(cx),
+                    spaces,
+                    viewports.export_placement(cx),
+                )
+            }
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { runtime, .. } => {
+                let spaces = runtime
+                    .registered_viewport_spaces()
+                    .into_iter()
+                    .map(|space| {
+                        let status = if runtime.is_viewport_open(&space) {
+                            "open"
+                        } else {
+                            "missing"
+                        };
+                        format!("{}: {status}", space.as_str())
+                    })
+                    .collect();
+                (runtime.close_policy(), spaces, runtime.export_placement())
+            }
+        }
+    }
+
+    fn surface_session_lines(&self, cx: &mut Context<Self>) -> Vec<String> {
+        let surface = match &self.authority {
+            RuntimePanelAuthority::Managed(surface) => surface,
+            #[cfg(test)]
+            RuntimePanelAuthority::Unmanaged { .. } => return Vec::new(),
+        };
+        let session = open_gpui_devtools::docking::docking_surface_inspection(
+            surface.window_session_status(cx),
+            &surface.viewports().runtime_status(cx),
+        )
+        .session;
+        let anchor = session
+            .anchor_window_id
+            .map(|window| window.to_string())
+            .unwrap_or_else(|| "none".to_owned());
+        let reason = session
+            .reason_kind
+            .zip(session.reason_detail)
+            .map(|(kind, detail)| format!("{kind}/{detail}"))
+            .unwrap_or_else(|| "none".to_owned());
+        vec![
+            format!("surface session: {} G{}", session.phase, session.generation),
+            format!("surface anchor: {anchor}"),
+            format!("surface terminal reason: {reason}"),
+            format!(
+                "surface windows: {} total / {} opening / {} active / {} retiring",
+                session.owned_window_count,
+                session.opening_window_count,
+                session.active_window_count,
+                session.retiring_window_count
+            ),
+            format!(
+                "surface terminal tickets: {} total / {} pending",
+                session.terminal_ticket_count, session.pending_terminal_ticket_count
+            ),
+            format!("surface runtime empty: {:?}", session.runtime_empty),
+        ]
     }
 
     fn refresh_devtools_inspector(&mut self, cx: &mut Context<Self>) {
         let status = self.current_runtime_status(cx);
-        match self.devtools_panel.refresh(status, cx) {
+        let window_session = self.current_window_session_status(cx);
+        match self.devtools_panel.refresh(status, window_session, cx) {
             Ok(frame) => self.set_operation_log(
                 format!(
                     "refreshed devtools inspector: generation {}",
@@ -356,22 +564,10 @@ impl Render for RuntimeStatusPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lines = {
             let status = self.current_runtime_status(cx);
-            let spaces = self
-                .runtime
-                .registered_viewport_spaces()
-                .into_iter()
-                .map(|space| {
-                    let status = if self.runtime.is_viewport_open(&space) {
-                        "open"
-                    } else {
-                        "missing"
-                    };
-                    format!("{}: {}", space.as_str(), status)
-                })
-                .collect::<Vec<_>>();
-            let placement = self.runtime.export_placement();
-            let mut lines = vec![
-                format!("close policy: {:?}", self.runtime.close_policy()),
+            let (close_policy, spaces, placement) = self.runtime_overview(cx);
+            let mut lines = self.surface_session_lines(cx);
+            lines.extend([
+                format!("close policy: {close_policy:?}"),
                 format!("registered viewports: {}", spaces.len()),
                 format!("placement snapshots: {}", placement.viewports.len()),
                 format!("spaces: {}", spaces.join(", ")),
@@ -449,7 +645,7 @@ impl Render for RuntimeStatusPanel {
                             .and_then(|record| record.placement_source.as_ref())
                     )
                 ),
-            ];
+            ]);
             lines.extend(status.visual_affordances.iter().map(|record| {
                 format!(
                     "affordance {}: {}",
@@ -666,6 +862,86 @@ fn docking_devtools_status_pill(
         .child(div().text_xs().child(value.into()))
 }
 
+fn restore_secondary_panels_on_surface(surface: &DockSurface, cx: &mut App) -> String {
+    let secondary_space = DockSpaceId::from(SECONDARY_SPACE);
+    let preview = DockItemId::from("preview");
+    let diff = DockItemId::from("diff");
+    let mut results = Vec::new();
+
+    match surface.panel_location(preview.clone(), cx) {
+        Some(location) if location.space() == &secondary_space => {
+            results.push("preview already in secondary".to_owned());
+        }
+        Some(_) => results.push("preview is open outside secondary".to_owned()),
+        None => results.push(surface_open_item_result(
+            "preview",
+            surface.open_panel_at_in_space(
+                secondary_space.clone(),
+                DockPanelPlacement::center(preview.clone()).selected(),
+                cx,
+            ),
+        )),
+    }
+
+    match surface.panel_location(diff.clone(), cx) {
+        Some(location) if location.space() == &secondary_space => {
+            results.push("diff already in secondary".to_owned());
+        }
+        Some(_) => results.push("diff is open outside secondary".to_owned()),
+        None => results.push(surface_open_item_result(
+            "diff",
+            surface.open_panel_at_in_space(
+                secondary_space,
+                DockPanelPlacement::stacked_with(diff, preview),
+                cx,
+            ),
+        )),
+    }
+
+    results.join("; ")
+}
+
+fn restore_outline_panel_on_surface(surface: &DockSurface, cx: &mut App) -> String {
+    let main_space = DockSpaceId::from(SPACE);
+    let outline = DockItemId::from("outline");
+    match surface.panel_location(outline.clone(), cx) {
+        Some(location) if location.space() == &main_space => {
+            "outline already in primary".to_owned()
+        }
+        Some(_) => "outline is open outside primary".to_owned(),
+        None => surface_open_item_result(
+            "outline",
+            surface.open_panel_in_space(main_space, outline, cx),
+        ),
+    }
+}
+
+fn restore_central_note_panel_on_surface(surface: &DockSurface, cx: &mut App) -> String {
+    let central_space = DockSpaceId::from(CENTRAL_SPACE);
+    let note = DockItemId::from("central-note");
+    match surface.panel_location(note.clone(), cx) {
+        Some(location) if location.space() == &central_space => {
+            "central note already in central".to_owned()
+        }
+        Some(_) => "central note is open outside central".to_owned(),
+        None => surface_open_item_result(
+            "central note",
+            surface.open_panel_at_in_space(central_space, DockPanelPlacement::center(note), cx),
+        ),
+    }
+}
+
+fn surface_open_item_result<T: std::fmt::Debug, E: std::fmt::Display>(
+    label: &str,
+    result: Result<T, E>,
+) -> String {
+    match result {
+        Ok(outcome) => format!("{label}: {outcome:?}"),
+        Err(error) => format!("{label} failed: {error}"),
+    }
+}
+
+#[cfg(test)]
 fn restore_secondary_panels(controller: &mut DockController) -> String {
     let secondary_space = DockSpaceId::from(SECONDARY_SPACE);
     let preview = DockItemId::from("preview");
@@ -711,6 +987,7 @@ fn restore_secondary_panels(controller: &mut DockController) -> String {
     results.join("; ")
 }
 
+#[cfg(test)]
 fn restore_outline_panel(controller: &mut DockController) -> String {
     let main_space = DockSpaceId::from(SPACE);
     let outline = DockItemId::from("outline");
@@ -728,6 +1005,7 @@ fn restore_outline_panel(controller: &mut DockController) -> String {
     open_item_result("outline", controller.reopen_panel(main_space, outline))
 }
 
+#[cfg(test)]
 fn restore_central_note_panel(controller: &mut DockController) -> String {
     let central_space = DockSpaceId::from(CENTRAL_SPACE);
     let note = DockItemId::from("central-note");
@@ -748,6 +1026,7 @@ fn restore_central_note_panel(controller: &mut DockController) -> String {
     )
 }
 
+#[cfg(test)]
 fn open_item_result(
     label: &str,
     result: std::result::Result<DockPanelOpenOutcome, DockActionApplyError>,
@@ -775,6 +1054,30 @@ fn docking_runtime_devtools_summary(status: &DockViewportRuntimeStatus) -> Strin
         inspection.summary.visual_affordance_count,
         inspection.summary.diagnostic_count
     )
+}
+
+fn docking_panel_devtools_session(status: Arc<Mutex<DockingDevtoolsStatus>>) -> DevtoolsSession {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("docking.runtime", move || {
+            let status = status
+                .lock()
+                .map_err(|_| {
+                    ProbeSnapshotError::CollectionFailed(
+                        "docking panel status lock poisoned".to_owned(),
+                    )
+                })?
+                .clone();
+            Ok(match status.window_session {
+                Some(window_session) => open_gpui_devtools::docking::docking_surface_capture(
+                    window_session,
+                    &status.runtime,
+                ),
+                None => open_gpui_devtools::docking::docking_runtime_capture(&status.runtime),
+            })
+        })
+        .expect("docking panel capture provider id should be valid");
+    DevtoolsSession::new("docking.runtime", registry).with_history_limit(4)
 }
 
 fn docking_runtime_devtools_session(
@@ -1421,200 +1724,278 @@ fn restored_demo_layout() -> DockLayout {
     layout_from_raw_parts(spaces, nodes)
 }
 
+macro_rules! configure_demo_builder {
+    ($builder:expr, $runtime_panel:expr) => {
+        ($builder)
+            .try_layout(&restored_demo_layout())
+            .expect("demo dock layout should restore")
+            .allow_floating(true)
+            .allow_platform_viewports(true)
+            .allow_dock_class_in_space(SPACE, PRIMARY_DOCK_CLASS)
+            .allow_dock_class_in_space(SPACE, SECONDARY_DOCK_CLASS)
+            .allow_dock_class_in_space(SPACE, CENTRAL_DOCK_CLASS)
+            .allow_dock_class_in_space(SECONDARY_SPACE, SECONDARY_DOCK_CLASS)
+            .allow_dock_class_in_space(CENTRAL_SPACE, CENTRAL_DOCK_CLASS)
+            .panel("runtime", $runtime_panel)
+            .panel(
+                "explorer",
+                DockPanel::lazy("Explorer", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Explorer",
+                            "Project structure",
+                            0x2563eb,
+                            &[
+                                "crates/gpui_docking",
+                                "examples/docking-native",
+                                "docs/plans",
+                                "target/doc",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(PRIMARY_DOCK_CLASS),
+            )
+            .panel(
+                "outline",
+                DockPanel::lazy("Outline", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Outline",
+                            "Symbols in the active file",
+                            0x0891b2,
+                            &[
+                                "DockHost",
+                                "DockController::builder",
+                                "DockPanelPlacement",
+                                "Render for DockHost",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(PRIMARY_DOCK_CLASS),
+            )
+            .panel(
+                "workspace",
+                DockPanel::lazy("Workspace", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Workspace",
+                            "Pinned overview",
+                            0x0f766e,
+                            &[
+                                "open-gpui",
+                                "gpui_docking",
+                                "runtime viewports",
+                                "retained panels",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(PRIMARY_DOCK_CLASS),
+            )
+            .panel(
+                "editor",
+                DockPanel::lazy("Editor", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Editor",
+                            "Active document",
+                            0x16a34a,
+                            &[
+                                "Controller-backed rendering is active.",
+                                "Tabs route through resolved drop transactions.",
+                                "Splits use normalized graph fractions.",
+                                "Registered panel factories stay outside the graph.",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(PRIMARY_DOCK_CLASS),
+            )
+            .panel(
+                "preview",
+                DockPanel::lazy("Preview", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Preview",
+                            "Rendered layout notes",
+                            0x9333ea,
+                            &[
+                                "DockHost observes DockController.",
+                                "Tab selection updates graph state.",
+                                "Layout round-trips through DockLayout.",
+                                "Splitter handles resize panes.",
+                                "Tabs can drag/drop between stacks.",
+                                "Secondary viewport placement lives in the adapter.",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(SECONDARY_DOCK_CLASS),
+            )
+            .panel(
+                "diff",
+                DockPanel::lazy("Diff", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Diff",
+                            "Secondary stack",
+                            0x7c3aed,
+                            &[
+                                "drop_runtime.rs",
+                                "viewport_runtime.rs",
+                                "render_tabs.rs",
+                                "host_interactions.rs",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(SECONDARY_DOCK_CLASS),
+            )
+            .panel(
+                "terminal",
+                DockPanel::lazy("Terminal", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Terminal",
+                            "Command output",
+                            0xea580c,
+                            &[
+                                "$ cargo nextest run -p open-gpui-docking",
+                                "Docking public API tests passed",
+                                "$ cargo doc -p open-gpui-docking --no-deps",
+                                "DockController::builder restores DockLayout.",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(PRIMARY_DOCK_CLASS),
+            )
+            .panel(
+                "problems",
+                DockPanel::lazy("Problems", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Problems",
+                            "Diagnostics",
+                            0xdc2626,
+                            &[
+                                "No active diagnostics.",
+                                "Missing panels render placeholders.",
+                                "OS windows remain adapter state.",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(PRIMARY_DOCK_CLASS),
+            )
+            .panel(
+                "central-note",
+                DockPanel::lazy("Central note", |cx| {
+                    cx.new(|_| {
+                        DemoPanel::new(
+                            "Central note",
+                            "Central-only dogfood panel",
+                            0x4f46e5,
+                            &[
+                                "This panel is classed for the empty central viewport.",
+                                "Secondary-class panels should reject here.",
+                                "Opening content recovers the central region identity.",
+                            ],
+                        )
+                    })
+                    .into()
+                })
+                .with_dock_class(CENTRAL_DOCK_CLASS),
+            )
+    };
+}
+
+#[cfg(test)]
+fn unmanaged_runtime_placeholder_panel() -> DockPanel {
+    DockPanel::lazy("Runtime", |cx| {
+        cx.new(|_| {
+            DemoPanel::new(
+                "Runtime",
+                "Advanced unmanaged runtime fixture",
+                0x475569,
+                &["Tests replace this placeholder with the live runtime panel."],
+            )
+        })
+        .into()
+    })
+    .with_dock_class(PRIMARY_DOCK_CLASS)
+}
+
+fn managed_surface_runtime_panel(
+    surface: Rc<RefCell<Option<DockSurface>>>,
+    placement: DockViewportPlacementLayout,
+    primary_bounds: Bounds<Pixels>,
+    secondary_bounds: Bounds<Pixels>,
+    central_bounds: Bounds<Pixels>,
+) -> DockPanel {
+    DockPanel::lazy("Runtime", move |cx| {
+        let surface = surface
+            .borrow()
+            .as_ref()
+            .cloned()
+            .expect("the managed DockSurface must exist before its first panel resolves");
+        let placement = placement.clone();
+        cx.new(|cx| {
+            RuntimeStatusPanel::new_managed(
+                surface,
+                placement,
+                primary_bounds,
+                secondary_bounds,
+                central_bounds,
+                cx,
+            )
+        })
+        .into()
+    })
+    .with_dock_class(PRIMARY_DOCK_CLASS)
+}
+
+#[cfg(test)]
 fn build_controller() -> DockController {
-    DockController::builder(SPACE)
-        .try_layout(&restored_demo_layout())
-        .expect("demo dock layout should restore")
-        .allow_floating(true)
-        .allow_platform_viewports(true)
-        .allow_dock_class_in_space(SPACE, PRIMARY_DOCK_CLASS)
-        .allow_dock_class_in_space(SPACE, SECONDARY_DOCK_CLASS)
-        .allow_dock_class_in_space(SPACE, CENTRAL_DOCK_CLASS)
-        .allow_dock_class_in_space(SECONDARY_SPACE, SECONDARY_DOCK_CLASS)
-        .allow_dock_class_in_space(CENTRAL_SPACE, CENTRAL_DOCK_CLASS)
-        .panel_descriptor("runtime", dogfood_descriptor("Runtime", PRIMARY_DOCK_CLASS))
-        .panel(
-            "explorer",
-            DockPanel::lazy("Explorer", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Explorer",
-                        "Project structure",
-                        0x2563eb,
-                        &[
-                            "crates/gpui_docking",
-                            "examples/docking-native",
-                            "docs/plans",
-                            "target/doc",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(PRIMARY_DOCK_CLASS),
+    configure_demo_builder!(
+        DockController::builder(SPACE),
+        unmanaged_runtime_placeholder_panel()
+    )
+    .try_build()
+    .expect("demo controller setup should validate")
+}
+
+fn build_managed_surface(
+    surface_slot: Rc<RefCell<Option<DockSurface>>>,
+    placement: DockViewportPlacementLayout,
+    primary_bounds: Bounds<Pixels>,
+    secondary_bounds: Bounds<Pixels>,
+    central_bounds: Bounds<Pixels>,
+    cx: &mut App,
+) -> DockSurface {
+    configure_demo_builder!(
+        DockSurface::builder(SPACE),
+        managed_surface_runtime_panel(
+            surface_slot,
+            placement,
+            primary_bounds,
+            secondary_bounds,
+            central_bounds
         )
-        .panel(
-            "outline",
-            DockPanel::lazy("Outline", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Outline",
-                        "Symbols in the active file",
-                        0x0891b2,
-                        &[
-                            "DockHost",
-                            "DockController::builder",
-                            "DockPanelPlacement",
-                            "Render for DockHost",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(PRIMARY_DOCK_CLASS),
-        )
-        .panel(
-            "workspace",
-            DockPanel::lazy("Workspace", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Workspace",
-                        "Pinned overview",
-                        0x0f766e,
-                        &[
-                            "open-gpui",
-                            "gpui_docking",
-                            "runtime viewports",
-                            "retained panels",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(PRIMARY_DOCK_CLASS),
-        )
-        .panel(
-            "editor",
-            DockPanel::lazy("Editor", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Editor",
-                        "Active document",
-                        0x16a34a,
-                        &[
-                            "Controller-backed rendering is active.",
-                            "Tabs route through resolved drop transactions.",
-                            "Splits use normalized graph fractions.",
-                            "Registered panel factories stay outside the graph.",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(PRIMARY_DOCK_CLASS),
-        )
-        .panel(
-            "preview",
-            DockPanel::lazy("Preview", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Preview",
-                        "Rendered layout notes",
-                        0x9333ea,
-                        &[
-                            "DockHost observes DockController.",
-                            "Tab selection updates graph state.",
-                            "Layout round-trips through DockLayout.",
-                            "Splitter handles resize panes.",
-                            "Tabs can drag/drop between stacks.",
-                            "Secondary viewport placement lives in the adapter.",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(SECONDARY_DOCK_CLASS),
-        )
-        .panel(
-            "diff",
-            DockPanel::lazy("Diff", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Diff",
-                        "Secondary stack",
-                        0x7c3aed,
-                        &[
-                            "drop_runtime.rs",
-                            "viewport_runtime.rs",
-                            "render_tabs.rs",
-                            "host_interactions.rs",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(SECONDARY_DOCK_CLASS),
-        )
-        .panel(
-            "terminal",
-            DockPanel::lazy("Terminal", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Terminal",
-                        "Command output",
-                        0xea580c,
-                        &[
-                            "$ cargo nextest run -p open-gpui-docking",
-                            "Docking public API tests passed",
-                            "$ cargo doc -p open-gpui-docking --no-deps",
-                            "DockController::builder restores DockLayout.",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(PRIMARY_DOCK_CLASS),
-        )
-        .panel(
-            "problems",
-            DockPanel::lazy("Problems", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Problems",
-                        "Diagnostics",
-                        0xdc2626,
-                        &[
-                            "No active diagnostics.",
-                            "Missing panels render placeholders.",
-                            "OS windows remain adapter state.",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(PRIMARY_DOCK_CLASS),
-        )
-        .panel(
-            "central-note",
-            DockPanel::lazy("Central note", |cx| {
-                cx.new(|_| {
-                    DemoPanel::new(
-                        "Central note",
-                        "Central-only dogfood panel",
-                        0x4f46e5,
-                        &[
-                            "This panel is classed for the empty central viewport.",
-                            "Secondary-class panels should reject here.",
-                            "Opening content recovers the central region identity.",
-                        ],
-                    )
-                })
-                .into()
-            })
-            .with_dock_class(CENTRAL_DOCK_CLASS),
-        )
-        .try_build()
-        .expect("demo controller setup should validate")
+    )
+    .visual_style_resolver(dock_visual_style_resolver())
+    .build(cx)
+    .expect("managed demo surface setup should validate")
 }
 
 fn dogfood_descriptor(title: impl Into<String>, dock_class: &str) -> DockPanelDescriptor {
@@ -1790,11 +2171,6 @@ fn main() {
     .init();
     log::info!("{DOCKING_DEBUG_PREFIX} starting docking native example");
     application().run(|cx: &mut App| {
-        let controller = cx.new(|_| build_controller());
-        let runtime = DockViewportRuntimeHandle::with_visual_style_resolver(
-            controller.clone(),
-            dock_visual_style_resolver(),
-        );
         let primary_bounds = Bounds::centered(None, size(px(920.0), px(640.0)), cx);
         let secondary_bounds = Bounds::new(
             point(
@@ -1811,56 +2187,44 @@ fn main() {
             size(px(460.0), px(220.0)),
         );
         let placement = saved_viewport_placement(primary_bounds, secondary_bounds, central_bounds);
-        let runtime_panel = cx.new(|cx| {
-            RuntimeStatusPanel::new(
-                runtime.clone(),
-                controller.clone(),
-                placement.clone(),
-                primary_bounds,
-                secondary_bounds,
-                central_bounds,
-                cx,
-            )
-        });
-        controller.update(cx, |controller, _| {
-            controller
-                .attach_panel_view("runtime", runtime_panel.clone())
-                .expect("runtime panel descriptor should exist");
-        });
-        log::info!("{DOCKING_DEBUG_PREFIX} opened runtime panel and attached dock layout");
+        let surface_slot = Rc::new(RefCell::new(None));
+        let surface = build_managed_surface(
+            surface_slot.clone(),
+            placement.clone(),
+            primary_bounds,
+            secondary_bounds,
+            central_bounds,
+            cx,
+        );
+        surface_slot.replace(Some(surface.clone()));
+        let viewports = surface.viewports();
+        log::info!("{DOCKING_DEBUG_PREFIX} built managed DockSurface");
 
         let primary_options = restored_viewport_options(&placement, SPACE, primary_bounds);
-        let primary_opened = runtime
-            .open_viewport(SPACE, primary_options, cx)
-            .expect("failed to open primary docking viewport");
-        cx.update_window(primary_opened.window(), |_, window, cx| {
+        let primary_opened = match surface.open_primary_window(primary_options, cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+            outcome => panic!("failed to open managed DockSurface primary: {outcome:?}"),
+        };
+        let primary_window = primary_opened.window();
+        cx.update_window(primary_window, |_, window, cx| {
             set_window_theme(window, cx, LIGHT_THEME_ID)
                 .expect("primary light theme should be registered");
         })
         .expect("primary docking viewport should remain open");
         log::info!(
-            "{DOCKING_DEBUG_PREFIX} opened primary viewport space={} window_id={:?}",
+            "{DOCKING_DEBUG_PREFIX} opened managed primary space={} generation={} window_id={:?}",
             SPACE,
-            primary_opened.window().window_id()
+            primary_opened.generation(),
+            primary_window.window_id()
         );
-        let primary_window_id = primary_opened.window().window_id();
-        cx.on_window_closed(move |cx, window_id| {
-            if window_id == primary_window_id {
-                log::info!(
-                    "{DOCKING_DEBUG_PREFIX} primary window closed, quitting app window_id={:?}",
-                    window_id
-                );
-                cx.quit();
-            }
-        })
-        .detach();
 
         let secondary_options =
             restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);
-        let secondary_opened = runtime
-            .open_viewport(SECONDARY_SPACE, secondary_options, cx)
-            .expect("failed to open secondary docking viewport");
-        cx.update_window(secondary_opened.window(), |_, window, cx| {
+        let secondary_window = match viewports.open(SECONDARY_SPACE, secondary_options, cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("failed to open managed secondary viewport: {outcome:?}"),
+        };
+        cx.update_window(secondary_window, |_, window, cx| {
             set_window_theme(window, cx, DARK_THEME_ID)
                 .expect("secondary dark theme should be registered");
         })
@@ -1868,10 +2232,11 @@ fn main() {
         log::info!("{DOCKING_DEBUG_PREFIX} opened secondary viewport space={SECONDARY_SPACE}");
 
         let central_options = restored_viewport_options(&placement, CENTRAL_SPACE, central_bounds);
-        let central_opened = runtime
-            .open_viewport(CENTRAL_SPACE, central_options, cx)
-            .expect("failed to open empty central docking viewport");
-        cx.update_window(central_opened.window(), |_, window, cx| {
+        let central_window = match viewports.open(CENTRAL_SPACE, central_options, cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("failed to open managed central viewport: {outcome:?}"),
+        };
+        cx.update_window(central_window, |_, window, cx| {
             set_window_theme(window, cx, HIGH_CONTRAST_THEME_ID)
                 .expect("central high-contrast theme should be registered");
         })
@@ -1888,7 +2253,7 @@ mod tests {
     use super::*;
     use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
     use open_gpui_docking::{
-        DockClassId, DockPolicyError,
+        DockClassId, DockPolicyError, DockSurfaceWindowSessionPhase,
         advanced::{
             DockViewportCoordinateStatusRecord, DockViewportInputStatus,
             DockViewportPlatformRequestStatus, DockViewportRouteStatus,
@@ -2116,6 +2481,61 @@ mod tests {
         assert_eq!(central_region.node, None);
         assert!(central_region.keep_alive_when_empty);
         assert!(central_region.passthrough_when_empty);
+    }
+
+    #[open_gpui::test]
+    fn managed_example_primary_close_converges_without_app_quit(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+        cx.set_platform_viewport_windows(true);
+        let surface_slot = Rc::new(RefCell::new(None));
+        let (surface, anchor, dependent) = cx.update(|cx| {
+            let primary_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(360.0), px(240.0)));
+            let secondary_bounds =
+                Bounds::new(point(px(400.0), px(0.0)), size(px(320.0), px(240.0)));
+            let central_bounds =
+                Bounds::new(point(px(400.0), px(280.0)), size(px(320.0), px(200.0)));
+            let placement =
+                saved_viewport_placement(primary_bounds, secondary_bounds, central_bounds);
+            let surface = build_managed_surface(
+                surface_slot.clone(),
+                placement,
+                primary_bounds,
+                secondary_bounds,
+                central_bounds,
+                cx,
+            );
+            surface_slot.replace(Some(surface.clone()));
+            let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+                DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+                outcome => panic!("managed primary should open, got {outcome:?}"),
+            };
+            let dependent = match surface.viewports().open(
+                SECONDARY_SPACE,
+                viewport_window_options(Bounds::new(
+                    point(px(400.0), px(0.0)),
+                    size(px(320.0), px(240.0)),
+                )),
+                cx,
+            ) {
+                DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+                outcome => panic!("managed dependent should open, got {outcome:?}"),
+            };
+            (surface, anchor, dependent)
+        });
+
+        assert!(!cx.simulate_window_close(anchor));
+        cx.run_until_parked();
+
+        assert!(!cx.windows().contains(&dependent));
+        assert!(!cx.windows().contains(&anchor));
+        assert!(
+            !cx.did_quit(),
+            "DockSurface teardown must not call App::quit"
+        );
+        assert_eq!(
+            cx.update(|cx| surface.window_session_status(cx).phase()),
+            DockSurfaceWindowSessionPhase::Closed
+        );
     }
 
     #[test]

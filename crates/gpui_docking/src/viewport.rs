@@ -145,6 +145,12 @@ impl DockViewportAdapter {
         self.registry.is_current_registration(key)
     }
 
+    pub(crate) fn snapshots(
+        &self,
+    ) -> impl Iterator<Item = (&DockSpaceId, &crate::DockViewportSnapshot)> {
+        self.registry.snapshots()
+    }
+
     /// Returns known dock spaces in stable lexical order.
     pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
         self.registry.spaces()
@@ -174,8 +180,8 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockItemId, DockNode, DockViewportTargetContext, DockViewportUnregisterOutcome,
-        DockViewportUnregisterReason, DockViewportWindowFacts,
+        DockGraph, DockItemId, DockNode, DockViewportRuntimeLineage, DockViewportTargetContext,
+        DockViewportUnregisterOutcome, DockViewportUnregisterReason, DockViewportWindowFacts,
         viewport_test_support::{bounds, handle, register_viewport, space},
     };
     use open_gpui::{DisplayId, WindowBounds, point, px};
@@ -190,14 +196,25 @@ mod tests {
 
         assert!(
             adapter
-                .register_viewport_with_outcome(main.clone(), first)
+                .register_viewport_with_outcome(
+                    main.clone(),
+                    first,
+                    DockViewportRuntimeLineage::Unmanaged,
+                )
+                .expect("unmanaged registration cannot conflict by lineage")
                 .replaced()
                 .is_empty()
         );
         assert_eq!(adapter.window_for_space(&main), Some(first));
         assert_eq!(adapter.space_for_window_id(first.window_id()), Some(&main));
 
-        let previous = adapter.register_viewport_with_outcome(main.clone(), second);
+        let previous = adapter
+            .register_viewport_with_outcome(
+                main.clone(),
+                second,
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("unmanaged replacement cannot conflict by lineage");
         assert_eq!(
             previous.replaced(),
             &[DockViewportUnregisterOutcome {
@@ -249,7 +266,13 @@ mod tests {
         let first = handle(1);
 
         register_viewport(&mut adapter, main.clone(), first);
-        let outcome = adapter.register_viewport_with_outcome(secondary.clone(), first);
+        let outcome = adapter
+            .register_viewport_with_outcome(
+                secondary.clone(),
+                first,
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("unmanaged replacement cannot conflict by lineage");
 
         assert_eq!(outcome.space(), &secondary);
         assert_eq!(outcome.window(), first);
@@ -279,7 +302,13 @@ mod tests {
 
         register_viewport(&mut adapter, main.clone(), first);
         register_viewport(&mut adapter, secondary.clone(), second);
-        let outcome = adapter.register_viewport_with_outcome(main.clone(), second);
+        let outcome = adapter
+            .register_viewport_with_outcome(
+                main.clone(),
+                second,
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("unmanaged replacement cannot conflict by lineage");
 
         assert_eq!(
             outcome.replaced(),
@@ -318,7 +347,13 @@ mod tests {
             host_bounds,
         );
 
-        let outcome = adapter.register_viewport_with_outcome(main.clone(), window);
+        let outcome = adapter
+            .register_viewport_with_outcome(
+                main.clone(),
+                window,
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("unmanaged idempotent registration cannot conflict by lineage");
         assert!(outcome.replaced().is_empty());
         assert_eq!(outcome.space(), &main);
         assert_eq!(outcome.window(), window);

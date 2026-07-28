@@ -21,6 +21,7 @@ pub use crate::viewport_runtime_status::{
     DockViewportRouteRecord, DockViewportRouteSelectionRecord, DockViewportRouteStatus,
     DockViewportRouteTarget, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
     DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord, DockViewportTearOffRecord,
-    DockViewportVisualAffordanceRecord, DockViewportWindowProfileRecord,
+    DockViewportVisualAffordanceRecord, DockViewportWindowOwnershipStatus,
+    DockViewportWindowProfileRecord,
 };
 pub use crate::viewport_tear_off::DockViewportTearOffCancelReason;

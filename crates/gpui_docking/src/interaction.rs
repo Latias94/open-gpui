@@ -1,6 +1,6 @@
 use crate::{
     DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockSplitResize, DockViewportFocusCommand,
-    DockViewportFocusCommandSource, SplitAxis,
+    DockViewportFocusCommandSource, DockViewportRuntimeLineage, SplitAxis,
     drag::{DockDragPayload, DockDragPayloadIdentity, DockDragTearOffGeometry},
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
@@ -117,22 +117,39 @@ pub(crate) struct DockFloatingBoundsRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockRuntimeDragSession {
     id: u64,
+    lineage: DockViewportRuntimeLineage,
     payload: DockDragPayloadIdentity,
     focus_item: Option<DockItemId>,
 }
 
 impl DockRuntimeDragSession {
     pub(crate) fn new(id: u64, payload: &DockDragPayload) -> Self {
-        Self::with_focus_item(id, payload, None)
+        Self::with_lineage_and_focus_item(id, DockViewportRuntimeLineage::Unmanaged, payload, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_focus_item(
         id: u64,
         payload: &DockDragPayload,
         focus_item: Option<DockItemId>,
     ) -> Self {
+        Self::with_lineage_and_focus_item(
+            id,
+            DockViewportRuntimeLineage::Unmanaged,
+            payload,
+            focus_item,
+        )
+    }
+
+    pub(crate) fn with_lineage_and_focus_item(
+        id: u64,
+        lineage: DockViewportRuntimeLineage,
+        payload: &DockDragPayload,
+        focus_item: Option<DockItemId>,
+    ) -> Self {
         Self {
             id,
+            lineage,
             payload: payload.identity(),
             focus_item,
         }
@@ -140,6 +157,10 @@ impl DockRuntimeDragSession {
 
     pub(crate) fn id(&self) -> u64 {
         self.id
+    }
+
+    pub(crate) fn lineage(&self) -> DockViewportRuntimeLineage {
+        self.lineage
     }
 
     pub(crate) fn accepts_payload(&self, payload: &DockDragPayload) -> bool {

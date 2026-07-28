@@ -1,9 +1,29 @@
-use crate::{DockSpaceId, DockViewportHostGeometry, DockViewportIdentity};
+use crate::{
+    DockSpaceId, DockViewportHostGeometry, DockViewportIdentity, DockViewportRuntimeLineage,
+};
 use open_gpui::{
     AnyWindowHandle, App, Bounds, DisplayId, Pixels, Window, WindowBounds, WindowCoordinateSpace,
     WindowId, WindowPlatformFacts,
 };
 use std::collections::{BTreeMap, HashMap};
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct DockViewportRegistrationConflict {
+    incumbent: DockViewportRuntimeLineage,
+    requested: DockViewportRuntimeLineage,
+}
+
+impl DockViewportRegistrationConflict {
+    fn lineage(
+        incumbent: DockViewportRuntimeLineage,
+        requested: DockViewportRuntimeLineage,
+    ) -> Self {
+        Self {
+            incumbent,
+            requested,
+        }
+    }
+}
 
 /// Stable token for one exact logical-space-to-window registration.
 ///
@@ -15,20 +35,27 @@ pub(crate) struct DockViewportRegistrationKey {
     space: DockSpaceId,
     window_id: WindowId,
     generation: u64,
+    lineage: DockViewportRuntimeLineage,
 }
 
 impl DockViewportRegistrationKey {
-    fn new(space: DockSpaceId, window_id: WindowId, generation: u64) -> Self {
+    fn new(
+        space: DockSpaceId,
+        window_id: WindowId,
+        generation: u64,
+        lineage: DockViewportRuntimeLineage,
+    ) -> Self {
         Self {
             space,
             window_id,
             generation,
+            lineage,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn for_test(space: DockSpaceId, window_id: WindowId) -> Self {
-        Self::new(space, window_id, 0)
+        Self::new(space, window_id, 0, DockViewportRuntimeLineage::Unmanaged)
     }
 
     #[cfg(test)]
@@ -37,7 +64,12 @@ impl DockViewportRegistrationKey {
         window_id: WindowId,
         generation: u64,
     ) -> Self {
-        Self::new(space, window_id, generation)
+        Self::new(
+            space,
+            window_id,
+            generation,
+            DockViewportRuntimeLineage::Unmanaged,
+        )
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {
@@ -46,6 +78,10 @@ impl DockViewportRegistrationKey {
 
     pub(crate) fn window_id(&self) -> WindowId {
         self.window_id
+    }
+
+    pub(crate) const fn lineage(&self) -> DockViewportRuntimeLineage {
+        self.lineage
     }
 }
 
@@ -359,6 +395,7 @@ pub(crate) struct DockViewportSnapshot {
     /// Last known platform input mask.
     pub(crate) input_mask: DockViewportInputMask,
     registration_generation: u64,
+    lineage: DockViewportRuntimeLineage,
     platform_requests: DockViewportPlatformRequests,
     lifecycle: DockViewportLifecycleMachine,
 }
@@ -367,10 +404,14 @@ impl DockViewportSnapshot {
     /// Creates a snapshot for a newly registered viewport window.
     #[cfg(test)]
     pub(crate) fn new(window: AnyWindowHandle) -> Self {
-        Self::with_registration_generation(window, 0)
+        Self::with_registration_generation(window, 0, DockViewportRuntimeLineage::Unmanaged)
     }
 
-    fn with_registration_generation(window: AnyWindowHandle, registration_generation: u64) -> Self {
+    fn with_registration_generation(
+        window: AnyWindowHandle,
+        registration_generation: u64,
+        lineage: DockViewportRuntimeLineage,
+    ) -> Self {
         Self {
             window,
             display_id: None,
@@ -379,6 +420,7 @@ impl DockViewportSnapshot {
             host_geometry: None,
             input_mask: DockViewportInputMask::Minimized,
             registration_generation,
+            lineage,
             platform_requests: DockViewportPlatformRequests::default(),
             lifecycle: DockViewportLifecycleMachine::default(),
         }
@@ -389,7 +431,12 @@ impl DockViewportSnapshot {
             space.clone(),
             self.window.window_id(),
             self.registration_generation,
+            self.lineage,
         )
+    }
+
+    pub(crate) const fn lineage(&self) -> DockViewportRuntimeLineage {
+        self.lineage
     }
 
     fn identity(&self, space: &DockSpaceId) -> DockViewportIdentity {
@@ -466,16 +513,35 @@ impl DockViewportSnapshot {
             .then(|| self.facts_generation())
     }
 
+    #[cfg(test)]
     pub(crate) fn update_route_facts(
         &mut self,
         window_facts: DockViewportWindowFacts,
         host_geometry: impl Into<DockViewportHostGeometry>,
     ) -> bool {
+        self.update_route_facts_with_change(window_facts, host_geometry)
+            .changed
+    }
+
+    pub(crate) fn update_route_facts_with_change(
+        &mut self,
+        window_facts: DockViewportWindowFacts,
+        host_geometry: impl Into<DockViewportHostGeometry>,
+    ) -> DockViewportWindowFactsChange {
         let host_geometry = Some(host_geometry.into());
         let display_id = window_facts.display_id;
         let window_bounds = Some(window_facts.window_bounds);
         let current_bounds = Some(window_facts.current_bounds);
         let input_mask = window_facts.input_mask;
+        let placement_changed = self.display_id != display_id
+            || self.window_bounds != window_bounds
+            || self
+                .host_geometry
+                .as_ref()
+                .map(|geometry| geometry.layout_bounds())
+                != host_geometry
+                    .as_ref()
+                    .map(|geometry| geometry.layout_bounds());
         if self.lifecycle.is_route_ready()
             && self.display_id == display_id
             && self.window_bounds == window_bounds
@@ -485,7 +551,10 @@ impl DockViewportSnapshot {
             let changed = self.input_mask != input_mask || self.platform_requests.resize_requested;
             self.input_mask = input_mask;
             self.platform_requests.resize_requested = false;
-            return changed;
+            return DockViewportWindowFactsChange {
+                changed,
+                placement_changed,
+            };
         }
 
         self.display_id = display_id;
@@ -495,7 +564,10 @@ impl DockViewportSnapshot {
         self.input_mask = input_mask;
         self.platform_requests.resize_requested = false;
         self.lifecycle.mark_route_ready();
-        true
+        DockViewportWindowFactsChange {
+            changed: true,
+            placement_changed,
+        }
     }
 
     pub(crate) fn apply_platform_window_facts_with_change(
@@ -507,7 +579,7 @@ impl DockViewportSnapshot {
         }
 
         self.platform_requests = self.platform_requests_after_window_facts(window_facts);
-        let placement_changed = self.placement_facts_differ(window_facts);
+        let placement_changed = self.serialized_window_placement_facts_differ(window_facts);
 
         if self.can_preserve_route_facts_for_platform_move(window_facts) {
             return DockViewportWindowFactsChange {
@@ -526,10 +598,12 @@ impl DockViewportSnapshot {
         }
     }
 
-    fn placement_facts_differ(&self, window_facts: DockViewportWindowFacts) -> bool {
+    fn serialized_window_placement_facts_differ(
+        &self,
+        window_facts: DockViewportWindowFacts,
+    ) -> bool {
         self.display_id != window_facts.display_id
             || self.window_bounds != Some(window_facts.window_bounds)
-            || self.current_bounds != Some(window_facts.current_bounds)
     }
 
     fn can_preserve_route_facts_for_platform_move(
@@ -656,27 +730,51 @@ impl DockViewportRegistry {
         space: DockSpaceId,
         window: AnyWindowHandle,
     ) -> Option<DockViewportSnapshot> {
-        self.register_with_replacements(space.clone(), window)
-            .into_iter()
-            .find(|(removed_space, _)| *removed_space == space)
-            .map(|(_, snapshot)| snapshot)
+        self.register_with_replacements(
+            space.clone(),
+            window,
+            DockViewportRuntimeLineage::Unmanaged,
+        )
+        .expect("unmanaged test registrations cannot conflict by lineage")
+        .into_iter()
+        .find(|(removed_space, _)| *removed_space == space)
+        .map(|(_, snapshot)| snapshot)
     }
 
     pub(crate) fn register_with_replacements(
         &mut self,
         space: DockSpaceId,
         window: AnyWindowHandle,
-    ) -> Vec<(DockSpaceId, DockViewportSnapshot)> {
+        lineage: DockViewportRuntimeLineage,
+    ) -> Result<Vec<(DockSpaceId, DockViewportSnapshot)>, DockViewportRegistrationConflict> {
         let window_id = window.window_id();
         if let Some(snapshot) = self.viewports.get(&space)
+            && snapshot.lineage != lineage
+        {
+            return Err(DockViewportRegistrationConflict::lineage(
+                snapshot.lineage,
+                lineage,
+            ));
+        }
+        if let Some(previous_space) = self.windows.get(&window_id)
+            && let Some(snapshot) = self.viewports.get(previous_space)
+            && snapshot.lineage != lineage
+        {
+            return Err(DockViewportRegistrationConflict::lineage(
+                snapshot.lineage,
+                lineage,
+            ));
+        }
+        if let Some(snapshot) = self.viewports.get(&space)
             && snapshot.identity(&space).matches(&space, window_id)
+            && snapshot.lineage == lineage
             && self
                 .windows
                 .get(&window_id)
                 .is_none_or(|registered_space| registered_space == &space)
         {
             self.windows.insert(window_id, space);
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let mut replaced = Vec::new();
@@ -704,9 +802,13 @@ impl DockViewportRegistry {
             .insert(space.clone(), registration_generation);
         self.viewports.insert(
             space,
-            DockViewportSnapshot::with_registration_generation(window, registration_generation),
+            DockViewportSnapshot::with_registration_generation(
+                window,
+                registration_generation,
+                lineage,
+            ),
         );
-        replaced
+        Ok(replaced)
     }
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
@@ -774,6 +876,7 @@ impl DockViewportRegistry {
         self.viewports.get(key.space()).is_some_and(|snapshot| {
             snapshot.registration_generation == key.generation
                 && snapshot.window.window_id() == key.window_id()
+                && snapshot.lineage == key.lineage()
         }) && self
             .windows
             .get(&key.window_id())
@@ -801,7 +904,9 @@ impl DockViewportRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::surface::window_session::DockSurfaceWindowSession;
     use crate::viewport_test_support::{handle, space};
+    use open_gpui::EntityId;
 
     #[test]
     fn newly_registered_viewport_starts_not_route_ready() {
@@ -849,6 +954,39 @@ mod tests {
     }
 
     #[test]
+    fn cross_lineage_registration_is_rejected_without_mutating_the_incumbent() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let window = handle(1);
+        registry.register(main.clone(), window);
+        let incumbent = registry
+            .registration_key(&main)
+            .expect("incumbent registration should exist");
+
+        let mut session = DockSurfaceWindowSession::new(EntityId::from(91));
+        let opening = session.reserve_opening().expect("surface should reserve");
+        let lease = session
+            .commit_opening(opening, WindowId::from(99))
+            .expect("surface should activate");
+
+        assert!(
+            registry
+                .register_with_replacements(
+                    main.clone(),
+                    window,
+                    DockViewportRuntimeLineage::Surface(lease),
+                )
+                .is_err()
+        );
+        assert_eq!(registry.registration_key(&main), Some(incumbent));
+        assert_eq!(registry.window_for_space(&main), Some(window));
+        assert_eq!(
+            registry.space_for_window_id(window.window_id()),
+            Some(&main)
+        );
+    }
+
+    #[test]
     fn registration_generations_are_scoped_to_each_space_lineage() {
         let mut registry = DockViewportRegistry::default();
         let main = space("main");
@@ -885,7 +1023,12 @@ mod tests {
             .expect("binding should have a registration key");
         assert!(
             registry
-                .register_with_replacements(main.clone(), window)
+                .register_with_replacements(
+                    main.clone(),
+                    window,
+                    DockViewportRuntimeLineage::Unmanaged,
+                )
+                .expect("unmanaged idempotent registration cannot conflict by lineage")
                 .is_empty()
         );
 
@@ -936,7 +1079,13 @@ mod tests {
                 .is_none()
         );
 
-        let replaced = registry.register_with_replacements(target_space.clone(), source_window);
+        let replaced = registry
+            .register_with_replacements(
+                target_space.clone(),
+                source_window,
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("unmanaged replacement cannot conflict by lineage");
         assert_eq!(replaced.len(), 2);
         assert!(replaced.iter().any(|(space, snapshot)| {
             *space == target_space && snapshot.window == target_window
@@ -1047,6 +1196,83 @@ mod tests {
         assert!(snapshot.is_route_ready());
         assert!(!snapshot.can_route_hover_hit());
         assert_eq!(snapshot.route_unavailable_reason(), None);
+    }
+
+    #[test]
+    fn route_only_scene_facts_do_not_report_persistent_placement_changes() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        registry.register(main.clone(), handle(1));
+        let window_bounds = Bounds::new(
+            open_gpui::point(open_gpui::px(100.0), open_gpui::px(100.0)),
+            open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+        );
+        let host_bounds = Bounds::new(
+            open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+            open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+        );
+        let facts =
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(window_bounds));
+        let snapshot = registry
+            .snapshot_mut(&main)
+            .expect("registered viewport should have a mutable snapshot");
+
+        let initial = snapshot.update_route_facts_with_change(
+            facts,
+            DockViewportHostGeometry::identity_with_hit_region_for_test(host_bounds, host_bounds),
+        );
+        assert!(initial.changed);
+        assert!(initial.placement_changed);
+
+        let smaller_hit_region = Bounds::new(
+            open_gpui::point(open_gpui::px(8.0), open_gpui::px(8.0)),
+            open_gpui::size(open_gpui::px(304.0), open_gpui::px(224.0)),
+        );
+        let hit_region_only = snapshot.update_route_facts_with_change(
+            facts,
+            DockViewportHostGeometry::identity_with_hit_region_for_test(
+                host_bounds,
+                smaller_hit_region,
+            ),
+        );
+        assert!(hit_region_only.changed);
+        assert!(
+            !hit_region_only.placement_changed,
+            "the serialized host bounds did not change"
+        );
+
+        let mut current_bounds_only = facts;
+        current_bounds_only.current_bounds =
+            DockViewportWindowBoundsFrame::WindowLocal(Bounds::new(
+                open_gpui::point(open_gpui::px(4.0), open_gpui::px(6.0)),
+                window_bounds.size,
+            ));
+        let route_frame_only = snapshot.update_route_facts_with_change(
+            current_bounds_only,
+            DockViewportHostGeometry::identity_with_hit_region_for_test(
+                host_bounds,
+                smaller_hit_region,
+            ),
+        );
+        assert!(route_frame_only.changed);
+        assert!(
+            !route_frame_only.placement_changed,
+            "route-coordinate freshness is not part of placement serialization"
+        );
+
+        let mut observed_route_frame_only = current_bounds_only;
+        observed_route_frame_only.current_bounds =
+            DockViewportWindowBoundsFrame::WindowLocal(Bounds::new(
+                open_gpui::point(open_gpui::px(12.0), open_gpui::px(16.0)),
+                window_bounds.size,
+            ));
+        let platform_route_frame_only =
+            snapshot.apply_platform_window_facts_with_change(observed_route_frame_only);
+        assert!(platform_route_frame_only.changed);
+        assert!(
+            !platform_route_frame_only.placement_changed,
+            "platform route coordinates are not part of placement serialization"
+        );
     }
 
     #[test]

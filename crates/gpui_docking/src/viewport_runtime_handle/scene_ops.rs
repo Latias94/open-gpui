@@ -1,6 +1,21 @@
 use super::*;
 use crate::DockViewportHostGeometry;
 
+fn admits_scene_registration(
+    runtime: &DockViewportRuntime,
+    work_context: DockViewportRuntimeWorkContext,
+    current_registration: Option<&DockViewportRegistrationKey>,
+    expected_registration: Option<&DockViewportRegistrationKey>,
+) -> bool {
+    match expected_registration {
+        Some(expected) => {
+            current_registration == Some(expected)
+                && runtime.admits_registration_in_context(work_context, expected)
+        }
+        None => runtime.admits_work_context(work_context) && current_registration.is_none(),
+    }
+}
+
 fn sample_viewport_frame_request<C: open_gpui::AppContext>(
     request: DockViewportFrameSampleRequest,
     cx: &mut C,
@@ -106,17 +121,23 @@ impl DockViewportRuntimeHandle {
         &self,
         draft: DockViewportHostSceneDraft,
         expected_registration: Option<&DockViewportRegistrationKey>,
+        work_context: DockViewportRuntimeWorkContext,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<DockViewportRenderedHostScenePreparation> {
         let space = draft.space.clone();
         let window_id = window.window_handle().window_id();
-        if draft.window_id != window_id
-            || self
-                .registration_key_for_space_window(&space, window_id)
-                .as_ref()
-                != expected_registration
-        {
+        let registration_is_admitted = {
+            let runtime = self.runtime.borrow();
+            let current_registration = runtime.registration_key_for_space_window(&space, window_id);
+            admits_scene_registration(
+                &runtime,
+                work_context,
+                current_registration.as_ref(),
+                expected_registration,
+            )
+        };
+        if draft.window_id != window_id || !registration_is_admitted {
             return None;
         }
 
@@ -127,6 +148,7 @@ impl DockViewportRuntimeHandle {
             changed: backend_focus_changed || viewport_frame_changed,
             draft,
             expected_registration: expected_registration.cloned(),
+            work_context,
             window: window.window_handle(),
             window_facts,
         })
@@ -140,39 +162,55 @@ impl DockViewportRuntimeHandle {
             changed,
             draft,
             expected_registration,
+            work_context,
             window,
             window_facts,
         } = preparation;
         let space = draft.space.clone();
         let window_id = draft.window_id;
         let mut runtime = self.runtime.borrow_mut();
-        if runtime
-            .registration_key_for_space_window(&space, window_id)
-            .as_ref()
-            != expected_registration.as_ref()
-        {
+        let current_registration = runtime.registration_key_for_space_window(&space, window_id);
+        if !admits_scene_registration(
+            &runtime,
+            work_context,
+            current_registration.as_ref(),
+            expected_registration.as_ref(),
+        ) {
             return DockViewportRenderedHostSceneCommit {
                 changed,
+                work_context,
                 frame: None,
                 registration_update: DockViewportRuntimeUpdate::default(),
                 route_preview_update: DockViewportRuntimeUpdate::default(),
             };
         }
 
-        let registration_update =
-            runtime.register_rendered_host_viewport_with_cleanup(space.clone(), window);
+        let mut registration_update = runtime.register_rendered_host_viewport_with_cleanup(
+            space.clone(),
+            window,
+            work_context,
+        );
         let registration = runtime
             .registration_key_for_space_window(&space, window_id)
             .and_then(|registration_key| draft.bind(registration_key))
             .and_then(|snapshot| {
                 runtime.commit_viewport_host_scene_snapshot(snapshot, window_facts)
             });
-        let route_preview_update = runtime.clear_preview_for_unready_window_route(window_id);
-        let (host_scene_changed, frame) = registration
-            .map(|registration| (registration.changed, Some(registration.frame)))
-            .unwrap_or((false, None));
+        let mut route_preview_update = runtime.clear_preview_for_unready_window_route(window_id);
+        route_preview_update.bind_work_context(work_context);
+        let (host_scene_changed, placement_changed, frame) = registration
+            .map(|registration| {
+                (
+                    registration.changed,
+                    registration.placement_changed,
+                    Some(registration.frame),
+                )
+            })
+            .unwrap_or((false, false, None));
+        registration_update.mark_observed_viewport_placement(placement_changed, work_context);
         DockViewportRenderedHostSceneCommit {
             changed: changed || host_scene_changed,
+            work_context,
             frame,
             registration_update,
             route_preview_update,
@@ -185,6 +223,9 @@ impl DockViewportRuntimeHandle {
         commit: DockViewportRenderedHostSceneCommit,
         cx: &mut App,
     ) -> bool {
+        if !self.admits_rendered_viewport_host_scene_commit(&commit) {
+            return false;
+        }
         let registration_changed =
             refresh_runtime_update_with_commit(self, commit.registration_update, cx);
         let route_preview_changed = refresh_runtime_update(commit.route_preview_update, cx);
@@ -197,6 +238,9 @@ impl DockViewportRuntimeHandle {
         window: &Window,
         cx: &mut App,
     ) -> bool {
+        if !self.admits_rendered_viewport_host_scene_commit(&commit) {
+            return false;
+        }
         let current_window = Some(window.window_handle().window_id());
         self.publish_surface_commit(&commit.registration_update, cx);
         let registration_changed =
@@ -204,6 +248,18 @@ impl DockViewportRuntimeHandle {
         let route_preview_changed =
             refresh_runtime_update_excluding(commit.route_preview_update, current_window, cx);
         commit.changed || registration_changed || route_preview_changed
+    }
+
+    fn admits_rendered_viewport_host_scene_commit(
+        &self,
+        commit: &DockViewportRenderedHostSceneCommit,
+    ) -> bool {
+        let runtime = self.runtime.borrow();
+        runtime.admits_work_context(commit.work_context)
+            && commit.frame.as_ref().is_none_or(|frame| {
+                runtime
+                    .admits_registration_in_context(commit.work_context, frame.registration_key())
+            })
     }
 
     pub(crate) fn rollback_rendered_viewport_host_scene_frame(
@@ -228,11 +284,7 @@ impl DockViewportRuntimeHandle {
     ) -> bool {
         let window_id = window.window_handle().window_id();
         if registration.window_id() != window_id
-            || !self
-                .runtime
-                .borrow()
-                .adapter()
-                .is_current_registration(registration)
+            || !self.runtime.borrow().admits_registration(registration)
         {
             return false;
         }
@@ -256,7 +308,7 @@ impl DockViewportRuntimeHandle {
             });
         let pointer_input_resolution = {
             let mut runtime = self.runtime.borrow_mut();
-            if !runtime.adapter().is_current_registration(registration) {
+            if !runtime.admits_registration(registration) {
                 return false;
             }
             resolve_render_passthrough_pointer_input_request(
@@ -276,12 +328,7 @@ impl DockViewportRuntimeHandle {
             )
         });
         let pointer_input_request = pointer_input_resolution.request.filter(|_| !retry_blocked);
-        if !self
-            .runtime
-            .borrow()
-            .adapter()
-            .is_current_registration(registration)
-        {
+        if !self.runtime.borrow().admits_registration(registration) {
             return false;
         }
         let Some(pointer_sync) = pointer_input_request.and_then(|accepts_pointer_input| {
@@ -464,8 +511,62 @@ impl DockViewportRuntimeHandle {
 mod tests {
     use super::*;
     use crate::host_viewport_runtime_test_support::DockViewportRuntimeFixture;
+    use crate::surface::window_session::{
+        DockSurfaceWindowSession, DockSurfaceWindowSessionLease,
+        DockSurfaceWindowSessionShutdownConvergenceOutcome, DockSurfaceWindowSessionShutdownReason,
+        DockSurfaceWindowSessionTerminalDisposition,
+    };
     use crate::{drop_target::DockEmptySpaceDropTarget, viewport_test_support::bounds};
-    use open_gpui::{TestAppContext, point, px};
+    use open_gpui::{Empty, EntityId, TestAppContext, WindowId, point, px, size};
+
+    fn active_surface_lease(
+        session: &mut DockSurfaceWindowSession,
+        anchor: WindowId,
+    ) -> DockSurfaceWindowSessionLease {
+        let opening = session
+            .reserve_opening()
+            .expect("the surface session should reserve an opening generation");
+        session
+            .commit_opening(opening, anchor)
+            .expect("the reserved surface generation should activate")
+    }
+
+    fn reopen_surface_runtime(
+        runtime: &DockViewportRuntimeHandle,
+        session: &mut DockSurfaceWindowSession,
+        lease: DockSurfaceWindowSessionLease,
+        next_anchor: WindowId,
+    ) -> DockSurfaceWindowSessionLease {
+        session.begin_shutdown(
+            lease,
+            DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+            std::iter::empty(),
+        );
+        assert!(
+            runtime
+                .begin_surface_shutdown(lease)
+                .expect("the active generation should begin runtime shutdown")
+                .windows()
+                .is_empty(),
+            "the scene-only generation should not own platform windows"
+        );
+        session.mark_runtime_empty(lease);
+        session.settle_terminal(
+            lease,
+            lease.anchor(),
+            DockSurfaceWindowSessionTerminalDisposition::ObservedClosed,
+        );
+        assert_eq!(
+            session.complete_shutdown(lease),
+            DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed
+        );
+        let next = active_surface_lease(session, next_anchor);
+        assert_eq!(
+            runtime.activate_surface_lineage(next),
+            DockViewportRuntimeLineageActivationOutcome::Activated
+        );
+        next
+    }
 
     #[open_gpui::test]
     fn reconcile_viewport_frame_releases_runtime_borrow_before_external_sample(
@@ -499,6 +600,232 @@ mod tests {
         });
 
         assert!(sampled.get(), "the registered viewport should be sampled");
+    }
+
+    #[open_gpui::test]
+    fn unregistered_scene_preparation_cannot_finalize_after_surface_generation_switch(
+        cx: &mut TestAppContext,
+    ) {
+        let space = DockSpaceId::from("main");
+        let controller = DockViewportRuntimeFixture::builder(space.clone())
+            .space(space.clone(), ["a"])
+            .build_controller(cx)
+            .controller;
+        let authority = EntityId::from(101);
+        let runtime = DockViewportRuntimeHandle::for_surface(
+            controller,
+            authority,
+            DockViewportClosePolicy::default(),
+            None,
+        );
+        let mut session = DockSurfaceWindowSession::new(authority);
+        let g1 = active_surface_lease(&mut session, WindowId::from(1001));
+        assert_eq!(
+            runtime.activate_surface_lineage(g1),
+            DockViewportRuntimeLineageActivationOutcome::Activated
+        );
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(480.0), px(320.0)), |_, _| Empty)
+            .into();
+        let window_id = window.window_id();
+        let host_bounds = bounds(0.0, 0.0, 480.0, 320.0);
+        let preparation = window
+            .update(cx, |_, window, app| {
+                runtime
+                    .prepare_rendered_viewport_host_scene_draft(
+                        DockViewportHostSceneDraft::new(
+                            space.clone(),
+                            window_id,
+                            DockViewportWindowFacts::from_window(window, app).current_bounds,
+                            host_bounds,
+                            point(px(12.0), px(12.0)),
+                            crate::DockDropGuideMetrics::default(),
+                        ),
+                        None,
+                        DockViewportRuntimeWorkContext::new(
+                            DockViewportRuntimeLineage::Surface(g1),
+                            None,
+                        ),
+                        window,
+                        app,
+                    )
+                    .expect("G1 should prepare while its exact session is active")
+            })
+            .expect("the raw window should remain live");
+
+        let g2 = reopen_surface_runtime(&runtime, &mut session, g1, WindowId::from(1002));
+        let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
+
+        assert!(commit.frame.is_none(), "G1 work must not finalize under G2");
+        assert_eq!(
+            runtime.registration_key_for_space_window(&space, window_id),
+            None,
+            "an absent expected registration must not become a wildcard across generations"
+        );
+        assert!(runtime.windows_for_surface(g1).is_empty());
+        assert!(runtime.windows_for_surface(g2).is_empty());
+    }
+
+    #[open_gpui::test]
+    fn rendered_scene_registration_is_minted_only_by_unmanaged_runtime(cx: &mut TestAppContext) {
+        let space = DockSpaceId::from("main");
+        let controller = DockViewportRuntimeFixture::builder(space.clone())
+            .space(space.clone(), ["a"])
+            .build_controller(cx)
+            .controller;
+        let authority = EntityId::from(102);
+        let surface_runtime = DockViewportRuntimeHandle::for_surface(
+            controller.clone(),
+            authority,
+            DockViewportClosePolicy::default(),
+            None,
+        );
+        let mut session = DockSurfaceWindowSession::new(authority);
+        let lease = active_surface_lease(&mut session, WindowId::from(2001));
+        assert_eq!(
+            surface_runtime.activate_surface_lineage(lease),
+            DockViewportRuntimeLineageActivationOutcome::Activated
+        );
+        let surface_window: AnyWindowHandle = cx
+            .open_window(size(px(480.0), px(320.0)), |_, _| Empty)
+            .into();
+        let surface_window_id = surface_window.window_id();
+        let host_bounds = bounds(0.0, 0.0, 480.0, 320.0);
+        let surface_preparation = surface_window
+            .update(cx, |_, window, app| {
+                surface_runtime
+                    .prepare_rendered_viewport_host_scene_draft(
+                        DockViewportHostSceneDraft::new(
+                            space.clone(),
+                            surface_window_id,
+                            DockViewportWindowFacts::from_window(window, app).current_bounds,
+                            host_bounds,
+                            point(px(12.0), px(12.0)),
+                            crate::DockDropGuideMetrics::default(),
+                        ),
+                        None,
+                        DockViewportRuntimeWorkContext::new(
+                            DockViewportRuntimeLineage::Surface(lease),
+                            None,
+                        ),
+                        window,
+                        app,
+                    )
+                    .expect("the active surface context may sample an unregistered scene")
+            })
+            .expect("the surface test window should remain live");
+        let surface_commit =
+            surface_runtime.finalize_rendered_viewport_host_scene_draft(surface_preparation);
+        assert!(
+            surface_commit.frame.is_none(),
+            "surface rendering must not mint ownership for an arbitrary window"
+        );
+        assert_eq!(
+            surface_runtime.registration_key_for_space_window(&space, surface_window_id),
+            None
+        );
+        assert!(surface_runtime.windows_for_surface(lease).is_empty());
+
+        let unmanaged_runtime = DockViewportRuntimeHandle::new(controller);
+        let unmanaged_window: AnyWindowHandle = cx
+            .open_window(size(px(480.0), px(320.0)), |_, _| Empty)
+            .into();
+        let unmanaged_window_id = unmanaged_window.window_id();
+        let unmanaged_preparation = unmanaged_window
+            .update(cx, |_, window, app| {
+                unmanaged_runtime
+                    .prepare_rendered_viewport_host_scene_draft(
+                        DockViewportHostSceneDraft::new(
+                            space.clone(),
+                            unmanaged_window_id,
+                            DockViewportWindowFacts::from_window(window, app).current_bounds,
+                            host_bounds,
+                            point(px(24.0), px(24.0)),
+                            crate::DockDropGuideMetrics::default(),
+                        ),
+                        None,
+                        DockViewportRuntimeWorkContext::new(
+                            DockViewportRuntimeLineage::Unmanaged,
+                            None,
+                        ),
+                        window,
+                        app,
+                    )
+                    .expect("an unmanaged runtime should prepare its first rendered scene")
+            })
+            .expect("the unmanaged test window should remain live");
+        let unmanaged_commit =
+            unmanaged_runtime.finalize_rendered_viewport_host_scene_draft(unmanaged_preparation);
+        assert!(
+            unmanaged_commit.frame.is_some(),
+            "the explicitly unmanaged low-level runtime keeps first-render registration"
+        );
+        assert!(
+            unmanaged_runtime
+                .registration_key_for_space_window(&space, unmanaged_window_id)
+                .is_some()
+        );
+    }
+
+    #[open_gpui::test]
+    fn finalized_scene_commit_cannot_publish_after_registration_generation_switch(
+        cx: &mut TestAppContext,
+    ) {
+        let space = DockSpaceId::from("main");
+        let fixture = DockViewportRuntimeFixture::builder(space.clone())
+            .space(space.clone(), ["a"])
+            .allow_platform_viewports(true)
+            .build(cx);
+        let opened = fixture.open_unfocused_viewport(cx, &space);
+        let window = opened.window();
+        let window_id = window.window_id();
+        let runtime = fixture.runtime.clone();
+        let host_bounds = bounds(0.0, 0.0, 480.0, 320.0);
+        let expected_registration = runtime
+            .registration_key_for_space_window(&space, window_id)
+            .expect("the opened viewport should have a registration");
+        let preparation = window
+            .update(cx, |_, window, app| {
+                runtime
+                    .prepare_rendered_viewport_host_scene_draft(
+                        DockViewportHostSceneDraft::new(
+                            space.clone(),
+                            window_id,
+                            DockViewportWindowFacts::from_window(window, app).current_bounds,
+                            host_bounds,
+                            point(px(12.0), px(12.0)),
+                            crate::DockDropGuideMetrics::default(),
+                        ),
+                        Some(&expected_registration),
+                        DockViewportRuntimeWorkContext::new(
+                            DockViewportRuntimeLineage::Unmanaged,
+                            None,
+                        ),
+                        window,
+                        app,
+                    )
+                    .expect("the current registration should prepare")
+            })
+            .expect("the viewport window should remain live");
+        let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
+        assert!(commit.frame.is_some(), "the current scene should finalize");
+
+        let replacement = runtime
+            .runtime
+            .borrow_mut()
+            .replace_adapter_registration_for_test(space.clone(), window);
+        assert_ne!(expected_registration, replacement);
+        let published =
+            cx.update(|app| runtime.publish_rendered_viewport_host_scene_commit(commit, app));
+
+        assert!(
+            !published,
+            "a finalized G1 scene must not publish after the adapter advances to G2"
+        );
+        assert_eq!(
+            runtime.registration_key_for_space_window(&space, window_id),
+            Some(replacement)
+        );
     }
 
     #[open_gpui::test]
@@ -547,6 +874,10 @@ mod tests {
                             crate::DockDropGuideMetrics::default(),
                         ),
                         Some(&old_registration),
+                        DockViewportRuntimeWorkContext::new(
+                            DockViewportRuntimeLineage::Unmanaged,
+                            None,
+                        ),
                         window,
                         app,
                     )
@@ -588,6 +919,10 @@ mod tests {
         );
         let mut stale_rollback_commit = DockViewportRenderedHostSceneCommit {
             changed: false,
+            work_context: DockViewportRuntimeWorkContext::new(
+                DockViewportRuntimeLineage::Unmanaged,
+                None,
+            ),
             frame: None,
             registration_update: DockViewportRuntimeUpdate::default(),
             route_preview_update: DockViewportRuntimeUpdate::default(),
@@ -612,6 +947,10 @@ mod tests {
 
         let mut current_rollback_commit = DockViewportRenderedHostSceneCommit {
             changed: false,
+            work_context: DockViewportRuntimeWorkContext::new(
+                DockViewportRuntimeLineage::Unmanaged,
+                None,
+            ),
             frame: None,
             registration_update: DockViewportRuntimeUpdate::default(),
             route_preview_update: DockViewportRuntimeUpdate::default(),

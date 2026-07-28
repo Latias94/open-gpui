@@ -1,4 +1,4 @@
-use open_gpui::{EntityId, WindowId};
+use open_gpui::{AnyWindowHandle, EntityId, WindowId};
 
 /// Public lifecycle phase for one facade-managed Dock surface window session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,6 +88,8 @@ pub enum DockSurfaceWindowSessionOpeningRollbackReason {
     AppShutdown,
     /// The owner explicitly cancelled primary creation.
     Cancelled,
+    /// Root construction or initial rendering panicked before activation.
+    Panicked,
 }
 
 /// Typed reason a committed window session entered deterministic shutdown.
@@ -129,19 +131,67 @@ pub enum DockSurfacePrimaryWindowOpenConflict {
     },
 }
 
+/// Result of one facade-managed primary-window open request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DockSurfacePrimaryWindowOpenOutcome {
+    /// A committed primary window activated a new session generation.
+    Opened(DockSurfacePrimaryWindowOpened),
+    /// The request was rejected or rolled back before activation.
+    Unavailable(DockSurfacePrimaryWindowUnavailable),
+}
+
+/// A committed facade-managed primary window and its session generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DockSurfacePrimaryWindowOpened {
+    window: AnyWindowHandle,
+    generation: u64,
+}
+
+impl DockSurfacePrimaryWindowOpened {
+    pub(crate) const fn new(window: AnyWindowHandle, generation: u64) -> Self {
+        Self { window, generation }
+    }
+
+    /// Returns the exact committed primary window.
+    pub const fn window(self) -> AnyWindowHandle {
+        self.window
+    }
+
+    /// Returns the activated window-session generation.
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+}
+
+/// Typed reason a facade-managed primary window could not open.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DockSurfacePrimaryWindowUnavailable {
+    /// Another window-session generation still owns the primary role.
+    Conflict(DockSurfacePrimaryWindowOpenConflict),
+    /// Window creation rolled back the exact opening reservation.
+    OpeningRolledBack {
+        /// Lifecycle reason recorded by the window-session authority.
+        reason: DockSurfaceWindowSessionOpeningRollbackReason,
+        /// Diagnostic supplied by the GPUI window creation boundary.
+        message: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DockSurfaceWindowSessionOpeningToken {
     authority: EntityId,
     generation: u64,
 }
 
 impl DockSurfaceWindowSessionOpeningToken {
+    #[cfg(test)]
     pub(crate) const fn generation(self) -> u64 {
         self.generation
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DockSurfaceWindowSessionLease {
     authority: EntityId,
     generation: u64,
@@ -149,12 +199,26 @@ pub(crate) struct DockSurfaceWindowSessionLease {
 }
 
 impl DockSurfaceWindowSessionLease {
+    pub(crate) const fn authority(self) -> EntityId {
+        self.authority
+    }
+
     pub(crate) const fn generation(self) -> u64 {
         self.generation
     }
 
     pub(crate) const fn anchor(self) -> WindowId {
         self.anchor
+    }
+
+    pub(crate) fn activates(
+        self,
+        token: DockSurfaceWindowSessionOpeningToken,
+        anchor: WindowId,
+    ) -> bool {
+        self.authority == token.authority
+            && self.generation == token.generation
+            && self.anchor == anchor
     }
 }
 
@@ -180,20 +244,24 @@ pub(crate) enum DockSurfaceWindowSessionBeginShutdownOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DockSurfaceWindowSessionTerminalAbsenceReason {
-    WindowDestroyed,
-    AppShutdown,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockSurfaceWindowSessionTerminalDisposition {
     ObservedClosed,
-    ConfirmedAbsent(DockSurfaceWindowSessionTerminalAbsenceReason),
+    ConfirmedAbsentAfterAppShutdown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockSurfaceWindowSessionTerminalOutcome {
     Settled,
+    AlreadyTerminal,
+    UnknownWindow,
+    StaleLease,
+    NotShuttingDown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockSurfaceWindowSessionCloseDispatchOutcome {
+    Claimed,
+    AlreadyClaimed,
     AlreadyTerminal,
     UnknownWindow,
     StaleLease,
@@ -222,6 +290,7 @@ pub(crate) enum DockSurfaceWindowSessionShutdownConvergenceOutcome {
 #[derive(Debug)]
 struct DockSurfaceWindowSessionTerminalTicket {
     window_id: WindowId,
+    close_dispatched: bool,
     terminal: Option<DockSurfaceWindowSessionTerminalDisposition>,
 }
 
@@ -229,6 +298,7 @@ impl DockSurfaceWindowSessionTerminalTicket {
     fn pending(window_id: WindowId) -> Self {
         Self {
             window_id,
+            close_dispatched: false,
             terminal: None,
         }
     }
@@ -337,6 +407,100 @@ impl DockSurfaceWindowSession {
         };
         self.state = DockSurfaceWindowSessionState::Active { lease };
         Ok(lease)
+    }
+
+    pub(crate) fn active_lease(&self) -> Option<DockSurfaceWindowSessionLease> {
+        match &self.state {
+            DockSurfaceWindowSessionState::Active { lease } => Some(*lease),
+            DockSurfaceWindowSessionState::Vacant
+            | DockSurfaceWindowSessionState::Opening { .. }
+            | DockSurfaceWindowSessionState::ShuttingDown { .. }
+            | DockSurfaceWindowSessionState::Closed { .. } => None,
+        }
+    }
+
+    pub(crate) fn opening_token(&self) -> Option<DockSurfaceWindowSessionOpeningToken> {
+        match &self.state {
+            DockSurfaceWindowSessionState::Opening { token } => Some(*token),
+            DockSurfaceWindowSessionState::Vacant
+            | DockSurfaceWindowSessionState::Active { .. }
+            | DockSurfaceWindowSessionState::ShuttingDown { .. }
+            | DockSurfaceWindowSessionState::Closed { .. } => None,
+        }
+    }
+
+    pub(crate) fn active_lease_for_anchor(
+        &self,
+        anchor: WindowId,
+    ) -> Option<DockSurfaceWindowSessionLease> {
+        self.active_lease().filter(|lease| lease.anchor == anchor)
+    }
+
+    pub(crate) fn protects_anchor_from_native_close(&self, anchor: WindowId) -> bool {
+        match &self.state {
+            DockSurfaceWindowSessionState::Active { lease }
+            | DockSurfaceWindowSessionState::ShuttingDown { lease, .. } => lease.anchor == anchor,
+            DockSurfaceWindowSessionState::Vacant
+            | DockSurfaceWindowSessionState::Opening { .. }
+            | DockSurfaceWindowSessionState::Closed { .. } => false,
+        }
+    }
+
+    pub(crate) fn shutting_down_lease_for_window(
+        &self,
+        window_id: WindowId,
+    ) -> Option<DockSurfaceWindowSessionLease> {
+        match &self.state {
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease,
+                terminal_tickets,
+                ..
+            } if terminal_tickets
+                .iter()
+                .any(|ticket| ticket.window_id == window_id) =>
+            {
+                Some(*lease)
+            }
+            DockSurfaceWindowSessionState::Vacant
+            | DockSurfaceWindowSessionState::Opening { .. }
+            | DockSurfaceWindowSessionState::Active { .. }
+            | DockSurfaceWindowSessionState::ShuttingDown { .. }
+            | DockSurfaceWindowSessionState::Closed { .. } => None,
+        }
+    }
+
+    pub(crate) fn shutting_down_lease(&self) -> Option<DockSurfaceWindowSessionLease> {
+        match &self.state {
+            DockSurfaceWindowSessionState::ShuttingDown { lease, .. } => Some(*lease),
+            DockSurfaceWindowSessionState::Vacant
+            | DockSurfaceWindowSessionState::Opening { .. }
+            | DockSurfaceWindowSessionState::Active { .. }
+            | DockSurfaceWindowSessionState::Closed { .. } => None,
+        }
+    }
+
+    pub(crate) fn pending_terminal_window_ids(
+        &self,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> Option<Vec<WindowId>> {
+        match &self.state {
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease: current,
+                terminal_tickets,
+                ..
+            } if *current == lease => Some(
+                terminal_tickets
+                    .iter()
+                    .filter(|ticket| ticket.terminal.is_none())
+                    .map(|ticket| ticket.window_id)
+                    .collect(),
+            ),
+            DockSurfaceWindowSessionState::Vacant
+            | DockSurfaceWindowSessionState::Opening { .. }
+            | DockSurfaceWindowSessionState::Active { .. }
+            | DockSurfaceWindowSessionState::ShuttingDown { .. }
+            | DockSurfaceWindowSessionState::Closed { .. } => None,
+        }
     }
 
     pub(crate) fn rollback_opening(
@@ -467,6 +631,42 @@ impl DockSurfaceWindowSession {
                 DockSurfaceWindowSessionTerminalOutcome::NotShuttingDown
             }
             _ => DockSurfaceWindowSessionTerminalOutcome::StaleLease,
+        }
+    }
+
+    pub(crate) fn claim_close_dispatch(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        window_id: WindowId,
+    ) -> DockSurfaceWindowSessionCloseDispatchOutcome {
+        match &mut self.state {
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease: current,
+                terminal_tickets,
+                ..
+            } if *current == lease => {
+                let Some(ticket) = terminal_tickets
+                    .iter_mut()
+                    .find(|ticket| ticket.window_id == window_id)
+                else {
+                    return DockSurfaceWindowSessionCloseDispatchOutcome::UnknownWindow;
+                };
+                if ticket.terminal.is_some() {
+                    DockSurfaceWindowSessionCloseDispatchOutcome::AlreadyTerminal
+                } else if ticket.close_dispatched {
+                    DockSurfaceWindowSessionCloseDispatchOutcome::AlreadyClaimed
+                } else {
+                    ticket.close_dispatched = true;
+                    DockSurfaceWindowSessionCloseDispatchOutcome::Claimed
+                }
+            }
+            DockSurfaceWindowSessionState::ShuttingDown { .. } => {
+                DockSurfaceWindowSessionCloseDispatchOutcome::StaleLease
+            }
+            DockSurfaceWindowSessionState::Active { lease: current } if *current == lease => {
+                DockSurfaceWindowSessionCloseDispatchOutcome::NotShuttingDown
+            }
+            _ => DockSurfaceWindowSessionCloseDispatchOutcome::StaleLease,
         }
     }
 

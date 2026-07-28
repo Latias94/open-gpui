@@ -1,4 +1,4 @@
-use crate::{DockHost, DockItemId, DockSpaceId, DockViewportAdapter};
+use crate::{DockHost, DockItemId, DockSpaceId, DockViewportAdapter, DockViewportRuntimeLineage};
 use open_gpui::{AnyWindowHandle, Bounds, Pixels, WindowHandle, WindowId, point, px, size};
 
 pub(crate) fn space(id: &str) -> DockSpaceId {
@@ -22,5 +22,7 @@ pub(crate) fn register_viewport(
     space: impl Into<DockSpaceId>,
     window: impl Into<AnyWindowHandle>,
 ) {
-    let _ = adapter.register_viewport_with_outcome(space, window);
+    let _ = adapter
+        .register_viewport_with_outcome(space, window, DockViewportRuntimeLineage::Unmanaged)
+        .expect("unmanaged test viewport registration cannot conflict by lineage");
 }

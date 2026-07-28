@@ -7,9 +7,20 @@ use crate::{AnyView, AnyWindowHandle, Window, WindowId};
 
 use super::{App, Effect, QuitMode};
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum WindowReservationError {
+    #[error("application shutdown invalidated the window reservation")]
+    AppShutdown,
+    #[error("window closed before its creation transaction committed")]
+    WindowClosed,
+    #[error("window reservation is no longer current")]
+    NotCurrent,
+}
+
 pub(super) struct ReservedWindow<'a> {
     app: &'a mut App,
     id: WindowId,
+    epoch: u64,
     pending: bool,
 }
 
@@ -26,12 +37,17 @@ impl ReservedWindow<'_> {
         WindowUpdateStackScope::new(&mut *self.app, self.id).run(update)
     }
 
-    pub(super) fn commit(mut self, mut window: Window) -> anyhow::Result<()> {
+    pub(super) fn validate(&self) -> Result<(), WindowReservationError> {
+        validate_reservation(self.app, self.id, self.epoch)
+    }
+
+    pub(super) fn commit(mut self, mut window: Window) -> Result<(), WindowReservationError> {
+        self.validate()?;
         if !window.creation_can_commit() {
-            anyhow::bail!("window closed before its creation transaction committed");
+            return Err(WindowReservationError::WindowClosed);
         }
         let initial_presentation = window.take_initial_presentation_command();
-        commit_reserved(&mut *self.app, self.id, window);
+        commit_reserved(&mut *self.app, self.id, self.epoch, window)?;
         self.pending = false;
         if let Some((sink, command)) = initial_presentation {
             sink.enqueue(command);
@@ -49,32 +65,51 @@ impl Drop for ReservedWindow<'_> {
     }
 }
 
-pub(super) fn reserve(app: &mut App) -> ReservedWindow<'_> {
+pub(super) fn reserve(app: &mut App) -> Result<ReservedWindow<'_>, WindowReservationError> {
+    if app.window_open_barrier_depth > 0 {
+        return Err(WindowReservationError::AppShutdown);
+    }
+
+    let epoch = app.window_open_epoch;
     let id = app.windows.insert(None);
     if let Some(cell) = app.this.upgrade() {
         cell.reserve_native_window(id);
     }
-    ReservedWindow {
+    Ok(ReservedWindow {
         app,
         id,
+        epoch,
         pending: true,
-    }
+    })
 }
 
-fn commit_reserved(app: &mut App, id: WindowId, window: Window) {
-    assert!(
-        app.windows.get(id).is_some_and(Option::is_none),
-        "window reservation must be current when committed"
-    );
+fn validate_reservation(app: &App, id: WindowId, epoch: u64) -> Result<(), WindowReservationError> {
+    if app.window_open_barrier_depth > 0 || app.window_open_epoch != epoch {
+        return Err(WindowReservationError::AppShutdown);
+    }
+    if !app.windows.get(id).is_some_and(Option::is_none) {
+        return Err(WindowReservationError::NotCurrent);
+    }
+    Ok(())
+}
+
+fn commit_reserved(
+    app: &mut App,
+    id: WindowId,
+    epoch: u64,
+    window: Window,
+) -> Result<(), WindowReservationError> {
+    validate_reservation(app, id, epoch)?;
     app.window_handles.insert(id, window.handle);
     app.window_profiles.insert(id, window.window_profile());
     app.windows
         .get_mut(id)
-        .expect("reserved window id should still exist")
+        .ok_or(WindowReservationError::NotCurrent)?
         .replace(Box::new(window));
     if let Some(cell) = app.this.upgrade() {
         cell.commit_native_window(id);
     }
+    Ok(())
 }
 
 fn rollback_reserved(app: &mut App, id: WindowId) {
@@ -251,7 +286,11 @@ pub(super) fn handles(app: &App) -> Vec<AnyWindowHandle> {
 
 pub(super) fn finish_window_update(app: &mut App, id: WindowId, window: Box<Window>) -> Option<()> {
     if window.removed {
-        unregister_removed_window(app, id);
+        let first_panic = unregister_removed_window(app, id);
+        drop(window);
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
     } else {
         app.windows.get_mut(id)?.replace(window);
     }
@@ -259,7 +298,7 @@ pub(super) fn finish_window_update(app: &mut App, id: WindowId, window: Box<Wind
     Some(())
 }
 
-fn unregister_removed_window(app: &mut App, id: WindowId) {
+fn unregister_removed_window(app: &mut App, id: WindowId) -> Option<Box<dyn Any + Send>> {
     app.window_handles.remove(&id);
     app.window_profiles.remove(&id);
     app.windows.remove(id);
@@ -269,16 +308,17 @@ fn unregister_removed_window(app: &mut App, id: WindowId) {
     cleanup_entity_window_links(app, id);
     let mut first_panic = notify_window_closed(app, id);
 
-    if should_quit_after_last_window(app.quit_mode) && app.windows.is_empty() {
+    if !app.notifying_window_closed
+        && should_quit_after_last_window(app.quit_mode)
+        && app.windows.is_empty()
+    {
         retain_first_panic(
             &mut first_panic,
             catch_unwind(AssertUnwindSafe(|| app.quit())).err(),
         );
     }
 
-    if let Some(payload) = first_panic {
-        resume_unwind(payload);
-    }
+    first_panic
 }
 
 fn cleanup_entity_window_links(app: &mut App, id: WindowId) {
@@ -295,14 +335,23 @@ fn cleanup_entity_window_links(app: &mut App, id: WindowId) {
 }
 
 fn notify_window_closed(app: &mut App, id: WindowId) -> Option<Box<dyn Any + Send>> {
+    app.pending_window_closed_notifications.push_back(id);
+    if app.notifying_window_closed {
+        return None;
+    }
+
+    app.notifying_window_closed = true;
     let mut first_panic = None;
-    app.window_closed_observers.clone().retain(&(), |callback| {
-        retain_first_panic(
-            &mut first_panic,
-            catch_unwind(AssertUnwindSafe(|| callback(app, id))).err(),
-        );
-        true
-    });
+    while let Some(closed_window) = app.pending_window_closed_notifications.pop_front() {
+        app.window_closed_observers.clone().retain(&(), |callback| {
+            retain_first_panic(
+                &mut first_panic,
+                catch_unwind(AssertUnwindSafe(|| callback(app, closed_window))).err(),
+            );
+            true
+        });
+    }
+    app.notifying_window_closed = false;
     first_panic
 }
 

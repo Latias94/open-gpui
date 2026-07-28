@@ -1,10 +1,17 @@
 use crate::{
     DockController, DockHost, DockPanel, DockPanelPlacement, DockSurface,
-    DockSurfaceActivationOutcome, DockViewportActivationTransaction, DockViewportFocusRequest,
-    DockViewportRuntimeHandle,
+    DockSurfaceActivationOutcome, DockSurfacePrimaryWindowOpenOutcome,
+    DockViewportActivationTransaction, DockViewportFocusRequest, DockViewportRuntimeHandle,
     surface::{
         DockSurfaceActivationDispatch, DockSurfaceActivationHostLookup,
         DockSurfaceActivationHostRegistrationStatus, DockSurfaceActivationState,
+        window_session::{
+            DockSurfaceWindowSession, DockSurfaceWindowSessionBeginShutdownOutcome,
+            DockSurfaceWindowSessionLease, DockSurfaceWindowSessionRuntimeEmptyOutcome,
+            DockSurfaceWindowSessionShutdownConvergenceOutcome,
+            DockSurfaceWindowSessionShutdownReason, DockSurfaceWindowSessionTerminalDisposition,
+            DockSurfaceWindowSessionTerminalOutcome,
+        },
     },
     viewport_activation::{
         DockViewportActivationApplyOutcome, apply_viewport_activation_transaction,
@@ -13,12 +20,17 @@ use crate::{
 use open_gpui::{
     AnyView, AnyWindowHandle, App, AppContext, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, Styled, SubtreePresentation,
-    SubtreePresentationExt, TestAppContext, Window, WindowHandle, WindowId, div, px, size,
+    SubtreePresentationExt, TestAppContext, Window, WindowHandle, WindowId, WindowOptions, div, px,
+    size,
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 struct FocusPanel {
     focus_handle: FocusHandle,
+    presentation: Rc<Cell<SubtreePresentation>>,
 }
 
 impl Focusable for FocusPanel {
@@ -33,6 +45,7 @@ impl Render for FocusPanel {
             .id("surface-activation-focus-panel")
             .track_focus(&self.focus_handle)
             .size_full()
+            .with_subtree_presentation(self.presentation.get())
     }
 }
 
@@ -50,8 +63,16 @@ impl Render for EmbeddedHostRoot {
 }
 
 fn focus_panel(cx: &mut App) -> Entity<FocusPanel> {
+    focus_panel_with_presentation(Rc::new(Cell::new(SubtreePresentation::Visible)), cx)
+}
+
+fn focus_panel_with_presentation(
+    presentation: Rc<Cell<SubtreePresentation>>,
+    cx: &mut App,
+) -> Entity<FocusPanel> {
     cx.new(|cx| FocusPanel {
         focus_handle: cx.focus_handle(),
+        presentation,
     })
 }
 
@@ -59,9 +80,33 @@ fn fake_window(id: u64) -> AnyWindowHandle {
     WindowHandle::<DockHost>::new(WindowId::from(id)).into()
 }
 
+fn active_activation_lease(authority: u64, anchor: u64) -> DockSurfaceWindowSessionLease {
+    let mut session = DockSurfaceWindowSession::new(open_gpui::EntityId::from(authority));
+    let opening = session
+        .reserve_opening()
+        .expect("activation test session should reserve an opening");
+    session
+        .commit_opening(opening, WindowId::from(anchor))
+        .expect("activation test session should activate")
+}
+
 fn host_entity<C: AppContext>(cx: &mut C, controller: Entity<DockController>) -> Entity<DockHost> {
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
     cx.new(|cx| DockHost::from_controller(controller, "main", runtime, cx))
+}
+
+fn open_primary_host(surface: &DockSurface, cx: &mut App) -> (AnyWindowHandle, Entity<DockHost>) {
+    let opened = match surface.open_primary_window(WindowOptions::default(), cx) {
+        DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+        outcome => panic!("managed primary host should open, got {outcome:?}"),
+    };
+    let window = opened.window();
+    let host = window
+        .downcast::<DockHost>()
+        .expect("managed primary window should retain a DockHost root")
+        .entity(cx)
+        .expect("managed primary DockHost should remain live");
+    (window, host)
 }
 
 #[open_gpui::test]
@@ -114,7 +159,7 @@ fn immediate_activation_outcome_is_suppressed_when_subscription_is_dropped(
 }
 
 #[open_gpui::test]
-fn facade_activation_targets_a_host_nested_below_an_arbitrary_window_root(cx: &mut TestAppContext) {
+fn embedded_surface_host_does_not_register_managed_activation_authority(cx: &mut TestAppContext) {
     let (surface, host) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
             .panel_placements([DockPanelPlacement::center("editor")])
@@ -130,16 +175,17 @@ fn facade_activation_targets_a_host_nested_below_an_arbitrary_window_root(cx: &m
         presentation: SubtreePresentation::Visible,
     });
     cx.run_until_parked();
-    window
-        .update(cx, |_, window, _| window.activate_window())
-        .expect("embedded host window should remain live");
-    cx.run_until_parked();
     assert!(matches!(
         cx.read_entity(surface.owner(), |owner, _| owner
             .activation()
             .lookup_host(&"main".into())),
-        DockSurfaceActivationHostLookup::Available { .. }
+        DockSurfaceActivationHostLookup::Unavailable
     ));
+    assert!(cx.read_entity(&host, |host, _| {
+        host.viewport_runtime()
+            .registration_key_for_space_window(host.space(), window.window_id())
+            .is_none()
+    }));
 
     let outcomes = Rc::new(RefCell::new(Vec::new()));
     let observed = outcomes.clone();
@@ -154,7 +200,7 @@ fn facade_activation_targets_a_host_nested_below_an_arbitrary_window_root(cx: &m
 
     assert_eq!(
         outcomes.borrow().as_slice(),
-        &[DockSurfaceActivationOutcome::Committed]
+        &[DockSurfaceActivationOutcome::Unavailable]
     );
     assert!(cx.read_entity(&host, |host, _| host.pending_focus_command().is_none()));
     drop(subscription);
@@ -164,24 +210,19 @@ fn facade_activation_targets_a_host_nested_below_an_arbitrary_window_root(cx: &m
 fn facade_activation_from_current_window_listener_commits_without_reborrowing_window(
     cx: &mut TestAppContext,
 ) {
-    let (surface, host) = cx.update(|cx| {
+    let (surface, host, window) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
             .panel_placements([DockPanelPlacement::center("editor")])
             .panel("editor", DockPanel::lazy_focusable("Editor", focus_panel))
             .build(cx)
             .expect("surface should build");
-        let host = cx.new(|cx| surface.host("main", cx));
-        (surface, host)
-    });
-    let window_host = host.clone();
-    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| EmbeddedHostRoot {
-        host: window_host,
-        presentation: SubtreePresentation::Visible,
+        let (window, host) = open_primary_host(&surface, cx);
+        (surface, host, window)
     });
     cx.run_until_parked();
     window
         .update(cx, |_, window, _| window.activate_window())
-        .expect("embedded host window should remain live");
+        .expect("managed primary window should remain live");
     cx.run_until_parked();
 
     let outcomes = Rc::new(RefCell::new(Vec::new()));
@@ -212,19 +253,14 @@ fn facade_activation_from_current_window_listener_commits_without_reborrowing_wi
 fn deferred_current_window_activation_rejects_replaced_viewport_registration(
     cx: &mut TestAppContext,
 ) {
-    let (surface, host) = cx.update(|cx| {
+    let (surface, host, window) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
             .panel_placements([DockPanelPlacement::center("editor")])
             .panel("editor", DockPanel::lazy_focusable("Editor", focus_panel))
             .build(cx)
             .expect("surface should build");
-        let host = cx.new(|cx| surface.host("main", cx));
-        (surface, host)
-    });
-    let window_host = host.clone();
-    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| EmbeddedHostRoot {
-        host: window_host,
-        presentation: SubtreePresentation::Visible,
+        let (window, host) = open_primary_host(&surface, cx);
+        (surface, host, window)
     });
     cx.run_until_parked();
 
@@ -282,7 +318,7 @@ fn deferred_current_window_activation_rejects_replaced_viewport_registration(
 
 #[open_gpui::test]
 fn activation_completion_can_reenter_surface_after_first_settlement(cx: &mut TestAppContext) {
-    let (surface, host) = cx.update(|cx| {
+    let (surface, _host, window) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
             .panel_placements([
                 DockPanelPlacement::center("editor").selected(),
@@ -295,13 +331,8 @@ fn activation_completion_can_reenter_surface_after_first_settlement(cx: &mut Tes
             )
             .build(cx)
             .expect("surface should build");
-        let host = cx.new(|cx| surface.host("main", cx));
-        (surface, host)
-    });
-    let window_host = host.clone();
-    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| EmbeddedHostRoot {
-        host: window_host,
-        presentation: SubtreePresentation::Visible,
+        let (window, host) = open_primary_host(&surface, cx);
+        (surface, host, window)
     });
     cx.run_until_parked();
     window
@@ -337,28 +368,28 @@ fn activation_completion_can_reenter_surface_after_first_settlement(cx: &mut Tes
 
 #[open_gpui::test]
 fn stale_surface_activation_is_rejected_before_runtime_focus_mutation(cx: &mut TestAppContext) {
-    let (surface, host) = cx.update(|cx| {
+    let (surface, host, window) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
             .panel_placements([DockPanelPlacement::center("editor")])
             .panel("editor", DockPanel::lazy_focusable("Editor", focus_panel))
             .build(cx)
             .expect("surface should build");
-        let host = cx.new(|cx| surface.host("main", cx));
-        (surface, host)
-    });
-    let window_host = host.clone();
-    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| EmbeddedHostRoot {
-        host: window_host,
-        presentation: SubtreePresentation::Visible,
+        let (window, host) = open_primary_host(&surface, cx);
+        (surface, host, window)
     });
     cx.run_until_parked();
 
     let owner = surface.owner().clone();
     let owner_weak = owner.downgrade();
     let (binding, target_host, first_subscription) = cx.update_entity(&owner, |owner, _| {
-        let begin = owner
-            .activation_mut()
-            .begin_request(owner_weak, "main".into(), |_, _cx| {});
+        let lease = owner
+            .window_session()
+            .active_lease()
+            .expect("the managed primary host should own an active lease");
+        let begin =
+            owner
+                .activation_mut()
+                .begin_request(lease, owner_weak, "main".into(), |_, _cx| {});
         let (_request_id, subscription, dispatch, settlements) = begin.into_parts();
         assert!(settlements.is_empty());
         let DockSurfaceActivationDispatch::Available(target) = dispatch else {
@@ -422,8 +453,12 @@ fn stale_surface_activation_is_rejected_before_runtime_focus_mutation(cx: &mut T
 }
 
 #[open_gpui::test]
-fn facade_activation_rejects_inert_and_hidden_hosts_without_selecting(cx: &mut TestAppContext) {
-    let (surface, host) = cx.update(|cx| {
+fn facade_activation_keeps_selection_commit_when_inert_or_hidden_focus_is_rejected(
+    cx: &mut TestAppContext,
+) {
+    let terminal_presentation = Rc::new(Cell::new(SubtreePresentation::Visible));
+    let terminal_panel_presentation = terminal_presentation.clone();
+    let (surface, _host, window) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
             .panel_placements([
                 DockPanelPlacement::center("editor").selected(),
@@ -432,25 +467,20 @@ fn facade_activation_rejects_inert_and_hidden_hosts_without_selecting(cx: &mut T
             .panel("editor", DockPanel::lazy_focusable("Editor", focus_panel))
             .panel(
                 "terminal",
-                DockPanel::lazy_focusable("Terminal", focus_panel),
+                DockPanel::lazy_focusable("Terminal", move |cx| {
+                    focus_panel_with_presentation(terminal_panel_presentation.clone(), cx)
+                }),
             )
             .build(cx)
             .expect("surface should build");
-        let host = cx.new(|cx| surface.host("main", cx));
-        (surface, host)
-    });
-    let window_host = host.clone();
-    let window = cx.open_window(size(px(360.0), px(240.0)), move |_, _| EmbeddedHostRoot {
-        host: window_host,
-        presentation: SubtreePresentation::Visible,
+        let (window, host) = open_primary_host(&surface, cx);
+        (surface, host, window)
     });
     cx.run_until_parked();
+    terminal_presentation.set(SubtreePresentation::Inert);
     window
-        .update(cx, |fixture, _, cx| {
-            fixture.presentation = SubtreePresentation::Inert;
-            cx.notify();
-        })
-        .expect("fixture window should remain live");
+        .update(cx, |_, window, _| window.refresh())
+        .expect("managed primary window should remain live");
     cx.run_until_parked();
 
     let outcomes = Rc::new(RefCell::new(Vec::new()));
@@ -469,16 +499,14 @@ fn facade_activation_rejects_inert_and_hidden_hosts_without_selecting(cx: &mut T
     );
     assert_eq!(
         cx.read(|cx| surface.selected_panel_in_space("main", cx)),
-        Some("editor".into())
+        Some("terminal".into())
     );
     drop(inert_subscription);
 
+    terminal_presentation.set(SubtreePresentation::Hidden);
     window
-        .update(cx, |fixture, _, cx| {
-            fixture.presentation = SubtreePresentation::Hidden;
-            cx.notify();
-        })
-        .expect("fixture window should remain live");
+        .update(cx, |_, window, _| window.refresh())
+        .expect("managed primary window should remain live");
     cx.run_until_parked();
     let hidden_outcomes = outcomes.clone();
     let hidden_subscription = cx.update(|cx| {
@@ -498,7 +526,7 @@ fn facade_activation_rejects_inert_and_hidden_hosts_without_selecting(cx: &mut T
     );
     assert_eq!(
         cx.read(|cx| surface.selected_panel_in_space("main", cx)),
-        Some("editor".into())
+        Some("terminal".into())
     );
     drop(hidden_subscription);
 }
@@ -516,9 +544,12 @@ fn activation_host_registration_rejects_duplicates_and_reuses_a_new_generation(
         let first_host = host_entity(cx, controller.clone());
         let second_host = host_entity(cx, controller);
         let mut state = DockSurfaceActivationState::new();
+        let lease = active_activation_lease(1, 101);
+        assert!(state.activate_lease(lease));
 
         let first_result =
-            state.register_host("main".into(), first_host.downgrade(), fake_window(1));
+            state.register_host(lease, "main".into(), first_host.downgrade(), fake_window(1));
+        let first_result = first_result.expect("the active lease should register its first host");
         let (first_registration, first_settlements) = first_result.into_parts();
         assert_eq!(
             first_registration.status(),
@@ -530,8 +561,14 @@ fn activation_host_registration_rejects_duplicates_and_reuses_a_new_generation(
             DockSurfaceActivationHostLookup::Available { generation: 1, .. }
         ));
 
+        let duplicate_result = state.register_host(
+            lease,
+            "main".into(),
+            second_host.downgrade(),
+            fake_window(2),
+        );
         let duplicate_result =
-            state.register_host("main".into(), second_host.downgrade(), fake_window(2));
+            duplicate_result.expect("the active lease should record its duplicate host");
         let (duplicate_registration, duplicate_settlements) = duplicate_result.into_parts();
         assert_eq!(
             duplicate_registration.status(),
@@ -550,8 +587,14 @@ fn activation_host_registration_rejects_duplicates_and_reuses_a_new_generation(
         ));
 
         assert!(state.release_host(&first_registration).is_empty());
+        let replacement_result = state.register_host(
+            lease,
+            "main".into(),
+            second_host.downgrade(),
+            fake_window(2),
+        );
         let replacement_result =
-            state.register_host("main".into(), second_host.downgrade(), fake_window(2));
+            replacement_result.expect("the active lease should register its replacement host");
         let (replacement_registration, replacement_settlements) = replacement_result.into_parts();
         assert_eq!(
             replacement_registration.status(),
@@ -577,13 +620,17 @@ fn activation_state_supersedes_pending_requests_and_rejects_stale_bindings(
         });
         let host = host_entity(cx, controller);
         let mut state = DockSurfaceActivationState::new();
+        let lease = active_activation_lease(2, 201);
+        assert!(state.activate_lease(lease));
         let registration = state
-            .register_host("main".into(), host.downgrade(), fake_window(1))
+            .register_host(lease, "main".into(), host.downgrade(), fake_window(1))
+            .expect("the active lease should register its host")
             .into_parts()
             .0;
         let outcomes = Rc::new(RefCell::new(Vec::new()));
         let first_outcomes = outcomes.clone();
         let first = state.begin_request(
+            lease,
             open_gpui::WeakEntity::new_invalid(),
             "main".into(),
             move |outcome, _cx| first_outcomes.borrow_mut().push(outcome),
@@ -621,6 +668,129 @@ fn activation_state_supersedes_pending_requests_and_rejects_stale_bindings(
         drop(first_subscription);
         drop(second_subscription);
         assert!(state.release_host(&registration).is_empty());
+    });
+}
+
+#[open_gpui::test]
+fn activation_shutdown_settles_g1_once_and_isolates_reopened_g2(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let controller = cx.new(|_| {
+            DockController::builder("main")
+                .panel_placements([DockPanelPlacement::center("editor")])
+                .build()
+        });
+        let g1_host = host_entity(cx, controller.clone());
+        let g2_host = host_entity(cx, controller);
+        let authority = open_gpui::EntityId::from(3);
+        let mut session = DockSurfaceWindowSession::new(authority);
+        let mut state = DockSurfaceActivationState::new();
+
+        let g1_opening = session.reserve_opening().expect("G1 should reserve");
+        let g1 = session
+            .commit_opening(g1_opening, WindowId::from(301))
+            .expect("G1 should activate");
+        assert!(state.activate_lease(g1));
+        let (g1_registration, g1_registration_settlements) = state
+            .register_host(g1, "main".into(), g1_host.downgrade(), fake_window(301))
+            .expect("G1 should register its activation host")
+            .into_parts();
+        assert!(g1_registration_settlements.is_empty());
+
+        let outcomes = Rc::new(RefCell::new(Vec::new()));
+        let observed = outcomes.clone();
+        let begin = state.begin_request(
+            g1,
+            open_gpui::WeakEntity::new_invalid(),
+            "main".into(),
+            move |outcome, _cx| observed.borrow_mut().push(outcome),
+        );
+        let (_request, subscription, dispatch, begin_settlements) = begin.into_parts();
+        assert!(begin_settlements.is_empty());
+        let g1_binding = match dispatch {
+            DockSurfaceActivationDispatch::Available(target) => target.binding().clone(),
+            DockSurfaceActivationDispatch::Immediate(outcome) => {
+                panic!("G1 activation host should be available, got {outcome:?}")
+            }
+        };
+
+        assert_eq!(
+            session.begin_shutdown(
+                g1,
+                DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                std::iter::empty(),
+            ),
+            DockSurfaceWindowSessionBeginShutdownOutcome::Started {
+                terminal_ticket_count: 1,
+            }
+        );
+        state.freeze_lease(g1).deliver(cx);
+        assert_eq!(
+            outcomes.borrow().as_slice(),
+            &[DockSurfaceActivationOutcome::WindowClosed]
+        );
+        assert!(
+            state.freeze_lease(g1).is_empty(),
+            "repeated G1 freeze must not redeliver the terminal callback"
+        );
+        assert!(
+            state
+                .settle(&g1_binding, DockSurfaceActivationOutcome::Committed)
+                .is_empty(),
+            "a frozen G1 binding must remain terminal"
+        );
+        assert!(
+            state
+                .register_host(g1, "main".into(), g1_host.downgrade(), fake_window(301),)
+                .is_none(),
+            "a frozen G1 lease must not restore activation authority"
+        );
+
+        assert_eq!(
+            session.mark_runtime_empty(g1),
+            DockSurfaceWindowSessionRuntimeEmptyOutcome::Marked
+        );
+        assert_eq!(
+            session.settle_terminal(
+                g1,
+                g1.anchor(),
+                DockSurfaceWindowSessionTerminalDisposition::ObservedClosed,
+            ),
+            DockSurfaceWindowSessionTerminalOutcome::Settled
+        );
+        assert_eq!(
+            session.complete_shutdown(g1),
+            DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed
+        );
+
+        let g2_opening = session.reserve_opening().expect("G2 should reserve");
+        let g2 = session
+            .commit_opening(g2_opening, WindowId::from(302))
+            .expect("G2 should activate");
+        assert!(state.activate_lease(g2));
+        let (g2_registration, g2_registration_settlements) = state
+            .register_host(g2, "main".into(), g2_host.downgrade(), fake_window(302))
+            .expect("G2 should register the same logical space independently")
+            .into_parts();
+        assert!(g2_registration_settlements.is_empty());
+        assert_eq!(g2_registration.lease(), g2);
+
+        assert!(state.release_host(&g1_registration).is_empty());
+        assert!(matches!(
+            state.lookup_host(&"main".into()),
+            DockSurfaceActivationHostLookup::Available {
+                window,
+                generation: 2,
+                ..
+            } if window == fake_window(302)
+        ));
+        assert_eq!(
+            outcomes.borrow().as_slice(),
+            &[DockSurfaceActivationOutcome::WindowClosed],
+            "late G1 operations must not settle or supersede G2"
+        );
+
+        drop(subscription);
+        assert!(state.release_host(&g2_registration).is_empty());
     });
 }
 

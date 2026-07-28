@@ -194,6 +194,7 @@ mod viewport_runtime;
 mod viewport_runtime_drop_resolution;
 mod viewport_runtime_effects;
 mod viewport_runtime_handle;
+mod viewport_runtime_lineage;
 mod viewport_runtime_status;
 mod viewport_target_context;
 mod viewport_target_resolver;
@@ -272,6 +273,8 @@ mod layout_tests;
 #[cfg(test)]
 mod public_surface_tests;
 #[cfg(test)]
+mod viewport_runtime_native_owner_tests;
+#[cfg(test)]
 mod viewport_test_support;
 #[cfg(test)]
 mod visual_style_runtime_tests;
@@ -313,9 +316,10 @@ pub use surface::{
     DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange, DockSurfaceChangeCategory,
     DockSurfaceChangeEvent, DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError,
     DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
-    DockSurfacePanelSnapshot, DockSurfacePrimaryWindowOpenConflict, DockSurfaceSnapshot,
-    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
-    DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
+    DockSurfacePanelSnapshot, DockSurfacePrimaryWindowOpenConflict,
+    DockSurfacePrimaryWindowOpenOutcome, DockSurfacePrimaryWindowOpened,
+    DockSurfacePrimaryWindowUnavailable, DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome,
+    DockSurfaceViewportCloseStatus, DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
     DockSurfaceViewportLifecycleReadiness, DockSurfaceViewportOpenOutcome,
     DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
     DockSurfaceViewportPlatformCapabilities, DockSurfaceViewportPlatformReadiness,
@@ -378,6 +382,7 @@ pub(crate) use viewport_runtime::*;
 pub(crate) use viewport_runtime_drop_resolution::*;
 pub(crate) use viewport_runtime_effects::*;
 pub(crate) use viewport_runtime_handle::DockViewportRuntimeHandle;
+pub(crate) use viewport_runtime_lineage::*;
 pub(crate) use viewport_runtime_status::*;
 pub(crate) use viewport_target_context::*;
 pub(crate) use viewport_target_resolver::*;

@@ -5,6 +5,8 @@ use std::{
     rc::Rc,
 };
 
+use futures::channel::oneshot;
+
 #[cfg(any(test, feature = "test-support"))]
 use super::native_callback_diagnostics::{
     NativeBoundaryDiagnosticCursor, NativeBoundaryDiagnosticsSnapshot,
@@ -130,6 +132,7 @@ impl Drop for NativeBoundaryTerminalGuard<'_> {
 #[doc(hidden)]
 pub struct AppCell {
     app: RefCell<App>,
+    app_borrow_waiters: RefCell<Vec<oneshot::Sender<()>>>,
     native_events: NativeEventIngress,
     native_queries: NativeQuerySnapshots,
     open_urls_handler: NativeAppHandlerSlot<OpenUrlsHandler>,
@@ -145,6 +148,7 @@ impl AppCell {
         let this = app.this.clone();
         Self {
             app: RefCell::new(app),
+            app_borrow_waiters: RefCell::new(Vec::new()),
             native_events: NativeEventIngress::new(foreground_executor, this),
             native_queries: NativeQuerySnapshots::default(),
             open_urls_handler: NativeAppHandlerSlot::default(),
@@ -762,6 +766,7 @@ impl AppCell {
                             };
                             if app.quitting {
                                 drop(app);
+                                self.wake_app_borrow_waiters();
                                 terminal.settle(NativeBoundaryDisposition::Closed);
                                 drain.terminate();
                                 return;
@@ -769,6 +774,7 @@ impl AppCell {
                             let delivery =
                                 terminal.run_callback(|| app.update(|app| event.deliver(app)));
                             drop(app);
+                            self.wake_app_borrow_waiters();
                             terminal.settle_event(delivery.disposition);
                             if delivery.control == NativeEventDrainControl::Terminate {
                                 drain.terminate();
@@ -856,6 +862,26 @@ impl AppCell {
         }
         self.native_events.resume_after_app_borrow();
         self.drain_native_work(None);
+        self.wake_app_borrow_waiters();
+    }
+
+    // Registering after a failed borrow and checking idle happen on the application thread, so a
+    // release cannot be missed between those operations.
+    pub(super) fn wait_for_app_borrow_release(&self) -> oneshot::Receiver<()> {
+        let (sender, receiver) = oneshot::channel();
+        if self.app_is_idle() {
+            let _ = sender.send(());
+        } else {
+            self.app_borrow_waiters.borrow_mut().push(sender);
+        }
+        receiver
+    }
+
+    fn wake_app_borrow_waiters(&self) {
+        let waiters = std::mem::take(&mut *self.app_borrow_waiters.borrow_mut());
+        for waiter in waiters {
+            let _ = waiter.send(());
+        }
     }
 
     fn app_is_idle(&self) -> bool {
@@ -1014,9 +1040,8 @@ impl Drop for NativeCallbackLease {
             generation, self.generation,
             "native callback leases must retire in stack order"
         );
-        if !app.native_callback_lease_active() && app.app_is_idle() {
-            app.native_events.resume_after_app_borrow();
-            app.drain_native_work(None);
+        if !app.native_callback_lease_active() {
+            app.app_borrow_released();
         }
     }
 }

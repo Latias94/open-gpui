@@ -61,18 +61,26 @@ struct HeadlessWindowState {
     accepts_pointer_input: bool,
     creation_facts: WindowCreationFacts,
     atlas: Arc<HeadlessAtlas>,
+    close_callback: Option<Box<dyn FnOnce()>>,
 }
 
 pub(crate) struct HeadlessWindow(Rc<RefCell<HeadlessWindowState>>);
 
 impl Drop for HeadlessWindow {
     fn drop(&mut self) {
-        let (input_callback, input_handler) = {
-            let state = self.0.borrow();
-            (state.input_callback.clone(), state.input_handler.clone())
+        let (input_callback, input_handler, close_callback) = {
+            let mut state = self.0.borrow_mut();
+            (
+                state.input_callback.clone(),
+                state.input_handler.clone(),
+                state.close_callback.take(),
+            )
         };
         input_callback.terminate();
         input_handler.terminate();
+        if let Some(callback) = close_callback {
+            callback();
+        }
     }
 }
 
@@ -110,6 +118,7 @@ impl HeadlessWindow {
                 transient_for: None,
             },
             atlas: Arc::new(HeadlessAtlas::default()),
+            close_callback: None,
         })))
     }
 }
@@ -271,7 +280,9 @@ impl PlatformWindow for HeadlessWindow {
     fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
     }
 
-    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
+    fn on_close(&self, callback: Box<dyn FnOnce()>) {
+        self.0.borrow_mut().close_callback = Some(callback);
+    }
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 

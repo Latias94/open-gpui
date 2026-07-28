@@ -3,8 +3,8 @@ use open_gpui::{
     Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::prelude::{
-    DockPanelPlacement, DockSurface, DockSurfaceChange, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportUnavailable,
+    DockPanelPlacement, DockSurface, DockSurfaceChange, DockSurfacePrimaryWindowOpenOutcome,
+    DockSurfacePrimaryWindowOpened, DockSurfaceViewportOpenOutcome, DockSurfaceViewportUnavailable,
 };
 use open_gpui_platform::application;
 use std::{cell::Cell, rc::Rc, time::Duration};
@@ -114,7 +114,7 @@ fn build_surface(cx: &mut App) -> DockSurface {
                 0xb45309,
                 &[
                     "Detached into its own dock space",
-                    "Opened through the viewport session facade",
+                    "Opened through the DockSurfaceViewports facade",
                 ],
             ),
         )
@@ -122,6 +122,38 @@ fn build_surface(cx: &mut App) -> DockSurface {
         .allow_platform_viewports(true)
         .build(cx)
         .expect("multi-viewport docking surface should validate")
+}
+
+fn build_isolated_surface(cx: &mut App) -> DockSurface {
+    DockSurface::builder(MAIN_SPACE)
+        .panel_placements([
+            DockPanelPlacement::center("activity").selected(),
+            DockPanelPlacement::right_rail("notes").fraction(0.32),
+        ])
+        .panel_factory(
+            "activity",
+            "Activity",
+            panel(
+                "Activity",
+                0xdc2626,
+                &["Independent controller state", "Independent window session"],
+            ),
+        )
+        .panel_factory(
+            "notes",
+            "Notes",
+            panel(
+                "Notes",
+                0x0891b2,
+                &[
+                    "The logical space id is also main",
+                    "State remains surface-local",
+                ],
+            ),
+        )
+        .allow_floating(true)
+        .build(cx)
+        .expect("isolated docking surface should validate")
 }
 
 fn main_window_options(cx: &App) -> WindowOptions {
@@ -159,6 +191,15 @@ fn handle_secondary_open_outcome(outcome: DockSurfaceViewportOpenOutcome) {
             | DockSurfaceViewportUnavailable::PolicyDisabled(_),
         ) => {}
         DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::SessionInactive { status },
+        ) => {
+            log::warn!(
+                "secondary docking viewport rejected by inactive surface session: phase={:?} generation={}",
+                status.phase(),
+                status.generation()
+            );
+        }
+        DockSurfaceViewportOpenOutcome::Unavailable(
             DockSurfaceViewportUnavailable::OpenFailed(error),
         ) => {
             log::warn!("secondary docking viewport did not open: {error}");
@@ -173,6 +214,33 @@ fn handle_secondary_open_outcome(outcome: DockSurfaceViewportOpenOutcome) {
         ) => {
             log::warn!("secondary docking viewport uses unsupported window flags: {flags:?}");
         }
+    }
+}
+
+fn isolated_window_options(cx: &App) -> WindowOptions {
+    let mut bounds = Bounds::centered(None, size(px(620.0), px(440.0)), cx);
+    bounds.origin.x += px(260.0);
+    bounds.origin.y += px(80.0);
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        focus_on_appearing: false,
+        titlebar: Some(TitlebarOptions {
+            title: Some("Open GPUI Docking Isolated Surface".into()),
+            appears_transparent: false,
+            traffic_light_position: None,
+        }),
+        ..Default::default()
+    }
+}
+
+fn open_primary(
+    surface: &DockSurface,
+    options: WindowOptions,
+    cx: &mut App,
+) -> DockSurfacePrimaryWindowOpened {
+    match surface.open_primary_window(options, cx) {
+        DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+        outcome => panic!("failed to open DockSurface primary window: {outcome:?}"),
     }
 }
 
@@ -220,6 +288,7 @@ fn log_platform_window_contract(surface: &DockSurface, cx: &App) {
 fn main() {
     application().run(|cx: &mut App| {
         let surface = build_surface(cx);
+        let isolated_surface = build_isolated_surface(cx);
         let snapshot_export_pending = Rc::new(Cell::new(false));
         let pending_for_events = snapshot_export_pending.clone();
         let surface_for_events = surface.clone();
@@ -254,9 +323,16 @@ fn main() {
             })
             .detach();
 
-        surface
-            .open_primary_window(main_window_options(cx), cx)
-            .expect("failed to open primary docking window");
+        let primary = open_primary(&surface, main_window_options(cx), cx);
+        let isolated_primary =
+            open_primary(&isolated_surface, isolated_window_options(cx), cx);
+        assert_ne!(primary.window(), isolated_primary.window());
+        log::info!(
+            "isolated DockSurface sessions opened: shared-space={} primary-generation={} isolated-generation={}",
+            MAIN_SPACE,
+            primary.generation(),
+            isolated_primary.generation()
+        );
 
         let viewports = surface.viewports();
         if cx.viewport_capabilities().platform_viewport_windows {

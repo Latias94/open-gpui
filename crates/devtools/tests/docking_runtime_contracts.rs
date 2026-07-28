@@ -2,19 +2,21 @@
 
 use open_gpui::{
     Bounds, PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
-    PlatformWindowMutationCapabilities, WindowActivationPolicy, WindowBounds,
+    PlatformWindowMutationCapabilities, QuitMode, WindowActivationPolicy, WindowBounds,
     WindowCoordinateSpace, WindowCreationSupport, WindowId, WindowInitialPresentationOrder,
-    WindowKind, WindowMutationRequest, WindowMutationSupport, WindowPlatformFacts, point, px, size,
+    WindowKind, WindowMutationRequest, WindowMutationSupport, WindowOptions, WindowPlatformFacts,
+    point, px, size,
 };
 use open_gpui_devtools::{
-    DevtoolsDiffKind, DevtoolsDiffStatus, DevtoolsReport, docking,
+    DevtoolsDiffKind, DevtoolsDiffStatus, DevtoolsRegistry, DevtoolsReport, docking,
     docking::{
         DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED, DOCKING_VIEWPORT_ROUTE_FACTS_MISSING,
         DOCKING_VIEWPORT_ROUTE_FACTS_STALE,
     },
 };
 use open_gpui_docking::{
-    DockItemId, DockSpaceId,
+    DockItemId, DockSpaceId, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
+    DockSurfaceViewportOpenOutcome,
     advanced::{
         DockViewportDropOutcomeKind, DockViewportDropOutcomeRecord, DockViewportInputStatus,
         DockViewportLifecycleRecord, DockViewportPayloadRecord,
@@ -26,10 +28,239 @@ use open_gpui_docking::{
         DockViewportRouteStatus, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
         DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord,
         DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
-        DockViewportWindowProfileRecord, DockVisualAffordanceDebugLayer,
-        DockVisualAffordanceDebugSummary,
+        DockViewportWindowOwnershipStatus, DockViewportWindowProfileRecord,
+        DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary,
     },
 };
+use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+
+#[open_gpui::test]
+fn docking_surface_inspection_projects_window_session_authority(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (session, runtime) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .build(cx)
+            .expect("surface should build");
+        (
+            surface.window_session_status(cx),
+            surface.viewports().runtime_status(cx),
+        )
+    });
+
+    let inspection = docking::docking_surface_inspection(session, &runtime);
+    assert_eq!(inspection.session.phase, "vacant");
+    assert_eq!(inspection.session.generation, 0);
+    assert_eq!(inspection.session.anchor_window_id, None);
+    assert_eq!(inspection.session.reason_kind, None);
+    assert_eq!(inspection.session.reason_detail, None);
+    assert_eq!(inspection.session.owned_window_count, 0);
+    assert_eq!(inspection.session.opening_window_count, 0);
+    assert_eq!(inspection.session.active_window_count, 0);
+    assert_eq!(inspection.session.retiring_window_count, 0);
+    assert_eq!(inspection.session.terminal_ticket_count, 0);
+    assert_eq!(inspection.session.pending_terminal_ticket_count, 0);
+    assert_eq!(inspection.session.runtime_empty, None);
+
+    let capture = docking::docking_surface_capture(session, &runtime);
+    let surface_target = capture
+        .targets
+        .targets
+        .iter()
+        .find(|target| target.id.as_str() == "docking.surface")
+        .expect("surface target should be present");
+    let runtime_target = capture
+        .targets
+        .targets
+        .iter()
+        .find(|target| target.id.as_str() == "docking.runtime")
+        .expect("runtime target should be present");
+    assert_eq!(runtime_target.parent_id.as_ref(), Some(&surface_target.id));
+    assert!(capture.domains.iter().any(|domain| {
+        domain.id.as_str() == "docking.surface"
+            && domain
+                .summary
+                .as_ref()
+                .is_some_and(|summary| summary["phase"] == "vacant" && summary["generation"] == 0)
+    }));
+    assert!(capture.snapshots.iter().any(|snapshot| {
+        snapshot.probe_id.as_str() == "docking.surface"
+            && serde_json::to_value(snapshot)
+                .is_ok_and(|value| value.to_string().contains("window-session"))
+    }));
+}
+
+#[open_gpui::test]
+fn docking_surface_capture_providers_namespace_every_capture_identity(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (left_session, left_runtime, right_session, right_runtime) = cx.update(|cx| {
+        let left = DockSurface::builder("left")
+            .build(cx)
+            .expect("left surface should build");
+        let right = DockSurface::builder("right")
+            .build(cx)
+            .expect("right surface should build");
+        (
+            left.window_session_status(cx),
+            left.viewports().runtime_status(cx),
+            right.window_session_status(cx),
+            right.viewports().runtime_status(cx),
+        )
+    });
+
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider(
+            docking::docking_surface_capture_provider("dock surface", move || {
+                (left_session, left_runtime.clone())
+            })
+            .expect("left provider id should be valid"),
+        )
+        .expect("left provider should register");
+    registry
+        .register_capture_provider(
+            docking::docking_surface_capture_provider("dock-surface", move || {
+                (right_session, right_runtime.clone())
+            })
+            .expect("right provider id should be valid"),
+        )
+        .expect("right provider should register");
+
+    let capture = registry.collect_capture();
+    assert!(capture.diagnostics.iter().all(|diagnostic| {
+        !matches!(
+            diagnostic.code.as_str(),
+            "capture.duplicate_target" | "capture.duplicate_domain" | "capture.duplicate_probe"
+        )
+    }));
+
+    let surface_targets = capture
+        .targets
+        .targets
+        .iter()
+        .filter(|target| target.label == "Docking surface")
+        .collect::<Vec<_>>();
+    let runtime_targets = capture
+        .targets
+        .targets
+        .iter()
+        .filter(|target| target.label == "Docking runtime")
+        .collect::<Vec<_>>();
+    assert_eq!(surface_targets.len(), 2);
+    assert_eq!(runtime_targets.len(), 2);
+    assert_ne!(surface_targets[0].id, surface_targets[1].id);
+
+    let surface_ids = surface_targets
+        .iter()
+        .map(|target| target.id.clone())
+        .collect::<BTreeSet<_>>();
+    let runtime_parents = runtime_targets
+        .iter()
+        .map(|target| {
+            target
+                .parent_id
+                .clone()
+                .expect("each provider runtime should belong to its surface")
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(runtime_parents, surface_ids);
+    assert_eq!(
+        capture
+            .domains
+            .iter()
+            .map(|domain| domain.id.clone())
+            .collect::<BTreeSet<_>>()
+            .len(),
+        4
+    );
+    assert_eq!(
+        capture
+            .snapshots
+            .iter()
+            .map(|snapshot| snapshot.probe_id.clone())
+            .collect::<BTreeSet<_>>()
+            .len(),
+        4
+    );
+}
+
+#[open_gpui::test]
+fn docking_surface_inspection_projects_active_and_shutting_down_owned_windows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| cx.set_quit_mode(QuitMode::Explicit));
+    let (surface, anchor, dependent) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface should build");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("primary should open, got {outcome:?}"),
+        };
+        let dependent = match surface
+            .viewports()
+            .open("secondary", WindowOptions::default(), cx)
+        {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("dependent should open, got {outcome:?}"),
+        };
+        (surface, anchor, dependent)
+    });
+
+    let active = cx.update(|cx| {
+        docking::docking_surface_inspection(
+            surface.window_session_status(cx),
+            &surface.viewports().runtime_status(cx),
+        )
+    });
+    assert_eq!(active.session.phase, "active");
+    assert_eq!(active.session.owned_window_count, 2);
+    assert_eq!(active.session.opening_window_count, 0);
+    assert_eq!(active.session.active_window_count, 2);
+    assert_eq!(active.session.retiring_window_count, 0);
+
+    let shutting_down = Rc::new(RefCell::new(None));
+    cx.update(|cx| {
+        let surface = surface.clone();
+        let shutting_down = shutting_down.clone();
+        cx.on_window_closed(move |cx, window_id| {
+            if window_id == dependent.window_id() {
+                shutting_down.replace(Some(docking::docking_surface_inspection(
+                    surface.window_session_status(cx),
+                    &surface.viewports().runtime_status(cx),
+                )));
+            }
+        })
+        .detach();
+    });
+
+    assert!(!cx.simulate_window_close(anchor));
+    cx.run_until_parked();
+
+    let shutting_down = shutting_down
+        .borrow()
+        .clone()
+        .expect("dependent terminal should expose the in-flight shutdown state");
+    assert_eq!(shutting_down.session.phase, "shutting-down");
+    assert!(shutting_down.session.owned_window_count >= 1);
+    assert_eq!(shutting_down.session.opening_window_count, 0);
+    assert_eq!(shutting_down.session.active_window_count, 0);
+    assert_eq!(
+        shutting_down.session.retiring_window_count,
+        shutting_down.session.owned_window_count
+    );
+
+    let closed = cx.update(|cx| {
+        docking::docking_surface_inspection(
+            surface.window_session_status(cx),
+            &surface.viewports().runtime_status(cx),
+        )
+    });
+    assert_eq!(closed.session.phase, "closed");
+    assert_eq!(closed.session.owned_window_count, 0);
+}
 
 #[test]
 fn docking_runtime_inspection_projects_public_status_rows() {
@@ -38,6 +269,10 @@ fn docking_runtime_inspection_projects_public_status_rows() {
 
     assert_eq!(inspection.summary.platform_capabilities_present, true);
     assert_eq!(inspection.summary.platform_viewport_windows, Some(false));
+    assert_eq!(inspection.summary.owned_window_count, 3);
+    assert_eq!(inspection.summary.opening_window_count, 1);
+    assert_eq!(inspection.summary.active_window_count, 1);
+    assert_eq!(inspection.summary.retiring_window_count, 1);
     assert_eq!(inspection.summary.viewport_lifecycle_count, 1);
     assert_eq!(inspection.summary.window_profile_count, 1);
     assert_eq!(inspection.summary.route_ready_count, 1);
@@ -363,6 +598,12 @@ fn docking_runtime_drop_tear_off_and_placement_changes_are_diffable() {
 
 fn runtime_status(platform_viewport_windows: bool) -> DockViewportRuntimeStatus {
     let mut status = DockViewportRuntimeStatus::default();
+    status.window_ownership = DockViewportWindowOwnershipStatus {
+        owned_window_count: 3,
+        opening_window_count: 1,
+        active_window_count: 1,
+        retiring_window_count: 1,
+    };
     status.platform_capabilities = Some(DockViewportPlatformCapabilityRecord {
         platform_viewport_windows,
         global_window_bounds: true,

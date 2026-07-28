@@ -1,7 +1,7 @@
 use super::{
     DockSurface, DockSurfaceChange, DockSurfaceSnapshot, DockSurfaceViewportReadiness,
     DockSurfaceViewportReadinessReport, DockSurfaceViewportUnsupportedFlag,
-    with_detached_root_transaction,
+    DockSurfaceWindowSessionStatus, with_detached_root_transaction,
 };
 use crate::{
     DockPolicyError, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
@@ -136,6 +136,11 @@ pub enum DockSurfaceViewportOpenStatus {
 /// Typed reason a facade-level platform viewport request did not open a window.
 #[derive(Debug)]
 pub enum DockSurfaceViewportUnavailable {
+    /// The surface does not have an active primary-window session that can own this viewport.
+    SessionInactive {
+        /// Exact lifecycle snapshot that rejected the managed viewport request.
+        status: DockSurfaceWindowSessionStatus,
+    },
     /// The app's docking policy does not allow platform viewport windows.
     PolicyDisabled(DockPolicyError),
     /// The active backend does not support independent platform viewport windows.
@@ -637,6 +642,19 @@ impl DockSurfaceViewportOpenOutcome {
 }
 
 impl DockSurfaceViewportUnavailable {
+    /// Returns true when the surface has no active primary-window session.
+    pub fn is_session_inactive(&self) -> bool {
+        matches!(self, Self::SessionInactive { .. })
+    }
+
+    /// Returns the window-session snapshot that rejected this request, when present.
+    pub fn window_session_status(&self) -> Option<DockSurfaceWindowSessionStatus> {
+        match self {
+            Self::SessionInactive { status } => Some(*status),
+            _ => None,
+        }
+    }
+
     /// Returns true when the active platform backend does not expose platform viewport windows.
     pub fn is_backend_unsupported(&self) -> bool {
         matches!(self, Self::BackendUnsupported)

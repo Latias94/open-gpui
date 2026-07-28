@@ -2,7 +2,9 @@
 use crate::DockViewportActivationTransaction;
 use crate::surface::{
     DockSurfaceActivationOutcome, DockSurfaceChangeCategory, DockSurfaceOwner,
-    DockSurfaceTransactionId, with_detached_root_transaction,
+    DockSurfaceTransactionId,
+    window_session::{DockSurfaceWindowSessionLease, DockSurfaceWindowSessionOpeningToken},
+    with_detached_root_transaction,
 };
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockNodeId,
@@ -13,12 +15,14 @@ use crate::{
     DockViewportPlatformSyncDispatch, DockViewportPlatformSyncRejectedReason,
     DockViewportPlatformSyncRequest, DockViewportResolvedDropRoute,
     DockViewportResolvedDropRouteOutcome, DockViewportRestoreReadiness,
-    DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeStatus,
-    DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
-    DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOpenAttemptKey,
-    DockVisualAffordanceDebugSummary, apply_viewport_window_effects,
-    apply_viewport_window_effects_excluding, close_window_quietly,
+    DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeCommitAuthority,
+    DockViewportRuntimeLineage, DockViewportRuntimeLineageActivationOutcome,
+    DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportRuntimeWorkContext,
+    DockViewportShouldCloseOutcome, DockViewportSurfaceShutdownEffects,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
+    DockViewportTearOffRequest, DockViewportWindowEffects, DockViewportWindowFacts,
+    DockViewportWindowOpenAttemptKey, DockVisualAffordanceDebugSummary,
+    apply_viewport_window_effects, apply_viewport_window_effects_excluding, close_window_quietly,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -56,7 +60,7 @@ use open_gpui::WindowBounds;
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels, Point, Result,
     Subscription, WeakEntity, Window, WindowId, WindowMutationDomain, WindowMutationRequest,
-    WindowOptions, WindowPlacementRequest, WindowPlatformFacts,
+    WindowOptions, WindowPlacementRequest, WindowPlatformFacts, WindowTransientOwner,
 };
 #[cfg(test)]
 use std::cell::{Ref, RefMut};
@@ -91,6 +95,24 @@ pub struct DockViewportRuntimeHandle {
     surface_owner: Rc<RefCell<Option<WeakEntity<DockSurfaceOwner>>>>,
     #[cfg(test)]
     window_close_apply_test_hook: DockViewportWindowCloseApplyTestHook,
+}
+
+#[derive(Debug)]
+struct DockViewportManagedSurface {
+    owner: Entity<DockSurfaceOwner>,
+    lease: DockSurfaceWindowSessionLease,
+    transient_owner: WindowTransientOwner,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub(crate) enum DockViewportNativeOwnerError {
+    #[error(
+        "facade-managed viewport transient owner must be the exact active DockSurface anchor: expected {expected:?}, requested {requested:?}"
+    )]
+    ManagedOwnerMismatch {
+        expected: AnyWindowHandle,
+        requested: AnyWindowHandle,
+    },
 }
 
 #[cfg(test)]
@@ -167,6 +189,10 @@ impl DockViewportOpenReservations {
             space,
             generation,
         })
+    }
+
+    fn cancel_all(&self) {
+        self.state.borrow_mut().active.clear();
     }
 }
 
@@ -249,8 +275,12 @@ fn relevant_window_mutation_facts_match(
     }
 }
 
-type DockViewportRuntimeCommitCallback =
-    dyn Fn(Option<DockSurfaceTransactionId>, &[DockSurfaceChangeCategory], &mut App);
+type DockViewportRuntimeCommitCallback = dyn Fn(
+    DockViewportRuntimeCommitAuthority,
+    Option<DockSurfaceTransactionId>,
+    &[DockSurfaceChangeCategory],
+    &mut App,
+);
 
 #[derive(Clone, Default)]
 struct DockViewportRuntimeCommitSink {
@@ -269,8 +299,12 @@ impl std::fmt::Debug for DockViewportRuntimeCommitSink {
 impl DockViewportRuntimeCommitSink {
     fn install(
         &self,
-        callback: impl Fn(Option<DockSurfaceTransactionId>, &[DockSurfaceChangeCategory], &mut App)
-        + 'static,
+        callback: impl Fn(
+            DockViewportRuntimeCommitAuthority,
+            Option<DockSurfaceTransactionId>,
+            &[DockSurfaceChangeCategory],
+            &mut App,
+        ) + 'static,
     ) {
         let mut slot = self.callback.borrow_mut();
         assert!(
@@ -282,6 +316,7 @@ impl DockViewportRuntimeCommitSink {
 
     fn publish(
         &self,
+        authority: DockViewportRuntimeCommitAuthority,
         surface_transaction: Option<DockSurfaceTransactionId>,
         categories: &[DockSurfaceChangeCategory],
         cx: &mut App,
@@ -291,7 +326,7 @@ impl DockViewportRuntimeCommitSink {
         }
         let callback = self.callback.borrow().clone();
         if let Some(callback) = callback {
-            callback(surface_transaction, categories, cx);
+            callback(authority, surface_transaction, categories, cx);
         }
     }
 }
@@ -398,6 +433,7 @@ pub(crate) struct DockViewportRenderedHostScenePreparation {
     changed: bool,
     draft: DockViewportHostSceneDraft,
     expected_registration: Option<DockViewportRegistrationKey>,
+    work_context: DockViewportRuntimeWorkContext,
     window: AnyWindowHandle,
     window_facts: DockViewportWindowFacts,
 }
@@ -411,6 +447,7 @@ impl DockViewportRenderedHostScenePreparation {
 #[derive(Debug)]
 pub(crate) struct DockViewportRenderedHostSceneCommit {
     changed: bool,
+    work_context: DockViewportRuntimeWorkContext,
     pub(crate) frame: Option<DockViewportHostSceneFrame>,
     registration_update: DockViewportRuntimeUpdate,
     route_preview_update: DockViewportRuntimeUpdate,
@@ -612,6 +649,124 @@ impl DockViewportRuntimeHandle {
         .into_handle()
     }
 
+    pub(crate) fn for_surface(
+        controller: Entity<DockController>,
+        authority: open_gpui::EntityId,
+        close_policy: DockViewportClosePolicy,
+        visual_style_resolver: Option<crate::DockVisualStyleResolver>,
+    ) -> Self {
+        DockViewportRuntime::with_surface_authority_close_policy_and_visual_style_resolver(
+            controller,
+            authority,
+            close_policy,
+            visual_style_resolver,
+        )
+        .into_handle()
+    }
+
+    pub(crate) fn activate_surface_lineage(
+        &self,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> DockViewportRuntimeLineageActivationOutcome {
+        self.runtime.borrow_mut().activate_surface_lineage(lease)
+    }
+
+    pub(crate) fn begin_surface_shutdown(
+        &self,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> Option<DockViewportSurfaceShutdownEffects> {
+        let effects = self.runtime.borrow_mut().begin_surface_shutdown(lease)?;
+        self.platform_mutation_observation_subscriptions
+            .borrow_mut()
+            .clear();
+        self.pending_platform_mutations.borrow_mut().clear();
+        self.terminal_platform_mutations.borrow_mut().clear();
+        self.open_reservations.cancel_all();
+        Some(effects)
+    }
+
+    pub(crate) fn commit_surface_shutdown(
+        &self,
+        effects: DockViewportSurfaceShutdownEffects,
+        cx: &mut App,
+    ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
+        let (lease, windows, cleanup_update) = effects.into_parts();
+        let Some(work_context) = cleanup_update.work_context() else {
+            debug_assert!(cleanup_update.change_categories().is_empty());
+            return windows;
+        };
+        if work_context.lineage() != DockViewportRuntimeLineage::Surface(lease)
+            || !self.runtime.borrow().admits_frozen_surface_shutdown(lease)
+        {
+            return windows;
+        }
+        self.publish_surface_commit_with_authority(
+            DockViewportRuntimeCommitAuthority::FrozenSurfaceShutdown(work_context),
+            &cleanup_update,
+            cx,
+        );
+        windows
+    }
+
+    pub(crate) fn abort_surface_opening(
+        &self,
+        opening: DockSurfaceWindowSessionOpeningToken,
+    ) -> Vec<AnyWindowHandle> {
+        self.runtime.borrow_mut().abort_surface_opening(opening)
+    }
+
+    pub(crate) fn settle_surface_window_terminal(
+        &self,
+        lease: DockSurfaceWindowSessionLease,
+        window_id: WindowId,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .settle_surface_window_terminal(lease, window_id)
+    }
+
+    pub(crate) fn surface_generation_empty(&self, lease: DockSurfaceWindowSessionLease) -> bool {
+        self.runtime.borrow().surface_generation_empty(lease)
+    }
+
+    pub(crate) fn admits_work_context(&self, context: DockViewportRuntimeWorkContext) -> bool {
+        self.runtime.borrow().admits_work_context(context)
+    }
+
+    pub(crate) fn begin_primary_anchor_open_attempt(
+        &self,
+        window: AnyWindowHandle,
+        opening: DockSurfaceWindowSessionOpeningToken,
+    ) -> Option<DockViewportWindowOpenAttemptKey> {
+        self.runtime
+            .borrow_mut()
+            .begin_primary_anchor_open_attempt(window, opening)
+    }
+
+    pub(crate) fn abort_window_open_attempt(
+        &self,
+        attempt: DockViewportWindowOpenAttemptKey,
+    ) -> bool {
+        self.runtime.borrow_mut().abort_window_open_attempt(attempt)
+    }
+
+    pub(crate) fn promote_primary_anchor_open_attempt(
+        &self,
+        attempt: DockViewportWindowOpenAttemptKey,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .promote_primary_anchor_open_attempt(attempt, lease)
+    }
+
+    pub(crate) fn windows_for_surface(
+        &self,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
+        self.runtime.borrow().windows_for_surface(lease)
+    }
+
     /// Creates a handle from a prepared runtime.
     pub(crate) fn from_runtime(runtime: DockViewportRuntime) -> Self {
         Self {
@@ -671,15 +826,167 @@ impl DockViewportRuntimeHandle {
             .and_then(WeakEntity::upgrade)
     }
 
+    fn exact_managed_surface(&self, cx: &App) -> Result<Option<DockViewportManagedSurface>> {
+        let lineage = self.runtime.borrow().admission().default_lineage();
+        match lineage {
+            Some(DockViewportRuntimeLineage::Unmanaged) => Ok(None),
+            Some(DockViewportRuntimeLineage::Surface(lease)) => {
+                let owner = self.surface_owner().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "facade-managed viewport runtime lost its DockSurface owner",
+                    )
+                })?;
+                let active_lease =
+                    cx.read_entity(&owner, |owner, _| owner.window_session().active_lease());
+                if active_lease != Some(lease) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "facade-managed viewport runtime does not match the exact active DockSurface session lease",
+                    )
+                    .into());
+                }
+
+                let mut anchors =
+                    self.windows_for_surface(lease)
+                        .into_iter()
+                        .filter_map(|(role, window)| {
+                            (role == crate::DockViewportWindowRole::PrimaryAnchor).then_some(window)
+                        });
+                let anchor = anchors.next().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "facade-managed viewport runtime has no primary anchor for the active DockSurface session lease",
+                    )
+                })?;
+                if anchors.next().is_some() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "facade-managed viewport runtime has multiple primary anchors for one DockSurface session lease",
+                    )
+                    .into());
+                }
+                if anchor.window_id() != lease.anchor() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "facade-managed viewport primary anchor does not match the exact DockSurface session lease",
+                    )
+                    .into());
+                }
+                let transient_owner = cx.transient_window_owner(anchor)?;
+                Ok(Some(DockViewportManagedSurface {
+                    owner,
+                    lease,
+                    transient_owner,
+                }))
+            }
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "facade-managed viewport windows require an active DockSurface window session",
+            )
+            .into()),
+        }
+    }
+
+    fn resolve_viewport_transient_owner(
+        options: &mut WindowOptions,
+        managed_surface: Option<&DockViewportManagedSurface>,
+        current_window: Option<AnyWindowHandle>,
+        cx: &App,
+    ) -> Result<()> {
+        let transient_owner_supported = cx
+            .window_capabilities_for(&options.kind, options.display_id)
+            .creation
+            .transient_for
+            .is_supported();
+
+        if let Some(managed_surface) = managed_surface {
+            if let Some(requested_owner) = options.transient_for.as_ref()
+                && requested_owner.window() != managed_surface.transient_owner.window()
+            {
+                return Err(DockViewportNativeOwnerError::ManagedOwnerMismatch {
+                    expected: managed_surface.transient_owner.window(),
+                    requested: requested_owner.window(),
+                }
+                .into());
+            }
+
+            if options.transient_for.is_some() || transient_owner_supported {
+                options.transient_for = Some(managed_surface.transient_owner.clone());
+            }
+        } else if options.transient_for.is_none()
+            && transient_owner_supported
+            && let Some(owner) = current_window
+        {
+            options.transient_for = Some(cx.transient_window_owner(owner)?);
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn install_surface_commit_sink(
         &self,
-        callback: impl Fn(Option<DockSurfaceTransactionId>, &[DockSurfaceChangeCategory], &mut App)
-        + 'static,
+        callback: impl Fn(
+            DockViewportRuntimeCommitAuthority,
+            Option<DockSurfaceTransactionId>,
+            &[DockSurfaceChangeCategory],
+            &mut App,
+        ) + 'static,
     ) {
         self.surface_commit_sink.install(callback);
     }
 
     fn publish_surface_commit(&self, update: &DockViewportRuntimeUpdate, cx: &mut App) {
+        if update.change_categories().is_empty() {
+            return;
+        }
+        let Some(work_context) = update.work_context() else {
+            debug_assert!(
+                false,
+                "categorized runtime updates require an exact work context"
+            );
+            return;
+        };
+        self.publish_surface_commit_with_authority(
+            DockViewportRuntimeCommitAuthority::Active(work_context),
+            update,
+            cx,
+        );
+    }
+
+    fn publish_surface_commit_with_authority(
+        &self,
+        authority: DockViewportRuntimeCommitAuthority,
+        update: &DockViewportRuntimeUpdate,
+        cx: &mut App,
+    ) {
+        if update.change_categories().is_empty() {
+            return;
+        }
+        let work_context = authority.work_context();
+        if update.work_context() != Some(work_context) {
+            debug_assert!(
+                false,
+                "runtime commit authority must match its update context"
+            );
+            return;
+        }
+        let admitted = match authority {
+            DockViewportRuntimeCommitAuthority::Active(context) => {
+                self.admits_work_context(context)
+            }
+            DockViewportRuntimeCommitAuthority::FrozenSurfaceShutdown(context) => {
+                match context.lineage() {
+                    DockViewportRuntimeLineage::Surface(lease) => {
+                        self.runtime.borrow().admits_frozen_surface_shutdown(lease)
+                    }
+                    DockViewportRuntimeLineage::Unmanaged => false,
+                }
+            }
+        };
+        if !admitted {
+            return;
+        }
         let active_transaction = self.active_surface_transaction.get();
         if let (Some(update_transaction), Some(active_transaction)) =
             (update.surface_transaction(), active_transaction)
@@ -690,6 +997,7 @@ impl DockViewportRuntimeHandle {
             );
         }
         self.surface_commit_sink.publish(
+            authority,
             update.surface_transaction().or(active_transaction),
             update.change_categories(),
             cx,
@@ -773,13 +1081,9 @@ impl DockViewportRuntimeHandle {
     ) -> bool {
         let (record, tickets) = result.into_parts();
         let window_id = record.window_id;
-        if expected_registration.is_some_and(|registration| {
-            !self
-                .runtime
-                .borrow()
-                .adapter()
-                .is_current_registration(registration)
-        }) {
+        if expected_registration
+            .is_some_and(|registration| !self.runtime.borrow().admits_registration(registration))
+        {
             return false;
         }
         let immediate_terminals = record
@@ -838,12 +1142,9 @@ impl DockViewportRuntimeHandle {
             self.platform_mutation_observation_subscriptions.clone();
         let subscription = ticket.subscribe(move |observation| {
             let registration_is_current = registration.as_ref().is_none_or(|registration| {
-                runtime.upgrade().is_some_and(|runtime| {
-                    runtime
-                        .borrow()
-                        .adapter()
-                        .is_current_registration(registration)
-                })
+                runtime
+                    .upgrade()
+                    .is_some_and(|runtime| runtime.borrow().admits_registration(registration))
             });
             let remove_pending = pending_platform_mutations
                 .borrow()
@@ -1086,10 +1387,7 @@ impl DockViewportRuntimeHandle {
     }
 
     fn is_current_registration(&self, registration: &DockViewportRegistrationKey) -> bool {
-        self.runtime
-            .borrow()
-            .adapter()
-            .is_current_registration(registration)
+        self.runtime.borrow().admits_registration(registration)
     }
 
     pub(crate) fn release_host_binding_from_window(
@@ -1435,7 +1733,35 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
         self.ensure_platform_viewport_windows_supported(cx)?;
+        let managed_surface = self.exact_managed_surface(cx)?;
+        let lineage = managed_surface
+            .as_ref()
+            .map(|surface| DockViewportRuntimeLineage::Surface(surface.lease))
+            .unwrap_or(DockViewportRuntimeLineage::Unmanaged);
+        Self::resolve_viewport_transient_owner(
+            &mut options,
+            managed_surface.as_ref(),
+            current_window.as_ref().map(|window| window.window_handle()),
+            cx,
+        )?;
         self.ensure_window_closed_observer(cx);
+        let work_context = self
+            .runtime
+            .borrow()
+            .current_work_context(surface_transaction)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "viewport open requires an admitted runtime lineage",
+                )
+            })?;
+        if work_context.lineage() != lineage {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "viewport open lineage changed while resolving its active surface lease",
+            )
+            .into());
+        }
 
         let space = space.into();
         let _open_reservation =
@@ -1606,19 +1932,8 @@ impl DockViewportRuntimeHandle {
             cx,
         );
         let mut stale_cleanup_update = DockViewportRuntimeUpdate::default();
-        stale_cleanup_update.mark_viewport_topology(reusable_topology_changed, surface_transaction);
+        stale_cleanup_update.mark_viewport_topology(reusable_topology_changed, work_context);
         self.publish_surface_commit(&stale_cleanup_update, cx);
-
-        if options.transient_for.is_none()
-            && cx
-                .window_capabilities_for(&options.kind, options.display_id)
-                .creation
-                .transient_for
-                .is_supported()
-            && let Some(owner) = current_window.as_ref().map(|window| window.window_handle())
-        {
-            options.transient_for = Some(cx.transient_window_owner(owner)?);
-        }
 
         let controller = self.runtime.borrow().controller_entity();
         let host_space = space.clone();
@@ -1626,19 +1941,19 @@ impl DockViewportRuntimeHandle {
         let open_attempt_runtime = host_runtime.clone();
         let open_attempt_slot = Rc::new(Cell::new(None));
         let open_attempt_slot_for_builder = open_attempt_slot.clone();
-        let surface_owner = self.surface_owner();
         let open_result = cx.open_window(options, move |window, cx| {
             let open_attempt = open_attempt_runtime
                 .runtime
                 .borrow_mut()
-                .begin_window_open_attempt(window.window_handle().window_id());
+                .begin_window_open_attempt(window.window_handle(), lineage);
             open_attempt_slot_for_builder.set(open_attempt);
-            cx.new(move |cx| match surface_owner {
-                Some(surface_owner) => DockHost::from_surface_owner(
+            cx.new(move |cx| match managed_surface {
+                Some(surface) => DockHost::from_managed_surface_owner(
                     controller,
                     host_space,
                     host_runtime,
-                    &surface_owner,
+                    &surface.owner,
+                    surface.lease,
                     cx,
                 ),
                 None => DockHost::from_controller(controller, host_space, host_runtime, cx),
@@ -1741,11 +2056,17 @@ impl DockViewportRuntimeHandle {
     fn open_unregistered_viewport_window(
         &self,
         space: DockSpaceId,
-        options: WindowOptions,
+        mut options: WindowOptions,
         cx: &mut App,
     ) -> Result<(AnyWindowHandle, DockViewportWindowOpenAttemptKey)> {
         self.ensure_platform_viewports_allowed(cx)?;
         self.ensure_platform_viewport_windows_supported(cx)?;
+        let managed_surface = self.exact_managed_surface(cx)?;
+        let lineage = managed_surface
+            .as_ref()
+            .map(|surface| DockViewportRuntimeLineage::Surface(surface.lease))
+            .unwrap_or(DockViewportRuntimeLineage::Unmanaged);
+        Self::resolve_viewport_transient_owner(&mut options, managed_surface.as_ref(), None, cx)?;
         self.ensure_window_closed_observer(cx);
 
         let controller = self.runtime.borrow().controller_entity();
@@ -1753,19 +2074,19 @@ impl DockViewportRuntimeHandle {
         let open_attempt_runtime = host_runtime.clone();
         let open_attempt_slot = Rc::new(Cell::new(None));
         let open_attempt_slot_for_builder = open_attempt_slot.clone();
-        let surface_owner = self.surface_owner();
         let open_result = cx.open_window(options, move |window, cx| {
             let open_attempt = open_attempt_runtime
                 .runtime
                 .borrow_mut()
-                .begin_window_open_attempt(window.window_handle().window_id());
+                .begin_window_open_attempt(window.window_handle(), lineage);
             open_attempt_slot_for_builder.set(open_attempt);
-            cx.new(move |cx| match surface_owner {
-                Some(surface_owner) => DockHost::from_surface_owner(
+            cx.new(move |cx| match managed_surface {
+                Some(surface) => DockHost::from_managed_surface_owner(
                     controller,
                     space,
                     host_runtime,
-                    &surface_owner,
+                    &surface.owner,
+                    surface.lease,
                     cx,
                 ),
                 None => DockHost::from_controller(controller, space, host_runtime, cx),
@@ -1994,12 +2315,12 @@ impl DockViewportRuntimeHandle {
             }
         };
         let registration_key = completed.registration().registration_key().clone();
+        let work_context = runtime_update
+            .work_context()
+            .expect("tear-off completion requires an exact runtime work context");
         self.publish_surface_commit(&runtime_update, cx);
         let mut graph_update = DockViewportRuntimeUpdate::default();
-        graph_update.mark_graph_commit(
-            completed.action().changed(),
-            self.active_surface_transaction.get(),
-        );
+        graph_update.mark_graph_commit(completed.action().changed(), work_context);
         self.publish_surface_commit(&graph_update, cx);
         let registration_current_after_publication =
             self.is_current_registration(&registration_key);
@@ -2035,10 +2356,16 @@ impl DockViewportRuntimeHandle {
         window: AnyWindowHandle,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
+        let lineage = self
+            .runtime
+            .borrow()
+            .admission()
+            .default_lineage()
+            .expect("test tear-off runtime requires an admitted lineage");
         let Some(open_attempt) = self
             .runtime
             .borrow_mut()
-            .begin_window_open_attempt(window.window_id())
+            .begin_window_open_attempt(window, lineage)
         else {
             return Err(std::io::Error::other(
                 "test tear-off window id is already owned by another runtime generation",
@@ -2393,5 +2720,270 @@ mod window_mutation_retry_tests {
         assert!(!relevant_window_mutation_facts_match(
             request, &previous, &current
         ));
+    }
+}
+
+#[cfg(test)]
+mod surface_commit_lineage_tests {
+    use super::*;
+    use crate::{
+        DockGraph, DockSurface, DockViewportWindowRole, DockWorkspace,
+        surface::window_session::{
+            DockSurfaceWindowSessionBeginShutdownOutcome, DockSurfaceWindowSessionLease,
+            DockSurfaceWindowSessionRuntimeEmptyOutcome,
+            DockSurfaceWindowSessionShutdownConvergenceOutcome,
+            DockSurfaceWindowSessionShutdownReason, DockSurfaceWindowSessionTerminalDisposition,
+            DockSurfaceWindowSessionTerminalOutcome,
+        },
+    };
+    use open_gpui::{Empty, TestAppContext, WindowHandle, WindowId};
+
+    fn active_surface_lease(
+        surface: &DockSurface,
+        anchor: WindowId,
+        cx: &mut App,
+    ) -> DockSurfaceWindowSessionLease {
+        cx.update_entity(surface.owner(), |owner, _| {
+            let opening = owner
+                .window_session_mut()
+                .reserve_opening()
+                .expect("the surface session should reserve an opening generation");
+            owner
+                .window_session_mut()
+                .commit_opening(opening, anchor)
+                .expect("the reserved surface generation should activate")
+        })
+    }
+
+    fn close_surface_generation(
+        surface: &DockSurface,
+        runtime: &DockViewportRuntimeHandle,
+        lease: DockSurfaceWindowSessionLease,
+        cx: &mut App,
+    ) {
+        let begin = cx.update_entity(surface.owner(), |owner, _| {
+            owner.window_session_mut().begin_shutdown(
+                lease,
+                DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                std::iter::empty(),
+            )
+        });
+        assert_eq!(
+            begin,
+            DockSurfaceWindowSessionBeginShutdownOutcome::Started {
+                terminal_ticket_count: 1,
+            }
+        );
+        assert!(
+            runtime
+                .begin_surface_shutdown(lease)
+                .expect("the active surface generation should freeze")
+                .windows()
+                .is_empty(),
+            "this revision regression does not own native windows"
+        );
+        let complete = cx.update_entity(surface.owner(), |owner, _| {
+            assert_eq!(
+                owner.window_session_mut().mark_runtime_empty(lease),
+                DockSurfaceWindowSessionRuntimeEmptyOutcome::Marked
+            );
+            assert_eq!(
+                owner.window_session_mut().settle_terminal(
+                    lease,
+                    lease.anchor(),
+                    DockSurfaceWindowSessionTerminalDisposition::ObservedClosed,
+                ),
+                DockSurfaceWindowSessionTerminalOutcome::Settled
+            );
+            owner.window_session_mut().complete_shutdown(lease)
+        });
+        assert_eq!(
+            complete,
+            DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed
+        );
+    }
+
+    #[open_gpui::test]
+    fn stale_categorized_surface_publish_cannot_advance_revision(cx: &mut TestAppContext) {
+        cx.update(|app| {
+            let space = DockSpaceId::from("main");
+            let controller =
+                app.new(|_| DockController::new(DockWorkspace::new(space, DockGraph::new())));
+            let surface = DockSurface::from_controller(controller, app);
+            let runtime = surface.viewport_runtime(app);
+
+            let g1 = active_surface_lease(&surface, WindowId::from(2001), app);
+            assert_eq!(
+                runtime.activate_surface_lineage(g1),
+                DockViewportRuntimeLineageActivationOutcome::Activated
+            );
+            let g1_context =
+                DockViewportRuntimeWorkContext::new(DockViewportRuntimeLineage::Surface(g1), None);
+            let mut g1_update = DockViewportRuntimeUpdate::default();
+            g1_update.mark_graph_commit(true, g1_context);
+            runtime.publish_surface_commit(&g1_update, app);
+            assert_eq!(surface.revision(app), 1);
+
+            close_surface_generation(&surface, &runtime, g1, app);
+            let g2 = active_surface_lease(&surface, WindowId::from(2002), app);
+            assert_eq!(
+                runtime.activate_surface_lineage(g2),
+                DockViewportRuntimeLineageActivationOutcome::Activated
+            );
+
+            let revision_before_stale_publish = surface.revision(app);
+            runtime.publish_surface_commit(&g1_update, app);
+            assert_eq!(
+                surface.revision(app),
+                revision_before_stale_publish,
+                "a categorized G1 update must not advance the surface revision under G2"
+            );
+
+            let g2_context =
+                DockViewportRuntimeWorkContext::new(DockViewportRuntimeLineage::Surface(g2), None);
+            let mut g2_update = DockViewportRuntimeUpdate::default();
+            g2_update.mark_graph_commit(true, g2_context);
+            runtime.publish_surface_commit(&g2_update, app);
+            assert_eq!(
+                surface.revision(app),
+                revision_before_stale_publish + 1,
+                "the exact active generation should still publish categorized commits"
+            );
+        });
+    }
+
+    #[open_gpui::test]
+    fn frozen_shutdown_publishes_topology_cleanup_exactly_once(cx: &mut TestAppContext) {
+        let (surface, runtime, changes, window, g1, revision_before_shutdown, _subscription) = cx
+            .update(|app| {
+                let space = DockSpaceId::from("main");
+                let controller = app.new(|_| {
+                    DockController::new(DockWorkspace::new(space.clone(), DockGraph::new()))
+                });
+                let surface = DockSurface::from_controller(controller, app);
+                let runtime = surface.viewport_runtime(app);
+                let changes = Rc::new(RefCell::new(Vec::new()));
+                let observed = changes.clone();
+                let subscription = surface.subscribe_changes(app, move |event, _| {
+                    observed.borrow_mut().push(event.clone());
+                });
+
+                let window: AnyWindowHandle =
+                    WindowHandle::<Empty>::new(WindowId::from(3001)).into();
+                let g1 = active_surface_lease(&surface, window.window_id(), app);
+                assert_eq!(
+                    runtime.activate_surface_lineage(g1),
+                    DockViewportRuntimeLineageActivationOutcome::Activated
+                );
+                let registration = runtime
+                    .runtime
+                    .borrow_mut()
+                    .register_opened_viewport_with_cleanup(space, window)
+                    .expect("the active G1 runtime should register its viewport");
+                runtime.publish_surface_commit(registration.runtime_update(), app);
+                assert_eq!(
+                    surface
+                        .export_snapshot(app)
+                        .viewport_placement()
+                        .viewports
+                        .len(),
+                    1
+                );
+                let revision_before_shutdown = surface.revision(app);
+                (
+                    surface,
+                    runtime,
+                    changes,
+                    window,
+                    g1,
+                    revision_before_shutdown,
+                    subscription,
+                )
+            });
+        changes.borrow_mut().clear();
+
+        let closed_windows = cx.update(|app| {
+            let begin = app.update_entity(surface.owner(), |owner, _| {
+                owner.window_session_mut().begin_shutdown(
+                    g1,
+                    DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                    [window.window_id()],
+                )
+            });
+            assert_eq!(
+                begin,
+                DockSurfaceWindowSessionBeginShutdownOutcome::Started {
+                    terminal_ticket_count: 1,
+                }
+            );
+
+            let effects = runtime
+                .begin_surface_shutdown(g1)
+                .expect("the active G1 runtime should mint one frozen cleanup token");
+            assert_eq!(effects.lease(), g1);
+            assert!(
+                surface
+                    .export_snapshot(app)
+                    .viewport_placement()
+                    .viewports
+                    .is_empty(),
+                "the runtime must remove G1 placement before publishing cleanup"
+            );
+            runtime.commit_surface_shutdown(effects, app)
+        });
+        assert_eq!(
+            closed_windows,
+            [(DockViewportWindowRole::ManagedViewport, window)]
+        );
+        assert_eq!(
+            cx.read(|app| surface.revision(app)),
+            revision_before_shutdown + 1
+        );
+        assert_eq!(changes.borrow().len(), 1);
+        assert_eq!(
+            changes.borrow()[0].categories(),
+            &[DockSurfaceChangeCategory::ViewportTopology]
+        );
+
+        cx.update(|app| {
+            assert!(
+                runtime.begin_surface_shutdown(g1).is_none(),
+                "a frozen generation must not mint a second cleanup token"
+            );
+            let mut stale_update = DockViewportRuntimeUpdate::default();
+            stale_update.mark_graph_commit(
+                true,
+                DockViewportRuntimeWorkContext::new(DockViewportRuntimeLineage::Surface(g1), None),
+            );
+            runtime.publish_surface_commit(&stale_update, app);
+            assert_eq!(
+                surface.revision(app),
+                revision_before_shutdown + 1,
+                "ordinary active authority must remain rejected after G1 freezes"
+            );
+        });
+        assert_eq!(changes.borrow().len(), 1);
+
+        let complete = cx.update(|app| {
+            app.update_entity(surface.owner(), |owner, _| {
+                assert_eq!(
+                    owner.window_session_mut().mark_runtime_empty(g1),
+                    DockSurfaceWindowSessionRuntimeEmptyOutcome::Marked
+                );
+                assert_eq!(
+                    owner.window_session_mut().settle_terminal(
+                        g1,
+                        window.window_id(),
+                        DockSurfaceWindowSessionTerminalDisposition::ObservedClosed,
+                    ),
+                    DockSurfaceWindowSessionTerminalOutcome::Settled
+                );
+                owner.window_session_mut().complete_shutdown(g1)
+            })
+        });
+        assert_eq!(
+            complete,
+            DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed
+        );
     }
 }

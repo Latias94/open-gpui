@@ -27,8 +27,10 @@ stable product ids, or application-owned persistence.
 ## Decision
 
 Every facade-created `DockSurface` clone references one private `DockSurfaceOwner` entity. The
-owner holds the controller, viewport runtime, primary space, monotonic committed revision, and
-activation state. The owner type and its transaction identity are not public APIs.
+owner holds the controller, viewport runtime, primary space, monotonic committed revision,
+activation state, and the private window-session authority described by
+[ADR 0030](0030-open-gpui-dock-surface-window-session-authority.md). The owner type, transaction
+identity, and exact-generation window leases are not public APIs.
 
 Each facade, host, or runtime root mutation allocates a private `DockSurfaceTransactionId`.
 Synchronous nested work carries that identity through controller and viewport commit paths.
@@ -75,6 +77,9 @@ subscription stops callback delivery but does not cancel the issued intent. Node
   retargeted by a stale equal-item callback.
 - Low-level controller and runtime APIs remain available through explicit modules, but they do not
   create a second public surface owner.
+- Window-session shutdown and revision commits remain separate: close intent and terminal ticket
+  settlement are not durable layout changes, while one authoritative runtime cleanup may publish
+  at most one normal committed change.
 
 ## Rejected Alternatives
 

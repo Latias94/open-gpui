@@ -459,6 +459,24 @@ impl<'a, T: 'static> Context<'a, T> {
         subscription
     }
 
+    /// Registers a callback for the terminal initial-presentation result of this window.
+    pub fn observe_window_initial_presentation(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) = window.initial_presentation_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                view.update(cx, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
         &self,

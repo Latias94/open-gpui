@@ -6,15 +6,20 @@ use open_gpui::{
     WindowInitialPresentationOrder, WindowMutationRequest, WindowMutationSupport,
     WindowPlacementState, WindowPlatformFacts,
 };
-use open_gpui_docking::advanced::{
-    DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPayloadRecord,
-    DockViewportPlatformCapabilityRecord, DockViewportPlatformSyncDispatch,
-    DockViewportPlatformSyncObservedRecord, DockViewportPlatformSyncRecord,
-    DockViewportPlatformSyncRequest, DockViewportReleaseUnavailableRecord,
-    DockViewportRestoreReadinessRecord, DockViewportRouteRecord, DockViewportRouteSelectionRecord,
-    DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntimeStatus,
-    DockViewportStaleStatusReason, DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
-    DockViewportWindowProfileRecord,
+use open_gpui_docking::{
+    DockSurfaceWindowSessionOpeningRollbackReason, DockSurfaceWindowSessionPhase,
+    DockSurfaceWindowSessionReason, DockSurfaceWindowSessionShutdownReason,
+    DockSurfaceWindowSessionStatus,
+    advanced::{
+        DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPayloadRecord,
+        DockViewportPlatformCapabilityRecord, DockViewportPlatformSyncDispatch,
+        DockViewportPlatformSyncObservedRecord, DockViewportPlatformSyncRecord,
+        DockViewportPlatformSyncRequest, DockViewportReleaseUnavailableRecord,
+        DockViewportRestoreReadinessRecord, DockViewportRouteRecord,
+        DockViewportRouteSelectionRecord, DockViewportRouteStatus, DockViewportRouteTarget,
+        DockViewportRuntimeStatus, DockViewportStaleStatusReason, DockViewportTearOffRecord,
+        DockViewportVisualAffordanceRecord, DockViewportWindowProfileRecord,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,10 +29,26 @@ use crate::{
     DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, ProbeSnapshotError, SnapshotDiagnostic,
     SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary,
     SnapshotTree,
-    adapters::{sanitize_sensitive_text, snapshot_node_with_payload},
+    adapters::{opaque_stable_id, sanitize_sensitive_text, snapshot_node_with_payload},
 };
 
 const DOCKING_RUNTIME_PROBE_ID: &str = "docking.runtime";
+const DOCKING_SURFACE_PROBE_ID: &str = "docking.surface";
+
+#[derive(Clone, Copy)]
+struct DockingCaptureIdentity<'a> {
+    provider_id: Option<&'a str>,
+}
+
+impl<'a> DockingCaptureIdentity<'a> {
+    const CANONICAL: Self = Self { provider_id: None };
+
+    const fn provider(provider_id: &'a str) -> Self {
+        Self {
+            provider_id: Some(provider_id),
+        }
+    }
+}
 
 /// Diagnostic code emitted when public platform facts say viewport windows are unsupported.
 pub const DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED: &str =
@@ -36,6 +57,48 @@ pub const DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED: &str =
 pub const DOCKING_VIEWPORT_ROUTE_FACTS_MISSING: &str = "docking.viewport.route_facts.missing";
 /// Diagnostic code emitted when public lifecycle facts say route facts are stale.
 pub const DOCKING_VIEWPORT_ROUTE_FACTS_STALE: &str = "docking.viewport.route_facts.stale";
+
+/// Structured DevTools projection of one facade-managed docking surface.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingSurfaceInspection {
+    /// Stable surface target id used by the DevTools target tree.
+    pub surface_target_id: DevtoolsTargetId,
+    /// Stable surface domain id used by the DevTools domain output.
+    pub domain_id: DevtoolsDomainId,
+    /// Window-session lifecycle and shutdown convergence facts.
+    pub session: DockingSurfaceSessionRow,
+    /// Low-level viewport runtime facts owned by this surface.
+    pub runtime: DockingRuntimeInspection,
+}
+
+/// Read-only window-session row for one facade-managed docking surface.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DockingSurfaceSessionRow {
+    /// Stable lifecycle phase label.
+    pub phase: String,
+    /// Latest reserved session generation.
+    pub generation: u64,
+    /// Exact committed anchor window id, when one exists.
+    pub anchor_window_id: Option<u64>,
+    /// Stable top-level reason category.
+    pub reason_kind: Option<String>,
+    /// Stable rollback or shutdown reason detail.
+    pub reason_detail: Option<String>,
+    /// Total number of exact window handles retained by the surface runtime.
+    pub owned_window_count: usize,
+    /// Number of retained handles still in an opening transaction.
+    pub opening_window_count: usize,
+    /// Number of retained handles under active runtime ownership.
+    pub active_window_count: usize,
+    /// Number of retained handles awaiting terminal close convergence.
+    pub retiring_window_count: usize,
+    /// Number of exact terminal tickets captured for shutdown.
+    pub terminal_ticket_count: usize,
+    /// Number of terminal tickets that have not settled.
+    pub pending_terminal_ticket_count: usize,
+    /// Current-generation runtime convergence, when shutdown has measured it.
+    pub runtime_empty: Option<bool>,
+}
 
 /// Structured DevTools projection of one docking viewport runtime status.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,6 +134,14 @@ pub struct DockingRuntimeSummary {
     pub platform_viewport_windows: Option<bool>,
     /// Whether saved-placement restore facts were present in the status.
     pub placement_restore_present: bool,
+    /// Total number of exact window handles retained by the runtime ownership authority.
+    pub owned_window_count: usize,
+    /// Number of retained handles still in an opening transaction.
+    pub opening_window_count: usize,
+    /// Number of retained handles under active runtime ownership.
+    pub active_window_count: usize,
+    /// Number of retained handles awaiting terminal close convergence.
+    pub retiring_window_count: usize,
     /// Number of registered viewport lifecycle rows.
     pub viewport_lifecycle_count: usize,
     /// Number of viewport windows with an actual-kind creation and mutation profile.
@@ -312,10 +383,17 @@ pub struct DockingVisualAffordanceRow {
 
 /// Converts a docking viewport runtime status into a target/domain/event capture.
 pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCapture {
-    let runtime_target_id = docking_runtime_target_id();
-    let runtime_domain_id = docking_runtime_domain_id();
-    let snapshot = docking_runtime_snapshot_envelope(status);
-    let diagnostics = docking_runtime_diagnostics(status);
+    docking_runtime_capture_with_identity(status, DockingCaptureIdentity::CANONICAL)
+}
+
+fn docking_runtime_capture_with_identity(
+    status: &DockViewportRuntimeStatus,
+    identity: DockingCaptureIdentity<'_>,
+) -> DevtoolsCapture {
+    let runtime_target_id = docking_runtime_target_id(identity);
+    let runtime_domain_id = docking_runtime_domain_id(identity);
+    let snapshot = docking_runtime_snapshot_envelope(status, identity);
+    let diagnostics = docking_runtime_diagnostics(status, identity);
 
     let mut targets = vec![
         DevtoolsTargetSnapshot::new(
@@ -330,7 +408,9 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
             .viewport_lifecycle
             .iter()
             .enumerate()
-            .map(|(index, lifecycle)| lifecycle_target(index, lifecycle, &runtime_target_id)),
+            .map(|(index, lifecycle)| {
+                lifecycle_target(index, lifecycle, &runtime_target_id, identity)
+            }),
     );
     targets.extend(
         status
@@ -338,7 +418,7 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
             .iter()
             .enumerate()
             .map(|(index, affordance)| {
-                visual_affordance_target(index, affordance, &runtime_target_id)
+                visual_affordance_target(index, affordance, &runtime_target_id, identity)
             }),
     );
 
@@ -449,7 +529,7 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
                     format!("Visual affordance {index}"),
                     DevtoolsEventKind::Instant,
                 )
-                .target_id(visual_affordance_target_id(index, affordance))
+                .target_id(visual_affordance_target_id(index, affordance, identity))
                 .domain_id(runtime_domain_id.clone())
                 .with_payload(visual_affordance_payload(affordance))
             }),
@@ -476,7 +556,87 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
     )
 }
 
+/// Converts one facade-managed surface session and its runtime into a single capture.
+pub fn docking_surface_capture(
+    session: DockSurfaceWindowSessionStatus,
+    runtime: &DockViewportRuntimeStatus,
+) -> DevtoolsCapture {
+    docking_surface_capture_with_identity(session, runtime, DockingCaptureIdentity::CANONICAL)
+}
+
+fn docking_surface_capture_with_identity(
+    session: DockSurfaceWindowSessionStatus,
+    runtime: &DockViewportRuntimeStatus,
+    identity: DockingCaptureIdentity<'_>,
+) -> DevtoolsCapture {
+    let runtime_capture = docking_runtime_capture_with_identity(runtime, identity);
+    let surface_target_id = docking_surface_target_id(identity);
+    let session_row = DockingSurfaceSessionRow::from_status(session, runtime);
+    let session_payload = docking_surface_session_payload(&session_row);
+    let surface_snapshot = docking_surface_snapshot_envelope(&session_row, identity);
+
+    let surface_target = DevtoolsTargetSnapshot::new(
+        surface_target_id.clone(),
+        DevtoolsTargetKind::Runtime,
+        "Docking surface",
+    )
+    .with_metadata(session_payload.clone());
+    let runtime_target_id = docking_runtime_target_id(identity);
+    let runtime_targets = runtime_capture.targets.targets.into_iter().map(|target| {
+        if target.id == runtime_target_id {
+            target.parent_id(surface_target_id.clone())
+        } else {
+            target
+        }
+    });
+
+    let surface_domain = DevtoolsDomainSnapshot::new(
+        docking_surface_domain_id(identity),
+        surface_target_id.clone(),
+        DevtoolsDomainKind::Docking,
+        "Docking surface session",
+    )
+    .with_summary(session_payload)
+    .with_snapshot(surface_snapshot.clone());
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new(std::iter::once(surface_target).chain(runtime_targets)),
+        std::iter::once(surface_domain).chain(runtime_capture.domains),
+        runtime_capture.events,
+        std::iter::once(surface_snapshot).chain(runtime_capture.snapshots),
+        runtime_capture.diagnostics,
+    )
+}
+
+/// Creates a capture provider for one facade-managed docking surface.
+///
+/// The provider id also derives an opaque namespace for every target, domain, event reference,
+/// diagnostic, and snapshot in the capture, so multiple surfaces can coexist in one registry.
+pub fn docking_surface_capture_provider<F>(
+    id: impl Into<String>,
+    status: F,
+) -> Result<
+    CaptureProvider<impl Fn() -> Result<DevtoolsCapture, ProbeSnapshotError>>,
+    ProbeSnapshotError,
+>
+where
+    F: Fn() -> (DockSurfaceWindowSessionStatus, DockViewportRuntimeStatus) + Send + Sync + 'static,
+{
+    let id = id.into();
+    let capture_id = id.clone();
+    CaptureProvider::new(id, move || {
+        let (session, runtime) = status();
+        Ok(docking_surface_capture_with_identity(
+            session,
+            &runtime,
+            DockingCaptureIdentity::provider(&capture_id),
+        ))
+    })
+}
+
 /// Creates a capture provider for docking viewport runtime status snapshots.
+///
+/// The provider id also derives an opaque namespace for every identity in the capture.
 pub fn docking_runtime_capture_provider<F>(
     id: impl Into<String>,
     status: F,
@@ -487,7 +647,14 @@ pub fn docking_runtime_capture_provider<F>(
 where
     F: Fn() -> DockViewportRuntimeStatus + Send + Sync + 'static,
 {
-    CaptureProvider::new(id, move || Ok(docking_runtime_capture(&status())))
+    let id = id.into();
+    let capture_id = id.clone();
+    CaptureProvider::new(id, move || {
+        Ok(docking_runtime_capture_with_identity(
+            &status(),
+            DockingCaptureIdentity::provider(&capture_id),
+        ))
+    })
 }
 
 /// Converts a docking viewport runtime status into a DevTools tree.
@@ -498,10 +665,10 @@ pub fn docking_runtime_probe_snapshot(status: &DockViewportRuntimeStatus) -> Sna
 
 /// Converts docking runtime status into structured rows for inspector/workbench UIs.
 pub fn docking_runtime_inspection(status: &DockViewportRuntimeStatus) -> DockingRuntimeInspection {
-    let runtime_target_id = docking_runtime_target_id();
-    let domain_id = docking_runtime_domain_id();
+    let runtime_target_id = docking_runtime_target_id(DockingCaptureIdentity::CANONICAL);
+    let domain_id = docking_runtime_domain_id(DockingCaptureIdentity::CANONICAL);
     let runtime_events = docking_runtime_event_rows(status, &runtime_target_id, &domain_id);
-    let diagnostics = docking_runtime_diagnostics(status);
+    let diagnostics = docking_runtime_diagnostics(status, DockingCaptureIdentity::CANONICAL);
     let summary =
         DockingRuntimeSummary::from_status(status, runtime_events.len(), diagnostics.len());
 
@@ -537,6 +704,43 @@ pub fn docking_runtime_inspection(status: &DockViewportRuntimeStatus) -> Docking
     }
 }
 
+/// Converts one facade-managed surface session and runtime into structured DevTools rows.
+pub fn docking_surface_inspection(
+    session: DockSurfaceWindowSessionStatus,
+    runtime: &DockViewportRuntimeStatus,
+) -> DockingSurfaceInspection {
+    DockingSurfaceInspection {
+        surface_target_id: docking_surface_target_id(DockingCaptureIdentity::CANONICAL),
+        domain_id: docking_surface_domain_id(DockingCaptureIdentity::CANONICAL),
+        session: DockingSurfaceSessionRow::from_status(session, runtime),
+        runtime: docking_runtime_inspection(runtime),
+    }
+}
+
+impl DockingSurfaceSessionRow {
+    fn from_status(
+        status: DockSurfaceWindowSessionStatus,
+        runtime: &DockViewportRuntimeStatus,
+    ) -> Self {
+        let (reason_kind, reason_detail) = docking_surface_session_reason(status.reason());
+        let ownership = runtime.window_ownership;
+        Self {
+            phase: docking_surface_session_phase(status.phase()).to_owned(),
+            generation: status.generation(),
+            anchor_window_id: status.anchor().map(|anchor| anchor.as_u64()),
+            reason_kind: reason_kind.map(str::to_owned),
+            reason_detail: reason_detail.map(str::to_owned),
+            owned_window_count: ownership.owned_window_count,
+            opening_window_count: ownership.opening_window_count,
+            active_window_count: ownership.active_window_count,
+            retiring_window_count: ownership.retiring_window_count,
+            terminal_ticket_count: status.terminal_ticket_count(),
+            pending_terminal_ticket_count: status.pending_terminal_ticket_count(),
+            runtime_empty: status.runtime_empty(),
+        }
+    }
+}
+
 impl DockingRuntimeSummary {
     fn from_status(
         status: &DockViewportRuntimeStatus,
@@ -549,6 +753,10 @@ impl DockingRuntimeSummary {
                 .platform_capabilities
                 .map(|capabilities| capabilities.platform_viewport_windows),
             placement_restore_present: status.placement_restore.is_some(),
+            owned_window_count: status.window_ownership.owned_window_count,
+            opening_window_count: status.window_ownership.opening_window_count,
+            active_window_count: status.window_ownership.active_window_count,
+            retiring_window_count: status.window_ownership.retiring_window_count,
             viewport_lifecycle_count: status.viewport_lifecycle.len(),
             window_profile_count: status.window_profiles.len(),
             route_ready_count: status
@@ -701,7 +909,7 @@ impl From<DockViewportRestoreReadinessRecord> for DockingPlacementRestoreRow {
 impl DockingViewportLifecycleRow {
     fn from_lifecycle(index: usize, lifecycle: &DockViewportLifecycleRecord) -> Self {
         Self {
-            target_id: lifecycle_target_id(index, lifecycle),
+            target_id: lifecycle_target_id(index, lifecycle, DockingCaptureIdentity::CANONICAL),
             index,
             space: sanitize_sensitive_text(lifecycle.space.as_str()),
             window_id: lifecycle.window_id.as_u64(),
@@ -732,7 +940,11 @@ impl DockingVisualAffordanceRow {
         let active = record.summary.active.as_ref();
 
         Self {
-            target_id: visual_affordance_target_id(index, record),
+            target_id: visual_affordance_target_id(
+                index,
+                record,
+                DockingCaptureIdentity::CANONICAL,
+            ),
             index,
             space: sanitize_sensitive_text(record.space.as_str()),
             window_id: record.window_id.as_u64(),
@@ -760,7 +972,10 @@ impl DockingVisualAffordanceRow {
     }
 }
 
-fn docking_runtime_diagnostics(status: &DockViewportRuntimeStatus) -> Vec<SnapshotDiagnostic> {
+fn docking_runtime_diagnostics(
+    status: &DockViewportRuntimeStatus,
+    identity: DockingCaptureIdentity<'_>,
+) -> Vec<SnapshotDiagnostic> {
     let mut diagnostics = Vec::new();
 
     if status
@@ -768,7 +983,7 @@ fn docking_runtime_diagnostics(status: &DockViewportRuntimeStatus) -> Vec<Snapsh
         .is_some_and(|capabilities| !capabilities.platform_viewport_windows)
     {
         diagnostics.push(SnapshotDiagnostic::new(
-            docking_runtime_probe_id(),
+            docking_runtime_probe_id(identity),
             DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED,
             "platform viewport windows are unsupported by current platform capabilities",
         ));
@@ -778,7 +993,7 @@ fn docking_runtime_diagnostics(status: &DockViewportRuntimeStatus) -> Vec<Snapsh
         match lifecycle.route_status {
             DockViewportRouteStatus::MissingRouteFacts => {
                 diagnostics.push(SnapshotDiagnostic::new(
-                    docking_runtime_probe_id(),
+                    docking_runtime_probe_id(identity),
                     DOCKING_VIEWPORT_ROUTE_FACTS_MISSING,
                     format!(
                         "viewport `{}` is registered but has no route facts",
@@ -788,7 +1003,7 @@ fn docking_runtime_diagnostics(status: &DockViewportRuntimeStatus) -> Vec<Snapsh
             }
             DockViewportRouteStatus::Stale { reason } => {
                 diagnostics.push(SnapshotDiagnostic::new(
-                    docking_runtime_probe_id(),
+                    docking_runtime_probe_id(identity),
                     DOCKING_VIEWPORT_ROUTE_FACTS_STALE,
                     format!(
                         "viewport `{}` has stale route facts: {}",
@@ -929,17 +1144,68 @@ fn push_optional_runtime_event_row(
     }
 }
 
-fn docking_runtime_snapshot_envelope(status: &DockViewportRuntimeStatus) -> SnapshotEnvelope {
+fn docking_runtime_snapshot_envelope(
+    status: &DockViewportRuntimeStatus,
+    identity: DockingCaptureIdentity<'_>,
+) -> SnapshotEnvelope {
     SnapshotEnvelope::new(
-        docking_runtime_probe_id(),
+        docking_runtime_probe_id(identity),
         SnapshotKind::Docking,
         docking_runtime_tree(status),
     )
     .with_redaction(SnapshotRedactionSummary::default())
 }
 
-fn docking_runtime_probe_id() -> ProbeId {
-    ProbeId::new(DOCKING_RUNTIME_PROBE_ID).expect("internal docking runtime probe id is non-empty")
+fn docking_runtime_probe_id(identity: DockingCaptureIdentity<'_>) -> ProbeId {
+    let id = match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsTargetId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "runtime",
+            ])
+            .as_str()
+            .to_owned()
+        }
+        None => DOCKING_RUNTIME_PROBE_ID.to_owned(),
+    };
+    ProbeId::new(id).expect("internal docking runtime probe id is non-empty")
+}
+
+fn docking_surface_probe_id(identity: DockingCaptureIdentity<'_>) -> ProbeId {
+    let id = match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsTargetId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "surface",
+            ])
+            .as_str()
+            .to_owned()
+        }
+        None => DOCKING_SURFACE_PROBE_ID.to_owned(),
+    };
+    ProbeId::new(id).expect("internal docking surface probe id is non-empty")
+}
+
+fn docking_surface_snapshot_envelope(
+    status: &DockingSurfaceSessionRow,
+    identity: DockingCaptureIdentity<'_>,
+) -> SnapshotEnvelope {
+    SnapshotEnvelope::new(
+        docking_surface_probe_id(identity),
+        SnapshotKind::Docking,
+        SnapshotTree::new([snapshot_node_with_payload(
+            ["docking", "surface", "window-session"],
+            "Surface window session",
+            docking_surface_session_payload(status),
+        )]),
+    )
+    .with_redaction(SnapshotRedactionSummary::default())
 }
 
 fn docking_runtime_tree(status: &DockViewportRuntimeStatus) -> SnapshotTree {
@@ -1076,33 +1342,104 @@ fn docking_runtime_tree(status: &DockViewportRuntimeStatus) -> SnapshotTree {
     SnapshotTree::new([root])
 }
 
-fn docking_runtime_target_id() -> DevtoolsTargetId {
-    DevtoolsTargetId::from_parts(["docking", "runtime"])
+fn docking_runtime_target_id(identity: DockingCaptureIdentity<'_>) -> DevtoolsTargetId {
+    match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsTargetId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "runtime",
+            ])
+        }
+        None => DevtoolsTargetId::from_parts(["docking", "runtime"]),
+    }
 }
 
-fn docking_runtime_domain_id() -> DevtoolsDomainId {
-    DevtoolsDomainId::from_parts(["docking", "runtime"])
+fn docking_runtime_domain_id(identity: DockingCaptureIdentity<'_>) -> DevtoolsDomainId {
+    match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsDomainId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "runtime",
+            ])
+        }
+        None => DevtoolsDomainId::from_parts(["docking", "runtime"]),
+    }
 }
 
-fn lifecycle_target_id(index: usize, lifecycle: &DockViewportLifecycleRecord) -> DevtoolsTargetId {
+fn docking_surface_target_id(identity: DockingCaptureIdentity<'_>) -> DevtoolsTargetId {
+    match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsTargetId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "surface",
+            ])
+        }
+        None => DevtoolsTargetId::from_parts(["docking", "surface"]),
+    }
+}
+
+fn docking_surface_domain_id(identity: DockingCaptureIdentity<'_>) -> DevtoolsDomainId {
+    match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsDomainId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "surface",
+            ])
+        }
+        None => DevtoolsDomainId::from_parts(["docking", "surface"]),
+    }
+}
+
+fn lifecycle_target_id(
+    index: usize,
+    lifecycle: &DockViewportLifecycleRecord,
+    identity: DockingCaptureIdentity<'_>,
+) -> DevtoolsTargetId {
     let index_label = index.to_string();
     let window_id = lifecycle.window_id.as_u64().to_string();
-    DevtoolsTargetId::from_parts([
-        "docking",
-        "viewport",
-        index_label.as_str(),
-        lifecycle.space.as_str(),
-        window_id.as_str(),
-    ])
+    match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsTargetId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "viewport",
+                index_label.as_str(),
+                lifecycle.space.as_str(),
+                window_id.as_str(),
+            ])
+        }
+        None => DevtoolsTargetId::from_parts([
+            "docking",
+            "viewport",
+            index_label.as_str(),
+            lifecycle.space.as_str(),
+            window_id.as_str(),
+        ]),
+    }
 }
 
 fn lifecycle_target(
     index: usize,
     lifecycle: &DockViewportLifecycleRecord,
     parent_id: &DevtoolsTargetId,
+    identity: DockingCaptureIdentity<'_>,
 ) -> DevtoolsTargetSnapshot {
     DevtoolsTargetSnapshot::new(
-        lifecycle_target_id(index, lifecycle),
+        lifecycle_target_id(index, lifecycle, identity),
         DevtoolsTargetKind::Viewport,
         format!("Viewport {}", lifecycle.space.as_str()),
     )
@@ -1113,25 +1450,41 @@ fn lifecycle_target(
 fn visual_affordance_target_id(
     index: usize,
     affordance: &DockViewportVisualAffordanceRecord,
+    identity: DockingCaptureIdentity<'_>,
 ) -> DevtoolsTargetId {
     let index_label = index.to_string();
     let window_id = affordance.window_id.as_u64().to_string();
-    DevtoolsTargetId::from_parts([
-        "docking",
-        "visual-affordance",
-        index_label.as_str(),
-        affordance.space.as_str(),
-        window_id.as_str(),
-    ])
+    match identity.provider_id {
+        Some(provider_id) => {
+            let provider_namespace = opaque_stable_id("docking-provider", provider_id);
+            DevtoolsTargetId::from_parts([
+                "docking",
+                "provider",
+                provider_namespace.as_str(),
+                "visual-affordance",
+                index_label.as_str(),
+                affordance.space.as_str(),
+                window_id.as_str(),
+            ])
+        }
+        None => DevtoolsTargetId::from_parts([
+            "docking",
+            "visual-affordance",
+            index_label.as_str(),
+            affordance.space.as_str(),
+            window_id.as_str(),
+        ]),
+    }
 }
 
 fn visual_affordance_target(
     index: usize,
     affordance: &DockViewportVisualAffordanceRecord,
     parent_id: &DevtoolsTargetId,
+    identity: DockingCaptureIdentity<'_>,
 ) -> DevtoolsTargetSnapshot {
     DevtoolsTargetSnapshot::new(
-        visual_affordance_target_id(index, affordance),
+        visual_affordance_target_id(index, affordance, identity),
         DevtoolsTargetKind::Viewport,
         format!("Visual affordance {}", affordance.space.as_str()),
     )
@@ -1177,6 +1530,10 @@ fn runtime_summary_payload(status: &DockViewportRuntimeStatus) -> serde_json::Va
         "has_platform_capabilities": status.platform_capabilities.is_some(),
         "window_profile_count": status.window_profiles.len(),
         "has_placement_restore": status.placement_restore.is_some(),
+        "owned_window_count": status.window_ownership.owned_window_count,
+        "opening_window_count": status.window_ownership.opening_window_count,
+        "active_window_count": status.window_ownership.active_window_count,
+        "retiring_window_count": status.window_ownership.retiring_window_count,
         "viewport_lifecycle_count": status.viewport_lifecycle.len(),
         "has_last_route": status.last_route.is_some(),
         "has_last_drop_outcome": status.last_drop_outcome.is_some(),
@@ -1188,6 +1545,78 @@ fn runtime_summary_payload(status: &DockViewportRuntimeStatus) -> serde_json::Va
         "recent_platform_observation_count": status.recent_platform_observations.len(),
         "visual_affordance_count": status.visual_affordances.len(),
     })
+}
+
+fn docking_surface_session_payload(row: &DockingSurfaceSessionRow) -> serde_json::Value {
+    serde_json::json!({
+        "phase": row.phase,
+        "generation": row.generation,
+        "anchor_window_id": row.anchor_window_id,
+        "reason_kind": row.reason_kind,
+        "reason_detail": row.reason_detail,
+        "owned_window_count": row.owned_window_count,
+        "opening_window_count": row.opening_window_count,
+        "active_window_count": row.active_window_count,
+        "retiring_window_count": row.retiring_window_count,
+        "terminal_ticket_count": row.terminal_ticket_count,
+        "pending_terminal_ticket_count": row.pending_terminal_ticket_count,
+        "runtime_empty": row.runtime_empty,
+    })
+}
+
+fn docking_surface_session_phase(phase: DockSurfaceWindowSessionPhase) -> &'static str {
+    match phase {
+        DockSurfaceWindowSessionPhase::Vacant => "vacant",
+        DockSurfaceWindowSessionPhase::Opening => "opening",
+        DockSurfaceWindowSessionPhase::Active => "active",
+        DockSurfaceWindowSessionPhase::ShuttingDown => "shutting-down",
+        DockSurfaceWindowSessionPhase::Closed => "closed",
+    }
+}
+
+fn docking_surface_session_reason(
+    reason: Option<DockSurfaceWindowSessionReason>,
+) -> (Option<&'static str>, Option<&'static str>) {
+    match reason {
+        Some(DockSurfaceWindowSessionReason::OpeningRolledBack(reason)) => (
+            Some("opening-rolled-back"),
+            Some(docking_surface_opening_rollback_reason(reason)),
+        ),
+        Some(DockSurfaceWindowSessionReason::Shutdown(reason)) => (
+            Some("shutdown"),
+            Some(docking_surface_shutdown_reason(reason)),
+        ),
+        Some(_) => (Some("unknown"), Some("unknown")),
+        None => (None, None),
+    }
+}
+
+fn docking_surface_opening_rollback_reason(
+    reason: DockSurfaceWindowSessionOpeningRollbackReason,
+) -> &'static str {
+    match reason {
+        DockSurfaceWindowSessionOpeningRollbackReason::WindowOpenFailed => "window-open-failed",
+        DockSurfaceWindowSessionOpeningRollbackReason::ClosedDuringOpening => {
+            "closed-during-opening"
+        }
+        DockSurfaceWindowSessionOpeningRollbackReason::PresentationFailedBeforeVisibility => {
+            "presentation-failed-before-visibility"
+        }
+        DockSurfaceWindowSessionOpeningRollbackReason::AppShutdown => "app-shutdown",
+        DockSurfaceWindowSessionOpeningRollbackReason::Cancelled => "cancelled",
+        DockSurfaceWindowSessionOpeningRollbackReason::Panicked => "panicked",
+        _ => "unknown",
+    }
+}
+
+fn docking_surface_shutdown_reason(reason: DockSurfaceWindowSessionShutdownReason) -> &'static str {
+    match reason {
+        DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested => "anchor-close-requested",
+        DockSurfaceWindowSessionShutdownReason::AnchorDestroyed => "anchor-destroyed",
+        DockSurfaceWindowSessionShutdownReason::PresentationFailed => "presentation-failed",
+        DockSurfaceWindowSessionShutdownReason::AppShutdown => "app-shutdown",
+        _ => "unknown",
+    }
 }
 
 fn platform_capability_payload(

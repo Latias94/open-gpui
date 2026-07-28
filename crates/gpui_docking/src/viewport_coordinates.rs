@@ -125,16 +125,27 @@ impl DockViewportAdapter {
     /// Updates live window facts and host bounds in one snapshot write.
     ///
     /// Returns true when the stored snapshot changed.
+    #[cfg(test)]
     pub(crate) fn update_snapshot(
         &mut self,
         space: &DockSpaceId,
         window_facts: DockViewportWindowFacts,
         host_geometry: impl Into<DockViewportHostGeometry>,
     ) -> bool {
+        self.update_snapshot_with_change(space, window_facts, host_geometry)
+            .changed
+    }
+
+    pub(crate) fn update_snapshot_with_change(
+        &mut self,
+        space: &DockSpaceId,
+        window_facts: DockViewportWindowFacts,
+        host_geometry: impl Into<DockViewportHostGeometry>,
+    ) -> crate::viewport_registry::DockViewportWindowFactsChange {
         let Some(snapshot) = self.snapshot_mut(space) else {
-            return false;
+            return crate::viewport_registry::DockViewportWindowFactsChange::default();
         };
-        snapshot.update_route_facts(window_facts, host_geometry)
+        snapshot.update_route_facts_with_change(window_facts, host_geometry)
     }
 
     /// Captures stable identities for live input-mask sampling outside the adapter borrow.

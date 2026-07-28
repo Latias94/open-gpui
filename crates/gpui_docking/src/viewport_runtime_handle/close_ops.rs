@@ -34,7 +34,14 @@ impl DockViewportRuntimeHandle {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockViewportCloseOutcome {
+        if let Some(owner) = self.surface_owner() {
+            crate::surface::handle_surface_window_closed(&owner, window_id, cx);
+        }
         self.with_surface_transaction(cx, |surface_transaction, cx| {
+            let work_context = self
+                .runtime
+                .borrow()
+                .current_work_context(surface_transaction);
             self.clear_platform_mutation_observation_subscriptions(window_id);
             let prepared = self.runtime.borrow_mut().prepare_window_closed(window_id);
             let applied = prepared.apply_merge_back(cx);
@@ -44,14 +51,16 @@ impl DockViewportRuntimeHandle {
             let is_current = finalized.is_current();
             let closed = finalized.into_refresh();
             let mut update = DockViewportRuntimeUpdate::default();
-            update.mark_viewport_topology(
-                is_current && viewport_close_removed_runtime_mapping(&closed.outcome),
-                surface_transaction,
-            );
-            update.mark_graph_commit(
-                closed.outcome.status() == DockViewportCloseStatus::MergedBack,
-                surface_transaction,
-            );
+            if let Some(work_context) = work_context {
+                update.mark_viewport_topology(
+                    is_current && viewport_close_removed_runtime_mapping(&closed.outcome),
+                    work_context,
+                );
+                update.mark_graph_commit(
+                    closed.outcome.status() == DockViewportCloseStatus::MergedBack,
+                    work_context,
+                );
+            }
             self.publish_surface_commit(&update, cx);
             if is_current {
                 let closed_effects = closed.window_effects();
@@ -161,6 +170,16 @@ impl DockViewportRuntimeHandle {
                 window_close_apply_test_hook: window_close_apply_test_hook.clone(),
             };
             let _ = handle.handle_window_closed_with_app(window_id, cx);
+        })
+        .detach();
+
+        let runtime = Rc::downgrade(&self.runtime);
+        cx.on_window_native_terminal(move |_, window_id| {
+            if let Some(runtime) = runtime.upgrade() {
+                let _ = runtime
+                    .borrow_mut()
+                    .settle_native_window_terminal(window_id);
+            }
         })
         .detach();
     }

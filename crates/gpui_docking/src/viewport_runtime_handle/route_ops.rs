@@ -38,9 +38,12 @@ impl DockViewportRuntimeHandle {
                             &workspace_facts,
                         )
                     };
-                    let result = prepared
-                        .and_then(|prepared| prepared.apply(cx))
-                        .map(|applied| self.runtime.borrow_mut().finalize_payload_drop(applied));
+                    let result =
+                        prepared
+                            .and_then(|prepared| prepared.apply(cx))
+                            .and_then(|applied| {
+                                self.runtime.borrow_mut().finalize_payload_drop(applied)
+                            });
                     if let Ok((_, update)) = &result {
                         self.publish_surface_commit(update, cx);
                     }
@@ -385,12 +388,18 @@ impl DockViewportRuntimeHandle {
         excluded_window: Option<WindowId>,
         cx: &mut App,
     ) -> bool {
+        let work_context = self
+            .runtime
+            .borrow()
+            .current_work_context(surface_transaction);
         let (effects, topology_changed) = self
             .runtime
             .borrow_mut()
             .finalize_empty_payload_drop_source_vacate(applied);
         let mut update = DockViewportRuntimeUpdate::default();
-        update.mark_viewport_topology(topology_changed, surface_transaction);
+        if let Some(work_context) = work_context {
+            update.mark_viewport_topology(topology_changed, work_context);
+        }
         self.publish_surface_commit(&update, cx);
         apply_viewport_window_effects_excluding(&self.runtime, effects, excluded_window, cx);
         topology_changed

@@ -3,7 +3,8 @@ use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
-    DockViewportRuntimeHandle, DockVisualStyle, DockVisualStyleResolver,
+    DockViewportRuntimeHandle, DockViewportRuntimeLineage, DockViewportRuntimeWorkContext,
+    DockVisualStyle, DockVisualStyleResolver,
     geometry::DockDropGuideMetrics,
     host_render_session::DockHostRenderSession,
     interaction::{DockInteractionRuntime, DockPendingFocusCommand},
@@ -11,7 +12,9 @@ use crate::{
     surface::{
         DockSurfaceActivationHostRegistration, DockSurfaceActivationHostRegistrationStatus,
         DockSurfaceActivationOutcome, DockSurfaceActivationSettlements, DockSurfaceChangeCategory,
-        DockSurfaceOwner, with_root_transaction,
+        DockSurfaceOwner,
+        window_session::{DockSurfaceWindowSessionLease, DockSurfaceWindowSessionOpeningToken},
+        with_root_transaction,
     },
     transition_executor::DockTransitionExecutor,
     viewport_registry::DockViewportRegistrationKey,
@@ -21,7 +24,7 @@ use crate::{
 };
 use open_gpui::{
     App, AppContext as _, Context, Entity, FocusClaimOutcome, FocusHandle, Pixels,
-    PointerCaptureHandle, PrepaintPublicationId, Subscription, WeakEntity, Window, WindowId, px,
+    PointerCaptureHandle, PrepaintPublicationId, Subscription, Window, WindowId, px,
 };
 use open_gpui_motion::MotionPreference;
 use std::{collections::HashMap, rc::Rc};
@@ -48,6 +51,20 @@ enum DockNoPanelFocusSettlement {
 pub(crate) struct DockHostWindowBinding {
     window_id: WindowId,
     generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockHostPrimaryAnchorAuthority {
+    Opening(DockSurfaceWindowSessionOpeningToken),
+    Active(DockSurfaceWindowSessionLease),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockHostRole {
+    Unmanaged,
+    Embedded,
+    PrimaryAnchor(DockHostPrimaryAnchorAuthority),
+    ManagedViewport(DockSurfaceWindowSessionLease),
 }
 
 /// Static host rendering options.
@@ -89,7 +106,8 @@ impl Default for DockHostOptions {
 #[derive(Debug)]
 pub struct DockHost {
     controller: Entity<DockController>,
-    surface_owner: Option<WeakEntity<DockSurfaceOwner>>,
+    surface_owner: Option<Entity<DockSurfaceOwner>>,
+    role: DockHostRole,
     surface_activation_registration: Option<DockSurfaceActivationHostRegistration>,
     space: DockSpaceId,
     focus_handle: FocusHandle,
@@ -135,6 +153,7 @@ impl DockHost {
             viewport_runtime,
             visual_style_resolver,
             None,
+            DockHostRole::Unmanaged,
             cx,
         )
     }
@@ -153,11 +172,12 @@ impl DockHost {
             viewport_runtime,
             Some(visual_style_resolver),
             None,
+            DockHostRole::Unmanaged,
             cx,
         )
     }
 
-    pub(crate) fn from_surface_owner(
+    pub(crate) fn from_embedded_surface_owner(
         controller: Entity<DockController>,
         space: impl Into<DockSpaceId>,
         viewport_runtime: DockViewportRuntimeHandle,
@@ -170,7 +190,48 @@ impl DockHost {
             space,
             viewport_runtime,
             visual_style_resolver,
-            Some(surface_owner.downgrade()),
+            Some(surface_owner.clone()),
+            DockHostRole::Embedded,
+            cx,
+        )
+    }
+
+    pub(crate) fn from_opening_primary_surface_owner(
+        controller: Entity<DockController>,
+        space: impl Into<DockSpaceId>,
+        viewport_runtime: DockViewportRuntimeHandle,
+        surface_owner: &Entity<DockSurfaceOwner>,
+        opening: DockSurfaceWindowSessionOpeningToken,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let visual_style_resolver = viewport_runtime.visual_style_resolver();
+        Self::from_controller_with_optional_visual_style_resolver(
+            controller,
+            space,
+            viewport_runtime,
+            visual_style_resolver,
+            Some(surface_owner.clone()),
+            DockHostRole::PrimaryAnchor(DockHostPrimaryAnchorAuthority::Opening(opening)),
+            cx,
+        )
+    }
+
+    pub(crate) fn from_managed_surface_owner(
+        controller: Entity<DockController>,
+        space: impl Into<DockSpaceId>,
+        viewport_runtime: DockViewportRuntimeHandle,
+        surface_owner: &Entity<DockSurfaceOwner>,
+        lease: DockSurfaceWindowSessionLease,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let visual_style_resolver = viewport_runtime.visual_style_resolver();
+        Self::from_controller_with_optional_visual_style_resolver(
+            controller,
+            space,
+            viewport_runtime,
+            visual_style_resolver,
+            Some(surface_owner.clone()),
+            DockHostRole::ManagedViewport(lease),
             cx,
         )
     }
@@ -180,16 +241,18 @@ impl DockHost {
         space: impl Into<DockSpaceId>,
         viewport_runtime: DockViewportRuntimeHandle,
         visual_style_resolver: Option<DockVisualStyleResolver>,
-        surface_owner: Option<WeakEntity<DockSurfaceOwner>>,
+        surface_owner: Option<Entity<DockSurfaceOwner>>,
+        role: DockHostRole,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&controller, |_, _, cx| cx.notify()).detach();
-        if let Some(surface_owner) = surface_owner.as_ref().and_then(WeakEntity::upgrade) {
+        if let Some(surface_owner) = surface_owner.as_ref() {
             cx.observe(&surface_owner, |_, _, cx| cx.notify()).detach();
         }
         Self {
             controller,
             surface_owner,
+            role,
             surface_activation_registration: None,
             space: space.into(),
             focus_handle: cx.focus_handle(),
@@ -219,6 +282,54 @@ impl DockHost {
             last_visual_affordance_scene: None,
             last_presentation_scene: None,
         }
+    }
+
+    pub(crate) fn promote_primary_anchor(
+        &mut self,
+        opening: DockSurfaceWindowSessionOpeningToken,
+        lease: DockSurfaceWindowSessionLease,
+        anchor: WindowId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.can_promote_primary_anchor(opening, anchor) || !lease.activates(opening, anchor) {
+            return false;
+        }
+        self.role = DockHostRole::PrimaryAnchor(DockHostPrimaryAnchorAuthority::Active(lease));
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn can_promote_primary_anchor(
+        &self,
+        opening: DockSurfaceWindowSessionOpeningToken,
+        anchor: WindowId,
+    ) -> bool {
+        self.role == DockHostRole::PrimaryAnchor(DockHostPrimaryAnchorAuthority::Opening(opening))
+            && self.bound_window_id == Some(anchor)
+    }
+
+    pub(crate) fn runtime_lineage(&self, cx: &Context<Self>) -> Option<DockViewportRuntimeLineage> {
+        match self.role {
+            DockHostRole::Unmanaged => Some(DockViewportRuntimeLineage::Unmanaged),
+            DockHostRole::Embedded
+            | DockHostRole::PrimaryAnchor(DockHostPrimaryAnchorAuthority::Opening(_)) => None,
+            DockHostRole::PrimaryAnchor(DockHostPrimaryAnchorAuthority::Active(lease))
+            | DockHostRole::ManagedViewport(lease) => self
+                .surface_owner
+                .as_ref()
+                .is_some_and(|owner| {
+                    cx.read_entity(owner, |owner, _| owner.window_session().admits(lease))
+                })
+                .then_some(DockViewportRuntimeLineage::Surface(lease)),
+        }
+    }
+
+    pub(crate) fn runtime_work_context(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<DockViewportRuntimeWorkContext> {
+        self.runtime_lineage(cx)
+            .map(|lineage| DockViewportRuntimeWorkContext::new(lineage, None))
     }
 
     pub(crate) fn resolve_visual_style(
@@ -260,7 +371,7 @@ impl DockHost {
     }
 
     pub(crate) fn surface_owner_entity(&self) -> Option<Entity<DockSurfaceOwner>> {
-        self.surface_owner.as_ref().and_then(WeakEntity::upgrade)
+        self.surface_owner.clone()
     }
 
     pub(crate) fn with_workspace<R>(
@@ -290,7 +401,7 @@ impl DockHost {
         changed: impl FnOnce(&R) -> bool,
     ) -> Result<R, DockActionApplyError> {
         let controller = self.controller.clone();
-        let Some(owner) = self.surface_owner.as_ref().and_then(WeakEntity::upgrade) else {
+        let Some(owner) = self.surface_owner.clone() else {
             return cx.update_entity(&controller, |controller, cx| {
                 let outcome = mutate(controller);
                 let did_change = outcome.as_ref().map(changed).unwrap_or(false);
@@ -424,10 +535,13 @@ impl DockHost {
         &self,
         binding: DockHostWindowBinding,
         registration: Option<&DockViewportRegistrationKey>,
+        work_context: DockViewportRuntimeWorkContext,
         window_id: WindowId,
+        cx: &Context<Self>,
     ) -> bool {
         self.is_current_window_binding(binding, window_id)
             && self.bound_viewport_registration.as_ref() == registration
+            && self.runtime_work_context(cx) == Some(work_context)
     }
 
     pub(crate) fn adopt_viewport_scene_registration(
@@ -435,9 +549,11 @@ impl DockHost {
         binding: DockHostWindowBinding,
         expected: Option<&DockViewportRegistrationKey>,
         registration: DockViewportRegistrationKey,
+        work_context: DockViewportRuntimeWorkContext,
         window_id: WindowId,
+        cx: &Context<Self>,
     ) -> bool {
-        if !self.accepts_viewport_scene_candidate(binding, expected, window_id) {
+        if !self.accepts_viewport_scene_candidate(binding, expected, work_context, window_id, cx) {
             return false;
         }
         self.bound_viewport_registration = Some(registration);
@@ -453,7 +569,7 @@ impl DockHost {
         registration: DockSurfaceActivationHostRegistration,
         cx: &mut App,
     ) {
-        if let Some(owner) = self.surface_owner.as_ref().and_then(WeakEntity::upgrade) {
+        if let Some(owner) = self.surface_owner.clone() {
             let settlements = cx.update_entity(&owner, |owner, owner_cx| {
                 let settlements = owner.activation_mut().release_host(&registration);
                 owner_cx.notify();
@@ -496,7 +612,7 @@ impl DockHost {
         }
     }
 
-    fn ensure_window_binding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn ensure_window_binding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let window_id = window.window_handle().window_id();
         let viewport_registration = self
             .viewport_runtime
@@ -577,11 +693,15 @@ impl DockHost {
 
     pub(crate) fn ensure_surface_activation_host_registration(
         &mut self,
+        work_context: DockViewportRuntimeWorkContext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.ensure_window_binding(window, cx);
-        let Some(owner) = self.surface_owner.as_ref().and_then(WeakEntity::upgrade) else {
+        let DockViewportRuntimeLineage::Surface(lease) = work_context.lineage() else {
+            return;
+        };
+        let Some(owner) = self.surface_owner.clone() else {
             return;
         };
         let window_handle = window.window_handle();
@@ -590,7 +710,8 @@ impl DockHost {
             .surface_activation_registration
             .as_ref()
             .filter(|registration| {
-                registration.host_id() == host_id
+                registration.lease() == lease
+                    && registration.host_id() == host_id
                     && registration.space() == self.space()
                     && registration.window() == window_handle
             })
@@ -601,10 +722,16 @@ impl DockHost {
                 let host = cx.entity().downgrade();
                 let space = self.space().clone();
                 let result = cx.update_entity(&owner, |owner, _| {
+                    if !owner.window_session().admits(lease) {
+                        return None;
+                    }
                     owner
                         .activation_mut()
-                        .register_host(space, host, window_handle)
+                        .register_host(lease, space, host, window_handle)
                 });
+                let Some(result) = result else {
+                    return;
+                };
                 let (registration, settlements) = result.into_parts();
                 self.surface_activation_registration = Some(registration);
                 Self::defer_activation_settlements(settlements, cx);
@@ -620,10 +747,16 @@ impl DockHost {
         let host = cx.entity().downgrade();
         let space = self.space().clone();
         let result = cx.update_entity(&owner, |owner, _| {
+            if !owner.window_session().admits(lease) {
+                return None;
+            }
             owner
                 .activation_mut()
-                .register_host(space, host, window_handle)
+                .register_host(lease, space, host, window_handle)
         });
+        let Some(result) = result else {
+            return;
+        };
         let (registration, settlements) = result.into_parts();
         self.surface_activation_registration = Some(registration);
         Self::defer_activation_settlements(settlements, cx);

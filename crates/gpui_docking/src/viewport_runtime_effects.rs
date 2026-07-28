@@ -1,6 +1,10 @@
 use crate::{
-    DockViewportRuntime, DockViewportWindowRetirement, DockViewportWindowRetirementKey,
-    surface::{DockSurfaceChangeCategory, DockSurfaceTransactionId},
+    DockViewportRuntime, DockViewportRuntimeWorkContext, DockViewportWindowRetirement,
+    DockViewportWindowRetirementKey,
+    surface::{
+        DockSurfaceChangeCategory, DockSurfaceTransactionId,
+        window_session::DockSurfaceWindowSessionLease,
+    },
 };
 use open_gpui::{AnyWindowHandle, App, WindowId};
 use std::{cell::RefCell, rc::Rc};
@@ -117,17 +121,89 @@ fn extend_unique_close_effects(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockViewportRuntimeCommitAuthority {
+    Active(DockViewportRuntimeWorkContext),
+    FrozenSurfaceShutdown(DockViewportRuntimeWorkContext),
+}
+
+impl DockViewportRuntimeCommitAuthority {
+    pub(crate) const fn work_context(self) -> DockViewportRuntimeWorkContext {
+        match self {
+            Self::Active(context) | Self::FrozenSurfaceShutdown(context) => context,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportRuntimeUpdate {
     changed: bool,
     windows: Vec<AnyWindowHandle>,
+    work_context: Option<DockViewportRuntimeWorkContext>,
     surface_transaction: Option<DockSurfaceTransactionId>,
     change_categories: Vec<DockSurfaceChangeCategory>,
+}
+
+#[must_use = "surface shutdown effects must publish their cleanup commit before windows close"]
+#[derive(Debug)]
+pub(crate) struct DockViewportSurfaceShutdownEffects {
+    lease: DockSurfaceWindowSessionLease,
+    windows: Vec<(crate::DockViewportWindowRole, AnyWindowHandle)>,
+    cleanup_update: DockViewportRuntimeUpdate,
+}
+
+impl DockViewportSurfaceShutdownEffects {
+    pub(crate) fn new(
+        lease: DockSurfaceWindowSessionLease,
+        windows: Vec<(crate::DockViewportWindowRole, AnyWindowHandle)>,
+        cleanup_update: DockViewportRuntimeUpdate,
+    ) -> Self {
+        Self {
+            lease,
+            windows,
+            cleanup_update,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn lease(&self) -> DockSurfaceWindowSessionLease {
+        self.lease
+    }
+
+    #[cfg(test)]
+    pub(crate) fn windows(&self) -> &[(crate::DockViewportWindowRole, AnyWindowHandle)] {
+        &self.windows
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        DockSurfaceWindowSessionLease,
+        Vec<(crate::DockViewportWindowRole, AnyWindowHandle)>,
+        DockViewportRuntimeUpdate,
+    ) {
+        (self.lease, self.windows, self.cleanup_update)
+    }
 }
 
 impl DockViewportRuntimeUpdate {
     pub(crate) fn changed(&self) -> bool {
         self.changed
+    }
+
+    pub(crate) const fn work_context(&self) -> Option<DockViewportRuntimeWorkContext> {
+        self.work_context
+    }
+
+    pub(crate) fn bind_work_context(&mut self, context: DockViewportRuntimeWorkContext) {
+        if let Some(current) = self.work_context {
+            assert_eq!(
+                current, context,
+                "cannot merge viewport runtime updates from different work contexts"
+            );
+        } else {
+            self.work_context = Some(context);
+        }
     }
 
     pub(crate) fn mark_changed(&mut self, changed: bool) {
@@ -137,11 +213,11 @@ impl DockViewportRuntimeUpdate {
     pub(crate) fn mark_viewport_topology(
         &mut self,
         changed: bool,
-        surface_transaction: Option<DockSurfaceTransactionId>,
+        context: DockViewportRuntimeWorkContext,
     ) {
         self.mark_category(
             changed,
-            surface_transaction,
+            context,
             DockSurfaceChangeCategory::ViewportTopology,
         );
     }
@@ -149,25 +225,25 @@ impl DockViewportRuntimeUpdate {
     pub(crate) fn mark_graph_commit(
         &mut self,
         changed: bool,
-        surface_transaction: Option<DockSurfaceTransactionId>,
+        context: DockViewportRuntimeWorkContext,
     ) {
         for category in [
             DockSurfaceChangeCategory::Layout,
             DockSurfaceChangeCategory::Selection,
             DockSurfaceChangeCategory::PanelLifecycle,
         ] {
-            self.mark_category(changed, surface_transaction, category);
+            self.mark_category(changed, context, category);
         }
     }
 
     pub(crate) fn mark_observed_viewport_placement(
         &mut self,
         changed: bool,
-        surface_transaction: Option<DockSurfaceTransactionId>,
+        context: DockViewportRuntimeWorkContext,
     ) {
         self.mark_category(
             changed,
-            surface_transaction,
+            context,
             DockSurfaceChangeCategory::ObservedViewportPlacement,
         );
     }
@@ -188,11 +264,15 @@ impl DockViewportRuntimeUpdate {
         let DockViewportRuntimeUpdate {
             changed,
             windows,
+            work_context,
             surface_transaction,
             change_categories,
         } = update;
         self.mark_changed(changed);
         self.extend_windows(windows);
+        if let Some(work_context) = work_context {
+            self.bind_work_context(work_context);
+        }
         if !change_categories.is_empty() {
             self.merge_surface_transaction(surface_transaction);
         }
@@ -206,12 +286,13 @@ impl DockViewportRuntimeUpdate {
     fn mark_category(
         &mut self,
         changed: bool,
-        surface_transaction: Option<DockSurfaceTransactionId>,
+        context: DockViewportRuntimeWorkContext,
         category: DockSurfaceChangeCategory,
     ) {
         self.mark_changed(changed);
         if changed {
-            self.merge_surface_transaction(surface_transaction);
+            self.bind_work_context(context);
+            self.merge_surface_transaction(context.surface_transaction());
             self.extend_change_categories([category]);
         }
     }
@@ -364,7 +445,10 @@ pub(crate) fn refresh_viewport_window_effects_excluding<C: open_gpui::AppContext
 #[cfg(test)]
 mod tests {
     use super::{DockViewportRuntimeUpdate, unique_windows, unique_windows_excluding};
-    use crate::{surface::DockSurfaceChangeCategory, viewport_test_support::handle};
+    use crate::{
+        DockViewportRuntimeWorkContext, surface::DockSurfaceChangeCategory,
+        viewport_test_support::handle,
+    };
 
     #[test]
     fn unique_windows_preserves_first_occurrence_order() {
@@ -404,12 +488,14 @@ mod tests {
 
     #[test]
     fn explicit_runtime_commit_categories_merge_without_duplicates() {
+        let context =
+            DockViewportRuntimeWorkContext::new(crate::DockViewportRuntimeLineage::Unmanaged, None);
         let mut update = DockViewportRuntimeUpdate::default();
-        update.mark_viewport_topology(true, None);
-        update.mark_viewport_topology(true, None);
+        update.mark_viewport_topology(true, context);
+        update.mark_viewport_topology(true, context);
 
         let mut observed = DockViewportRuntimeUpdate::default();
-        observed.mark_observed_viewport_placement(true, None);
+        observed.mark_observed_viewport_placement(true, context);
         update.merge(observed);
 
         assert_eq!(

@@ -54,7 +54,9 @@ Platform viewport windows fail closed unless both gates are true:
 - Application policy allows them through `DockSurfaceBuilder::allow_platform_viewports(true)` or `DockPolicy`.
 - The active backend reports `PlatformViewportCapabilities::platform_viewport_windows`.
 
-`DockSurface::viewports` returns a `DockSurfaceViewports` facade for the common multi-window path. The facade can check `readiness`, `readiness_many`, or `restore_readiness` before opening windows, then open detached dock spaces, restore saved placement data, export placement snapshots, and handle GPUI close hooks while keeping applications away from raw runtime handles. Readiness and open outcomes distinguish policy-disabled, backend-unsupported, unsupported requested platform flags, invalid placement, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
+`DockSurface::viewports` returns a `DockSurfaceViewports` facade for the common multi-window path. First open the surface anchor through `DockSurface::open_primary_window` and match its typed `DockSurfacePrimaryWindowOpenOutcome`; managed viewport readiness and open requests return `SessionInactive` until that exact session generation is active. The facade can then check `readiness`, `readiness_many`, or `restore_readiness`, open detached dock spaces, restore saved placement data, export placement snapshots, and handle GPUI close hooks while keeping applications away from raw runtime handles. Readiness and open outcomes distinguish inactive sessions, policy-disabled, backend-unsupported, unsupported requested platform flags, invalid placement, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
+
+Every surface owns an independent window session with a monotonic generation and exact primary anchor. Closing that anchor freezes new managed work, retires dependent viewports before the anchor, and reaches `Closed` only after its runtime registry and terminal window tickets converge. Close dispatch and logical GPUI removal are not native terminal facts: ordinary teardown waits for the platform's exact `Closed` callbacks, while App shutdown may confirm absence only after the window registry has been cleared. Docking never calls `App::quit`; GPUI's application quit policy remains authoritative. `DockSurface::window_session_status` exposes phase, generation, anchor, terminal reason, ticket counts, and runtime convergence for diagnostics. Embedded `host_view` content renders without creating an anchor or registering managed route and activation authority, so facade activation reports `Unavailable` for that embedded-only host. Applications that intentionally own a custom window lifetime use the explicit low-level runtime and host APIs instead.
 
 For an already-open detached viewport, Dock projects GPUI's property-specific window-mutation
 capabilities from that viewport window's actual immutable kind and target-display profile. Its
@@ -98,7 +100,8 @@ Use `DockSurfaceSnapshot` with `DockSurface::builder(...).try_snapshot(...)` and
 ```rust
 use open_gpui::{Bounds, WindowBounds, WindowOptions, px, size};
 use open_gpui_docking::prelude::{
-    DockSurface, DockSurfaceSnapshot, DockSurfaceViewportOpenOutcome,
+    DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceSnapshot,
+    DockSurfaceViewportOpenOutcome,
 };
 
 fn panel_factory(_cx: &mut open_gpui::App) -> open_gpui::AnyView {
@@ -116,6 +119,20 @@ fn restore_surface(
         .allow_platform_viewports(true)
         .build(cx)
         .expect("registered panels should satisfy the restored layout");
+
+    let primary = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+            None,
+            size(px(960.0), px(640.0)),
+            cx,
+        ))),
+        ..Default::default()
+    };
+    let DockSurfacePrimaryWindowOpenOutcome::Opened(_) =
+        surface.open_primary_window(primary, cx)
+    else {
+        panic!("the managed Dock surface anchor must open before restoring viewports");
+    };
 
     let viewports = surface.viewports();
     let report = viewports.restore_snapshot(
@@ -160,7 +177,7 @@ Run the facade-level multi-viewport example when checking native platform-window
 cargo run -p open-gpui-docking-multiviewport
 ```
 
-This example opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, detaches a preview panel into a child dock space through `DockSurface::detach_panel_to_space`, opens that space through `DockSurface::viewports`, and handles unsupported backends through typed facade outcomes. It also logs committed revisions, performs application-owned debounced snapshot export, and activates a panel by stable item id with a typed terminal outcome.
+This example opens two independent managed surface anchors. The primary surface opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, detaches preview panels into a child dock space, and opens that space through `DockSurface::viewports`; the isolated surface remains an independent primary. It demonstrates that identical logical space ids do not merge session generations or window ownership across surfaces, while retaining typed unsupported-backend outcomes, committed revision logging, application-owned debounced snapshot export, and stable-item activation completion.
 
 Run the normal-checkout native dogfood example when working on viewport runtime behavior or
 diagnostics:
@@ -172,9 +189,10 @@ cargo run -p open-gpui-docking-native
 The dogfood example demonstrates a controller-backed host with registered panels, tab stacks, split
 layout, floating behavior, capability-gated platform viewport windows, and the runtime diagnostic
 paths used by the docking tests. Its application-side adapter maps UI Components light, dark, and
-high-contrast theme snapshots into complete Dock styles. Real cross-window dragging proves that the
-source drag visual keeps its opening-generation style while target guides use the destination
-host's current style.
+high-contrast theme snapshots into complete Dock styles. Deterministic tests prove that the source
+drag visual keeps its opening-generation style while target guides use the destination host's
+current style. Real captured cross-window transport and pre-release native visibility require the
+owning-platform evidence described in the verification plan.
 
 ## Visual Style
 

@@ -1326,6 +1326,7 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
+    native_closed: Rc<Cell<bool>>,
     removal_state: WindowRemovalState,
     should_close_handler: WindowShouldCloseHandlerSlot,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
@@ -1399,6 +1400,7 @@ pub struct Window {
     capslock: Capslock,
     scale_factor: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) initial_presentation_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
@@ -2048,10 +2050,13 @@ impl Window {
             });
         }
 
+        let native_closed = Rc::new(Cell::new(false));
         platform_window.on_close(Box::new({
             let window_id = handle.window_id();
             let cx = cx.to_async();
+            let native_closed = native_closed.clone();
             move || {
+                native_closed.set(true);
                 cx.enqueue_window_closed(window_id);
             }
         }));
@@ -2235,6 +2240,7 @@ impl Window {
             handle,
             invalidator,
             removed: false,
+            native_closed,
             removal_state: WindowRemovalState::Open,
             should_close_handler: WindowShouldCloseHandlerSlot::default(),
             platform_window,
@@ -2307,6 +2313,7 @@ impl Window {
             capslock,
             scale_factor,
             bounds_observers: SubscriberSet::new(),
+            initial_presentation_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
             button_layout_observers: SubscriberSet::new(),
@@ -2355,7 +2362,7 @@ impl Window {
     }
 
     pub(crate) fn creation_can_commit(&self) -> bool {
-        !self.removed && self.removal_state == WindowRemovalState::Open
+        !self.removed && !self.native_closed.get() && self.removal_state == WindowRemovalState::Open
     }
 
     pub(crate) fn prepare_initial_presentation(&mut self) -> Result<()> {
@@ -2388,6 +2395,11 @@ impl Window {
     }
 
     pub(crate) fn initial_presentation_completed(&mut self, cx: &mut App) {
+        if self.presentation_state.initial_presentation
+            == WindowInitialPresentationStatus::Completed
+        {
+            return;
+        }
         self.presentation_state.initial_presentation = WindowInitialPresentationStatus::Completed;
         let previous_facts = self.platform_facts.clone();
         self.refresh_platform_facts();
@@ -2415,10 +2427,23 @@ impl Window {
         if bounds_changed {
             self.notify_bounds_observers(cx);
         }
+        self.notify_initial_presentation_observers(cx);
     }
 
-    pub(crate) fn initial_presentation_failed(&mut self, _cx: &mut App) {
+    pub(crate) fn initial_presentation_failed(&mut self, cx: &mut App) {
+        if self.presentation_state.initial_presentation == WindowInitialPresentationStatus::Rejected
+        {
+            return;
+        }
         self.presentation_state.initial_presentation = WindowInitialPresentationStatus::Rejected;
+        self.refresh();
+        self.notify_initial_presentation_observers(cx);
+    }
+
+    fn notify_initial_presentation_observers(&mut self, cx: &mut App) {
+        self.initial_presentation_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
     }
 
     pub(crate) fn new_focus_listener(
@@ -2466,6 +2491,25 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.appearance_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback for the terminal initial-presentation result of this window.
+    ///
+    /// The subscription is owned by the window rather than its current root entity, so replacing
+    /// the root cannot detach lifecycle-critical presentation handling.
+    pub fn observe_window_initial_presentation(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.initial_presentation_observers.insert(
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);
@@ -3125,11 +3169,11 @@ impl Window {
 
         let window_handle = self.handle;
         cx.spawn(async move |cx| {
-            window_handle
-                .update(cx, |_, window, cx| {
-                    window.dispatch_focus_claim_resolutions(cx);
-                })
-                .ok();
+            cx.update_window_when_available(window_handle, |_, window, cx| {
+                window.dispatch_focus_claim_resolutions(cx);
+            })
+            .await
+            .ok();
         })
         .detach();
     }
@@ -9072,7 +9116,7 @@ impl Window {
             if currently_pending.needs_timeout {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
                     cx.background_executor.timer(Duration::from_secs(1)).await;
-                    cx.update(move |window, cx| {
+                    cx.update_when_available(move |window, cx| {
                         let current_context_stack = window.context_stack();
                         let Some(currently_pending) = window.pending_input.take() else {
                             return;
@@ -9097,6 +9141,7 @@ impl Window {
                         window.pending_input_changed(cx);
                         window.replay_pending_input(to_replay, cx)
                     })
+                    .await
                     .log_err();
                 }));
             } else {

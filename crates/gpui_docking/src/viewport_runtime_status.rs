@@ -24,6 +24,8 @@ const PLATFORM_SYNC_OBSERVATION_HISTORY_LIMIT: usize = 16;
 /// Read-only diagnostic snapshot for the viewport runtime.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DockViewportRuntimeStatus {
+    /// Exact window-handle counts projected from the runtime's sole ownership registry.
+    pub window_ownership: DockViewportWindowOwnershipStatus,
     /// Platform viewport capabilities sampled by the caller, when available.
     pub platform_capabilities: Option<DockViewportPlatformCapabilityRecord>,
     /// Property-specific support captured for each registered viewport's actual window kind.
@@ -56,6 +58,22 @@ pub struct DockViewportRuntimeStatus {
     pub recent_platform_observations: Vec<DockViewportPlatformSyncObservedRecord>,
     /// Latest visual affordance diagnostics published by rendered viewport hosts.
     pub visual_affordances: Vec<DockViewportVisualAffordanceRecord>,
+}
+
+/// Exact window-handle counts held by one viewport runtime.
+///
+/// The total includes opening, active, and retiring handles so diagnostics do not mistake an empty
+/// committed viewport registry for complete native-window convergence.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockViewportWindowOwnershipStatus {
+    /// Total number of exact window handles retained by the runtime ownership authority.
+    pub owned_window_count: usize,
+    /// Number of handles reserved by an opening transaction but not yet committed.
+    pub opening_window_count: usize,
+    /// Number of handles committed to active runtime ownership.
+    pub active_window_count: usize,
+    /// Number of handles retained until their terminal close converges.
+    pub retiring_window_count: usize,
 }
 
 /// Platform capability snapshot relevant to multi-viewport docking.
@@ -656,6 +674,14 @@ pub struct DockViewportVisualAffordanceRecord {
 }
 
 impl DockViewportRuntimeStatus {
+    pub(crate) fn with_window_ownership(
+        mut self,
+        window_ownership: DockViewportWindowOwnershipStatus,
+    ) -> Self {
+        self.window_ownership = window_ownership;
+        self
+    }
+
     /// Attaches the current platform viewport capability snapshot to this diagnostic status.
     pub fn with_platform_capabilities(
         mut self,

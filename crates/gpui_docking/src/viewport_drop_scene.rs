@@ -58,6 +58,7 @@ impl DockViewportHostSceneFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportHostSceneRegistration {
     pub(crate) changed: bool,
+    pub(crate) placement_changed: bool,
     pub(crate) frame: DockViewportHostSceneFrame,
 }
 
@@ -327,7 +328,11 @@ impl DockViewportHostSceneRegistry {
         }
         let frame = snapshot.frame();
         self.scenes.insert(snapshot.space.clone(), snapshot);
-        DockViewportHostSceneRegistration { changed, frame }
+        DockViewportHostSceneRegistration {
+            changed,
+            placement_changed: false,
+            frame,
+        }
     }
 
     #[cfg(test)]

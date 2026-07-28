@@ -2,7 +2,9 @@ use open_gpui::{
     AnyView, App, Bounds, Context, IntoElement, ParentElement, Render, Styled, TitlebarOptions,
     Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
-use open_gpui_docking::prelude::{DockPanelPlacement, DockSurface};
+use open_gpui_docking::prelude::{
+    DockPanelPlacement, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
+};
 use open_gpui_platform::application;
 
 const SPACE: &str = "main";
@@ -144,28 +146,54 @@ fn main() {
     application().run(|cx: &mut App| {
         let surface = build_surface(cx);
         let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
-        let window = surface
-            .open_primary_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Open GPUI Docking Minimal".into()),
-                        appears_transparent: false,
-                        traffic_light_position: None,
-                    }),
-                    ..Default::default()
-                },
-                cx,
-            )
-            .expect("failed to open minimal docking window");
-
-        let window_id = window.window_id();
-        cx.on_window_closed(move |cx, closed_window_id| {
-            if closed_window_id == window_id {
-                cx.quit();
-            }
-        })
-        .detach();
+        match surface.open_primary_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Open GPUI Docking Minimal".into()),
+                    appears_transparent: false,
+                    traffic_light_position: None,
+                }),
+                ..Default::default()
+            },
+            cx,
+        ) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(_) => {}
+            outcome => panic!("failed to open minimal docking window: {outcome:?}"),
+        }
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use open_gpui::{QuitMode, TestAppContext};
+    use open_gpui_docking::prelude::DockSurfaceWindowSessionPhase;
+
+    #[open_gpui::test]
+    fn primary_close_converges_without_app_quit(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_quit_mode(QuitMode::Explicit));
+        let (surface, anchor) = cx.update(|cx| {
+            let surface = build_surface(cx);
+            let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+                DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+                outcome => panic!("minimal primary should open, got {outcome:?}"),
+            };
+            (surface, anchor)
+        });
+
+        assert!(!cx.simulate_window_close(anchor));
+        cx.run_until_parked();
+
+        assert!(!cx.windows().contains(&anchor));
+        assert!(
+            !cx.did_quit(),
+            "DockSurface teardown must not call App::quit"
+        );
+        assert_eq!(
+            cx.update(|cx| surface.window_session_status(cx).phase()),
+            DockSurfaceWindowSessionPhase::Closed
+        );
+    }
 }

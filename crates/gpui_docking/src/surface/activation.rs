@@ -1,4 +1,4 @@
-use super::{DockSurface, DockSurfaceOwner};
+use super::{DockSurface, DockSurfaceOwner, window_session::DockSurfaceWindowSessionLease};
 use crate::{
     DockHost, DockItemId, DockSpaceId, DockViewportActivationTransaction, DockViewportFocusRequest,
     viewport_activation::{
@@ -163,6 +163,7 @@ impl DockSurfaceActivationSettlements {
 /// callback therefore cannot settle a replacement host generation or a newer equal-item request.
 #[derive(Clone)]
 pub(crate) struct DockSurfaceActivationBinding {
+    lease: DockSurfaceWindowSessionLease,
     request_id: DockSurfaceActivationRequestId,
     host_generation: DockSurfaceActivationHostGeneration,
     owner: WeakEntity<DockSurfaceOwner>,
@@ -171,12 +172,14 @@ pub(crate) struct DockSurfaceActivationBinding {
 
 impl DockSurfaceActivationBinding {
     fn new(
+        lease: DockSurfaceWindowSessionLease,
         request_id: DockSurfaceActivationRequestId,
         host_generation: DockSurfaceActivationHostGeneration,
         owner: WeakEntity<DockSurfaceOwner>,
         state: RcWeak<RefCell<DockSurfaceActivationCore>>,
     ) -> Self {
         Self {
+            lease,
             request_id,
             host_generation,
             owner,
@@ -192,7 +195,7 @@ impl DockSurfaceActivationBinding {
             return false;
         };
         cx.read_entity(&owner, |owner, _| {
-            owner.activation().binding_is_current(self)
+            owner.window_session().admits(self.lease) && owner.activation().binding_is_current(self)
         })
     }
 
@@ -212,11 +215,15 @@ impl DockSurfaceActivationBinding {
         };
         let request_id = self.request_id;
         let host_generation = self.host_generation;
-        cx.update_entity(&owner, move |_owner, owner_cx| {
+        let lease = self.lease;
+        cx.update_entity(&owner, move |owner, owner_cx| {
+            if !owner.window_session().admits(lease) {
+                return false;
+            }
             let settlement =
                 state
                     .borrow_mut()
-                    .settle_binding(request_id, host_generation, outcome);
+                    .settle_binding(lease, request_id, host_generation, outcome);
             let did_settle = settlement.is_some();
             if let Some(settlement) = settlement {
                 owner_cx.defer(move |cx| settlement.deliver(cx));
@@ -230,6 +237,7 @@ impl fmt::Debug for DockSurfaceActivationBinding {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("DockSurfaceActivationBinding")
+            .field("lease", &self.lease)
             .field("request_id", &self.request_id)
             .field("host_generation", &self.host_generation)
             .field("owner", &self.owner)
@@ -239,7 +247,8 @@ impl fmt::Debug for DockSurfaceActivationBinding {
 
 impl PartialEq for DockSurfaceActivationBinding {
     fn eq(&self, other: &Self) -> bool {
-        self.request_id == other.request_id
+        self.lease == other.lease
+            && self.request_id == other.request_id
             && self.host_generation == other.host_generation
             && self.owner == other.owner
             && RcWeak::ptr_eq(&self.state, &other.state)
@@ -340,6 +349,7 @@ enum DockSurfaceActivationHostRegistrationKind {
 /// Exact lease used to release either a committed host or one recorded duplicate.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DockSurfaceActivationHostRegistration {
+    lease: DockSurfaceWindowSessionLease,
     space: DockSpaceId,
     host_id: EntityId,
     window: AnyWindowHandle,
@@ -347,6 +357,10 @@ pub(crate) struct DockSurfaceActivationHostRegistration {
 }
 
 impl DockSurfaceActivationHostRegistration {
+    pub(crate) const fn lease(&self) -> DockSurfaceWindowSessionLease {
+        self.lease
+    }
+
     pub(crate) fn space(&self) -> &DockSpaceId {
         &self.space
     }
@@ -392,6 +406,7 @@ impl DockSurfaceActivationHostRegistrationResult {
 
 #[derive(Clone, Debug)]
 struct DockSurfaceCommittedActivationHost {
+    lease: DockSurfaceWindowSessionLease,
     host: WeakEntity<DockHost>,
     window: AnyWindowHandle,
     generation: DockSurfaceActivationHostGeneration,
@@ -399,6 +414,7 @@ struct DockSurfaceCommittedActivationHost {
 
 #[derive(Clone, Debug)]
 struct DockSurfaceConflictingActivationHost {
+    lease: DockSurfaceWindowSessionLease,
     host: WeakEntity<DockHost>,
     window: AnyWindowHandle,
     incumbent_generation: DockSurfaceActivationHostGeneration,
@@ -412,10 +428,10 @@ struct DockSurfaceActivationHostSlot {
 }
 
 impl DockSurfaceActivationHostSlot {
-    fn has_live_conflict(&self) -> bool {
+    fn has_live_conflict(&self, lease: DockSurfaceWindowSessionLease) -> bool {
         self.conflicts
             .values()
-            .any(|conflict| conflict.host.upgrade().is_some())
+            .any(|conflict| conflict.lease == lease && conflict.host.upgrade().is_some())
     }
 
     fn is_empty(&self) -> bool {
@@ -425,6 +441,7 @@ impl DockSurfaceActivationHostSlot {
 
 #[derive(Debug)]
 struct PendingDockSurfaceActivation {
+    lease: DockSurfaceWindowSessionLease,
     request_id: DockSurfaceActivationRequestId,
     space: DockSpaceId,
     host_generation: DockSurfaceActivationHostGeneration,
@@ -443,6 +460,8 @@ impl PendingDockSurfaceActivation {
 
 #[derive(Debug, Default)]
 struct DockSurfaceActivationCore {
+    active_lease: Option<DockSurfaceWindowSessionLease>,
+    frozen_lease: Option<DockSurfaceWindowSessionLease>,
     last_request_sequence: u64,
     last_conflict_sequence: u64,
     last_host_generation_by_space: BTreeMap<DockSpaceId, u64>,
@@ -451,6 +470,49 @@ struct DockSurfaceActivationCore {
 }
 
 impl DockSurfaceActivationCore {
+    fn activate_lease(&mut self, lease: DockSurfaceWindowSessionLease) -> bool {
+        if self.active_lease == Some(lease) {
+            return true;
+        }
+        if self.active_lease.is_some() || self.pending.is_some() || !self.hosts.is_empty() {
+            return false;
+        }
+        if self.frozen_lease.is_some_and(|frozen| {
+            frozen.authority() != lease.authority() || lease.generation() <= frozen.generation()
+        }) {
+            return false;
+        }
+        self.active_lease = Some(lease);
+        true
+    }
+
+    fn freeze_lease(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> Option<DockSurfaceActivationSettlement> {
+        if self.active_lease != Some(lease) {
+            return None;
+        }
+        self.active_lease = None;
+        self.frozen_lease = Some(lease);
+        let settlement = self
+            .pending
+            .take_if(|pending| pending.lease == lease)
+            .map(|pending| pending.into_settlement(DockSurfaceActivationOutcome::WindowClosed));
+        self.hosts.retain(|_, slot| {
+            if slot
+                .committed
+                .as_ref()
+                .is_some_and(|committed| committed.lease == lease)
+            {
+                slot.committed = None;
+            }
+            slot.conflicts.retain(|_, conflict| conflict.lease != lease);
+            !slot.is_empty()
+        });
+        settlement
+    }
+
     fn next_request_id(&mut self) -> DockSurfaceActivationRequestId {
         self.last_request_sequence = self
             .last_request_sequence
@@ -480,12 +542,16 @@ impl DockSurfaceActivationCore {
 
     fn settle_binding(
         &mut self,
+        lease: DockSurfaceWindowSessionLease,
         request_id: DockSurfaceActivationRequestId,
         host_generation: DockSurfaceActivationHostGeneration,
         outcome: DockSurfaceActivationOutcome,
     ) -> Option<DockSurfaceActivationSettlement> {
         let matches = self.pending.as_ref().is_some_and(|pending| {
-            pending.request_id == request_id && pending.host_generation == host_generation
+            self.active_lease == Some(lease)
+                && pending.lease == lease
+                && pending.request_id == request_id
+                && pending.host_generation == host_generation
         });
         if !matches {
             return None;
@@ -497,13 +563,15 @@ impl DockSurfaceActivationCore {
 
     fn settle_pending_host(
         &mut self,
+        lease: DockSurfaceWindowSessionLease,
         space: &DockSpaceId,
         generation: DockSurfaceActivationHostGeneration,
         window: AnyWindowHandle,
         outcome: DockSurfaceActivationOutcome,
     ) -> Option<DockSurfaceActivationSettlement> {
         let matches = self.pending.as_ref().is_some_and(|pending| {
-            pending.space == *space
+            pending.lease == lease
+                && pending.space == *space
                 && pending.host_generation == generation
                 && pending.window == window
         });
@@ -534,17 +602,16 @@ impl DockSurfaceActivationCore {
 
     fn prune_released_hosts(
         &mut self,
+        lease: DockSurfaceWindowSessionLease,
         space: &DockSpaceId,
     ) -> Option<DockSurfaceActivationSettlement> {
         let released_committed = {
             let slot = self.hosts.get_mut(space)?;
             slot.conflicts
-                .retain(|_, conflict| conflict.host.upgrade().is_some());
-            if slot
-                .committed
-                .as_ref()
-                .is_some_and(|committed| committed.host.upgrade().is_none())
-            {
+                .retain(|_, conflict| conflict.lease != lease || conflict.host.upgrade().is_some());
+            if slot.committed.as_ref().is_some_and(|committed| {
+                committed.lease == lease && committed.host.upgrade().is_none()
+            }) {
                 slot.committed.take()
             } else {
                 None
@@ -553,6 +620,7 @@ impl DockSurfaceActivationCore {
 
         let settlement = released_committed.and_then(|committed| {
             self.settle_pending_host(
+                lease,
                 space,
                 committed.generation,
                 committed.window,
@@ -569,17 +637,24 @@ impl DockSurfaceActivationCore {
         settlement
     }
 
-    fn lookup_host(&self, space: &DockSpaceId) -> DockSurfaceActivationHostLookup {
+    fn lookup_host(
+        &self,
+        lease: DockSurfaceWindowSessionLease,
+        space: &DockSpaceId,
+    ) -> DockSurfaceActivationHostLookup {
+        if self.active_lease != Some(lease) {
+            return DockSurfaceActivationHostLookup::Unavailable;
+        }
         let Some(slot) = self.hosts.get(space) else {
             return DockSurfaceActivationHostLookup::Unavailable;
         };
-        if slot.has_live_conflict() {
+        if slot.has_live_conflict(lease) {
             return DockSurfaceActivationHostLookup::DuplicateHostConflict;
         }
         let Some(committed) = slot
             .committed
             .as_ref()
-            .filter(|committed| committed.host.upgrade().is_some())
+            .filter(|committed| committed.lease == lease && committed.host.upgrade().is_some())
         else {
             return DockSurfaceActivationHostLookup::Unavailable;
         };
@@ -605,6 +680,19 @@ impl DockSurfaceActivationState {
         Self::default()
     }
 
+    pub(crate) fn activate_lease(&mut self, lease: DockSurfaceWindowSessionLease) -> bool {
+        self.core.borrow_mut().activate_lease(lease)
+    }
+
+    pub(crate) fn freeze_lease(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> DockSurfaceActivationSettlements {
+        let mut settlements = DockSurfaceActivationSettlements::default();
+        settlements.push(self.core.borrow_mut().freeze_lease(lease));
+        settlements
+    }
+
     /// Registers one mounted host without replacing a live incumbent.
     ///
     /// Re-registering the same host entity in the same window is idempotent. Other host entities,
@@ -612,24 +700,33 @@ impl DockSurfaceActivationState {
     /// conflicts until their exact registration is released.
     pub(crate) fn register_host(
         &mut self,
+        lease: DockSurfaceWindowSessionLease,
         space: DockSpaceId,
         host: WeakEntity<DockHost>,
         window: AnyWindowHandle,
-    ) -> DockSurfaceActivationHostRegistrationResult {
+    ) -> Option<DockSurfaceActivationHostRegistrationResult> {
         let host_id = host.entity_id();
         let mut state = self.core.borrow_mut();
+        if state.active_lease != Some(lease) {
+            return None;
+        }
         let mut settlements = DockSurfaceActivationSettlements::default();
-        settlements.push(state.prune_released_hosts(&space));
+        settlements.push(state.prune_released_hosts(lease, &space));
 
         if let Some(committed) = state
             .hosts
             .get(&space)
             .and_then(|slot| slot.committed.as_ref())
-            .filter(|committed| committed.host.entity_id() == host_id && committed.window == window)
+            .filter(|committed| {
+                committed.lease == lease
+                    && committed.host.entity_id() == host_id
+                    && committed.window == window
+            })
             .cloned()
         {
-            return DockSurfaceActivationHostRegistrationResult {
+            return Some(DockSurfaceActivationHostRegistrationResult {
                 registration: DockSurfaceActivationHostRegistration {
+                    lease,
                     space,
                     host_id,
                     window,
@@ -638,22 +735,26 @@ impl DockSurfaceActivationState {
                     },
                 },
                 settlements,
-            };
+            });
         }
 
         let incumbent = state
             .hosts
             .get(&space)
-            .and_then(|slot| slot.committed.clone());
+            .and_then(|slot| slot.committed.as_ref())
+            .filter(|committed| committed.lease == lease)
+            .cloned();
         if let Some(incumbent) = incumbent {
             if let Some(conflict) = state
                 .hosts
                 .get(&space)
                 .and_then(|slot| slot.conflicts.get(&host_id))
+                .filter(|conflict| conflict.lease == lease)
                 .cloned()
             {
-                return DockSurfaceActivationHostRegistrationResult {
+                return Some(DockSurfaceActivationHostRegistrationResult {
                     registration: DockSurfaceActivationHostRegistration {
+                        lease,
                         space,
                         host_id,
                         window: conflict.window,
@@ -663,7 +764,7 @@ impl DockSurfaceActivationState {
                         },
                     },
                     settlements,
-                };
+                });
             }
 
             let conflict_sequence = state.next_conflict_sequence();
@@ -675,6 +776,7 @@ impl DockSurfaceActivationState {
                 .insert(
                     host_id,
                     DockSurfaceConflictingActivationHost {
+                        lease,
                         host,
                         window,
                         incumbent_generation: incumbent.generation,
@@ -682,13 +784,15 @@ impl DockSurfaceActivationState {
                     },
                 );
             settlements.push(state.settle_pending_host(
+                lease,
                 &space,
                 incumbent.generation,
                 incumbent.window,
                 DockSurfaceActivationOutcome::DuplicateHostConflict,
             ));
-            return DockSurfaceActivationHostRegistrationResult {
+            return Some(DockSurfaceActivationHostRegistrationResult {
                 registration: DockSurfaceActivationHostRegistration {
+                    lease,
                     space,
                     host_id,
                     window,
@@ -698,26 +802,28 @@ impl DockSurfaceActivationState {
                     },
                 },
                 settlements,
-            };
+            });
         }
 
         let generation = state.next_host_generation(&space);
         let slot = state.hosts.entry(space.clone()).or_default();
         slot.conflicts.remove(&host_id);
         slot.committed = Some(DockSurfaceCommittedActivationHost {
+            lease,
             host,
             window,
             generation,
         });
-        DockSurfaceActivationHostRegistrationResult {
+        Some(DockSurfaceActivationHostRegistrationResult {
             registration: DockSurfaceActivationHostRegistration {
+                lease,
                 space,
                 host_id,
                 window,
                 kind: DockSurfaceActivationHostRegistrationKind::Committed { generation },
             },
             settlements,
-        }
+        })
     }
 
     /// Releases only the exact registration represented by `registration`.
@@ -734,7 +840,8 @@ impl DockSurfaceActivationState {
                     .get(&registration.space)
                     .and_then(|slot| slot.committed.as_ref())
                     .is_some_and(|committed| {
-                        committed.host.entity_id() == registration.host_id
+                        committed.lease == registration.lease
+                            && committed.host.entity_id() == registration.host_id
                             && committed.window == registration.window
                             && committed.generation == generation
                     });
@@ -743,6 +850,7 @@ impl DockSurfaceActivationState {
                         slot.committed = None;
                     }
                     settlements.push(state.settle_pending_host(
+                        registration.lease,
                         &registration.space,
                         generation,
                         registration.window,
@@ -758,7 +866,8 @@ impl DockSurfaceActivationState {
                     .get(&registration.space)
                     .and_then(|slot| slot.conflicts.get(&registration.host_id))
                     .is_some_and(|conflict| {
-                        conflict.window == registration.window
+                        conflict.lease == registration.lease
+                            && conflict.window == registration.window
                             && conflict.conflict_sequence == conflict_sequence
                     });
                 if matches {
@@ -781,12 +890,17 @@ impl DockSurfaceActivationState {
     /// Returns the unique live activation host without creating a request.
     #[cfg(test)]
     pub(crate) fn lookup_host(&self, space: &DockSpaceId) -> DockSurfaceActivationHostLookup {
-        self.core.borrow().lookup_host(space)
+        let state = self.core.borrow();
+        let Some(lease) = state.active_lease else {
+            return DockSurfaceActivationHostLookup::Unavailable;
+        };
+        state.lookup_host(lease, space)
     }
 
     /// Begins a surface-wide activation request and supersedes the prior request, if any.
     pub(crate) fn begin_request(
         &mut self,
+        lease: DockSurfaceWindowSessionLease,
         owner: WeakEntity<DockSurfaceOwner>,
         space: DockSpaceId,
         callback: impl FnOnce(DockSurfaceActivationOutcome, &mut App) + 'static,
@@ -795,6 +909,20 @@ impl DockSurfaceActivationState {
         let mut state = self.core.borrow_mut();
         let request_id = state.next_request_id();
         let mut settlements = DockSurfaceActivationSettlements::default();
+        if state.active_lease != Some(lease) {
+            settlements.push(Some(DockSurfaceActivationSettlement::new(
+                DockSurfaceActivationOutcome::Unavailable,
+                observer,
+            )));
+            return DockSurfaceActivationBegin {
+                request_id,
+                subscription,
+                dispatch: DockSurfaceActivationDispatch::Immediate(
+                    DockSurfaceActivationOutcome::Unavailable,
+                ),
+                settlements,
+            };
+        }
         settlements.push(
             state
                 .pending
@@ -802,7 +930,7 @@ impl DockSurfaceActivationState {
                 .map(|pending| pending.into_settlement(DockSurfaceActivationOutcome::Superseded)),
         );
 
-        let dispatch = match state.lookup_host(&space) {
+        let dispatch = match state.lookup_host(lease, &space) {
             DockSurfaceActivationHostLookup::Available {
                 host,
                 window,
@@ -810,12 +938,14 @@ impl DockSurfaceActivationState {
             } => {
                 let generation = DockSurfaceActivationHostGeneration(generation);
                 let binding = DockSurfaceActivationBinding::new(
+                    lease,
                     request_id,
                     generation,
                     owner,
                     Rc::downgrade(&self.core),
                 );
                 state.pending = Some(PendingDockSurfaceActivation {
+                    lease,
                     request_id,
                     space,
                     host_generation: generation,
@@ -881,8 +1011,11 @@ impl DockSurfaceActivationState {
     }
 
     pub(crate) fn binding_is_current(&self, binding: &DockSurfaceActivationBinding) -> bool {
-        self.core.borrow().pending.as_ref().is_some_and(|pending| {
-            pending.request_id == binding.request_id
+        let state = self.core.borrow();
+        state.pending.as_ref().is_some_and(|pending| {
+            state.active_lease == Some(binding.lease)
+                && pending.lease == binding.lease
+                && pending.request_id == binding.request_id
                 && pending.host_generation == binding.host_generation
         })
     }
@@ -894,6 +1027,7 @@ impl DockSurfaceActivationState {
     ) -> DockSurfaceActivationSettlements {
         let mut settlements = DockSurfaceActivationSettlements::default();
         settlements.push(self.core.borrow_mut().settle_binding(
+            binding.lease,
             binding.request_id,
             binding.host_generation,
             outcome,
@@ -1021,9 +1155,14 @@ impl DockSurface {
         let owner = self.owner().clone();
         let owner_weak = owner.downgrade();
         let begin = cx.update_entity(&owner, |owner, _| {
+            let Some(lease) = owner.window_session().active_lease() else {
+                return owner
+                    .activation_mut()
+                    .begin_immediate_request(DockSurfaceActivationOutcome::Unavailable, callback);
+            };
             owner
                 .activation_mut()
-                .begin_request(owner_weak, space.clone(), callback)
+                .begin_request(lease, owner_weak, space.clone(), callback)
         });
         let (request_id, subscription, dispatch, settlements) = begin.into_parts();
         Self::defer_settlements(settlements, cx);

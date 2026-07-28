@@ -1,8 +1,9 @@
 use super::{DockSurface, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable};
 use crate::{
-    DockPolicyError, DockSpaceId, DockViewportInputStatus, DockViewportLifecycleRecord,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreReadiness, DockViewportRouteStatus, DockViewportStaleStatusReason,
+    DockPolicyError, DockSpaceId, DockSurfaceWindowSessionPhase, DockSurfaceWindowSessionStatus,
+    DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportRestoreReadiness, DockViewportRouteStatus,
+    DockViewportStaleStatusReason,
 };
 use open_gpui::{
     App, AppContext as _, PlatformViewportCapabilities, PlatformWindowCapabilities,
@@ -34,6 +35,11 @@ pub struct DockSurfaceViewportReadinessReport {
 pub enum DockSurfaceViewportReadinessStatus {
     /// The request passed facade policy, backend, and placement preflight.
     Openable,
+    /// The surface has no active primary-window session that can own this viewport.
+    SessionInactive {
+        /// Exact lifecycle snapshot that rejected the managed viewport request.
+        status: DockSurfaceWindowSessionStatus,
+    },
     /// Application policy disabled platform viewport windows.
     PolicyDisabled(DockPolicyError),
     /// The active GPUI backend cannot open independent platform viewport windows.
@@ -166,22 +172,29 @@ impl DockSurfaceViewportReadiness {
             &spec.window_options().kind,
             spec.window_options().display_id,
         );
-        let status = match cx.read_entity(&controller, |controller, _| {
-            controller.policy().validate_platform_viewports()
-        }) {
-            Ok(()) if platform_capabilities.platform_viewport_windows => {
-                let unsupported_flags =
-                    unsupported_viewport_flags(spec.window_options(), window_capabilities);
-                if unsupported_flags.is_empty() {
-                    DockSurfaceViewportReadinessStatus::Openable
-                } else {
-                    DockSurfaceViewportReadinessStatus::FlagUnsupported {
-                        flags: unsupported_flags,
+        let window_session = surface.window_session_status(cx);
+        let status = if window_session.phase() != DockSurfaceWindowSessionPhase::Active {
+            DockSurfaceViewportReadinessStatus::SessionInactive {
+                status: window_session,
+            }
+        } else {
+            match cx.read_entity(&controller, |controller, _| {
+                controller.policy().validate_platform_viewports()
+            }) {
+                Ok(()) if platform_capabilities.platform_viewport_windows => {
+                    let unsupported_flags =
+                        unsupported_viewport_flags(spec.window_options(), window_capabilities);
+                    if unsupported_flags.is_empty() {
+                        DockSurfaceViewportReadinessStatus::Openable
+                    } else {
+                        DockSurfaceViewportReadinessStatus::FlagUnsupported {
+                            flags: unsupported_flags,
+                        }
                     }
                 }
+                Ok(()) => DockSurfaceViewportReadinessStatus::BackendUnsupported,
+                Err(error) => DockSurfaceViewportReadinessStatus::PolicyDisabled(error),
             }
-            Ok(()) => DockSurfaceViewportReadinessStatus::BackendUnsupported,
-            Err(error) => DockSurfaceViewportReadinessStatus::PolicyDisabled(error),
         };
         Self::from_status(
             surface,
@@ -489,6 +502,19 @@ impl DockSurfaceViewportReadinessStatus {
         matches!(self, Self::BackendUnsupported)
     }
 
+    /// Returns true when this status was blocked by an inactive surface window session.
+    pub fn is_session_inactive(&self) -> bool {
+        matches!(self, Self::SessionInactive { .. })
+    }
+
+    /// Returns the window-session snapshot that rejected this request, when present.
+    pub fn window_session_status(&self) -> Option<DockSurfaceWindowSessionStatus> {
+        match self {
+            Self::SessionInactive { status } => Some(*status),
+            _ => None,
+        }
+    }
+
     /// Returns true when this status was blocked by application policy.
     pub fn is_policy_disabled(&self) -> bool {
         matches!(self, Self::PolicyDisabled(_))
@@ -523,6 +549,9 @@ impl DockSurfaceViewportReadinessStatus {
     fn to_unavailable(&self) -> Option<DockSurfaceViewportUnavailable> {
         match self {
             Self::Openable => None,
+            Self::SessionInactive { status } => {
+                Some(DockSurfaceViewportUnavailable::SessionInactive { status: *status })
+            }
             Self::PolicyDisabled(error) => Some(DockSurfaceViewportUnavailable::PolicyDisabled(
                 error.clone(),
             )),

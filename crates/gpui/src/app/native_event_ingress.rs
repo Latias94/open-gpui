@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     rc::Weak,
     sync::Arc,
 };
@@ -1101,17 +1102,33 @@ impl NativeEventEnvelope {
                 }
             }
             NativeWindowEvent::Closed => {
-                let disposition = if app
-                    .update_window_id(window_id, |_, window, cx| {
+                let logical_close = catch_unwind(AssertUnwindSafe(|| {
+                    app.update_window_id(window_id, |_, window, cx| {
                         window.remove_window(cx);
                     })
-                    .is_ok()
-                {
-                    NativeEventDisposition::Delivered
-                } else {
-                    NativeEventDisposition::StaleWindow
+                }));
+                let disposition = match &logical_close {
+                    Ok(Ok(())) => NativeEventDisposition::Delivered,
+                    Ok(Err(_)) => NativeEventDisposition::StaleWindow,
+                    Err(_) => NativeEventDisposition::Delivered,
                 };
-                SystemWindowTabController::remove_tab(app, window_id);
+
+                let mut first_panic = logical_close.err();
+                let tab_cleanup = catch_unwind(AssertUnwindSafe(|| {
+                    SystemWindowTabController::remove_tab(app, window_id);
+                }));
+                if first_panic.is_none() {
+                    first_panic = tab_cleanup.err();
+                }
+                let native_terminal = catch_unwind(AssertUnwindSafe(|| {
+                    app.notify_window_native_terminal(window_id);
+                }));
+                if first_panic.is_none() {
+                    first_panic = native_terminal.err();
+                }
+                if let Some(payload) = first_panic {
+                    resume_unwind(payload);
+                }
                 disposition
             }
             NativeWindowEvent::HoverChanged(hovered) => {

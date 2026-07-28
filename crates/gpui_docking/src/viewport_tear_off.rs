@@ -640,6 +640,7 @@ impl DockViewportTearOffMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DockViewportRuntimeLineage;
     use crate::{
         DockActionOutcome, DockViewportAdapter,
         viewport_test_support::{handle, item, space},
@@ -788,7 +789,13 @@ mod tests {
             panic!("request should become pending");
         };
         let mut adapter = DockViewportAdapter::new();
-        let registration = adapter.register_viewport_with_outcome(space("detached"), handle(1));
+        let registration = adapter
+            .register_viewport_with_outcome(
+                space("detached"),
+                handle(1),
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("unmanaged tear-off registration cannot conflict by lineage");
         let first_affected = handle(2);
         let second_affected = handle(3);
         let replaced_window = handle(4);

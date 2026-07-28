@@ -5,6 +5,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{Arc, atomic::Ordering::SeqCst},
@@ -93,6 +94,61 @@ pub(crate) use native_platform_commands::PlatformWindowCommandSink;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Stage at which a synchronous GPUI window-open transaction failed.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowOpenFailureStage {
+    /// Application shutdown prevented this window-open transaction from starting or committing.
+    AppShutdown,
+    /// The platform window could not be created or mapped.
+    NativeCreateOrMap,
+    /// The native window synchronously closed while it was being created or mapped.
+    ClosedDuringNativeCreateOrMap,
+    /// The root builder synchronously closed the reserved window.
+    ClosedDuringBuild,
+    /// The initial draw synchronously closed the reserved window.
+    ClosedDuringInitialDraw,
+    /// The hidden initial-presentation attempt synchronously closed the reserved window.
+    ClosedDuringInitialPresentation,
+    /// A backend that presents before visibility rejected its hidden first frame.
+    BeforeVisibilityPresentation,
+    /// The fully built window could not commit to the application registry.
+    CommitRejected,
+}
+
+/// Typed failure from one synchronous GPUI window-open transaction.
+#[derive(Debug, thiserror::Error)]
+#[error("window open failed during {stage:?}: {source}")]
+pub struct WindowOpenError {
+    stage: WindowOpenFailureStage,
+    #[source]
+    source: anyhow::Error,
+}
+
+impl WindowOpenError {
+    fn new(stage: WindowOpenFailureStage, source: anyhow::Error) -> Self {
+        Self { stage, source }
+    }
+
+    fn from_reservation(error: window_registry::WindowReservationError) -> Self {
+        let stage = match error {
+            window_registry::WindowReservationError::AppShutdown => {
+                WindowOpenFailureStage::AppShutdown
+            }
+            window_registry::WindowReservationError::WindowClosed
+            | window_registry::WindowReservationError::NotCurrent => {
+                WindowOpenFailureStage::CommitRejected
+            }
+        };
+        Self::new(stage, error.into())
+    }
+
+    /// Returns the exact synchronous stage that failed.
+    pub const fn stage(&self) -> WindowOpenFailureStage {
+        self.stage
+    }
+}
 
 #[cfg(target_family = "wasm")]
 thread_local! {
@@ -244,6 +300,7 @@ pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
 type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
+type WindowNativeTerminalHandler = Box<dyn FnMut(&mut App, WindowId)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
@@ -628,6 +685,11 @@ pub struct App {
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) restart_observers: SubscriberSet<(), Handler>,
     pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
+    pub(crate) pending_window_closed_notifications: VecDeque<WindowId>,
+    pub(crate) notifying_window_closed: bool,
+    window_native_terminal_observers: SubscriberSet<(), WindowNativeTerminalHandler>,
+    pending_window_native_terminal_notifications: VecDeque<WindowId>,
+    notifying_window_native_terminal: bool,
 
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
@@ -676,6 +738,8 @@ pub struct App {
     pending_updates: usize,
     quit_mode: QuitMode,
     quitting: bool,
+    window_open_barrier_depth: usize,
+    window_open_epoch: u64,
 
     // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
     // Otherwise it may report false positives.
@@ -791,6 +855,11 @@ impl App {
                 restart_observers: SubscriberSet::new(),
                 restart_path: None,
                 window_closed_observers: SubscriberSet::new(),
+                pending_window_closed_notifications: VecDeque::new(),
+                notifying_window_closed: false,
+                window_native_terminal_observers: SubscriberSet::new(),
+                pending_window_native_terminal_notifications: VecDeque::new(),
+                notifying_window_native_terminal: false,
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
@@ -800,6 +869,8 @@ impl App {
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
                 quitting: false,
+                window_open_barrier_depth: 0,
+                window_open_epoch: 0,
                 cursor_hide_mode: CursorHideMode::default(),
                 accessibility_force_disabled: false,
 
@@ -913,6 +984,27 @@ impl App {
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
     /// will be given `SHUTDOWN_TIMEOUT` to complete before exiting.
     pub fn shutdown(&mut self) {
+        self.window_open_epoch = self
+            .window_open_epoch
+            .checked_add(1)
+            .expect("window-open epoch overflowed");
+        self.window_open_barrier_depth = self
+            .window_open_barrier_depth
+            .checked_add(1)
+            .expect("window-open shutdown barrier overflowed");
+        let was_quitting = self.quitting;
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.shutdown_with_window_open_barrier()
+        }));
+        self.quitting = was_quitting;
+        self.window_open_barrier_depth -= 1;
+
+        if let Err(payload) = result {
+            resume_unwind(payload);
+        }
+    }
+
+    fn shutdown_with_window_open_barrier(&mut self) {
         let mut futures = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
@@ -931,8 +1023,6 @@ impl App {
         {
             log::error!("timed out waiting on app_will_quit");
         }
-
-        self.quitting = false;
     }
 
     /// Get the id of the current keyboard layout
@@ -1267,17 +1357,46 @@ impl App {
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
+        self.open_window_detailed(options, build_root_view)
+            .map_err(Into::into)
+    }
+
+    /// Opens a window and preserves the synchronous creation stage on failure.
+    ///
+    /// This is intended for lifecycle authorities that must distinguish a platform creation
+    /// failure, a synchronous close, and a before-visibility presentation rejection.
+    pub fn open_window_detailed<V: 'static + Render>(
+        &mut self,
+        options: crate::WindowOptions,
+        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> std::result::Result<WindowHandle<V>, WindowOpenError> {
         self.update(|cx| {
-            let mut reservation = window_registry::reserve(cx);
+            let mut reservation =
+                window_registry::reserve(cx).map_err(WindowOpenError::from_reservation)?;
             let id = reservation.id();
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, reservation.app_mut()) {
                 Ok(mut window) => {
+                    reservation
+                        .validate()
+                        .map_err(WindowOpenError::from_reservation)?;
+                    if !window.creation_can_commit() {
+                        return Err(WindowOpenError::new(
+                            WindowOpenFailureStage::ClosedDuringNativeCreateOrMap,
+                            anyhow!(
+                                "native window closed while creating or mapping its reservation"
+                            ),
+                        ));
+                    }
                     let root_view =
                         reservation.with_update_scope(|cx| build_root_view(&mut window, cx));
-                    if window.removed {
-                        return Err(anyhow!(
-                            "window closed while building its initial root view"
+                    reservation
+                        .validate()
+                        .map_err(WindowOpenError::from_reservation)?;
+                    if !window.creation_can_commit() {
+                        return Err(WindowOpenError::new(
+                            WindowOpenFailureStage::ClosedDuringBuild,
+                            anyhow!("window closed while building its initial root view"),
                         ));
                     }
                     window.root.replace(root_view.into());
@@ -1290,14 +1409,49 @@ impl App {
                     // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
                     // where DispatchTree::root_node_id asserts on empty nodes
                     let clear = window.draw(reservation.app_mut());
+                    if let Err(error) = reservation.validate() {
+                        clear.clear();
+                        return Err(WindowOpenError::from_reservation(error));
+                    }
+                    if !window.creation_can_commit() {
+                        clear.clear();
+                        return Err(WindowOpenError::new(
+                            WindowOpenFailureStage::ClosedDuringInitialDraw,
+                            anyhow!("window closed during its initial draw"),
+                        ));
+                    }
                     let initial_presentation = window.prepare_initial_presentation();
                     clear.clear();
-                    initial_presentation?;
+                    reservation
+                        .validate()
+                        .map_err(WindowOpenError::from_reservation)?;
+                    if !window.creation_can_commit() {
+                        return Err(WindowOpenError::new(
+                            WindowOpenFailureStage::ClosedDuringInitialPresentation,
+                            anyhow!("window closed during its initial presentation"),
+                        ));
+                    }
+                    initial_presentation.map_err(|error| {
+                        WindowOpenError::new(
+                            WindowOpenFailureStage::BeforeVisibilityPresentation,
+                            error,
+                        )
+                    })?;
 
-                    reservation.commit(window)?;
+                    reservation
+                        .commit(window)
+                        .map_err(WindowOpenError::from_reservation)?;
                     Ok(handle)
                 }
-                Err(error) => Err(error),
+                Err(error) => match reservation.validate() {
+                    Err(reservation_error) => {
+                        Err(WindowOpenError::from_reservation(reservation_error))
+                    }
+                    Ok(()) => Err(WindowOpenError::new(
+                        WindowOpenFailureStage::NativeCreateOrMap,
+                        error,
+                    )),
+                },
             }
         })
     }
@@ -2267,6 +2421,57 @@ impl App {
         subscription
     }
 
+    /// Registers a callback for the terminal release of a native window authority.
+    ///
+    /// This is later than [`Self::on_window_closed`]: the backend's single-shot
+    /// [`crate::PlatformWindow::on_close`] callback has delivered its terminal native `Closed`
+    /// event and the logical window is already absent.
+    pub fn on_window_native_terminal(
+        &self,
+        on_terminal: impl FnMut(&mut App, WindowId) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self
+            .window_native_terminal_observers
+            .insert((), Box::new(on_terminal));
+        activate();
+        subscription
+    }
+
+    pub(crate) fn notify_window_native_terminal(&mut self, window_id: WindowId) {
+        self.pending_window_native_terminal_notifications
+            .push_back(window_id);
+        self.flush_window_native_terminal_notifications();
+    }
+
+    fn flush_window_native_terminal_notifications(&mut self) {
+        if self.notifying_window_native_terminal {
+            return;
+        }
+
+        self.notifying_window_native_terminal = true;
+        let mut first_panic = None;
+        while let Some(window_id) = self
+            .pending_window_native_terminal_notifications
+            .pop_front()
+        {
+            self.window_native_terminal_observers
+                .clone()
+                .retain(&(), |callback| {
+                    let candidate =
+                        catch_unwind(AssertUnwindSafe(|| callback(self, window_id))).err();
+                    if first_panic.is_none() {
+                        first_panic = candidate;
+                    }
+                    true
+                });
+        }
+        self.notifying_window_native_terminal = false;
+
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
+    }
+
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
@@ -2890,7 +3095,7 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 
 #[cfg(test)]
 mod test {
-    use super::window_registry;
+    use super::{native_event_ingress::NativeWindowEvent, window_registry};
     use std::{
         cell::{Cell, RefCell},
         panic::{AssertUnwindSafe, catch_unwind},
@@ -2899,7 +3104,7 @@ mod test {
 
     use crate::{
         AnyWindowHandle, AppContext, Context, Empty, Entity, IntoElement, QuitMode, Render,
-        TestAppContext, Window, WindowOptions,
+        TestAppContext, Window, WindowOpenFailureStage, WindowOptions,
     };
     use crate::{px, size};
 
@@ -3150,7 +3355,8 @@ mod test {
                 .expect("the anchor window must be committed")
                 .invalidator
                 .clone();
-            let mut reservation = window_registry::reserve(app);
+            let mut reservation =
+                window_registry::reserve(app).expect("window reservation should be available");
             let reserved_id = reservation.id();
             let app = reservation.app_mut();
             app.tracked_entities
@@ -3243,6 +3449,160 @@ mod test {
             window.remove_window(cx);
             Empty
         }
+    }
+
+    struct NativeCloseOnInitialDraw;
+
+    impl Render for NativeCloseOnInitialDraw {
+        fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            assert!(
+                window
+                    .platform_window
+                    .as_test()
+                    .expect("the test must use TestPlatform")
+                    .simulate_close(),
+                "the native close callback must be installed before the initial draw"
+            );
+            Empty
+        }
+    }
+
+    #[crate::test]
+    fn detailed_window_open_reports_native_map_failure(cx: &mut TestAppContext) {
+        cx.fail_next_window_map("injected map failure");
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+            })
+            .expect_err("the injected native map failure must reject window creation");
+
+        assert_eq!(error.stage(), WindowOpenFailureStage::NativeCreateOrMap);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn detailed_window_open_reports_native_close_during_map(cx: &mut TestAppContext) {
+        let root_builder_called = Rc::new(Cell::new(false));
+        cx.close_next_window_during_map();
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |_, app| {
+                    root_builder_called.set(true);
+                    app.new(|_| Empty)
+                })
+            })
+            .expect_err("a native close during map must reject window creation");
+
+        assert_eq!(
+            error.stage(),
+            WindowOpenFailureStage::ClosedDuringNativeCreateOrMap
+        );
+        assert!(
+            !root_builder_called.get(),
+            "the root builder must not run after the native window has closed"
+        );
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn detailed_window_open_reports_builder_close(cx: &mut TestAppContext) {
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |window, app| {
+                    window.remove_window(app);
+                    app.new(|_| Empty)
+                })
+            })
+            .expect_err("a builder-closed reservation must not commit");
+
+        assert_eq!(error.stage(), WindowOpenFailureStage::ClosedDuringBuild);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn detailed_window_open_reports_native_builder_close(cx: &mut TestAppContext) {
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |window, app| {
+                    assert!(
+                        window
+                            .platform_window
+                            .as_test()
+                            .expect("the test must use TestPlatform")
+                            .simulate_close(),
+                        "the native close callback must be installed before the root builder"
+                    );
+                    app.new(|_| Empty)
+                })
+            })
+            .expect_err("a native close during the root builder must reject the reservation");
+
+        assert_eq!(error.stage(), WindowOpenFailureStage::ClosedDuringBuild);
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn detailed_window_open_reports_initial_draw_close(cx: &mut TestAppContext) {
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |_, app| {
+                    app.new(|_| CloseOnInitialDraw)
+                })
+            })
+            .expect_err("an initial-draw close must not commit");
+
+        assert_eq!(
+            error.stage(),
+            WindowOpenFailureStage::ClosedDuringInitialDraw
+        );
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn detailed_window_open_reports_native_initial_draw_close(cx: &mut TestAppContext) {
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |_, app| {
+                    app.new(|_| NativeCloseOnInitialDraw)
+                })
+            })
+            .expect_err("a native close during the initial draw must reject the reservation");
+
+        assert_eq!(
+            error.stage(),
+            WindowOpenFailureStage::ClosedDuringInitialDraw
+        );
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn detailed_window_open_reports_native_initial_presentation_close(cx: &mut TestAppContext) {
+        cx.set_platform_window_creation_capabilities(crate::PlatformWindowCreationCapabilities {
+            focus_on_appearing: crate::WindowCreationSupport::Supported,
+            transient_for: crate::WindowCreationSupport::Supported,
+            initial_presentation_order: crate::WindowInitialPresentationOrder::BeforeVisibility,
+        });
+        cx.close_next_window_during_initial_presentation();
+
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+            })
+            .expect_err("a native close during hidden initial presentation must reject opening");
+
+        assert_eq!(
+            error.stage(),
+            WindowOpenFailureStage::ClosedDuringInitialPresentation
+        );
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
     }
 
     #[crate::test]
@@ -3470,6 +3830,330 @@ mod test {
             "LastWindowClosed must still request application quit"
         );
         assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn nested_window_close_observations_are_delivered_in_fifo_order(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::LastWindowClosed));
+        let first: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let second: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let first_id = first.window_id();
+        let second_id = second.window_id();
+        let observations = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|app| {
+            app.on_window_closed({
+                let observations = observations.clone();
+                move |app, closed_window| {
+                    observations.borrow_mut().push((1, closed_window));
+                    if closed_window == first_id {
+                        second
+                            .update(app, |_, window, app| window.remove_window(app))
+                            .expect("the nested window must remain open until the first callback");
+                    }
+                }
+            })
+            .detach();
+            app.on_window_closed({
+                let observations = observations.clone();
+                move |_, closed_window| observations.borrow_mut().push((2, closed_window))
+            })
+            .detach();
+        });
+
+        first
+            .update(cx, |_, window, app| window.remove_window(app))
+            .expect("the first window must exist before removal");
+
+        assert_eq!(
+            observations.borrow().as_slice(),
+            &[(1, first_id), (2, first_id), (1, second_id), (2, second_id)]
+        );
+        assert!(cx.did_quit());
+        assert!(cx.windows().is_empty());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn logical_window_close_precedes_native_terminal(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let window_id = window.window_id();
+        let observations = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|app| {
+            app.on_window_closed({
+                let observations = observations.clone();
+                move |_, closed_window| observations.borrow_mut().push(("logical", closed_window))
+            })
+            .detach();
+            app.on_window_native_terminal({
+                let observations = observations.clone();
+                move |_, terminal_window| {
+                    observations
+                        .borrow_mut()
+                        .push(("terminal", terminal_window))
+                }
+            })
+            .detach();
+        });
+
+        cx.update(|app| {
+            window
+                .update(app, |_, window, app| window.remove_window(app))
+                .expect("the window must exist before logical removal");
+            assert_eq!(
+                observations.borrow().as_slice(),
+                &[("logical", window_id)],
+                "dropping GPUI's platform-window owner is not a native terminal event"
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            observations.borrow().as_slice(),
+            &[("logical", window_id), ("terminal", window_id)],
+            "the delayed native Closed event must publish the terminal notification"
+        );
+    }
+
+    #[crate::test]
+    fn native_terminal_can_be_held_after_logical_window_removal(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let window_id = window.window_id();
+        let terminal_windows = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|app| {
+            app.on_window_native_terminal({
+                let terminal_windows = terminal_windows.clone();
+                move |_, terminal_window| terminal_windows.borrow_mut().push(terminal_window)
+            })
+            .detach();
+        });
+        let terminal_hold = cx.hold_window_native_terminal(window);
+
+        window
+            .update(cx, |_, window, app| window.remove_window(app))
+            .expect("the window must exist before logical removal");
+        cx.run_until_parked();
+
+        assert!(cx.windows().is_empty());
+        assert!(terminal_windows.borrow().is_empty());
+        assert!(terminal_hold.release());
+        cx.run_until_parked();
+        assert_eq!(terminal_windows.borrow().as_slice(), &[window_id]);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn dropping_native_terminal_hold_before_close_restores_normal_delivery(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let terminal_count = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            app.on_window_native_terminal({
+                let terminal_count = terminal_count.clone();
+                move |_, _| terminal_count.set(terminal_count.get() + 1)
+            })
+            .detach();
+        });
+
+        drop(cx.hold_window_native_terminal(window));
+        window
+            .update(cx, |_, window, app| window.remove_window(app))
+            .expect("the window must exist before logical removal");
+        cx.run_until_parked();
+
+        assert_eq!(terminal_count.get(), 1);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn stale_native_closed_event_still_notifies(cx: &mut TestAppContext) {
+        let stale_window = cx.update(|app| {
+            let reservation =
+                window_registry::reserve(app).expect("window reservation should be available");
+            let window_id = reservation.id();
+            drop(reservation);
+            window_id
+        });
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|app| {
+            app.on_window_native_terminal({
+                let observations = observations.clone();
+                move |_, window_id| observations.borrow_mut().push(window_id)
+            })
+            .detach();
+        });
+
+        cx.app
+            .enqueue_native_window_event(stale_window, NativeWindowEvent::Closed);
+        cx.run_until_parked();
+
+        assert_eq!(observations.borrow().as_slice(), &[stale_window]);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn native_terminal_survives_logical_close_observer_panic(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let window_id = window.window_id();
+        let terminal_count = Rc::new(Cell::new(0));
+        cx.update(|app| {
+            app.on_window_closed(|_, _| panic!("injected logical close observer panic"))
+                .detach();
+            app.on_window_native_terminal({
+                let terminal_count = terminal_count.clone();
+                move |_, terminal_window| {
+                    assert_eq!(terminal_window, window_id);
+                    terminal_count.set(terminal_count.get() + 1);
+                }
+            })
+            .detach();
+        });
+        let platform_window = cx.test_window(window);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            assert!(platform_window.simulate_close());
+            cx.run_until_parked();
+        }));
+
+        assert!(result.is_err());
+        assert!(cx.windows().is_empty());
+        assert_eq!(terminal_count.get(), 1);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn nested_native_terminal_observations_are_delivered_in_fifo_order(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let first: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let second: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let first_id = first.window_id();
+        let second_id = second.window_id();
+        let observations = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|app| {
+            app.on_window_native_terminal({
+                let observations = observations.clone();
+                move |app, terminal_window| {
+                    observations.borrow_mut().push((1, terminal_window));
+                    if terminal_window == first_id {
+                        second
+                            .update(app, |_, window, app| window.remove_window(app))
+                            .expect("the nested window must remain open until terminal fanout");
+                    }
+                }
+            })
+            .detach();
+            app.on_window_native_terminal({
+                let observations = observations.clone();
+                move |_, terminal_window| observations.borrow_mut().push((2, terminal_window))
+            })
+            .detach();
+        });
+
+        cx.update(|app| {
+            first
+                .update(app, |_, window, app| window.remove_window(app))
+                .expect("the first window must exist before removal");
+            assert!(observations.borrow().is_empty());
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            observations.borrow().as_slice(),
+            &[(1, first_id), (2, first_id), (1, second_id), (2, second_id)]
+        );
+        assert_eq!(observations.borrow().len(), 4);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn shutdown_barrier_rejects_immediate_and_deferred_window_opens(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let failures = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|app| {
+            app.on_app_quit({
+                let failures = failures.clone();
+                move |app| {
+                    let immediate = app
+                        .open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+                        .expect_err("shutdown must reject a reentrant window open")
+                        .stage();
+                    failures.borrow_mut().push(immediate);
+
+                    app.defer({
+                        let failures = failures.clone();
+                        move |app| {
+                            let deferred = app
+                                .open_window_detailed(WindowOptions::default(), |_, app| {
+                                    app.new(|_| Empty)
+                                })
+                                .expect_err("shutdown must reject a deferred window open")
+                                .stage();
+                            failures.borrow_mut().push(deferred);
+                        }
+                    });
+                    async {}
+                }
+            })
+            .detach();
+        });
+
+        cx.quit();
+
+        assert_eq!(
+            failures.borrow().as_slice(),
+            &[
+                WindowOpenFailureStage::AppShutdown,
+                WindowOpenFailureStage::AppShutdown
+            ]
+        );
+        assert!(cx.windows().is_empty());
+        let replacement = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
+        assert!(replacement.update(cx, |_, _, _| ()).is_ok());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn shutdown_inside_root_builder_returns_typed_error_without_panicking(cx: &mut TestAppContext) {
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |_, app| {
+                    let root = app.new(|_| Empty);
+                    app.shutdown();
+                    root
+                })
+            })
+            .expect_err("shutdown must invalidate the in-flight window reservation");
+
+        assert_eq!(error.stage(), WindowOpenFailureStage::AppShutdown);
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        let replacement = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
+        assert!(replacement.update(cx, |_, _, _| ()).is_ok());
         assert_app_transaction_idle(cx);
     }
 

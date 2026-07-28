@@ -3,7 +3,7 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHeadlessRenderer,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
     PlatformWindowMutationCapabilities, PromptButton, ScreenCaptureFrame, ScreenCaptureSource,
     ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow, ThermalState,
     WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
@@ -35,7 +35,11 @@ pub(crate) struct TestPlatform {
     window_creation_capabilities_override: RefCell<Option<PlatformWindowCreationCapabilities>>,
     window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
     next_window_map_error: RefCell<Option<String>>,
+    next_window_close_during_map: RefCell<bool>,
     next_window_creation_show_fact: RefCell<Option<bool>>,
+    next_window_initial_presentation_command_outcomes:
+        RefCell<Option<VecDeque<PlatformWindowCommandOutcome>>>,
+    next_window_close_during_initial_presentation: RefCell<bool>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -157,7 +161,10 @@ impl TestPlatform {
             window_creation_capabilities_override: RefCell::new(None),
             window_mutation_capabilities_override: RefCell::new(None),
             next_window_map_error: RefCell::new(None),
+            next_window_close_during_map: RefCell::new(false),
             next_window_creation_show_fact: RefCell::new(None),
+            next_window_initial_presentation_command_outcomes: RefCell::new(None),
+            next_window_close_during_initial_presentation: RefCell::new(false),
             expect_restart: Default::default(),
             quit_requested: Default::default(),
             open_urls_callback: Default::default(),
@@ -206,10 +213,28 @@ impl TestPlatform {
             .replace(message.into());
     }
 
+    pub(crate) fn close_next_window_during_map(&self) {
+        self.next_window_close_during_map.replace(true);
+    }
+
     pub(crate) fn set_next_window_creation_show_fact(&self, show: bool) {
         self.next_window_creation_show_fact
             .borrow_mut()
             .replace(show);
+    }
+
+    pub(crate) fn reject_next_window_initial_presentation(&self) {
+        self.next_window_initial_presentation_command_outcomes
+            .borrow_mut()
+            .replace(VecDeque::from([
+                PlatformWindowCommandOutcome::Rejected,
+                PlatformWindowCommandOutcome::Rejected,
+            ]));
+    }
+
+    pub(crate) fn close_next_window_during_initial_presentation(&self) {
+        self.next_window_close_during_initial_presentation
+            .replace(true);
     }
 
     pub(crate) fn simulate_new_path_selection(
@@ -670,7 +695,13 @@ impl Platform for TestPlatform {
             self.active_display.clone(),
             renderer,
             self.next_window_map_error.borrow_mut().take(),
+            self.next_window_close_during_map.replace(false),
             self.next_window_creation_show_fact.borrow_mut().take(),
+            self.next_window_initial_presentation_command_outcomes
+                .borrow_mut()
+                .take(),
+            self.next_window_close_during_initial_presentation
+                .replace(false),
         );
         Ok(Box::new(window))
     }

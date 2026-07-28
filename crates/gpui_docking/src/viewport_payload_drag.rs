@@ -1,5 +1,6 @@
 use crate::{
     DockActionApplyError, DockDragVisualStyle, DockItemId, DockViewportIdentity,
+    DockViewportRuntimeLineage,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     interaction::DockRuntimeDragSession,
 };
@@ -30,12 +31,13 @@ struct DockViewportActivePayloadDrag {
 impl DockViewportPayloadDragState {
     pub(crate) fn begin(
         &mut self,
+        lineage: DockViewportRuntimeLineage,
         payload: &DockDragPayload,
         focus_item: Option<DockItemId>,
         source_window: Option<AnyWindowHandle>,
         drag_visual_style: DockDragVisualStyle,
     ) -> DockRuntimeDragSession {
-        let session = self.next_session(payload, focus_item);
+        let session = self.next_session(lineage, payload, focus_item);
         self.active = Some(DockViewportActivePayloadDrag::new(
             session.clone(),
             source_window,
@@ -220,12 +222,13 @@ impl DockViewportPayloadDragState {
 
     fn next_session(
         &mut self,
+        lineage: DockViewportRuntimeLineage,
         payload: &DockDragPayload,
         focus_item: Option<DockItemId>,
     ) -> DockRuntimeDragSession {
         let id = self.next_session_id.wrapping_add(1);
         self.next_session_id = id;
-        DockRuntimeDragSession::with_focus_item(id, payload, focus_item)
+        DockRuntimeDragSession::with_lineage_and_focus_item(id, lineage, payload, focus_item)
     }
 }
 
@@ -365,10 +368,22 @@ mod tests {
         let second_style = drag_style(0x445566);
         let mut state = DockViewportPayloadDragState::default();
 
-        let first = state.begin(&payload, None, None, first_style.clone());
+        let first = state.begin(
+            DockViewportRuntimeLineage::Unmanaged,
+            &payload,
+            None,
+            None,
+            first_style.clone(),
+        );
         assert_eq!(state.drag_visual_style(Some(&first)), Some(&first_style));
 
-        let second = state.begin(&payload, None, None, second_style.clone());
+        let second = state.begin(
+            DockViewportRuntimeLineage::Unmanaged,
+            &payload,
+            None,
+            None,
+            second_style.clone(),
+        );
         assert_ne!(first.id(), second.id());
         assert_eq!(state.drag_visual_style(Some(&first)), None);
         assert_eq!(state.drag_visual_style(Some(&second)), Some(&second_style));
@@ -383,12 +398,24 @@ mod tests {
         let identity = payload.identity();
         let mut state = DockViewportPayloadDragState::default();
 
-        let first = state.begin(&payload, None, None, drag_style(0x112233));
+        let first = state.begin(
+            DockViewportRuntimeLineage::Unmanaged,
+            &payload,
+            None,
+            None,
+            drag_style(0x112233),
+        );
         assert_eq!(payload.identity(), identity);
         assert!(state.validate_session(Some(&first)).is_ok());
         assert!(state.finish(&first).is_some());
 
-        let second = state.begin(&payload, None, None, drag_style(0x445566));
+        let second = state.begin(
+            DockViewportRuntimeLineage::Unmanaged,
+            &payload,
+            None,
+            None,
+            drag_style(0x445566),
+        );
         assert_eq!(payload.identity(), identity);
         assert_eq!(
             state.validate_session(Some(&first)),

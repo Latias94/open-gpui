@@ -53,6 +53,7 @@ fn root_and_prelude_do_not_reexport_diagnostics() {
         "DockTransitionExecutionState",
         "DockTransitionPlan",
         "DockViewportRuntimeStatus",
+        "DockViewportWindowOwnershipStatus",
         "DockViewportPlatformCapabilityRecord",
         "DockViewportRouteStatus",
         "DockViewportRuntime",
@@ -177,6 +178,7 @@ fn advanced_exports_diagnostic_surface_explicitly() {
         "DockTransitionExecutionState",
         "DockTransitionPlan",
         "DockViewportRuntimeStatus",
+        "DockViewportWindowOwnershipStatus",
         "DockViewportPlatformCapabilityRecord",
         "DockViewportRouteStatus",
         "DockVisualAffordanceDebugLayer",
@@ -320,6 +322,26 @@ fn common_import_paths_compile() {
         &root::DockSurface,
         &open_gpui::App,
     ) -> root::DockSurfaceWindowSessionStatus = root::DockSurface::window_session_status;
+    let root_open_primary_window: fn(
+        &root::DockSurface,
+        open_gpui::WindowOptions,
+        &mut open_gpui::App,
+    ) -> root::DockSurfacePrimaryWindowOpenOutcome = root::DockSurface::open_primary_window;
+    let root_primary_open_outcome: Option<root::DockSurfacePrimaryWindowOpenOutcome> = None;
+    let prelude_primary_opened: Option<prelude::DockSurfacePrimaryWindowOpened> = None;
+    let root_primary_unavailable: Option<root::DockSurfacePrimaryWindowUnavailable> = None;
+    let root_primary_window = root::DockSurfacePrimaryWindowOpened::window;
+    let prelude_primary_generation = prelude::DockSurfacePrimaryWindowOpened::generation;
+    let root_session_phase = root::DockSurfaceWindowSessionStatus::phase;
+    let root_session_generation = root::DockSurfaceWindowSessionStatus::generation;
+    let root_session_anchor = root::DockSurfaceWindowSessionStatus::anchor;
+    let root_session_reason = root::DockSurfaceWindowSessionStatus::reason;
+    let root_session_terminal_count = root::DockSurfaceWindowSessionStatus::terminal_ticket_count;
+    let root_session_pending_count =
+        root::DockSurfaceWindowSessionStatus::pending_terminal_ticket_count;
+    let root_session_runtime_empty = root::DockSurfaceWindowSessionStatus::runtime_empty;
+    let prelude_inactive_session_status =
+        prelude::DockSurfaceViewportUnavailable::window_session_status;
     let root_primary_open_conflict: Option<root::DockSurfacePrimaryWindowOpenConflict> = None;
     let root_snapshot_type: Option<root::DockSurfaceSnapshot> = None;
     let prelude_snapshot_type: Option<prelude::DockSurfaceSnapshot> = None;
@@ -397,6 +419,20 @@ fn common_import_paths_compile() {
         root_window_session_shutdown_reason,
         prelude_window_session_rollback_reason,
         root_window_session_status,
+        root_open_primary_window,
+        root_primary_open_outcome,
+        prelude_primary_opened,
+        root_primary_unavailable,
+        root_primary_window,
+        prelude_primary_generation,
+        root_session_phase,
+        root_session_generation,
+        root_session_anchor,
+        root_session_reason,
+        root_session_terminal_count,
+        root_session_pending_count,
+        root_session_runtime_empty,
+        prelude_inactive_session_status,
         root_primary_open_conflict,
         root_snapshot_type,
         prelude_snapshot_type,

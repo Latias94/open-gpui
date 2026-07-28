@@ -21,5 +21,8 @@ open_gpui.workspace = true
 open_gpui_docking.workspace = true
 open_gpui_platform = { workspace = true, features = ["font-kit"] }
 
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true
