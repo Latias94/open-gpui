@@ -1,10 +1,10 @@
 use crate::{
-    DockController, DockDropDelivery, DockFloatingContainer, DockGraph, DockHost, DockItemId,
-    DockNode, DockNodeId, DockSpaceId, DockViewportClosePolicy, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportInputStatus,
-    DockViewportOpenOutcome, DockViewportRuntime, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+    DockController, DockFloatingContainer, DockGraph, DockHost, DockItemId, DockNode, DockNodeId,
+    DockSpaceId, DockViewportClosePolicy, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteRequest, DockViewportInputStatus, DockViewportOpenOutcome,
+    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportTargetContext, DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace,
+    DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
@@ -13,8 +13,10 @@ use crate::{
     interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Bounds, Entity, Modifiers, MouseButton, Pixels, Point,
-    TestAppContext, VisualTestContext, WindowBounds, WindowId, WindowOptions, point, px,
+    AnyWindowHandle, AppContext as _, Bounds, DevicePixels, Entity, Modifiers, MouseButton, Pixels,
+    PlatformWindowHit, PlatformWindowHitStack, PlatformWindowPhysicalCoverage,
+    PlatformWindowPhysicalGeometry, Point, TestAppContext, VisualTestContext, WindowBounds,
+    WindowId, WindowOptions, point, px, size,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -243,20 +245,67 @@ impl DockCrossWindowVisualDragFixture {
 
         let start = debug_bounds(&mut source_visual, &source_tab).center();
         let threshold = point(start.x + px(24.0), start.y);
-        let end = target_position(debug_bounds(&mut target_visual, &target_selector));
+        let target_local = target_position(debug_bounds(&mut target_visual, &target_selector));
+        let target_from_source = point(px(400.0) + target_local.x, target_local.y);
+        configure_native_registered_window_hit(
+            cx,
+            self.source.window(),
+            self.target.window(),
+            target_from_source,
+        );
 
         activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
         source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-        cx.set_platform_hovered_window(Some(self.target.window()));
-        target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
         before_release(&self.target.host, cx);
         if release == DockCrossWindowDragRelease::Release {
-            target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+            source_visual.simulate_mouse_up(
+                target_from_source,
+                MouseButton::Left,
+                Modifiers::none(),
+            );
         }
         cx.run_until_parked();
-        cx.set_platform_hovered_window(None);
     }
+}
+
+pub(crate) fn configure_native_registered_window_hit(
+    cx: &TestAppContext,
+    source_window: AnyWindowHandle,
+    target_window: AnyWindowHandle,
+    target_from_source: Point<Pixels>,
+) {
+    let source_bounds = Bounds::new(
+        point(DevicePixels(0), DevicePixels(0)),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    let target_bounds = Bounds::new(
+        point(DevicePixels(800), DevicePixels(0)),
+        size(DevicePixels(1600), DevicePixels(1200)),
+    );
+    cx.set_platform_window_physical_client_geometry(source_window, Some(source_bounds), 2.0);
+    cx.set_platform_window_physical_client_geometry(target_window, Some(target_bounds), 2.0);
+
+    let sampled_point = point(
+        DevicePixels((target_from_source.x.as_f32() * 2.0).round() as i32),
+        DevicePixels((target_from_source.y.as_f32() * 2.0).round() as i32),
+    );
+    let coverage = PlatformWindowPhysicalCoverage::try_new(target_bounds)
+        .expect("target coverage should be representable");
+    let geometry = PlatformWindowPhysicalGeometry::try_new(target_bounds, 2.0)
+        .expect("target physical geometry should be representable");
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            sampled_point,
+            vec![PlatformWindowHit::RegisteredApplication {
+                window: target_window,
+                coverage,
+                geometry,
+            }],
+        )
+        .expect("registered target hit observation should be valid"),
+    );
 }
 
 impl DockViewportVisualHostFixture {
@@ -836,16 +885,6 @@ pub(crate) fn cache_host_route_preview_with_payload(
             app,
         );
     });
-}
-
-pub(crate) fn fresh_delivery_for_request(
-    cx: &mut TestAppContext,
-    runtime: &DockViewportRuntimeHandle,
-    request: &DockViewportDropRouteRequest,
-) -> DockDropDelivery {
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(request, app));
-    DockDropDelivery::from_resolution(resolution)
-        .expect("fresh current-facts route should mint a delivery")
 }
 
 pub(crate) fn backend_route_resolution_fixture(

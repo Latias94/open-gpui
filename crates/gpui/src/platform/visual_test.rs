@@ -7,11 +7,11 @@
 
 use crate::ScreenCaptureSource;
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, ForegroundExecutor, Keymap, Menu, MenuItem,
-    MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformHoveredWindow,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities, Task, TestDispatcher,
-    WindowAppearance, WindowParams,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, DevicePixels, ForegroundExecutor, Keymap,
+    Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
+    PlatformWindowHitStack, Point, Task, TestDispatcher, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -122,6 +122,10 @@ impl Platform for VisualTestPlatform {
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         self.platform.window_stack()
+    }
+
+    fn window_hit_stack_at(&self, point: Point<DevicePixels>) -> PlatformWindowHitStack {
+        self.platform.window_hit_stack_at(point)
     }
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {

@@ -4,16 +4,20 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 
 use crate::{
     AnyDrag, AnyView, App, AppContext as _, Bounds, Context, DispatchPhase, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, HitboxBehavior, InputHandler, InteractiveElement,
     InteractiveText, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NativeBoundaryDiagnosticCursor,
-    NativeBoundaryDisposition, NativeBoundaryKind, NativeBoundaryTarget, NativePlatformCommandKind,
-    ParentElement, Pixels, PlatformInput, Point, PointerCancelEvent, PointerCancelReason,
-    PointerCaptureError, PointerCaptureHandle, PromptLevel, PromptResponse, Render,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NativeBoundaryDiagnosticCursor,
+    NativeBoundaryDisposition, NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget,
+    NativeCallbackKind, NativeCapturedDragGeneration, NativeCapturedDragPhase,
+    NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal, NativePlatformCommandKind,
+    ParentElement, Pixels, PlatformInput, PlatformPointerCaptureReleaseOutcome, PlatformWindow,
+    PlatformWindowCommand, Point, PointerCancelEvent, PointerCancelReason, PointerCaptureError,
+    PointerCaptureHandle, PromptLevel, PromptResponse, QuitMode, Render, RequestFrameOptions,
     StatefulInteractiveElement, StyleRefinement, Styled, StyledText, SubtreePresentation,
     SubtreePresentationExt, TestAppContext, UTF16Selection, VisualContext, Window,
     WindowMouseEvent, canvas, deferred, div, point, px, size,
@@ -337,6 +341,49 @@ struct DragPreviewProbe {
     renders: Rc<Cell<usize>>,
 }
 
+struct NativeCapturedDragMouseUpProbe;
+
+struct NativeCapturedDragConsumerPanicProbe {
+    handle: PointerCaptureHandle,
+    cancellations: Rc<Cell<usize>>,
+    panic_on_cancel: Rc<Cell<bool>>,
+}
+
+struct NativeCapturedDragStartReentryProbe {
+    platform_window: Rc<RefCell<Option<crate::TestWindow>>>,
+    reserved_generation: Rc<Cell<Option<NativeCapturedDragGeneration>>>,
+    prepared_consumer: Rc<RefCell<Option<crate::PreparedNativeCapturedDragConsumer>>>,
+}
+
+#[derive(Clone, Copy)]
+enum NativeCapturedDragStartInterruption {
+    None,
+    CancelPointerSession,
+    RemoveWindow,
+    Panic,
+}
+
+struct NativeCapturedDragStartInvalidationProbe {
+    interruption: Rc<Cell<NativeCapturedDragStartInterruption>>,
+    reserved_generations: Rc<RefCell<Vec<NativeCapturedDragGeneration>>>,
+    prepared_consumer: Rc<RefCell<Option<crate::PreparedNativeCapturedDragConsumer>>>,
+}
+
+struct NativeCapturedDragStartInvalidationFixture {
+    source: crate::AnyWindowHandle,
+    platform_window: crate::TestWindow,
+    interruption: Rc<Cell<NativeCapturedDragStartInterruption>>,
+    reserved_generations: Rc<RefCell<Vec<NativeCapturedDragGeneration>>>,
+    prepared_consumer: Rc<RefCell<Option<crate::PreparedNativeCapturedDragConsumer>>>,
+    deliveries: Rc<Cell<usize>>,
+    _subscription: crate::Subscription,
+}
+
+struct NativeWindowUpdateProvenanceProbe {
+    target: crate::AnyWindowHandle,
+    observations: Rc<RefCell<Vec<bool>>>,
+}
+
 struct ActionWindowRemovalProbe {
     handle: PointerCaptureHandle,
     focus: FocusHandle,
@@ -551,6 +598,11 @@ struct PointerCaptureOwnersProbe {
     second: PointerCaptureHandle,
 }
 
+struct ShutdownPointerCancelProbe {
+    handle: PointerCaptureHandle,
+    cancellations: Rc<Cell<usize>>,
+}
+
 impl Render for PointerCaptureProbe {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let render = self.render_count.get() + 1;
@@ -584,10 +636,194 @@ impl Render for PointerCaptureProbe {
     }
 }
 
+impl Render for ShutdownPointerCancelProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let handle = self.handle;
+        let cancellations = self.cancellations.clone();
+        canvas(
+            move |bounds, window, _| {
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                window
+                    .bind_pointer_capture(&handle, hitbox.id)
+                    .expect("the shutdown probe should bind its capture owner");
+                hitbox
+            },
+            move |_, hitbox, window, _| {
+                let target = hitbox.id;
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
+                    if phase == DispatchPhase::Bubble
+                        && event.button == MouseButton::Left
+                        && target.is_mouse_event_target(window)
+                    {
+                        window
+                            .capture_pointer(&handle, MouseButton::Left)
+                            .expect("the shutdown probe should capture its pointer");
+                    }
+                });
+                window.on_pointer_cancel(move |_, phase, _, _| {
+                    if phase == DispatchPhase::Bubble {
+                        cancellations.set(cancellations.get() + 1);
+                    }
+                });
+            },
+        )
+        .size_full()
+    }
+}
+
 impl Render for DragPreviewProbe {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.renders.set(self.renders.get() + 1);
         div().w(px(1.0)).h(px(1.0))
+    }
+}
+
+impl Render for NativeCapturedDragMouseUpProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .on_mouse_up(MouseButton::Left, |_, window, cx| {
+                assert!(
+                    cx.stop_active_drag(window),
+                    "the user listener should be able to clear the drag before native delivery"
+                );
+            })
+    }
+}
+
+impl Render for NativeCapturedDragConsumerPanicProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let handle = self.handle;
+        let cancellations = self.cancellations.clone();
+        let panic_on_cancel = self.panic_on_cancel.clone();
+        canvas(
+            move |bounds, window, _| {
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                window
+                    .bind_pointer_capture(&handle, hitbox.id)
+                    .expect("the panic-recovery capture owner should bind");
+                hitbox
+            },
+            move |_, hitbox, window, _| {
+                let target = hitbox.id;
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
+                    if phase == DispatchPhase::Bubble
+                        && event.button == MouseButton::Left
+                        && target.is_mouse_event_target(window)
+                    {
+                        window
+                            .capture_pointer(&handle, MouseButton::Left)
+                            .expect("the panic-recovery gesture should capture its pointer");
+                    }
+                });
+                window.on_pointer_cancel(move |_, phase, _, _| {
+                    if phase == DispatchPhase::Bubble {
+                        cancellations.set(cancellations.get() + 1);
+                        if panic_on_cancel.replace(false) {
+                            panic!("injected pointer-cancel listener panic");
+                        }
+                    }
+                });
+            },
+        )
+        .size_full()
+    }
+}
+
+impl Render for NativeCapturedDragStartReentryProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let platform_window = self.platform_window.clone();
+        let reserved_generation = self.reserved_generation.clone();
+        let prepared_consumer = self.prepared_consumer.clone();
+        div()
+            .id("native-captured-drag-start-reentry-probe")
+            .size_full()
+            .on_drag("native-captured-drag-reentry", move |_, geometry, _, cx| {
+                reserved_generation.set(Some(geometry.native_captured_drag_generation()));
+                let consumer = geometry.prepare_native_captured_drag_consumer();
+                assert!(!consumer.is_active());
+                assert!(!consumer.is_revoked());
+                prepared_consumer.borrow_mut().replace(consumer);
+                platform_window
+                    .borrow()
+                    .as_ref()
+                    .expect("the test platform window must be installed before dragging")
+                    .simulate_active_status_change(false);
+                assert_eq!(
+                    prepared_consumer
+                        .borrow()
+                        .as_ref()
+                        .map(crate::PreparedNativeCapturedDragConsumer::is_active),
+                    Some(false),
+                    "the reentrant platform fact must wait for the atomic start commit"
+                );
+                cx.new(|_| Empty)
+            })
+    }
+}
+
+impl Render for NativeCapturedDragStartInvalidationProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let interruption = self.interruption.clone();
+        let reserved_generations = self.reserved_generations.clone();
+        let prepared_consumer = self.prepared_consumer.clone();
+        div()
+            .id("native-captured-drag-start-invalidation-probe")
+            .size_full()
+            .on_drag(
+                "native-captured-drag-start-invalidation",
+                move |_, geometry, window, cx| {
+                    reserved_generations
+                        .borrow_mut()
+                        .push(geometry.native_captured_drag_generation());
+                    if prepared_consumer.borrow().is_none()
+                        && !matches!(
+                            interruption.get(),
+                            NativeCapturedDragStartInterruption::None
+                        )
+                    {
+                        let consumer = geometry.prepare_native_captured_drag_consumer();
+                        assert!(!consumer.is_active());
+                        assert!(!consumer.is_revoked());
+                        prepared_consumer.borrow_mut().replace(consumer);
+                    }
+
+                    match interruption.get() {
+                        NativeCapturedDragStartInterruption::None => {}
+                        NativeCapturedDragStartInterruption::CancelPointerSession => {
+                            window.cancel_pointer_session(PointerCancelReason::CaptureRevoked, cx)
+                        }
+                        NativeCapturedDragStartInterruption::RemoveWindow => {
+                            window.remove_window(cx)
+                        }
+                        NativeCapturedDragStartInterruption::Panic => {
+                            panic!("injected drag listener panic after consumer preparation")
+                        }
+                    }
+                    cx.new(|_| Empty)
+                },
+            )
+    }
+}
+
+impl Render for NativeWindowUpdateProvenanceProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let target = self.target;
+        let observations = self.observations.clone();
+        div().size_full().on_mouse_move(move |_, _, cx| {
+            observations
+                .borrow_mut()
+                .push(cx.has_native_window_update_provenance());
+            cx.update_window_id(target.window_id(), |_, _, cx| {
+                observations
+                    .borrow_mut()
+                    .push(cx.has_native_window_update_provenance());
+            })
+            .expect("the nested target window should remain available");
+            observations
+                .borrow_mut()
+                .push(cx.has_native_window_update_provenance());
+        })
     }
 }
 
@@ -1070,11 +1306,12 @@ fn pointer_capture_requires_a_pressed_button_and_rejects_competing_owners(cx: &m
     );
 
     cx.update(|window, cx| {
-        cx.active_drag = Some(AnyDrag {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
             window_id: window.window_handle().window_id(),
             source: None,
             value: Arc::new("drag"),
-            view: cx.new(|_| Empty).into(),
+            view: drag_view,
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
@@ -2785,4 +3022,2521 @@ fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut Te
     })
     .expect("the drag-owning window should accept the terminating mouse up");
     cx.update(|app| assert!(app.active_drag.is_none()));
+}
+
+fn open_native_captured_drag_start_invalidation_fixture(
+    cx: &mut TestAppContext,
+    interruption: NativeCapturedDragStartInterruption,
+) -> NativeCapturedDragStartInvalidationFixture {
+    let interruption = Rc::new(Cell::new(interruption));
+    let reserved_generations = Rc::new(RefCell::new(Vec::new()));
+    let prepared_consumer = Rc::new(RefCell::new(None));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let interruption = interruption.clone();
+            let reserved_generations = reserved_generations.clone();
+            let prepared_consumer = prepared_consumer.clone();
+            move |_, _| NativeCapturedDragStartInvalidationProbe {
+                interruption,
+                reserved_generations,
+                prepared_consumer,
+            }
+        })
+        .into();
+    let platform_window = cx.test_window(source);
+    let deliveries = Rc::new(Cell::new(0_usize));
+    let subscription = cx.update({
+        let deliveries = deliveries.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |_, _| {
+                deliveries.set(deliveries.get().saturating_add(1));
+            })
+        }
+    });
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the drag source should remain open for its initial frame");
+    cx.run_until_parked();
+
+    NativeCapturedDragStartInvalidationFixture {
+        source,
+        platform_window,
+        interruption,
+        reserved_generations,
+        prepared_consumer,
+        deliveries,
+        _subscription: subscription,
+    }
+}
+
+fn trigger_native_captured_drag_start(fixture: &mut NativeCapturedDragStartInvalidationFixture) {
+    let _ =
+        fixture
+            .platform_window
+            .simulate_input_result(mouse_down(MouseButton::Left, 10.0, 10.0));
+    let _ = fixture
+        .platform_window
+        .simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(30.0), px(10.0)),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::none(),
+        }));
+}
+
+fn assert_native_captured_drag_start_was_revoked(
+    cx: &mut TestAppContext,
+    fixture: &NativeCapturedDragStartInvalidationFixture,
+) {
+    let reserved_generations = fixture.reserved_generations.borrow();
+    assert_eq!(reserved_generations.len(), 1);
+    {
+        let prepared_consumer = fixture.prepared_consumer.borrow();
+        let prepared_consumer = prepared_consumer
+            .as_ref()
+            .expect("the interrupted listener must prepare its native captured-drag consumer");
+        assert_eq!(prepared_consumer.generation(), reserved_generations[0]);
+        assert!(!prepared_consumer.is_active());
+        assert!(prepared_consumer.is_revoked());
+    }
+    drop(reserved_generations);
+
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    assert_eq!(
+        fixture.deliveries.get(),
+        0,
+        "a revoked start must not publish captured native pointer facts"
+    );
+}
+
+fn retry_native_captured_drag_start(
+    cx: &mut TestAppContext,
+    fixture: &mut NativeCapturedDragStartInvalidationFixture,
+) {
+    fixture
+        .interruption
+        .set(NativeCapturedDragStartInterruption::None);
+    cx.update_window(fixture.source, |_, window, cx| {
+        assert!(
+            !window.has_active_pointer_session(cx),
+            "an interrupted drag start must settle its pointer session before retry"
+        );
+        window.draw(cx).clear();
+    })
+    .expect("the interrupted drag source should remain available for a clean retry");
+
+    trigger_native_captured_drag_start(fixture);
+
+    assert_eq!(
+        cx.read(|cx| cx.active_drag.as_ref().map(|drag| drag.window_id)),
+        Some(fixture.source.window_id()),
+        "the next uninterrupted listener must commit a normal active drag"
+    );
+    let reserved_generations = fixture.reserved_generations.borrow();
+    assert_eq!(reserved_generations.len(), 2);
+    assert_ne!(reserved_generations[0], reserved_generations[1]);
+    drop(reserved_generations);
+    assert_eq!(
+        fixture.deliveries.get(),
+        0,
+        "starting a replacement drag must not replay facts from the revoked generation"
+    );
+
+    cx.update_window(fixture.source, |_, window, cx| {
+        window.cancel_pointer_session(PointerCancelReason::CaptureRevoked, cx);
+    })
+    .expect("the replacement drag source should remain open for cleanup");
+}
+
+#[open_gpui::test]
+fn drag_listener_pointer_cancel_revokes_reserved_native_capture_start_and_allows_next_drag(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = open_native_captured_drag_start_invalidation_fixture(
+        cx,
+        NativeCapturedDragStartInterruption::CancelPointerSession,
+    );
+
+    trigger_native_captured_drag_start(&mut fixture);
+    cx.run_until_parked();
+
+    assert_native_captured_drag_start_was_revoked(cx, &fixture);
+    assert!(
+        cx.update_window(fixture.source, |_, window, cx| {
+            !window.has_active_pointer_session(cx)
+        })
+        .expect("the cancelled drag source should remain open")
+    );
+    retry_native_captured_drag_start(cx, &mut fixture);
+}
+
+#[open_gpui::test]
+fn drag_listener_window_removal_revokes_reserved_native_capture_start_without_delivery(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = open_native_captured_drag_start_invalidation_fixture(
+        cx,
+        NativeCapturedDragStartInterruption::RemoveWindow,
+    );
+
+    trigger_native_captured_drag_start(&mut fixture);
+    cx.run_until_parked();
+
+    assert_native_captured_drag_start_was_revoked(cx, &fixture);
+    assert!(
+        !cx.windows().contains(&fixture.source),
+        "the deferred input-transaction removal must still commit"
+    );
+}
+
+#[open_gpui::test]
+fn panicking_drag_listener_revokes_reserved_native_capture_start_and_allows_next_drag(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = open_native_captured_drag_start_invalidation_fixture(
+        cx,
+        NativeCapturedDragStartInterruption::Panic,
+    );
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        trigger_native_captured_drag_start(&mut fixture);
+    }));
+    assert!(panic.is_err());
+    cx.run_until_parked();
+
+    assert_native_captured_drag_start_was_revoked(cx, &fixture);
+    assert!(cx.windows().contains(&fixture.source));
+    retry_native_captured_drag_start(cx, &mut fixture);
+}
+
+#[open_gpui::test]
+fn native_captured_drag_start_activates_prepared_consumer_before_reentrant_cancel(
+    cx: &mut TestAppContext,
+) {
+    let platform_window_slot = Rc::new(RefCell::new(None));
+    let reserved_generation = Rc::new(Cell::new(None));
+    let prepared_consumer = Rc::new(RefCell::new(None));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let platform_window = platform_window_slot.clone();
+            let reserved_generation = reserved_generation.clone();
+            let prepared_consumer = prepared_consumer.clone();
+            move |_, _| NativeCapturedDragStartReentryProbe {
+                platform_window,
+                reserved_generation,
+                prepared_consumer,
+            }
+        })
+        .into();
+    let mut platform_window = cx.test_window(source);
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 0);
+    *platform_window_slot.borrow_mut() = Some(platform_window.clone());
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let deliveries = deliveries.clone();
+        let prepared_consumer = prepared_consumer.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| {
+                let consumer = prepared_consumer.borrow();
+                let consumer = consumer
+                    .as_ref()
+                    .expect("the listener must prepare its consumer before native delivery");
+                deliveries.borrow_mut().push((
+                    event.phase(),
+                    event.generation(),
+                    consumer.is_active(),
+                    consumer.is_revoked(),
+                ));
+            })
+        }
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 10.0, 10.0));
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(30.0), px(10.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+
+    let generation = reserved_generation
+        .get()
+        .expect("the drag listener must observe its reserved generation");
+    assert!(
+        prepared_consumer
+            .borrow()
+            .as_ref()
+            .is_some_and(crate::PreparedNativeCapturedDragConsumer::is_active)
+    );
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    assert_eq!(
+        deliveries.borrow().as_slice(),
+        [(
+            NativeCapturedDragPhase::Cancelled(PointerCancelReason::WindowDeactivated),
+            generation,
+            true,
+            false,
+        )]
+    );
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn exact_native_captured_drag_cancel_is_once_and_cannot_cancel_a_replacement_generation(
+    cx: &mut TestAppContext,
+) {
+    let source_capture = Rc::new(Cell::new(None));
+    let pointer_cancellations = Rc::new(Cell::new(0));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let source_capture = source_capture.clone();
+            let pointer_cancellations = pointer_cancellations.clone();
+            move |window, _| {
+                let handle = window.new_pointer_capture_handle();
+                source_capture.set(Some(handle));
+                NativeCapturedDragConsumerPanicProbe {
+                    handle,
+                    cancellations: pointer_cancellations,
+                    panic_on_cancel: Rc::new(Cell::new(false)),
+                }
+            }
+        })
+        .into();
+    let moved_generation = Rc::new(Cell::new(None));
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let moved_generation = moved_generation.clone();
+        let deliveries = deliveries.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| {
+                if event.phase() == NativeCapturedDragPhase::Moved {
+                    moved_generation.set(Some(event.generation()));
+                }
+                deliveries.borrow_mut().push((
+                    event.phase(),
+                    event.generation(),
+                    event.payload::<&'static str>().copied(),
+                ));
+            })
+        }
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the exact-cancel source should remain open");
+    cx.run_until_parked();
+
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 10.0, 10.0));
+    let capture = source_capture
+        .get()
+        .expect("the exact-cancel source should expose its capture handle");
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: Some(capture),
+            value: Arc::new("exact-g1"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the captured source should start G1");
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(30.0), px(20.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+    let g1 = moved_generation
+        .get()
+        .expect("the first captured move should expose G1");
+
+    let source_window = source.window_id();
+    let source_slot = source_window.as_u64() & u64::from(u32::MAX);
+    let source_generation = source_window.as_u64() >> 32;
+    let aliased_generation = if source_generation == 7 { 9 } else { 7 };
+    let aliased_source = crate::WindowId::from((aliased_generation << 32) | source_slot);
+    assert_ne!(aliased_source, source_window);
+    assert!(!cx.update(|app| app.cancel_native_captured_drag(
+        aliased_source,
+        g1,
+        PointerCancelReason::CaptureRevoked,
+    )));
+    assert!(cx.read(|cx| cx.active_drag.is_some()));
+    assert!(
+        cx.update_window(source, |_, window, _| window.captured_pointer().is_some())
+            .expect("the real source window should remain open")
+    );
+
+    let diagnostic_cursor = cx.update(|app| {
+        app.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    assert!(
+        cx.update_window(source, |_, _, app| app.cancel_native_captured_drag(
+            source_window,
+            g1,
+            PointerCancelReason::CaptureRevoked,
+        ))
+        .expect("the source window update must accept its own exact cancellation")
+    );
+    assert!(!cx.update(|app| app.cancel_native_captured_drag(
+        source_window,
+        g1,
+        PointerCancelReason::CaptureRevoked,
+    )));
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    assert!(
+        cx.update_window(source, |_, window, _| window.captured_pointer().is_none())
+            .expect("the exact-cancel source should remain open")
+    );
+    assert_eq!(
+        platform_window.native_pointer_capture_release_count(),
+        1,
+        "exact cancellation must synchronously request native capture release"
+    );
+    assert_eq!(
+        pointer_cancellations.get(),
+        1,
+        "the ordered typed cancel must deliver once at the completed outer App boundary"
+    );
+    cx.run_until_parked();
+    assert_eq!(pointer_cancellations.get(), 1);
+    let diagnostic_delta = cx.update(|app| app.native_boundary_diagnostics(diagnostic_cursor));
+    let cancellation_diagnostic = diagnostic_delta
+        .terminal
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.target == NativeBoundaryTarget::Window(source_window)
+                && diagnostic.kind
+                    == NativeBoundaryKind::Callback(NativeCallbackKind::CapturedDragCancellation)
+        })
+        .expect("exact cancellation must publish its own boundary diagnostic");
+    assert_eq!(
+        cancellation_diagnostic.domain_generation,
+        Some(NativeBoundaryGeneration::CapturedDrag(g1))
+    );
+    assert_eq!(
+        deliveries.borrow().as_slice(),
+        &[
+            (NativeCapturedDragPhase::Moved, g1, Some("exact-g1")),
+            (
+                NativeCapturedDragPhase::Cancelled(PointerCancelReason::CaptureRevoked),
+                g1,
+                Some("exact-g1"),
+            ),
+        ]
+    );
+
+    moved_generation.set(None);
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 12.0, 10.0));
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: Some(capture),
+            value: Arc::new("exact-g2"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the captured source should start G2");
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(34.0), px(22.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+    let g2 = moved_generation
+        .get()
+        .expect("the replacement captured move should expose G2");
+    assert_ne!(g1, g2);
+
+    assert!(!cx.update(|app| app.cancel_native_captured_drag(
+        source_window,
+        g1,
+        PointerCancelReason::WindowClosed,
+    )));
+    assert!(cx.read(|cx| cx.active_drag.is_some()));
+    assert!(
+        cx.update_window(source, |_, window, _| window.captured_pointer().is_some())
+            .expect("the replacement source should remain open")
+    );
+    assert_eq!(pointer_cancellations.get(), 1);
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+
+    assert!(cx.update(|app| app.cancel_native_captured_drag(
+        source_window,
+        g2,
+        PointerCancelReason::WindowClosed,
+    )));
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    assert!(
+        cx.update_window(source, |_, window, _| window.captured_pointer().is_none())
+            .expect("the replacement source should remain open for cleanup")
+    );
+    cx.run_until_parked();
+
+    assert_eq!(pointer_cancellations.get(), 2);
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 2);
+    assert_eq!(
+        deliveries.borrow().as_slice(),
+        &[
+            (NativeCapturedDragPhase::Moved, g1, Some("exact-g1")),
+            (
+                NativeCapturedDragPhase::Cancelled(PointerCancelReason::CaptureRevoked),
+                g1,
+                Some("exact-g1"),
+            ),
+            (NativeCapturedDragPhase::Moved, g2, Some("exact-g2")),
+            (
+                NativeCapturedDragPhase::Cancelled(PointerCancelReason::WindowClosed),
+                g2,
+                Some("exact-g2"),
+            ),
+        ]
+    );
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn exact_native_captured_drag_cancel_preserves_a_replacement_pointer_owner(
+    cx: &mut TestAppContext,
+) {
+    let handles = Rc::new(Cell::new(None));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let handles = handles.clone();
+            move |window, _| {
+                let first = window.new_pointer_capture_handle();
+                let second = window.new_pointer_capture_handle();
+                handles.set(Some((first, second)));
+                PointerCaptureOwnersProbe { first, second }
+            }
+        })
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the replacement-owner source should remain open");
+    cx.run_until_parked();
+    let (first, second) = handles
+        .get()
+        .expect("the source should publish both capture owners");
+    let platform_window = cx.test_window(source);
+
+    let generation = cx
+        .update_window(source, |_, window, cx| {
+            window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+            window
+                .capture_pointer(&first, MouseButton::Left)
+                .expect("the first owner should capture the drag pointer");
+            let reservation = cx.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = cx.new(|_| Empty).into();
+            assert!(cx.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: Some(first),
+                    value: Arc::new("replacement-owner-g1"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            assert_eq!(window.release_pointer(&first), Ok(true));
+            window
+                .capture_pointer(&second, MouseButton::Left)
+                .expect("the replacement owner should capture the still-pressed pointer");
+            generation
+        })
+        .expect("the first owner should start G1");
+
+    let release_terminals = Rc::new(RefCell::new(Vec::new()));
+    let release_barrier = cx
+        .update({
+            let release_terminals = release_terminals.clone();
+            move |app| {
+                app.cancel_native_captured_drag_with_release_barrier(
+                    source.window_id(),
+                    generation,
+                    PointerCancelReason::CaptureRevoked,
+                    move |barrier, terminal, _| {
+                        release_terminals.borrow_mut().push((barrier, terminal));
+                    },
+                )
+            }
+        })
+        .expect("the exact G1 cancellation should reserve its release barrier");
+    assert!(cx.read(|app| app.active_drag.is_none()));
+    assert_eq!(
+        cx.update_window(source, |_, window, _| window
+            .captured_pointer()
+            .map(|capture| capture.handle()))
+            .expect("the replacement-owner source should remain open"),
+        Some(second),
+        "cancelling G1 must not clear a replacement logical capture"
+    );
+    assert_eq!(
+        platform_window.native_pointer_capture_release_count(),
+        0,
+        "a live replacement owner must retain the HWND capture session"
+    );
+    assert_eq!(
+        release_terminals.borrow().as_slice(),
+        &[(
+            release_barrier,
+            NativeCapturedDragReleaseTerminal::NotRequired
+        )],
+        "a replacement logical owner must settle only the cancelled generation as NotRequired"
+    );
+
+    cx.update_window(source, |_, window, cx| {
+        window.dispatch_event(mouse_up(MouseButton::Left, 10.0, 10.0), cx);
+    })
+    .expect("the replacement owner should accept its terminal mouse up");
+}
+
+#[open_gpui::test]
+fn exact_native_captured_drag_cancel_refreshes_source_after_removing_preview(
+    cx: &mut TestAppContext,
+) {
+    let preview_renders = Rc::new(Cell::new(0));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the preview source should remain open");
+    cx.run_until_parked();
+
+    let generation = cx
+        .update_window(source, {
+            let preview_renders = preview_renders.clone();
+            move |_, window, app| {
+                let reservation = app.reserve_native_captured_drag_start();
+                let generation = reservation.token().generation();
+                let drag_view = app
+                    .new(move |_| DragPreviewProbe {
+                        renders: preview_renders,
+                    })
+                    .into();
+                assert!(app.start_reserved_active_drag(
+                    reservation,
+                    AnyDrag {
+                        window_id: source.window_id(),
+                        source: None,
+                        value: Arc::new("preview-refresh-g1"),
+                        view: drag_view,
+                        window_preview_offset: point(px(0.0), px(0.0)),
+                        cursor_style: None,
+                        button: MouseButton::Left,
+                    },
+                ));
+                window.refresh();
+                window.draw(app).clear();
+                assert!(!window.invalidator.is_dirty());
+                generation
+            }
+        })
+        .expect("the preview source should start G1");
+    assert_eq!(preview_renders.get(), 1);
+
+    cx.update(|app| {
+        assert!(app.cancel_native_captured_drag(
+            source.window_id(),
+            generation,
+            PointerCancelReason::CaptureRevoked,
+        ));
+        source
+            .update(app, |_, window, _| {
+                assert!(
+                    window.invalidator.is_dirty(),
+                    "removing the active preview must schedule a source-window redraw"
+                );
+            })
+            .expect("the preview source should remain open after cancellation");
+    });
+}
+
+#[open_gpui::test]
+fn app_shutdown_settles_the_active_native_drag_and_preserves_outbox_reuse(cx: &mut TestAppContext) {
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let deliveries = deliveries.clone();
+        move |app| {
+            app.observe_native_captured_drag(move |event, _| {
+                deliveries
+                    .borrow_mut()
+                    .push((event.phase(), event.generation()));
+            })
+        }
+    });
+    let first: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(first, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: first.window_id(),
+            source: None,
+            value: Arc::new("shutdown-g1"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("G1 should start in the first window");
+    let mut first_platform_window = cx.test_window(first);
+    let _ = first_platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(20.0), px(10.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+    let g1 = deliveries
+        .borrow()
+        .iter()
+        .find_map(|(phase, generation)| {
+            (*phase == NativeCapturedDragPhase::Moved).then_some(*generation)
+        })
+        .expect("G1 should publish a captured move");
+
+    let release_attempts = Rc::new(Cell::new(0));
+    first_platform_window.set_pointer_capture_release_callback({
+        let release_attempts = release_attempts.clone();
+        move |_, _| {
+            let attempt = release_attempts.get();
+            release_attempts.set(attempt + 1);
+            if attempt == 0 {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Released
+            }
+        }
+    });
+
+    cx.quit();
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    cx.run_until_parked();
+
+    assert!(cx.windows().is_empty());
+    assert_eq!(
+        release_attempts.get(),
+        1,
+        "native-window retirement must settle the capture barrier and invalidate its delayed retry"
+    );
+    assert!(cx.read(|app| app.active_drag.is_none()));
+    assert!(deliveries.borrow().iter().any(|(phase, generation)| {
+        *generation == g1
+            && *phase == NativeCapturedDragPhase::Cancelled(PointerCancelReason::WindowClosed)
+    }));
+
+    let second: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(second, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: second.window_id(),
+            source: None,
+            value: Arc::new("shutdown-g2"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("G2 should start after reopening the test App");
+    let mut second_platform_window = cx.test_window(second);
+    let _ =
+        second_platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(25.0), px(12.0)),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::none(),
+        }));
+    cx.run_until_parked();
+    let g2 = deliveries
+        .borrow()
+        .iter()
+        .rev()
+        .find_map(|(phase, generation)| {
+            (*phase == NativeCapturedDragPhase::Moved).then_some(*generation)
+        })
+        .expect("G2 should publish through the reused outbox");
+    assert_ne!(g1, g2);
+
+    assert!(cx.update(|app| app.cancel_native_captured_drag(
+        second.window_id(),
+        g2,
+        PointerCancelReason::WindowClosed,
+    )));
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn capture_release_rejection_waits_for_fresh_app_progress_before_retry(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let app = Rc::downgrade(&cx.app);
+    let dispatcher_observed_idle = Rc::new(Cell::new(true));
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let dispatcher_observed_idle = dispatcher_observed_idle.clone();
+        let attempts = attempts.clone();
+        move |_, _| {
+            let app = app
+                .upgrade()
+                .expect("the test app must outlive the release dispatcher");
+            let idle = app.try_borrow_mut().is_ok();
+            dispatcher_observed_idle.set(dispatcher_observed_idle.get() && idle);
+            let attempt = attempts.get();
+            attempts.set(attempt + 1);
+            if attempt == 0 {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Released
+            }
+        }
+    });
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("release-boundary"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start its native captured drag");
+
+    cx.update(|app| {
+        assert!(app.cancel_native_captured_drag(
+            source.window_id(),
+            generation,
+            PointerCancelReason::CaptureRevoked,
+        ));
+        assert!(
+            platform_window
+                .native_pointer_capture_release_history()
+                .is_empty(),
+            "the capture dispatcher must not run while the caller still owns AppRefMut"
+        );
+    });
+
+    assert!(dispatcher_observed_idle.get());
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_prepare_history()
+            .len(),
+        1,
+        "the exact backend pointer session must be prepared once before post-borrow dispatch"
+    );
+    assert_eq!(
+        attempts.get(),
+        1,
+        "a rejected release must not spin in the same drain"
+    );
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    assert_eq!(
+        attempts.get(),
+        2,
+        "the delayed retry must run after the original native-work pump has completed"
+    );
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_prepare_history()
+            .len(),
+        1,
+        "a rejected release retry must reuse the original prepared backend session"
+    );
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_history()
+            .len(),
+        2
+    );
+}
+
+#[open_gpui::test]
+fn capture_release_is_prepared_before_a_budget_delayed_first_dispatch(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let dispatcher = platform_window.command_dispatcher();
+    let app_cell = cx.app.clone();
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("budget-delayed-release"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start its captured drag");
+
+    cx.update(|app| {
+        for _ in 0..65 {
+            app_cell.enqueue_platform_window_command(
+                source.window_id(),
+                dispatcher.clone(),
+                PlatformWindowCommand::StartWindowMove,
+            );
+        }
+        assert!(app.cancel_native_captured_drag(
+            source.window_id(),
+            generation,
+            PointerCancelReason::CaptureRevoked,
+        ));
+        assert!(
+            platform_window
+                .native_pointer_capture_release_history()
+                .is_empty(),
+            "queued native work must not execute while AppRefMut is held"
+        );
+    });
+
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_prepare_history()
+            .len(),
+        1,
+        "the backend pointer session must be frozen before post-borrow work can dispatch"
+    );
+    assert!(
+        platform_window
+            .native_pointer_capture_release_history()
+            .is_empty(),
+        "the first release dispatch must remain behind the 64-work drain budget"
+    );
+    cx.run_until_parked();
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_prepare_history()
+            .len(),
+        1,
+        "a delayed first dispatch must reuse the originally prepared backend session"
+    );
+}
+
+#[open_gpui::test]
+fn repeated_capture_release_rejection_stops_after_bounded_delayed_retries(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    let release_allowed = Rc::new(Cell::new(false));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        let release_allowed = release_allowed.clone();
+        move |_, _| {
+            attempts.set(attempts.get() + 1);
+            if release_allowed.get() {
+                PlatformPointerCaptureReleaseOutcome::Released
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            }
+        }
+    });
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("release-retry-bound"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start G1");
+
+    cx.update(|app| {
+        assert!(app.cancel_native_captured_drag(
+            source.window_id(),
+            generation,
+            PointerCancelReason::CaptureRevoked,
+        ));
+    });
+    assert_eq!(
+        attempts.get(),
+        1,
+        "the initial release is the only synchronous attempt"
+    );
+
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    assert_eq!(attempts.get(), 2);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(32));
+    assert_eq!(attempts.get(), 3);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(128));
+    assert_eq!(
+        attempts.get(),
+        4,
+        "three bounded delayed retries must be attempted before waiting for a new native fact"
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        attempts.get(),
+        4,
+        "a saturated rejection must not leave another self-scheduled wake behind"
+    );
+
+    assert!(platform_window.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        force_render: true,
+    }));
+    cx.run_until_parked();
+    assert_eq!(
+        attempts.get(),
+        4,
+        "ordinary frame progress must not wake a saturated capture release"
+    );
+
+    release_allowed.set(true);
+    platform_window.simulate_hover_status_change(true);
+    cx.run_until_parked();
+    assert_eq!(
+        attempts.get(),
+        5,
+        "a later explicit native fact may retry the saturated barrier without reintroducing a busy wake"
+    );
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+
+    cx.update_window(source, |_, window, app| window.remove_window(app))
+        .expect("the release source should remain removable after its terminal retry");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn shutdown_uses_native_window_terminal_after_capture_release_retries_are_saturated(
+    cx: &mut TestAppContext,
+) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, app| {
+        window.activate_window();
+        window.draw(app).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        move |_, _| {
+            attempts.set(attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Rejected
+        }
+    });
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("shutdown-after-saturated-release"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start its captured drag");
+    let completions = Rc::new(RefCell::<
+        Vec<(
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+        )>,
+    >::new(Vec::new()));
+    let barrier = cx
+        .update({
+            let completions = completions.clone();
+            move |app| {
+                assert!(app.cancel_native_captured_drag(
+                    source.window_id(),
+                    generation,
+                    PointerCancelReason::WindowClosed,
+                ));
+                app.cancel_native_captured_drag_with_release_barrier(
+                    source.window_id(),
+                    generation,
+                    PointerCancelReason::WindowClosed,
+                    move |barrier, terminal, _| {
+                        completions.borrow_mut().push((barrier, terminal));
+                    },
+                )
+            }
+        })
+        .expect("the exact pending release must accept a shutdown continuation");
+
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    cx.background_executor
+        .advance_clock(Duration::from_millis(32));
+    cx.background_executor
+        .advance_clock(Duration::from_millis(128));
+    cx.run_until_parked();
+    assert_eq!(attempts.get(), 4);
+    assert!(completions.borrow().is_empty());
+
+    cx.update(|app| app.shutdown());
+    cx.run_until_parked();
+
+    assert!(cx.windows().is_empty());
+    assert_eq!(
+        attempts.get(),
+        4,
+        "shutdown must retire the native window instead of inventing another release retry"
+    );
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_prepare_history()
+            .len(),
+        1,
+        "all rejected attempts must share one prepared backend session"
+    );
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[(
+            barrier,
+            NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
+        )],
+        "the exact captured-drag barrier must settle from the source window's native terminal"
+    );
+
+    let reopened: crate::AnyWindowHandle = cx
+        .open_window(size(px(280.0), px(180.0)), |_, _| Empty)
+        .into();
+    assert!(cx.windows().contains(&reopened));
+    cx.update_window(reopened, |_, window, app| window.remove_window(app))
+        .expect("the reopened lifecycle should remain removable");
+    cx.run_until_parked();
+}
+
+#[test]
+fn dropping_app_with_pending_capture_release_retry_does_not_deadlock() {
+    let mut cx = TestAppContext::single();
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, app| {
+        window.activate_window();
+        window.draw(app).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        move |_, _| {
+            attempts.set(attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Rejected
+        }
+    });
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("pending-release-drop"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start its captured drag");
+
+    cx.update(|app| {
+        assert!(app.cancel_native_captured_drag(
+            source.window_id(),
+            generation,
+            PointerCancelReason::CaptureRevoked,
+        ));
+    });
+    assert_eq!(attempts.get(), 1);
+
+    drop(cx);
+}
+
+#[open_gpui::test]
+fn stale_delayed_capture_release_wake_cannot_retry_a_newer_rejection_epoch(
+    cx: &mut TestAppContext,
+) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    let release_allowed = Rc::new(Cell::new(false));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        let release_allowed = release_allowed.clone();
+        move |_, _| {
+            attempts.set(attempts.get() + 1);
+            if release_allowed.get() {
+                PlatformPointerCaptureReleaseOutcome::Released
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            }
+        }
+    });
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("release-retry-epoch"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start G1");
+
+    cx.update(|app| {
+        assert!(app.cancel_native_captured_drag(
+            source.window_id(),
+            generation,
+            PointerCancelReason::CaptureRevoked,
+        ));
+    });
+    assert_eq!(attempts.get(), 1);
+
+    cx.app
+        .retry_native_pointer_capture_release_for_native_window_progress(source.window_id());
+    cx.run_until_parked();
+    assert_eq!(
+        attempts.get(),
+        2,
+        "native progress should consume the first pending retry epoch"
+    );
+
+    release_allowed.set(true);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    assert_eq!(
+        attempts.get(),
+        2,
+        "the stale first-epoch timer must not retry the newer rejection"
+    );
+    cx.background_executor
+        .advance_clock(Duration::from_millis(24));
+    assert_eq!(
+        attempts.get(),
+        3,
+        "only the newer rejection epoch's own timer may dispatch its retry"
+    );
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+
+    cx.update_window(source, |_, window, app| window.remove_window(app))
+        .expect("the source should remain removable after release");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn captured_drag_release_barrier_attaches_to_the_exact_pending_cancellation(
+    cx: &mut TestAppContext,
+) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        move |_, _| {
+            let attempt = attempts.get();
+            attempts.set(attempt + 1);
+            if attempt == 0 {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Released
+            }
+        }
+    });
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("release-attachment"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start G1");
+
+    let completions = Rc::new(RefCell::<
+        Vec<(
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+        )>,
+    >::new(Vec::new()));
+    let barrier = cx
+        .update({
+            let completions = completions.clone();
+            move |app| {
+                assert!(app.cancel_native_captured_drag(
+                    source.window_id(),
+                    generation,
+                    PointerCancelReason::WindowClosed,
+                ));
+                let barrier = app.cancel_native_captured_drag_with_release_barrier(
+                    source.window_id(),
+                    generation,
+                    PointerCancelReason::WindowClosed,
+                    move |barrier, terminal, _| {
+                        completions.borrow_mut().push((barrier, terminal));
+                    },
+                );
+                assert!(
+                    platform_window
+                        .native_pointer_capture_release_history()
+                        .is_empty(),
+                    "attaching a release continuation must not synchronously enter the platform"
+                );
+                barrier
+            }
+        })
+        .expect("the exact pending G1 release must accept an attached continuation");
+
+    assert_eq!(
+        attempts.get(),
+        1,
+        "the first native release attempt should reject once"
+    );
+    assert!(
+        completions.borrow().is_empty(),
+        "Rejected is diagnostic-only and must not authorize dependent effects"
+    );
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[(barrier, NativeCapturedDragReleaseTerminal::Released)],
+        "only the exact G1 release terminal may invoke the attached continuation"
+    );
+    assert_eq!(
+        attempts.get(),
+        2,
+        "the first delayed retry must release G1 exactly once"
+    );
+
+    let diagnostics =
+        cx.update(|app| app.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default()));
+    assert!(diagnostics.terminal.iter().any(|diagnostic| {
+        diagnostic.target == NativeBoundaryTarget::Window(source.window_id())
+            && diagnostic.kind
+                == NativeBoundaryKind::Command(
+                    NativePlatformCommandKind::CompleteCapturedDragRelease,
+                )
+            && diagnostic.domain_generation
+                == Some(NativeBoundaryGeneration::PointerCaptureRelease {
+                    captured_drag: Some(generation),
+                    release: barrier.release_generation(),
+                })
+            && diagnostic.disposition == NativeBoundaryDisposition::DELIVERED
+    }));
+}
+
+#[open_gpui::test]
+fn source_close_preserves_the_exact_capture_barrier_until_native_terminal(cx: &mut TestAppContext) {
+    let capture = Rc::new(Cell::new(None));
+    let pointer_cancellations = Rc::new(Cell::new(0));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let capture = capture.clone();
+            let pointer_cancellations = pointer_cancellations.clone();
+            move |window, _| {
+                let handle = window.new_pointer_capture_handle();
+                capture.set(Some(handle));
+                ShutdownPointerCancelProbe {
+                    handle,
+                    cancellations: pointer_cancellations,
+                }
+            }
+        })
+        .into();
+    cx.update_window(source, |_, window, app| {
+        window.activate_window();
+        window.draw(app).clear();
+    })
+    .expect("the source should remain open through its first frame");
+    cx.run_until_parked();
+
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 12.0, 12.0));
+    let capture = capture
+        .get()
+        .expect("the source should publish its pointer-capture handle");
+    let cancelled_generations = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let cancelled_generations = cancelled_generations.clone();
+        move |app| {
+            app.observe_native_captured_drag(move |event, _| {
+                if matches!(event.phase(), NativeCapturedDragPhase::Cancelled(_)) {
+                    cancelled_generations.borrow_mut().push(event.generation());
+                }
+            })
+        }
+    });
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: Some(capture),
+                    value: Arc::new("source-close"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source should start G1");
+
+    let release_attempts = Rc::new(Cell::new(0));
+    let native_drop_after_release_attempt = Rc::new(Cell::new(false));
+    platform_window.set_pointer_capture_release_callback({
+        let release_attempts = release_attempts.clone();
+        move |_, _| {
+            release_attempts.set(release_attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Rejected
+        }
+    });
+    platform_window.set_native_drop_callback({
+        let release_attempts = release_attempts.clone();
+        let native_drop_after_release_attempt = native_drop_after_release_attempt.clone();
+        move || {
+            native_drop_after_release_attempt.set(release_attempts.get() > 0);
+        }
+    });
+
+    let release_terminals = Rc::new(RefCell::<
+        Vec<(
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+        )>,
+    >::new(Vec::new()));
+    let release_barrier = cx.update({
+        let release_terminals = release_terminals.clone();
+        move |app| {
+            source
+                .update(app, |_, window, app| window.remove_window(app))
+                .expect("the source should remain reachable until its logical removal finishes");
+            app.cancel_native_captured_drag_with_release_barrier(
+                source.window_id(),
+                generation,
+                PointerCancelReason::WindowClosed,
+                move |barrier, terminal, _| {
+                    release_terminals.borrow_mut().push((barrier, terminal));
+                },
+            )
+            .expect(
+                "programmatic removal must preserve an exact capture-release barrier for attachment",
+            )
+        }
+    });
+    cx.run_until_parked();
+
+    assert!(
+        native_drop_after_release_attempt.get(),
+        "logical registry removal must not bypass the post-borrow release or native-terminal barrier"
+    );
+    assert_eq!(pointer_cancellations.get(), 1);
+    assert_eq!(cancelled_generations.borrow().as_slice(), &[generation]);
+    assert_eq!(
+        release_terminals.borrow().as_slice(),
+        &[(
+            release_barrier,
+            NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
+        )],
+        "source teardown may only release the captured-drag barrier through its native terminal"
+    );
+    assert!(cx.windows().is_empty());
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn native_window_retirement_drops_the_platform_object_only_with_appcell_idle(
+    cx: &mut TestAppContext,
+) {
+    let window: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let dropped_while_idle = Rc::new(Cell::new(false));
+    cx.test_window(window).set_native_drop_callback({
+        let app = Rc::downgrade(&cx.app);
+        let dropped_while_idle = dropped_while_idle.clone();
+        move || {
+            let app = app
+                .upgrade()
+                .expect("the test app must outlive its native window retirement");
+            let idle = app.try_borrow_mut().is_ok();
+            dropped_while_idle.set(idle);
+        }
+    });
+
+    cx.update_window(window, |_, window, app| window.remove_window(app))
+        .expect("the window should be removable");
+    cx.run_until_parked();
+
+    assert!(dropped_while_idle.get());
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn shutdown_waits_for_a_checked_out_source_before_clearing_the_registry(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+
+    cx.update_window(source, |_, _, app| {
+        app.shutdown();
+        assert!(
+            app.windows.contains_key(source.window_id()),
+            "shutdown must leave a checked-out window registered until its transaction returns"
+        );
+    })
+    .expect("the checked-out source should finish its transaction");
+    cx.run_until_parked();
+
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn native_quit_delivers_exact_cancel_before_registry_clear(cx: &mut TestAppContext) {
+    let capture = Rc::new(Cell::new(None));
+    let pointer_cancellations = Rc::new(Cell::new(0));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let capture = capture.clone();
+            let pointer_cancellations = pointer_cancellations.clone();
+            move |window, _| {
+                let handle = window.new_pointer_capture_handle();
+                capture.set(Some(handle));
+                ShutdownPointerCancelProbe {
+                    handle,
+                    cancellations: pointer_cancellations,
+                }
+            }
+        })
+        .into();
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let deliveries = deliveries.clone();
+        move |app| {
+            app.observe_native_captured_drag(move |event, _| {
+                deliveries
+                    .borrow_mut()
+                    .push((event.phase(), event.generation()));
+            })
+        }
+    });
+    cx.update_window(source, |_, window, app| {
+        window.activate_window();
+        window.draw(app).clear();
+    })
+    .expect("the native-quit source should remain open");
+    cx.run_until_parked();
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 12.0, 12.0));
+    let handle = capture
+        .get()
+        .expect("the shutdown probe must publish its capture handle");
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: Some(handle),
+                    value: Arc::new("native-quit"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the native-quit source should start G1");
+
+    cx.app.enqueue_quit_for_test();
+    cx.run_until_parked();
+
+    assert_eq!(pointer_cancellations.get(), 1);
+    assert!(deliveries.borrow().iter().any(|(phase, event_generation)| {
+        *event_generation == generation
+            && *phase == NativeCapturedDragPhase::Cancelled(PointerCancelReason::WindowClosed)
+    }));
+    assert!(cx.windows().is_empty());
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn native_closed_before_logical_pointer_teardown_does_not_strand_a_release_barrier(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+    let handles = Rc::new(Cell::new(None));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let handles = handles.clone();
+            move |window, _| {
+                let first = window.new_pointer_capture_handle();
+                let second = window.new_pointer_capture_handle();
+                handles.set(Some((first, second)));
+                PointerCaptureOwnersProbe { first, second }
+            }
+        })
+        .into();
+    cx.update_window(source, |_, window, app| {
+        window.activate_window();
+        window.draw(app).clear();
+    })
+    .expect("the source must present before it captures a pointer");
+    cx.run_until_parked();
+    let (capture, _) = handles
+        .get()
+        .expect("the source must publish its pointer-capture handles");
+    cx.update_window(source, |_, window, app| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 12.0, 12.0), app);
+        window
+            .capture_pointer(&capture, MouseButton::Left)
+            .expect("the source must own the pointer before native close");
+    })
+    .expect("the source must remain reachable before native close");
+
+    let platform_window = cx.test_window(source);
+    cx.update_window(source, |_, _, app| {
+        assert!(platform_window.simulate_close());
+        assert!(
+            app.windows.contains_key(source.window_id()),
+            "the native Closed callback must remain queued until this logical update ends"
+        );
+    })
+    .expect("the source must complete the update that queued native close");
+    cx.run_until_parked();
+
+    assert!(
+        !cx.windows().contains(&source),
+        "the queued native Closed callback must perform logical teardown after recording terminal"
+    );
+    assert!(
+        platform_window
+            .native_pointer_capture_release_history()
+            .is_empty(),
+        "a release reserved after native Closed must settle as NativeWindowTerminal without dispatch"
+    );
+
+    cx.app.enqueue_quit_for_test();
+    cx.run_until_parked();
+    assert!(
+        cx.read(|app| app.quitting),
+        "the later native Quit must converge instead of waiting on a release barrier created after Closed"
+    );
+}
+
+#[open_gpui::test]
+fn mouse_exit_is_hover_only_and_does_not_publish_captured_drag_movement(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let phases = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let phases = phases.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| {
+                phases.borrow_mut().push(event.phase());
+            })
+        }
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("hover-only-exit"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the captured-drag source should remain open");
+    cx.run_until_parked();
+
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseExited(MouseExitEvent {
+        position: point(px(50.0), px(40.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+
+    assert!(phases.borrow().is_empty());
+    assert!(cx.read(|cx| cx.active_drag.is_some()));
+    cx.update_window(source, |_, window, cx| {
+        assert!(cx.stop_active_drag(window));
+    })
+    .expect("the captured-drag source should remain available for cleanup");
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn reentrant_pointer_cancel_waits_for_earlier_native_ingress_before_outbox_delivery(
+    cx: &mut TestAppContext,
+) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let activation_subscription = cx
+        .update_window(source, {
+            let order = order.clone();
+            move |_, window, _| {
+                let (subscription, activate) = window.activation_observers.insert(
+                    (),
+                    Box::new(move |_, _| {
+                        order.borrow_mut().push("earlier-native-event");
+                        true
+                    }),
+                );
+                activate();
+                subscription
+            }
+        })
+        .expect("the source window should remain open");
+    let g1 = Rc::new(Cell::new(None));
+    let terminal_has_no_physical_frame = Rc::new(Cell::new(false));
+    let captured_subscription = cx.update({
+        let order = order.clone();
+        let g1 = g1.clone();
+        let terminal_has_no_physical_frame = terminal_has_no_physical_frame.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| match event.phase() {
+                NativeCapturedDragPhase::Moved => {
+                    g1.set(Some(event.generation()));
+                    order.borrow_mut().push("move");
+                }
+                NativeCapturedDragPhase::Cancelled(PointerCancelReason::PlatformCaptureLost) => {
+                    assert_eq!(Some(event.generation()), g1.get());
+                    terminal_has_no_physical_frame.set(event.physical_frame().is_none());
+                    order.borrow_mut().push("cancel");
+                }
+                _ => {}
+            })
+        }
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("ordered-capture-loss"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+
+    let platform_window = cx.test_window(source);
+    let reserve_once = Rc::new(Cell::new(true));
+    let reservation = Rc::new(Cell::new(None));
+    let interceptor = cx
+        .update_window(source, {
+            let platform_window = platform_window.clone();
+            let reserve_once = reserve_once.clone();
+            let reservation = reservation.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |_, _, _| {
+                    if reserve_once.replace(false) {
+                        platform_window.simulate_active_status_change(true);
+                        reservation.set(Some(
+                            platform_window.reserve_reentrant_pointer_cancel_for_test(
+                                PointerCancelReason::PlatformCaptureLost,
+                            ),
+                        ));
+                    }
+                })
+            }
+        })
+        .expect("the source window should remain open");
+    order.borrow_mut().clear();
+
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(30.0), px(20.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+
+    assert_eq!(
+        reservation.get(),
+        Some(crate::NativePointerCancelReservation::Reserved)
+    );
+    assert_eq!(
+        order.borrow().as_slice(),
+        &["move", "earlier-native-event", "cancel"]
+    );
+    assert!(terminal_has_no_physical_frame.get());
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    let _ = (activation_subscription, captured_subscription, interceptor);
+}
+
+#[open_gpui::test]
+fn captured_drag_outbox_waits_for_an_older_command_budget_before_deactivation(
+    cx: &mut TestAppContext,
+) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let phases = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let phases = phases.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| {
+                phases.borrow_mut().push(event.phase());
+            })
+        }
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("command-budget-g1"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+
+    let mut platform_window = cx.test_window(source);
+    cx.update_window(source, {
+        let platform_window = platform_window.clone();
+        move |_, window, _| {
+            for _ in 0..65 {
+                window.start_window_move();
+            }
+            platform_window.simulate_active_status_change(false);
+        }
+    })
+    .expect("the source window should queue its older command prefix");
+
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(30.0), px(20.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    assert_eq!(
+        phases.borrow().as_slice(),
+        &[NativeCapturedDragPhase::Cancelled(
+            PointerCancelReason::WindowDeactivated
+        )],
+        "the captured move must not overtake an older command/deactivation barrier"
+    );
+
+    cx.run_until_parked();
+    assert_eq!(
+        phases.borrow().as_slice(),
+        &[NativeCapturedDragPhase::Cancelled(
+            PointerCancelReason::WindowDeactivated
+        )]
+    );
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn native_captured_mouse_up_is_locked_before_user_cleanup_and_delivered_post_borrow(
+    cx: &mut TestAppContext,
+) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| {
+            NativeCapturedDragMouseUpProbe
+        })
+        .into();
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+
+    let subscription = cx.update(|cx| {
+        let deliveries = deliveries.clone();
+        cx.observe_native_captured_drag(move |event, cx| {
+            let source_present = cx
+                .update_window_id(event.source_window(), |_, _, _| ())
+                .is_ok();
+            deliveries.borrow_mut().push((
+                event.phase(),
+                source_present,
+                cx.active_drag.is_none(),
+                event.sequence(),
+                event.generation(),
+                event.payload::<&'static str>().copied(),
+                cx.has_native_window_update_provenance(),
+            ));
+        })
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("native-captured-drag"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should remain open");
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(mouse_up(MouseButton::Left, 24.0, 18.0));
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("replacement-drag"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should accept a replacement drag");
+    let _ = platform_window.simulate_input_result(mouse_up(MouseButton::Left, 28.0, 20.0));
+
+    let deliveries = deliveries.borrow();
+    assert_eq!(deliveries.len(), 2);
+    assert_eq!(deliveries[0].0, NativeCapturedDragPhase::Released);
+    assert_eq!(deliveries[1].0, NativeCapturedDragPhase::Released);
+    assert!(
+        deliveries[0].1,
+        "the source window must be back in the registry before consumer delivery"
+    );
+    assert!(
+        deliveries[0].2,
+        "normal mouse cleanup must complete before consumer delivery"
+    );
+    assert_eq!(deliveries[0].5, Some("native-captured-drag"));
+    assert_eq!(deliveries[1].5, Some("replacement-drag"));
+    assert!(!deliveries[0].6);
+    assert!(deliveries[0].3 < deliveries[1].3);
+    assert_ne!(deliveries[0].4, deliveries[1].4);
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn panicking_native_captured_drag_consumer_settles_g1_and_delivers_g2(cx: &mut TestAppContext) {
+    let source_capture = Rc::new(Cell::new(None));
+    let cancellations = Rc::new(Cell::new(0));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let source_capture = source_capture.clone();
+            let cancellations = cancellations.clone();
+            move |window, _| {
+                let handle = window.new_pointer_capture_handle();
+                source_capture.set(Some(handle));
+                NativeCapturedDragConsumerPanicProbe {
+                    handle,
+                    cancellations,
+                    panic_on_cancel: Rc::new(Cell::new(false)),
+                }
+            }
+        })
+        .into();
+    let panic_once = Rc::new(Cell::new(true));
+    let failed_generation = Rc::new(Cell::new(None));
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let panic_once = panic_once.clone();
+        let failed_generation = failed_generation.clone();
+        let deliveries = deliveries.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| {
+                if panic_once.replace(false) {
+                    failed_generation.set(Some(event.generation()));
+                    panic!("injected native captured-drag consumer panic");
+                }
+                deliveries
+                    .borrow_mut()
+                    .push((event.phase(), event.generation()));
+            })
+        }
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 10.0, 10.0));
+    let capture = source_capture
+        .get()
+        .expect("the panic-recovery source should expose its capture handle");
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: Some(capture),
+            value: Arc::new("g1"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the captured source should start G1");
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(30.0), px(20.0)),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::none(),
+        }))
+    }));
+    assert!(panic.is_err());
+    cx.run_until_parked();
+
+    let g1 = failed_generation
+        .get()
+        .expect("the first generation must reach the consumer before it panics");
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    assert_eq!(
+        cancellations.get(),
+        1,
+        "a panicking consumer must deliver exactly one real pointer cancellation"
+    );
+    assert!(
+        cx.update_window(source, |_, window, _| window.captured_pointer().is_none())
+            .expect("the source window should remain open"),
+        "panic recovery must release the source capture before G2"
+    );
+    assert!(deliveries.borrow().is_empty());
+
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("g2"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should accept a second drag generation");
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(34.0), px(22.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+
+    let deliveries = deliveries.borrow();
+    assert_eq!(deliveries.len(), 1);
+    assert_eq!(deliveries[0].0, NativeCapturedDragPhase::Moved);
+    assert_ne!(deliveries[0].1, g1);
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn panicking_pointer_cancel_listener_still_settles_g1_and_allows_g2(cx: &mut TestAppContext) {
+    let source_capture = Rc::new(Cell::new(None));
+    let cancellations = Rc::new(Cell::new(0));
+    let panic_on_cancel = Rc::new(Cell::new(true));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let source_capture = source_capture.clone();
+            let cancellations = cancellations.clone();
+            let panic_on_cancel = panic_on_cancel.clone();
+            move |window, _| {
+                let handle = window.new_pointer_capture_handle();
+                source_capture.set(Some(handle));
+                NativeCapturedDragConsumerPanicProbe {
+                    handle,
+                    cancellations,
+                    panic_on_cancel,
+                }
+            }
+        })
+        .into();
+    let phases = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let phases = phases.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| {
+                phases.borrow_mut().push(event.phase());
+            })
+        }
+    });
+
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 10.0, 10.0));
+    let capture = source_capture
+        .get()
+        .expect("the pointer-cancel source should expose its capture handle");
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: Some(capture),
+            value: Arc::new("cancel-panic-g1"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the captured source should start G1");
+
+    let cancel_panicked = catch_unwind(AssertUnwindSafe(|| {
+        platform_window.simulate_input_result(pointer_cancel())
+    }))
+    .is_err();
+    assert!(
+        cancel_panicked,
+        "pointer cancel listener did not panic: cancellations={} armed={}",
+        cancellations.get(),
+        panic_on_cancel.get()
+    );
+    cx.run_until_parked();
+
+    assert_eq!(cancellations.get(), 1);
+    assert_eq!(
+        phases.borrow().as_slice(),
+        &[NativeCapturedDragPhase::Cancelled(
+            PointerCancelReason::PlatformCaptureLost
+        )]
+    );
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    assert!(
+        cx.update_window(source, |_, window, _| window.captured_pointer().is_none())
+            .expect("the source window should remain open")
+    );
+
+    let _ = platform_window.simulate_input_result(mouse_down(MouseButton::Left, 10.0, 10.0));
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: Some(capture),
+            value: Arc::new("cancel-panic-g2"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the restored pointer listeners should allow G2");
+    assert!(cx.read(|cx| cx.active_drag.is_some()));
+    let _ = platform_window.simulate_input_result(mouse_up(MouseButton::Left, 12.0, 10.0));
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn pointer_panic_recovery_reserves_cancel_while_outer_app_borrow_is_busy(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let deliveries = deliveries.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, _| {
+                deliveries
+                    .borrow_mut()
+                    .push((event.phase(), event.generation()));
+            })
+        }
+    });
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("panic-g1"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+
+    let mut platform_window = cx.test_window(source);
+    let reservation = Rc::new(Cell::new(None));
+    cx.update_window(source, {
+        let reservation = reservation.clone();
+        let recovery_window = platform_window.clone();
+        let mut nested_window = platform_window.clone();
+        move |_, _, _| {
+            let nested_panic = catch_unwind(AssertUnwindSafe(|| {
+                nested_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+                    position: point(px(30.0), px(20.0)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::none(),
+                }))
+            }));
+            assert!(nested_panic.is_err());
+            reservation.set(Some(
+                recovery_window.reserve_pointer_cancel_after_callback_panic_for_test(
+                    PointerCancelReason::CaptureRevoked,
+                ),
+            ));
+        }
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+
+    assert_eq!(
+        reservation.get(),
+        Some(crate::NativePointerCancelReservation::Reserved)
+    );
+    assert_eq!(
+        platform_window.reserve_pointer_cancel_after_callback_panic_for_test(
+            PointerCancelReason::CaptureRevoked,
+        ),
+        crate::NativePointerCancelReservation::NoActiveCallback,
+        "panic recovery may reserve its exact callback generation only once"
+    );
+    let g1 = deliveries
+        .borrow()
+        .iter()
+        .find_map(|(phase, generation)| {
+            (*phase == NativeCapturedDragPhase::Cancelled(PointerCancelReason::CaptureRevoked))
+                .then_some(*generation)
+        })
+        .expect("the queued panic cancellation must settle G1");
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("panic-g2"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should accept G2");
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(34.0), px(22.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+    assert!(deliveries.borrow().iter().any(|(phase, generation)| {
+        *phase == NativeCapturedDragPhase::Moved && *generation != g1
+    }));
+    let _ = subscription;
+}
+
+#[open_gpui::test]
+fn pointer_panic_recovery_does_not_replace_a_locked_mouse_up_release(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let deliveries = Rc::new(RefCell::new(Vec::new()));
+    let subscription = cx.update({
+        let deliveries = deliveries.clone();
+        move |cx| {
+            cx.observe_native_captured_drag(move |event, cx| {
+                deliveries.borrow_mut().push((
+                    event.phase(),
+                    event.generation(),
+                    cx.active_drag.is_none(),
+                ));
+            })
+        }
+    });
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("released-g1"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should remain open");
+    cx.run_until_parked();
+
+    let panic_once = Rc::new(Cell::new(true));
+    let interceptor = cx
+        .update_window(source, {
+            let panic_once = panic_once.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, _| {
+                    if matches!(event, WindowMouseEvent::Up(event) if event.button == MouseButton::Left)
+                        && panic_once.replace(false)
+                    {
+                        panic!("injected mouse-up interceptor panic");
+                    }
+                })
+            }
+        })
+        .expect("the source window should remain open");
+
+    let mut platform_window = cx.test_window(source);
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        platform_window.simulate_input_result(mouse_up(MouseButton::Left, 24.0, 18.0))
+    }));
+    assert!(panic.is_err());
+    assert_eq!(
+        platform_window.reserve_pointer_cancel_after_callback_panic_for_test(
+            PointerCancelReason::CaptureRevoked,
+        ),
+        crate::NativePointerCancelReservation::Reserved
+    );
+    cx.run_until_parked();
+
+    let delivery_snapshot = deliveries.borrow();
+    assert_eq!(delivery_snapshot.len(), 1);
+    assert_eq!(delivery_snapshot[0].0, NativeCapturedDragPhase::Released);
+    assert!(
+        delivery_snapshot[0].2,
+        "terminal cleanup must complete before the captured release reaches a consumer"
+    );
+    let g1 = delivery_snapshot[0].1;
+    drop(delivery_snapshot);
+    assert!(cx.read(|cx| cx.active_drag.is_none()));
+
+    cx.update_window(source, |_, _, cx| {
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id: source.window_id(),
+            source: None,
+            value: Arc::new("released-g2"),
+            view: drag_view,
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
+    })
+    .expect("the source window should accept G2");
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(34.0), px(22.0)),
+        pressed_button: Some(MouseButton::Left),
+        modifiers: Modifiers::none(),
+    }));
+    cx.run_until_parked();
+    assert!(deliveries.borrow().iter().any(|(phase, generation, _)| {
+        *phase == NativeCapturedDragPhase::Moved && *generation != g1
+    }));
+    let _ = (subscription, interceptor);
+}
+
+#[open_gpui::test]
+fn native_window_update_provenance_does_not_leak_into_nested_target_updates(
+    cx: &mut TestAppContext,
+) {
+    let target: crate::AnyWindowHandle = cx
+        .open_window(size(px(240.0), px(160.0)), |_, _| Empty)
+        .into();
+    let observations = Rc::new(RefCell::new(Vec::new()));
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), {
+            let observations = observations.clone();
+            move |_, _| NativeWindowUpdateProvenanceProbe {
+                target,
+                observations,
+            }
+        })
+        .into();
+
+    cx.update_window(source, |_, window, cx| window.draw(cx).clear())
+        .expect("the source window should remain open");
+    let mut platform_window = cx.test_window(source);
+    let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {
+        position: point(px(20.0), px(20.0)),
+        pressed_button: None,
+        modifiers: Modifiers::none(),
+    }));
+
+    assert_eq!(
+        observations.borrow().as_slice(),
+        [true, false, true],
+        "nested ordinary updates must clear and then restore the exact source provenance"
+    );
 }

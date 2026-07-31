@@ -1009,27 +1009,17 @@ mod runtime_suite {
                 let _ = window.resize(size(px(520.0), px(300.0)));
             })
             .expect("test viewport window should remain live");
-        let platform_facts_applied = cx.update(|app| {
-            runtime.apply_platform_window_facts(
-                opened.window().window_id(),
-                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(
-                    floating_bounds(0.0, 0.0, 520.0, 300.0),
-                )),
-                app,
-            )
-        });
         assert!(
-            platform_facts_applied,
-            "backend resize facts should update the viewport runtime"
+            runtime
+                .borrow_mut()
+                .apply_platform_window_facts(
+                    opened.window().window_id(),
+                    DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(
+                        floating_bounds(0.0, 0.0, 520.0, 300.0),
+                    )),
+                )
+                .changed()
         );
-        assert_eq!(
-            runtime.viewport_route_unavailable_reason(&secondary_space),
-            Some(DockViewportRouteUnavailableReason::Stale(
-                DockViewportStaleReason::WindowFactsChanged
-            )),
-            "platform resize must wait for a fresh host scene before routing again"
-        );
-
         let reused = cx
             .update(|app| {
                 runtime.open_viewport_unchecked_policy(
@@ -1074,6 +1064,11 @@ mod runtime_suite {
             floating_bounds(0.0, 0.0, 520.0, 300.0),
             point(px(260.0), px(150.0)),
         ));
+        assert_eq!(
+            runtime.viewport_route_unavailable_reason(&secondary_space),
+            None,
+            "fresh host geometry should settle the pending platform resize"
+        );
 
         let resized_after_fresh_scene = cx
             .update(|app| {

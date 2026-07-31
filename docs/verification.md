@@ -579,7 +579,7 @@ cargo fmt --all -- --check
 cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_viewport_preview_visual_tests host_viewport_route_tests --no-fail-fast
 cargo nextest run -p open-gpui-docking host_render_tests host_transition_tests host_render_geometry_parity_tests --no-fail-fast
 cargo nextest run -p open-gpui-docking host_accessibility_tests host_divider_hit_map_tests host_debug --no-fail-fast
-cargo nextest run -p open-gpui-docking host_interaction_tests host_outside_release host_viewport_drop --no-fail-fast
+cargo nextest run -p open-gpui-docking host_interaction_tests native_captured host_viewport_drop --no-fail-fast
 cargo check -p open-gpui-docking
 cargo check -p open-gpui-docking-native
 git diff --check
@@ -1838,13 +1838,46 @@ rejects production UI Components dependencies, retired guide-style names, compet
 the exact built-in style definition scopes. The native example maps light, dark, and high-contrast
 snapshots in the application layer; Docking itself remains theme-independent.
 
+For source-owned captured native drag transport changes, also run:
+
+```sh
+cargo nextest run -p open-gpui native_captured --no-fail-fast
+cargo nextest run -p open-gpui-docking native_captured --no-fail-fast
+cargo nextest run -p open-gpui-windows hit_stack pointer_capture --no-fail-fast
+```
+
+These gates inject movement and release into the source window while the target receives no raw
+pointer event. They require atomic activation of the exact prepared generation, preservation of the
+original ingress sequence across the AppCell outbox boundary, a callback-scoped physical point and
+coherent hit-stack geometry, and exactly-once terminal cleanup for release, cancellation, capture
+loss, source close, shutdown, replacement, and panic. `Unavailable`, a cross-point or incomplete
+observation, an opaque top-level, a stale host scene, and a foreign Dock surface must never fall
+through to a hidden host or reuse the last valid preview.
+
+Release locking runs before source-window mouse interceptors and listeners. The post-borrow Dock
+consumer receives the exact candidate and host scene reserved at `MouseUp`. It may roll the frame
+proof forward only across a semantically identical redraw with the same registration, binding,
+runtime context, geometry, and routing facts; it cannot re-hit-test into a replacement candidate.
+Resolver panic is carried to post-borrow delivery so the exact route is claimed and cleaned before
+the panic resumes.
+Platform capture release is likewise prepared once before delayed dispatch, and retries
+reuse its frozen pointer-session identity. Shutdown may retire the logical registry while waiting
+for native capture terminal, and a rejected native destroy retains its platform-window owner until
+retry succeeds. Automated owners include
+`native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_listener`,
+`capture_release_is_prepared_before_a_budget_delayed_first_dispatch`,
+`shutdown_uses_native_window_terminal_after_capture_release_retries_are_saturated`,
+`stale_framework_release_cannot_target_a_newer_native_capture`, and
+`failed_destroy_during_platform_window_retirement_retries_without_losing_owner`.
+
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
 controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
-last route target and the route selection source, so dogfood runs can distinguish trusted hovered
-window routes, window-stack fallback routes, focus-stamp fallback routes, and current-facts
-rejections. It also reports the current platform viewport capability snapshot, splitting route facts
-from placement facts so platform-boundary regressions are visible during native dogfood. The
+last route target and the route selection source, so dogfood runs can distinguish captured native
+hit-stack routes, trusted hovered-window routes, window-stack fallback routes, focus-stamp fallback
+routes, and current-facts rejections. It also reports the current platform viewport capability
+snapshot, including `window_hit_stack` independently from placement facts, so platform-boundary
+regressions are visible during native dogfood. The
 placement restore line reports matched and missing restored windows, and the tear-off status line
 reports whether a viewport opened from suggested bounds or drag-source geometry, so placement
 authority regressions are visible in the same panel.
@@ -1886,8 +1919,10 @@ Manual native docking dogfood should use the same example after the automated ch
    activate and the moved item must become the selected tab.
 8. Move runtime-opened windows across displays, choose `Save placement`, then use `Reopen closed
    demo viewports`; restored placement should use saved bounds only as placement input while live
-   drag routing continues to use current viewport bounds. On macOS, windows on a secondary display
-   should keep non-overlapping desktop-space bounds while routing between viewports.
+   Windows captured-drag routing continues to use the point-scoped physical hit observation and its
+   embedded target geometry. Model-level fallback routes use current viewport facts, never saved
+   placement. On macOS, windows on a secondary display should keep non-overlapping desktop-space
+   bounds for the model-level route paths that consume those facts.
 9. Exercise the runtime panel close-policy controls for prevent, retain, and merge-back behavior;
    closing a viewport must match the selected policy without losing descriptor-backed panel restore
    or leaving a stale cross-window route preview in another viewport.
@@ -1940,6 +1975,17 @@ Current docking multi-viewport capability states:
   `viewport_runtime_handle_drop_route_fails_closed_when_platform_viewport_windows_unsupported`,
   `viewport_runtime_open_viewport_fails_closed_when_platform_viewport_windows_unsupported`, and
   `viewport_runtime_tear_off_fails_closed_when_platform_viewport_windows_unsupported`.
+- Captured native cross-window routing has its own capability gate.
+  `PlatformViewportCapabilities::window_hit_stack` means the backend can classify native top-level
+  coverage at one physical point through the first opaque terminal, preserve full registered
+  `WindowId` values, and attach coherent client geometry to each registered hit. Windows and the
+  test platform currently implement that contract. Other backends return `Unavailable`; that
+  permits only a provable current source-local target and never cross-window fallthrough, desktop
+  inference, or last-preview reuse. Automated owners include
+  `native_captured_mouse_up_is_locked_before_user_cleanup_and_delivered_post_borrow`,
+  `runtime_native_captured_foreign_surface_projects_rejection_without_delivery`,
+  `runtime_native_captured_target_close_clears_preview_without_retiring_source_route`, and the
+  `hit_stack_stabilization_*` Windows tests.
 - Coordinate facts are explicit runtime state. `DockViewportCoordinateStatusRecord` reports whether
   each registered viewport is using shared global-screen bounds or receiver-local window bounds, and
   the runtime panel exposes that generation next to the route selection source. Mixed-DPI and
@@ -1947,10 +1993,13 @@ Current docking multi-viewport capability states:
   backend can publish stronger facts. Automated owners: `host_viewport_route_tests` and
   `viewport_lifecycle_record_reports_window_local_coordinate_status`.
 - Docking policy scenes, divider hit maps, floating-model deltas, and local drop facts remain in
-  absolute layout coordinates. Cross-window routing, global-screen conversion, and tear-off source
-  bounds remain in window/display coordinates. The viewport snapshot retains GPUI's opaque
-  committed `ElementGeometry` to convert between them; a transform-only frame advances route facts
-  so a proof captured under old displayed geometry cannot authorize a later release.
+  absolute layout coordinates. Captured cross-window routing starts with one immutable
+  `PlatformNativePointerPhysicalFrame`; only after the point-scoped hit stack selects a registered
+  target may Dock convert through that entry's `PlatformWindowPhysicalGeometry`. Tear-off placement
+  derives from the same callback frame and source geometry rather than mixing drag-start window
+  bounds with a release-time point. The viewport snapshot retains GPUI's opaque committed
+  `ElementGeometry` for host-local conversion; a transform-only frame advances route facts so a
+  proof captured under old displayed geometry cannot authorize a later release.
 - Viewport creation and reused-window placement are capability-gated platform operations.
   `Window::window_capabilities()` is the sole profile: its `creation` half reports first-appearance,
   typed-owner, and first-presentation ordering support, while its `mutations` half reports
@@ -2001,12 +2050,21 @@ Current docking multi-viewport capability states:
   `host_transition_tests`, `host_zoom_focus_tests`, `host_divider_hit_map_tests`, and
   `host_accessibility_tests`. Transparent payload-window rendering, platform accessibility mapping,
   and screenshot or pixel-regression baselines remain explicitly deferred follow-up work.
-- Routed overlay cleanup is fail-closed. Source-window route markers and target-window previews are
-  separately renderable, but releases revalidate against current viewport facts instead of trusting
-  cached preview state. Starting a new routed drag clears the previous session's routed preview,
-  replacing a route target removes stale previews from the old target window, and Escape clears the
-  GPUI active drag plus all routed preview state. Automated owners:
-  `host_viewport_preview_tests`, `host_transition_tests`, and `host_render_tests`.
+- Routed overlay and terminal cleanup are fail-closed. Source-window route markers and
+  target-window previews are separately renderable. Release locks an immutable candidate before
+  source listeners run, then validates its scene lineage instead of trusting cached preview state
+  or re-running hit testing after deferred redraw. A current frame may replace the frozen renderer
+  token only when its complete native-routing content is identical. Each route is bound to its source
+  generation, ingress sequence, runtime session, surface lease, host binding, and scene
+  registration. Terminal claim removes that exact route before any commit effect;
+  source close or surface shutdown retires it synchronously, target close removes only that target's
+  preview, and panic cleanup still admits the next generation. Runtime diagnostics record the
+  terminal route or typed unavailable/rejected outcome instead of retaining an unrelated prior
+  success. Automated owners: `host_viewport_preview_tests`, `host_transition_tests`,
+  `runtime_native_captured_source_close_retires_route_and_foreign_preview`,
+  `native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_listener`,
+  `runtime_native_captured_resolver_panic_retires_g1_and_accepts_g2`, and
+  `native_captured_desktop_release_matrix_tears_off_payloads_from_source_mouse_up`.
 - Test ownership is split by concern. Route, lifecycle, placement, close, preview, platform
   capability, and visual-proof assertions live in focused `host_viewport_*_tests` modules; the old
   monolithic runtime test files have been deleted. Rendered native dogfood tests remain

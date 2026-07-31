@@ -1,10 +1,10 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicyError, DockSpaceId,
     DockViewportActivationTransaction, DockViewportCloseOutcome, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportFocusRequest, DockViewportRestoreReadiness, DockViewportRouteSelectionSource,
-    DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockVisualAffordanceDebugSummary,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRejectionReason,
+    DockViewportDropRouteRequest, DockViewportFocusRequest, DockViewportRestoreReadiness,
+    DockViewportRouteSelectionSource, DockViewportShouldCloseOutcome,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockVisualAffordanceDebugSummary,
     viewport_drop_route::DockViewportDropRouteUnavailableReason,
     viewport_registry::{
         DockViewportCoordinateSnapshot, DockViewportCoordinateSpace, DockViewportInputMask,
@@ -85,6 +85,8 @@ pub struct DockViewportPlatformCapabilityRecord {
     pub global_window_bounds: bool,
     /// The platform can report application windows in front-to-back order.
     pub window_stack: bool,
+    /// The platform can classify the complete native top-level stack at one physical point.
+    pub window_hit_stack: bool,
     /// Display visible bounds exclude system-reserved work areas.
     pub display_work_area: bool,
     /// Per-window DPI scale facts are reliable for placement decisions.
@@ -230,6 +232,8 @@ pub struct DockViewportRouteRecord {
 /// Diagnostic source that selected a viewport route target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockViewportRouteSelectionRecord {
+    /// GPUI's source-owned captured-drag hit stack selected an exact committed host scene.
+    CapturedNativeHitStack,
     /// Current backend hovered-window signal selected the viewport.
     TrustedHoveredWindow,
     /// The receiving host supplied explicit local scene proof for the event receiver window.
@@ -238,8 +242,6 @@ pub enum DockViewportRouteSelectionRecord {
     FrontToBackWindowStackFallback,
     /// Focus-stamp order selected the viewport as an ImGui-style fallback.
     FocusStampWindowStackFallback,
-    /// Active drag state reused the last hovered viewport as the mouse reference viewport.
-    DragLastHoveredViewportFallback,
 }
 
 /// Release-time reason that a route intentionally failed closed.
@@ -284,11 +286,20 @@ pub enum DockViewportRouteTarget {
     },
     /// The release hit a registered viewport that had no current dock target.
     Unavailable,
-    /// The release was rejected by policy before mutation.
+    /// The release target was visible but ineligible for commit.
     Rejected {
-        /// Policy reason that rejected the route.
-        reason: DockPolicyError,
+        /// Typed authority or policy reason that rejected the route.
+        reason: DockViewportRouteRejectionRecord,
     },
+}
+
+/// Public diagnostic reason a current viewport route was rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DockViewportRouteRejectionRecord {
+    /// Workspace policy rejected the route.
+    Policy(DockPolicyError),
+    /// The target belongs to another independent Dock surface.
+    ForeignSurface,
 }
 
 /// Outcome recorded after a routed drop commit attempt.
@@ -894,6 +905,7 @@ impl From<PlatformViewportCapabilities> for DockViewportPlatformCapabilityRecord
             platform_viewport_windows: capabilities.platform_viewport_windows,
             global_window_bounds: capabilities.global_window_bounds,
             window_stack: capabilities.window_stack,
+            window_hit_stack: capabilities.window_hit_stack,
             display_work_area: capabilities.display_work_area,
             dpi_scale: capabilities.dpi_scale,
             hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
@@ -1043,7 +1055,23 @@ impl DockViewportRouteTarget {
     /// Returns the policy rejection reason for rejected routes.
     pub fn rejection_reason(&self) -> Option<DockPolicyError> {
         match self {
-            Self::Rejected { reason } => Some(reason.clone()),
+            Self::Rejected {
+                reason: DockViewportRouteRejectionRecord::Policy(reason),
+            } => Some(reason.clone()),
+            Self::Local { .. }
+            | Self::KnownViewport { .. }
+            | Self::TearOff { .. }
+            | Self::Unavailable
+            | Self::Rejected {
+                reason: DockViewportRouteRejectionRecord::ForeignSurface,
+            } => None,
+        }
+    }
+
+    /// Returns the complete typed rejection record for rejected routes.
+    pub fn rejection(&self) -> Option<&DockViewportRouteRejectionRecord> {
+        match self {
+            Self::Rejected { reason } => Some(reason),
             Self::Local { .. }
             | Self::KnownViewport { .. }
             | Self::TearOff { .. }
@@ -1072,7 +1100,14 @@ impl DockViewportRouteTarget {
             },
             DockViewportDropRoute::Unavailable => Self::Unavailable,
             DockViewportDropRoute::Rejected(reason) => Self::Rejected {
-                reason: reason.clone(),
+                reason: match reason {
+                    DockViewportDropRouteRejectionReason::Policy(reason) => {
+                        DockViewportRouteRejectionRecord::Policy(reason.clone())
+                    }
+                    DockViewportDropRouteRejectionReason::ForeignSurface => {
+                        DockViewportRouteRejectionRecord::ForeignSurface
+                    }
+                },
             },
         }
     }
@@ -1109,6 +1144,9 @@ impl DockViewportRouteSelectionRecord {
 
     fn from_selection_source(source: DockViewportRouteSelectionSource) -> Self {
         match source {
+            DockViewportRouteSelectionSource::CapturedNativeHitStack => {
+                Self::CapturedNativeHitStack
+            }
             DockViewportRouteSelectionSource::TrustedHoveredWindow => Self::TrustedHoveredWindow,
             DockViewportRouteSelectionSource::EventReceiverLocalScene => {
                 Self::EventReceiverLocalScene
@@ -1118,9 +1156,6 @@ impl DockViewportRouteSelectionRecord {
             }
             DockViewportRouteSelectionSource::FocusStampWindowStackFallback => {
                 Self::FocusStampWindowStackFallback
-            }
-            DockViewportRouteSelectionSource::DragLastHoveredViewportFallback => {
-                Self::DragLastHoveredViewportFallback
             }
         }
     }
@@ -1260,6 +1295,7 @@ mod tests {
             platform_viewport_windows: true,
             global_window_bounds: true,
             window_stack: true,
+            window_hit_stack: true,
             display_work_area: false,
             dpi_scale: true,
             hovered_window_ignores_no_input: true,
@@ -1274,6 +1310,7 @@ mod tests {
                 platform_viewport_windows: true,
                 global_window_bounds: true,
                 window_stack: true,
+                window_hit_stack: true,
                 display_work_area: false,
                 dpi_scale: true,
                 hovered_window_ignores_no_input: true,

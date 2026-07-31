@@ -18,9 +18,10 @@ pub use crate::viewport_runtime_status::{
     DockViewportPlatformSyncRejectedReason, DockViewportPlatformSyncRequest,
     DockViewportPlatformSyncUnsupported, DockViewportPlatformSyncUnsupportedReason,
     DockViewportReleaseUnavailableRecord, DockViewportRestoreReadinessRecord,
-    DockViewportRouteRecord, DockViewportRouteSelectionRecord, DockViewportRouteStatus,
-    DockViewportRouteTarget, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
-    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord, DockViewportTearOffRecord,
+    DockViewportRouteRecord, DockViewportRouteRejectionRecord, DockViewportRouteSelectionRecord,
+    DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntimeStatus,
+    DockViewportStaleStatusReason, DockViewportTearOffOutcomeKind,
+    DockViewportTearOffPlacementRecord, DockViewportTearOffRecord,
     DockViewportVisualAffordanceRecord, DockViewportWindowOwnershipStatus,
     DockViewportWindowProfileRecord,
 };

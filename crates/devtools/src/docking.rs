@@ -169,6 +169,8 @@ pub struct DockingPlatformCapabilityRow {
     pub global_window_bounds: bool,
     /// Whether the platform can report windows in front-to-back order.
     pub window_stack: bool,
+    /// Whether the platform can classify the complete native top-level stack at one physical point.
+    pub window_hit_stack: bool,
     /// Whether display visible bounds exclude reserved work areas.
     pub display_work_area: bool,
     /// Whether per-window DPI scale facts are reliable.
@@ -799,6 +801,7 @@ impl From<DockViewportPlatformCapabilityRecord> for DockingPlatformCapabilityRow
             platform_viewport_windows: capabilities.platform_viewport_windows,
             global_window_bounds: capabilities.global_window_bounds,
             window_stack: capabilities.window_stack,
+            window_hit_stack: capabilities.window_hit_stack,
             display_work_area: capabilities.display_work_area,
             dpi_scale: capabilities.dpi_scale,
             hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
@@ -1626,6 +1629,7 @@ fn platform_capability_payload(
         "platform_viewport_windows": capabilities.platform_viewport_windows,
         "global_window_bounds": capabilities.global_window_bounds,
         "window_stack": capabilities.window_stack,
+        "window_hit_stack": capabilities.window_hit_stack,
         "display_work_area": capabilities.display_work_area,
         "dpi_scale": capabilities.dpi_scale,
         "hovered_window_ignores_no_input": capabilities.hovered_window_ignores_no_input,
@@ -2014,6 +2018,7 @@ fn input_status_label(status: DockViewportInputStatus) -> &'static str {
 
 fn route_selection_label(selection: DockViewportRouteSelectionRecord) -> &'static str {
     match selection {
+        DockViewportRouteSelectionRecord::CapturedNativeHitStack => "captured-native-hit-stack",
         DockViewportRouteSelectionRecord::TrustedHoveredWindow => "trusted-hovered-window",
         DockViewportRouteSelectionRecord::EventReceiverLocalScene => "event-receiver-local-scene",
         DockViewportRouteSelectionRecord::FrontToBackWindowStackFallback => {
@@ -2021,9 +2026,6 @@ fn route_selection_label(selection: DockViewportRouteSelectionRecord) -> &'stati
         }
         DockViewportRouteSelectionRecord::FocusStampWindowStackFallback => {
             "focus-stamp-window-stack-fallback"
-        }
-        DockViewportRouteSelectionRecord::DragLastHoveredViewportFallback => {
-            "drag-last-hovered-viewport-fallback"
         }
     }
 }

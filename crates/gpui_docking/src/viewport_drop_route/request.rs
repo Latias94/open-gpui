@@ -1,14 +1,71 @@
 use crate::{
     DockNodeId, DockSpaceId, DockViewportDropPayload, DockViewportFocusStampFallbackPermit,
     DockViewportPlatformSignals, DockViewportTargetContext,
-    drag::DockDragTearOffGeometry,
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
     viewport_drop_scene::DockViewportHostSceneFrame,
     viewport_registry::DockViewportWindowBoundsFrame,
 };
 #[cfg(test)]
 use open_gpui::Bounds;
-use open_gpui::{Pixels, Point, WindowBounds, WindowId};
+use open_gpui::{
+    AnyWindowHandle, App, NativeCapturedDragGeneration, NativeIngressSequence, Pixels, Point,
+    WindowBounds, WindowId,
+};
+
+/// Exact route selected from one GPUI captured-drag native hit-stack fact.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockCapturedNativeDropRoute {
+    /// The frontmost registered window contains one current Dock host scene.
+    Host(DockCapturedNativeHostTarget),
+    /// The current host scene belongs to another independent Dock surface.
+    ForbiddenTarget(DockCapturedNativeHostTarget),
+    /// The point is not covered by an eligible Dock host and may tear off to the desktop.
+    Desktop,
+    /// The native point observation could not prove one current route target.
+    Unavailable,
+}
+
+/// Current host-scene proof selected inside the registered target window.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockCapturedNativeHostTarget {
+    target_window: AnyWindowHandle,
+    target_space: DockSpaceId,
+    host_position: Point<Pixels>,
+    scene_frame: DockViewportHostSceneFrame,
+}
+
+impl DockCapturedNativeHostTarget {
+    pub(crate) fn new(
+        target_window: AnyWindowHandle,
+        target_space: DockSpaceId,
+        host_position: Point<Pixels>,
+        scene_frame: DockViewportHostSceneFrame,
+    ) -> Self {
+        Self {
+            target_window,
+            target_space,
+            host_position,
+            scene_frame,
+        }
+    }
+
+    pub(crate) fn target_window(&self) -> AnyWindowHandle {
+        self.target_window
+    }
+
+    pub(crate) fn target_space(&self) -> &DockSpaceId {
+        &self.target_space
+    }
+
+    pub(crate) fn host_position(&self) -> Point<Pixels> {
+        self.host_position
+    }
+
+    pub(crate) fn scene_frame(&self) -> &DockViewportHostSceneFrame {
+        &self.scene_frame
+    }
+}
 
 /// Coordinate space used by `DockViewportDropRouteRequest::release_position`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +94,9 @@ pub(crate) struct DockViewportDropRouteRequest {
     coordinate_space: DockViewportPointerCoordinateSpace,
     release_origin: DockPayloadDropReleaseOrigin,
     event_receiver_local_scene_proof: Option<DockViewportHostSceneFrame>,
+    captured_native_route: Option<DockCapturedNativeDropRoute>,
+    captured_native_generation: Option<NativeCapturedDragGeneration>,
+    captured_native_sequence: Option<NativeIngressSequence>,
     platform_signals: DockViewportPlatformSignals,
 }
 
@@ -69,8 +129,50 @@ impl DockViewportDropRouteRequest {
             coordinate_space,
             release_origin,
             event_receiver_local_scene_proof: None,
+            captured_native_route: None,
+            captured_native_generation: None,
+            captured_native_sequence: None,
             platform_signals,
         }
+    }
+
+    pub(crate) fn from_captured_native_route(
+        payload: &DockDragPayload,
+        drag_session: DockRuntimeDragSession,
+        tear_off_geometry: Option<DockDragTearOffGeometry>,
+        suggested_window_bounds: Option<WindowBounds>,
+        source_local_position: Point<Pixels>,
+        route: DockCapturedNativeDropRoute,
+        generation: NativeCapturedDragGeneration,
+        sequence: NativeIngressSequence,
+        cx: &App,
+    ) -> Self {
+        let platform_signals = DockViewportPlatformSignals::from_captured_native_transport(cx);
+        Self::new(
+            payload.source_space.clone(),
+            payload.source_node,
+            DockViewportDropPayload::from_drag_payload(payload),
+            suggested_window_bounds,
+            source_local_position,
+            DockViewportPointerCoordinateSpace::SourceLocalOnly,
+            DockPayloadDropReleaseOrigin::SourceOnly,
+            platform_signals,
+        )
+        .with_drag_session(Some(drag_session))
+        .with_tear_off_geometry(tear_off_geometry)
+        .with_captured_native_route(route, generation, sequence)
+    }
+
+    fn with_captured_native_route(
+        mut self,
+        route: DockCapturedNativeDropRoute,
+        generation: NativeCapturedDragGeneration,
+        sequence: NativeIngressSequence,
+    ) -> Self {
+        self.captured_native_route = Some(route);
+        self.captured_native_generation = Some(generation);
+        self.captured_native_sequence = Some(sequence);
+        self
     }
 
     #[cfg(test)]
@@ -226,13 +328,6 @@ impl DockViewportDropRouteRequest {
         self
     }
 
-    pub(crate) fn with_drag_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
-        self.platform_signals = self
-            .platform_signals
-            .with_drag_last_hovered_viewport_window(window_id);
-        self
-    }
-
     pub(crate) fn with_focus_stamp_window_stack(
         mut self,
         windows: impl IntoIterator<Item = WindowId>,
@@ -309,6 +404,18 @@ impl DockViewportDropRouteRequest {
 
     pub(crate) fn event_receiver_local_scene_proof(&self) -> Option<&DockViewportHostSceneFrame> {
         self.event_receiver_local_scene_proof.as_ref()
+    }
+
+    pub(crate) fn captured_native_route(&self) -> Option<&DockCapturedNativeDropRoute> {
+        self.captured_native_route.as_ref()
+    }
+
+    pub(crate) fn captured_native_generation(&self) -> Option<NativeCapturedDragGeneration> {
+        self.captured_native_generation
+    }
+
+    pub(crate) fn captured_native_sequence(&self) -> Option<NativeIngressSequence> {
+        self.captured_native_sequence
     }
 
     #[cfg(test)]

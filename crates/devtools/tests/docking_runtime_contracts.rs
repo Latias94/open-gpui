@@ -608,6 +608,7 @@ fn runtime_status(platform_viewport_windows: bool) -> DockViewportRuntimeStatus 
         platform_viewport_windows,
         global_window_bounds: true,
         window_stack: true,
+        window_hit_stack: true,
         display_work_area: true,
         dpi_scale: true,
         hovered_window_ignores_no_input: false,

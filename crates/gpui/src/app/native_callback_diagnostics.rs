@@ -1,4 +1,4 @@
-use crate::{DispatchEventResult, WindowId, WindowMutationDomain};
+use crate::{DispatchEventResult, NativeCapturedDragGeneration, WindowId, WindowMutationDomain};
 
 #[cfg(any(test, feature = "test-support"))]
 use std::{
@@ -107,6 +107,7 @@ pub enum NativeCallbackKind {
     SystemTabSelectPrevious,
     SystemTabToggleBar,
     PlatformInput,
+    CapturedDragCancellation,
     PlatformInputHandlerSlot,
     PlatformInputHandler(NativeInputHandlerOperation),
 }
@@ -138,13 +139,23 @@ pub enum NativePlatformCommandKind {
     ShowWindowMenu,
     StartWindowMove,
     StartWindowResize,
+    ReleasePointerCapture,
+    CompleteCapturedDragRelease,
+    RetireNativeWindow,
+    CompleteShutdown,
 }
 
 /// The replaceable authority generation attached to native work.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeBoundaryGeneration {
+    AppShutdown(u64),
     AccessibilityActivation(u64),
+    CapturedDrag(NativeCapturedDragGeneration),
+    PointerCaptureRelease {
+        captured_drag: Option<NativeCapturedDragGeneration>,
+        release: u64,
+    },
     WindowMutation {
         domain: WindowMutationDomain,
         generation: u64,

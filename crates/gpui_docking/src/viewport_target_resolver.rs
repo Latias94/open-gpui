@@ -261,6 +261,9 @@ impl From<DockViewportTargetHit> for DockViewportWindowHit {
 /// This does not imply release delivery authority. The current route facts decide delivery later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportRouteSelectionSource {
+    /// GPUI's source-owned captured-drag transport selected an exact native hit-stack window and
+    /// committed host-scene frame without relying on target raw input.
+    CapturedNativeHitStack,
     /// Current backend hovered-window signal selected this viewport.
     TrustedHoveredWindow,
     /// The GPUI drag/drop event was delivered by this same registered viewport window and the host
@@ -273,9 +276,6 @@ pub(crate) enum DockViewportRouteSelectionSource {
     /// Backend hovered-window and platform stack signals are unavailable, and the ImGui-style
     /// focused-viewport stamp stack selected this viewport.
     FocusStampWindowStackFallback,
-    /// Drag/drop is active, hovered-window signal is unavailable, and the runtime reused the last
-    /// hovered viewport as ImGui's mouse reference viewport.
-    DragLastHoveredViewportFallback,
 }
 
 /// A viewport target selected by a concrete route selection source.
@@ -307,13 +307,6 @@ impl DockViewportRouteSelection {
         }
     }
 
-    fn drag_last_hovered_viewport_fallback(target: DockViewportWindowHit) -> Self {
-        Self {
-            target,
-            source: DockViewportRouteSelectionSource::DragLastHoveredViewportFallback,
-        }
-    }
-
     pub(crate) fn event_receiver_local_scene(target: DockViewportTargetHit) -> Self {
         Self {
             target: target.into(),
@@ -338,11 +331,11 @@ impl DockViewportRouteSelectionSource {
     pub(crate) fn records_routed_viewport_identity(self) -> bool {
         matches!(
             self,
-            Self::TrustedHoveredWindow
+            Self::CapturedNativeHitStack
+                | Self::TrustedHoveredWindow
                 | Self::EventReceiverLocalScene
                 | Self::FrontToBackWindowStackFallback
                 | Self::FocusStampWindowStackFallback
-                | Self::DragLastHoveredViewportFallback
         )
     }
 }
@@ -407,17 +400,6 @@ fn choose_front_to_back_window_stack_fallback_target(
     None
 }
 
-fn choose_drag_last_hovered_viewport_fallback_target(
-    hits: &[DockViewportWindowHit],
-    context: &DockViewportTargetContext,
-) -> Option<DockViewportRouteSelection> {
-    let last_hovered_window = context.drag_last_hovered_window()?;
-    hits.iter()
-        .find(|hit| hit.window_id() == last_hovered_window)
-        .cloned()
-        .map(DockViewportRouteSelection::drag_last_hovered_viewport_fallback)
-}
-
 pub(crate) fn resolve_viewport_route_selection<I, H>(
     hits: I,
     context: &DockViewportTargetContext,
@@ -434,10 +416,6 @@ where
     match context.trusted_hovered_signal() {
         crate::DockViewportTrustedHoveredSignal::Unavailable => {
             if let Some(target) = choose_front_to_back_window_stack_fallback_target(&hits, context)
-            {
-                return Some(target);
-            }
-            if let Some(target) = choose_drag_last_hovered_viewport_fallback_target(&hits, context)
             {
                 return Some(target);
             }
@@ -556,34 +534,6 @@ mod tests {
             "ImGui-style focus stamps remain a fallback route selection source but do not masquerade as a platform window stack"
         );
 
-        assert_eq!(
-            resolve_viewport_route_selection(
-                hits(),
-                &DockViewportTargetContext::new()
-                    .with_drag_last_hovered_viewport_window(second.window_id()),
-            )
-            .map(|target| (target.source(), target.into_target().space().clone())),
-            Some((
-                DockViewportRouteSelectionSource::DragLastHoveredViewportFallback,
-                space("zeta"),
-            )),
-            "drag last-hovered fallback is explicit route selection, not trusted backend hover"
-        );
-        assert_eq!(
-            resolve_viewport_route_selection(
-                hits(),
-                &DockViewportTargetContext::new()
-                    .with_drag_last_hovered_viewport_window(second.window_id())
-                    .with_window_stack([first, second]),
-            )
-            .map(|target| (target.source(), target.into_target().space().clone())),
-            Some((
-                DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
-                space("alpha"),
-            )),
-            "fresh platform window-stack fallback has priority over the drag's last hovered viewport"
-        );
-
         let fallback = choose_diagnostic_viewport_target(
             hits(),
             &DockViewportTargetContext::new().with_window_stack([second, first]),
@@ -631,17 +581,6 @@ mod tests {
             ),
             None
         );
-        assert_eq!(
-            resolve_viewport_route_selection(
-                hits(),
-                &DockViewportTargetContext::new()
-                    .with_trusted_hovered_window_known_empty()
-                    .with_drag_last_hovered_viewport_window(second.window_id()),
-            ),
-            None,
-            "trusted hovered=None vetoes drag last-hovered fallback"
-        );
-
         let single = choose_diagnostic_viewport_target(
             vec![candidate("alpha", first)],
             &DockViewportTargetContext::new(),

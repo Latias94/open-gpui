@@ -78,8 +78,6 @@ impl DockViewportTargetContextResampling {
 pub(crate) struct DockViewportPlatformSignals {
     /// Trusted backend window reported by the platform as being under the pointer.
     trusted_hovered_signal: DockViewportTrustedHoveredSignal,
-    /// ImGui-style drag fallback captured by the runtime when the hovered-window signal is unavailable.
-    drag_last_hovered_window: Option<WindowId>,
     /// Window that delivered the GPUI drag/drop event.
     event_receiver_window: Option<WindowId>,
     /// Window whose active callback already owns the GPUI window update transaction.
@@ -97,6 +95,24 @@ pub(crate) struct DockViewportPlatformSignals {
 }
 
 impl DockViewportPlatformSignals {
+    /// Captures capability-only facts for a route already selected by GPUI's native hit stack.
+    ///
+    /// Hover, window-stack, and focus-stamp signals are intentionally absent so a later resolver
+    /// cannot replace the immutable captured target.
+    pub(crate) fn from_captured_native_transport(cx: &App) -> Self {
+        let capabilities = cx.viewport_capabilities();
+        Self {
+            trusted_hovered_signal: DockViewportTrustedHoveredSignal::Unavailable,
+            event_receiver_window: None,
+            frame_sampling_exclusion_window: None,
+            window_stack: DockViewportFrontToBackWindowStack::default(),
+            global_window_bounds: false,
+            platform_viewport_windows: capabilities.platform_viewport_windows,
+            target_context_resampling: DockViewportTargetContextResampling::FrozenSnapshot,
+            focus_stamp_fallback_policy: DockViewportFocusStampFallbackPolicy::Disabled,
+        }
+    }
+
     /// Captures GPUI application-level platform signals.
     pub(crate) fn from_app(cx: &App) -> Self {
         let capabilities = cx.viewport_capabilities();
@@ -111,7 +127,6 @@ impl DockViewportPlatformSignals {
         };
         Self {
             trusted_hovered_signal,
-            drag_last_hovered_window: None,
             event_receiver_window: None,
             frame_sampling_exclusion_window: None,
             window_stack,
@@ -138,13 +153,6 @@ impl DockViewportPlatformSignals {
         self.window_stack = current.window_stack;
         self.platform_viewport_windows = current.platform_viewport_windows;
         self
-    }
-
-    pub(crate) fn with_drag_last_hovered_viewport_window(self, window_id: WindowId) -> Self {
-        let target_context = self
-            .target_context()
-            .with_drag_last_hovered_viewport_window(window_id);
-        self.apply_target_context(target_context)
     }
 
     pub(crate) fn with_focus_stamp_window_stack(
@@ -258,7 +266,6 @@ impl DockViewportPlatformSignals {
             self.trusted_hovered_signal,
             self.window_stack.clone(),
         )
-        .with_optional_drag_last_hovered_window(self.drag_last_hovered_window)
     }
 
     #[cfg(test)]
@@ -266,7 +273,6 @@ impl DockViewportPlatformSignals {
         let window_signals = target_context.into_window_signals();
         Self {
             trusted_hovered_signal: window_signals.trusted_hovered_signal,
-            drag_last_hovered_window: window_signals.drag_last_hovered_window,
             event_receiver_window: None,
             frame_sampling_exclusion_window: None,
             window_stack: window_signals.window_stack,
@@ -280,7 +286,6 @@ impl DockViewportPlatformSignals {
     fn apply_target_context(mut self, target_context: DockViewportTargetContext) -> Self {
         let window_signals = target_context.into_window_signals();
         self.trusted_hovered_signal = window_signals.trusted_hovered_signal;
-        self.drag_last_hovered_window = window_signals.drag_last_hovered_window;
         self.window_stack = window_signals.window_stack;
         self
     }

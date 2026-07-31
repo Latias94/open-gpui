@@ -1,5 +1,7 @@
 use crate::{DockViewportTearOffRequest, drag::DockDragTearOffGeometry};
-use open_gpui::{Bounds, Pixels, Point, WindowBounds, point, px};
+use open_gpui::{
+    Bounds, Pixels, PlatformNativePointerPhysicalFrame, Point, WindowBounds, point, px,
+};
 
 const DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION: f32 = 0.90;
 
@@ -70,6 +72,24 @@ pub(crate) fn suggested_tear_off_window_bounds(
         source_window_origin + host_position,
         geometry,
     ))
+}
+
+pub(crate) fn suggested_tear_off_window_bounds_from_native_frame(
+    physical_frame: PlatformNativePointerPhysicalFrame,
+    geometry: DockDragTearOffGeometry,
+) -> Option<WindowBounds> {
+    let source_geometry = physical_frame.source_geometry();
+    let scale_factor = source_geometry.scale_factor();
+    let source_client_origin = source_geometry
+        .client_bounds()
+        .to_pixels(scale_factor)
+        .origin;
+    let source_local_position =
+        source_geometry.global_to_local(physical_frame.global_position())?;
+    Some(WindowBounds::Windowed(tear_off_bounds_from_cursor_anchor(
+        source_client_origin + source_local_position,
+        geometry,
+    )))
 }
 
 fn bounds_from_drag_geometry(

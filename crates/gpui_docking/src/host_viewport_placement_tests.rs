@@ -7,10 +7,10 @@ mod runtime_suite {
         DockActionApplyError, DockActionOutcome, DockClassId, DockController, DockDropDelivery,
         DockFloatingContainer, DockGraph, DockHost, DockItemId, DockNode, DockPanel,
         DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportClosePolicy,
-        DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
-        DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportFocusCommand,
-        DockViewportFocusRequest, DockViewportInputStatus, DockViewportOpenStatus,
-        DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
+        DockViewportCloseStatus, DockViewportDropOutcomeKind, DockViewportDropPayload,
+        DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+        DockViewportFocusCommand, DockViewportFocusRequest, DockViewportInputStatus,
+        DockViewportOpenStatus, DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
         DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
         DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
         DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
@@ -35,8 +35,10 @@ mod runtime_suite {
         viewport_test_support::{handle, register_viewport},
     };
     use open_gpui::{
-        AnyWindowHandle, AppContext as _, Focusable, SharedString, TestAppContext, TitlebarOptions,
-        VisualTestContext, WindowBounds, WindowHandle, WindowId, WindowOptions, point, px, size,
+        AnyWindowHandle, AppContext as _, DevicePixels, Focusable,
+        PlatformNativePointerPhysicalFrame, PlatformWindowPhysicalGeometry, SharedString,
+        TestAppContext, TitlebarOptions, VisualTestContext, WindowBounds, WindowHandle, WindowId,
+        WindowOptions, point, px, size,
     };
 
     use crate::host_viewport_runtime_test_support::*;
@@ -555,9 +557,10 @@ mod runtime_suite {
             Some(true)
         );
 
+        let controller = runtime.borrow().controller_entity();
         let replacement = open_controller_space(
             cx,
-            runtime.borrow().controller_entity(),
+            controller,
             secondary_space.clone(),
             size(px(360.0), px(220.0)),
         )
@@ -641,9 +644,10 @@ mod runtime_suite {
             Some(false)
         );
 
+        let controller = runtime.borrow().controller_entity();
         let replacement = open_controller_space(
             cx,
-            runtime.borrow().controller_entity(),
+            controller,
             secondary_space.clone(),
             size(px(360.0), px(220.0)),
         )
@@ -1030,6 +1034,60 @@ mod runtime_suite {
         assert_eq!(
             result.expect_err("tear-off without authoritative placement must be rejected"),
             DockActionApplyError::TearOffViewportPlacementUnavailable
+        );
+        cx.read_entity(&controller, |controller, _| {
+            assert_eq!(
+                controller.graph().collect_items_in_space(&source_space),
+                vec![item("a")]
+            );
+        });
+    }
+
+    #[open_gpui::test]
+    fn viewport_runtime_handle_records_tear_off_preparation_failure(cx: &mut TestAppContext) {
+        let source_space = DockSpaceId::from("source");
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+        let payload = DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        );
+        let session = runtime.begin_payload_drag(&payload);
+        let request = DockViewportTearOffRequest::new(
+            source_space.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item("a")),
+            None,
+            None,
+        )
+        .with_drag_session(Some(session));
+
+        let result = cx.update(|app| runtime.commit_tear_off_drop_route_for_test(request, app));
+        assert_eq!(
+            result.expect_err("missing placement must reject before opening a viewport"),
+            DockActionApplyError::TearOffViewportPlacementUnavailable
+        );
+        let status = runtime.runtime_status();
+        let recorded = status
+            .last_drop_outcome
+            .expect("early tear-off failure must remain observable in runtime status");
+        assert_eq!(recorded.kind, DockViewportDropOutcomeKind::Error);
+        assert_eq!(
+            recorded.error,
+            Some(DockActionApplyError::TearOffViewportPlacementUnavailable)
         );
         cx.read_entity(&controller, |controller, _| {
             assert_eq!(
@@ -1585,6 +1643,37 @@ mod runtime_suite {
         assert_eq!(
             placement.window_bounds(),
             WindowBounds::Windowed(floating_bounds(100.0, 80.0, 900.0, 720.0))
+        );
+    }
+
+    #[test]
+    fn captured_native_tear_off_placement_uses_one_physical_callback_frame() {
+        let source_geometry = PlatformWindowPhysicalGeometry::try_new(
+            open_gpui::Bounds::new(
+                point(DevicePixels(200), DevicePixels(400)),
+                size(DevicePixels(800), DevicePixels(600)),
+            ),
+            2.0,
+        )
+        .expect("the source physical geometry should be representable");
+        let physical_frame = PlatformNativePointerPhysicalFrame::new(
+            point(DevicePixels(500), DevicePixels(700)),
+            source_geometry,
+        );
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(0.0, 0.0, 400.0, 300.0),
+            point(px(20.0), px(30.0)),
+        )
+        .with_preferred_size(size(px(320.0), px(240.0)));
+
+        assert_eq!(
+            crate::viewport_runtime::suggested_tear_off_window_bounds_from_native_frame(
+                physical_frame,
+                geometry,
+            ),
+            Some(WindowBounds::Windowed(floating_bounds(
+                230.0, 320.0, 320.0, 240.0
+            )))
         );
     }
 }
@@ -2461,6 +2550,13 @@ mod handle_suite {
         let start = debug_bounds(&mut source_visual, &source_tab).center();
         let threshold = point(start.x + px(24.0), start.y);
         let end = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+        let target_from_source = point(px(400.0) + end.x, end.y);
+        configure_native_registered_window_hit(
+            cx,
+            source_opened.window(),
+            target_opened.window(),
+            target_from_source,
+        );
 
         activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(
@@ -2473,19 +2569,17 @@ mod handle_suite {
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
-        cx.set_platform_hovered_window(Some(target_opened.window()));
-        target_visual.simulate_mouse_move(
-            end,
+        source_visual.simulate_mouse_move(
+            target_from_source,
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
-        target_visual.simulate_mouse_up(
-            end,
+        source_visual.simulate_mouse_up(
+            target_from_source,
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
         cx.run_until_parked();
-        cx.set_platform_hovered_window(None);
 
         cx.read_entity(&controller, |controller, _| {
             let DockNode::Tabs { items, selected } = controller
@@ -2750,6 +2844,13 @@ mod handle_suite {
         );
         let threshold = point(start.x + px(24.0), start.y);
         let end = debug_bounds(&mut target_visual, &target_stack).center();
+        let target_from_source = point(px(400.0) + end.x, end.y);
+        configure_native_registered_window_hit(
+            cx,
+            source_opened.window(),
+            target_opened.window(),
+            target_from_source,
+        );
 
         activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(
@@ -2762,19 +2863,17 @@ mod handle_suite {
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
-        cx.set_platform_hovered_window(Some(target_opened.window()));
-        target_visual.simulate_mouse_move(
-            end,
+        source_visual.simulate_mouse_move(
+            target_from_source,
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
-        target_visual.simulate_mouse_up(
-            end,
+        source_visual.simulate_mouse_up(
+            target_from_source,
             open_gpui::MouseButton::Left,
             open_gpui::Modifiers::none(),
         );
         cx.run_until_parked();
-        cx.set_platform_hovered_window(None);
         let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
         let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
 

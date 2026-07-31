@@ -4,7 +4,8 @@ use crate::{
     DispatchEventResult, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
     ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
-    PlatformWindowCreationCapabilities, PlatformWindowDispatch, PlatformWindowMutationCapabilities,
+    PlatformPointerCaptureReleaseOutcome, PlatformWindowCreationCapabilities,
+    PlatformWindowDispatch, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
     PlatformWindowMutationTerminal, Point, Render, Result, Size, Task, TestDispatcher,
     TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
     WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions, WindowPlatformFacts,
@@ -797,6 +798,36 @@ impl TestAppContext {
                 .collect()
         });
         self.test_platform.set_window_stack(test_windows);
+    }
+
+    /// Overrides the complete native hit stack for one physical desktop point.
+    ///
+    /// Queries at every other point remain unavailable so tests cannot accidentally reuse a
+    /// point-scoped observation.
+    pub fn set_platform_window_hit_stack(&self, stack: PlatformWindowHitStack) {
+        self.test_platform.set_window_hit_stack(stack);
+    }
+
+    /// Overrides one test window's physical client geometry and target scale.
+    pub fn set_platform_window_physical_client_geometry(
+        &self,
+        window: AnyWindowHandle,
+        bounds: Option<Bounds<crate::DevicePixels>>,
+        scale_factor: f32,
+    ) {
+        self.test_window(window)
+            .set_physical_client_geometry(bounds, scale_factor);
+    }
+
+    /// Overrides one test window's native pointer-capture release result.
+    pub fn set_pointer_capture_release_callback(
+        &self,
+        window: AnyWindowHandle,
+        callback: impl FnMut(u64) -> PlatformPointerCaptureReleaseOutcome + 'static,
+    ) {
+        let mut callback = callback;
+        self.test_window(window)
+            .set_pointer_capture_release_callback(move |generation, _| callback(generation));
     }
 
     /// Overrides whether the test platform can report the focused window.
@@ -1778,13 +1809,15 @@ mod clip_tests;
 #[cfg(test)]
 mod tests {
     use crate::{
-        AnyDrag, AnyView, AppContext as _, Context, CursorStyle, Empty, Entity, FocusHandle,
-        InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers,
-        MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-        PathPromptOptions, PlatformHoveredWindow, PlatformInput, PointerCaptureHandle, QuitMode,
-        Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, StyleRefinement, Styled,
-        Subscription, TestAppContext, TestInputDispatchSnapshot, TouchPhase, VisualContext,
-        VisualTestContext, Window, WindowMouseEvent, canvas, deferred, div, point, px, size,
+        AnyDrag, AnyView, AppContext as _, Bounds, Context, CursorStyle, DevicePixels, Empty,
+        Entity, FocusHandle, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke,
+        Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+        PathPromptOptions, Platform, PlatformHoveredWindow, PlatformInput, PlatformWindowHit,
+        PlatformWindowHitStack, PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry,
+        PointerCaptureHandle, QuitMode, Render, ScrollDelta, ScrollWheelEvent,
+        StatefulInteractiveElement, StyleRefinement, Styled, Subscription, TestAppContext,
+        TestInputDispatchSnapshot, TouchPhase, VisualContext, VisualTestContext, Window,
+        WindowMouseEvent, canvas, deferred, div, point, px, size,
     };
     use std::cell::{Cell, RefCell};
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -2839,6 +2872,74 @@ mod tests {
             cx.update(|app| app.hovered_window()),
             PlatformHoveredWindow::Window(first)
         );
+    }
+
+    #[open_gpui::test]
+    fn test_platform_window_hit_stack_is_scoped_to_the_sampled_physical_point(
+        cx: &mut TestAppContext,
+    ) {
+        let registered = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let sampled_point = point(DevicePixels(-48), DevicePixels(96));
+        let hits = vec![
+            PlatformWindowHit::OpaqueBarrier {
+                coverage: PlatformWindowPhysicalCoverage::try_new(Bounds::new(
+                    point(DevicePixels(-64), DevicePixels(80)),
+                    size(DevicePixels(640), DevicePixels(400)),
+                ))
+                .expect("test coverage must be representable"),
+            },
+            PlatformWindowHit::RegisteredApplication {
+                window: registered,
+                coverage: PlatformWindowPhysicalCoverage::try_new(Bounds::new(
+                    point(DevicePixels(-64), DevicePixels(80)),
+                    size(DevicePixels(640), DevicePixels(400)),
+                ))
+                .expect("test coverage must be representable"),
+                geometry: PlatformWindowPhysicalGeometry::try_new(
+                    Bounds::new(
+                        point(DevicePixels(-48), DevicePixels(96)),
+                        size(DevicePixels(608), DevicePixels(352)),
+                    ),
+                    1.5,
+                )
+                .expect("test geometry must be representable"),
+            },
+        ];
+        let stack = PlatformWindowHitStack::try_available(sampled_point, hits)
+            .expect("test hits must cover the sampled point");
+
+        assert!(!cx.update(|app| app.viewport_capabilities().window_hit_stack));
+
+        cx.set_platform_window_hit_stack(stack.clone());
+
+        assert!(cx.update(|app| app.viewport_capabilities().window_hit_stack));
+        assert_eq!(cx.test_platform.window_hit_stack_at(sampled_point), stack);
+        assert_eq!(
+            cx.test_platform
+                .window_hit_stack_at(point(DevicePixels(-47), DevicePixels(96))),
+            PlatformWindowHitStack::Unavailable,
+            "a hit stack sampled at another physical point must not be reused"
+        );
+    }
+
+    #[open_gpui::test]
+    fn test_platform_window_hit_stack_distinguishes_unavailable_from_no_hits(
+        cx: &mut TestAppContext,
+    ) {
+        let sampled_point = point(DevicePixels(12), DevicePixels(-24));
+
+        assert_eq!(
+            cx.test_platform.window_hit_stack_at(sampled_point),
+            PlatformWindowHitStack::Unavailable
+        );
+
+        let no_hits = PlatformWindowHitStack::try_available(sampled_point, Vec::new())
+            .expect("an empty observation is a valid desktop result");
+        cx.set_platform_window_hit_stack(no_hits.clone());
+
+        assert_eq!(cx.test_platform.window_hit_stack_at(sampled_point), no_hits);
     }
 
     #[open_gpui::test]

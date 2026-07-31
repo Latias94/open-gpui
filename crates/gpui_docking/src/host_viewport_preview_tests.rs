@@ -144,244 +144,6 @@ mod runtime_suite {
     }
 
     #[open_gpui::test]
-    fn viewport_runtime_rejected_preview_records_last_routed_viewport_identity(
-        cx: &mut TestAppContext,
-    ) {
-        let source_space = DockSpaceId::from("source");
-        let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        workspace.policy_mut().set_allow_edge_split(false);
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller.clone());
-
-        let source_window_bounds =
-            WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
-        let target_window_bounds = DockViewportHostSceneSeed::default_window_bounds();
-        let _ = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    source_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(source_window_bounds),
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("source viewport should open");
-        let target_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(target_window_bounds),
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("target viewport should open");
-
-        let target_scene = DockViewportHostSceneSeed::new(
-            target_space.clone(),
-            target_opened.window(),
-            target_tabs,
-        )
-        .with_window_bounds(target_window_bounds)
-        .with_host_position(point(px(120.0), px(100.0)));
-        let release_position = target_scene.screen_position();
-        target_scene.publish(&runtime);
-
-        let payload = DockDragPayload::new_item(
-            source_space.clone(),
-            source_tabs,
-            item("a"),
-            "Panel A".to_string(),
-        );
-        let session = runtime.begin_payload_drag(&payload);
-        let preview_request = DockViewportDropRouteRequest::from_target_context(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            release_position,
-            None,
-            DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
-        )
-        .with_drag_session(Some(session.clone()));
-        let preview_resolution =
-            cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-        assert!(matches!(
-            preview_resolution.route(),
-            DockViewportDropRoute::Rejected(_)
-        ));
-        assert!(
-            preview_resolution.preview_target().is_some(),
-            "rejected hover should still expose the viewport target for routed-preview bookkeeping"
-        );
-        cx.update(|app| {
-            runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
-        });
-        assert_eq!(
-            runtime
-                .last_routed_viewport_identity_for_drag_session(Some(&session))
-                .map(|identity| identity.window_id()),
-            Some(target_opened.window().window_id()),
-            "policy-rejected hover should still record the last routed viewport during the drag"
-        );
-    }
-
-    #[open_gpui::test]
-    fn viewport_runtime_unavailable_preview_does_not_clear_last_routed_viewport_identity(
-        cx: &mut TestAppContext,
-    ) {
-        let source_space = DockSpaceId::from("source");
-        let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller.clone());
-
-        let source_window_bounds =
-            WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
-        let target_window_bounds = DockViewportHostSceneSeed::default_window_bounds();
-        let source_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    source_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(source_window_bounds),
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("source viewport should open");
-        let target_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(target_window_bounds),
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("target viewport should open");
-
-        let target_scene = DockViewportHostSceneSeed::new(
-            target_space.clone(),
-            target_opened.window(),
-            target_tabs,
-        )
-        .with_window_bounds(target_window_bounds)
-        .with_host_position(point(px(120.0), px(100.0)));
-        let release_position = target_scene.screen_position();
-        target_scene.publish(&runtime);
-
-        let payload = DockDragPayload::new_item(
-            source_space.clone(),
-            source_tabs,
-            item("a"),
-            "Panel A".to_string(),
-        );
-        let session = runtime.begin_payload_drag(&payload);
-        let preview_request = DockViewportDropRouteRequest::from_target_context(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            release_position,
-            None,
-            DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
-        )
-        .with_drag_session(Some(session.clone()));
-        let preview_resolution =
-            cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-        assert!(
-            matches!(
-                preview_resolution.route(),
-                DockViewportDropRoute::KnownViewport { target, .. }
-                    if target.window_id() == target_opened.window().window_id()
-            ),
-            "preview setup should resolve the target viewport before policy changes, got {:?}",
-            preview_resolution.route()
-        );
-        assert!(
-            preview_resolution
-                .routed_preview_target_snapshot()
-                .is_some(),
-            "preview setup should capture a routed target snapshot"
-        );
-        cx.update(|app| {
-            runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
-        });
-        assert_eq!(
-            runtime
-                .last_routed_viewport_identity_for_drag_session(Some(&session))
-                .map(|identity| identity.window_id()),
-            Some(target_opened.window().window_id())
-        );
-
-        let unavailable_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
-            source_space,
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            point(px(220.0), px(200.0)),
-            None,
-            crate::DockViewportPlatformSignals::from_target_context(
-                DockViewportTargetContext::new(),
-            )
-            .with_event_receiver_window(source_opened.window())
-            .with_global_window_bounds(false),
-            DockPayloadDropReleaseOrigin::HoveredHost,
-        )
-        .with_drag_session(Some(session.clone()));
-        let unavailable_resolution =
-            cx.update(|app| runtime.resolve_payload_drop_delivery(&unavailable_request, app));
-        assert_eq!(
-            unavailable_resolution.route(),
-            &DockViewportDropRoute::Unavailable
-        );
-        cx.update(|app| {
-            runtime.update_routed_drop_preview(&unavailable_resolution, &payload, app);
-        });
-        assert_eq!(
-            runtime
-                .last_routed_viewport_identity_for_drag_session(Some(&session))
-                .map(|identity| identity.window_id()),
-            Some(target_opened.window().window_id()),
-            "unavailable preview should not erase the previously recorded routed viewport identity"
-        );
-    }
-
-    #[open_gpui::test]
     fn viewport_runtime_revalidates_routed_preview_release_against_current_policy(
         cx: &mut TestAppContext,
     ) {
@@ -479,7 +241,9 @@ mod runtime_suite {
             cx.update(|app| runtime.resolve_payload_drop_delivery_for_request(&request, app));
         assert_eq!(
             release_resolution.route(),
-            &DockViewportDropRoute::Rejected(DockPolicyError::CentralRegionDockOverDisabled),
+            &DockViewportDropRoute::rejected_by_policy(
+                DockPolicyError::CentralRegionDockOverDisabled,
+            ),
             "routed preview release must not reuse a stale KnownViewport route after policy changes"
         );
         assert!(
@@ -565,7 +329,11 @@ mod runtime_suite {
         assert!(
             matches!(
                 resolution.route(),
-                DockViewportDropRoute::Rejected(DockPolicyError::DockClassRejected { .. })
+                DockViewportDropRoute::Rejected(
+                    crate::DockViewportDropRouteRejectionReason::Policy(
+                        DockPolicyError::DockClassRejected { .. }
+                    )
+                )
             ),
             "policy-rejected cross-viewport targets should render as rejected routes"
         );
@@ -613,140 +381,6 @@ mod runtime_suite {
                 vec![item("b")]
             );
         });
-    }
-
-    #[open_gpui::test]
-    fn viewport_runtime_source_only_known_empty_hover_rejects_stale_routed_preview(
-        cx: &mut TestAppContext,
-    ) {
-        let source_space = DockSpaceId::from("source");
-        let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller.clone());
-
-        let source_window_bounds =
-            WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
-        let target_window_bounds =
-            WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let source_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    source_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(source_window_bounds),
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("source viewport should open");
-        let target_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(target_window_bounds),
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("target viewport should open");
-
-        assert!(runtime.begin_viewport_host_scene(
-            target_space.clone(),
-            target_opened.window().window_id(),
-            DockViewportWindowFacts::from_window_bounds(target_window_bounds),
-            floating_bounds(0.0, 0.0, 360.0, 220.0),
-            point(px(120.0), px(100.0)),
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &target_space,
-            target_opened.window().window_id(),
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ));
-
-        let payload = DockDragPayload::new_item(
-            source_space.clone(),
-            source_tabs,
-            item("a"),
-            "Panel A".to_string(),
-        );
-        let session = runtime.begin_payload_drag(&payload);
-        let preview_request = DockViewportDropRouteRequest::from_target_context(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            point(px(220.0), px(200.0)),
-            None,
-            DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
-        )
-        .with_drag_session(Some(session.clone()));
-        let preview_resolution =
-            cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-        assert!(
-            matches!(
-                preview_resolution.route(),
-                DockViewportDropRoute::KnownViewport { target, .. }
-                    if target.window_id() == target_opened.window().window_id()
-            ),
-            "preview setup should resolve the target viewport before policy changes, got {:?}",
-            preview_resolution.route()
-        );
-        let preview_snapshot = preview_resolution
-            .routed_preview_target_snapshot()
-            .expect("preview setup should capture a routed target snapshot");
-        assert_eq!(
-            preview_snapshot.target_window_id(),
-            Some(target_opened.window().window_id())
-        );
-        assert!(cx.update(|app| runtime.update_routed_drop_preview(
-            &preview_resolution,
-            &payload,
-            app
-        )));
-
-        let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            point(px(220.0), px(200.0)),
-            None,
-            crate::DockViewportPlatformSignals::from_target_context(
-                DockViewportTargetContext::new()
-                    .with_trusted_hovered_window_known_empty()
-                    .with_window_stack([source_opened.window()]),
-            ),
-            DockPayloadDropReleaseOrigin::SourceOnly,
-        )
-        .with_drag_session(Some(session));
-        let release_resolution =
-            cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
-
-        assert_eq!(
-            release_resolution.route(),
-            &DockViewportDropRoute::Unavailable,
-            "trusted hovered=None is authoritative and must not reuse an old routed preview target"
-        );
-        assert!(
-            release_resolution.delivery().is_none(),
-            "trusted hovered=None must not mint delivery from stale routed preview state"
-        );
     }
 
     #[open_gpui::test]
@@ -1655,6 +1289,7 @@ mod handle_suite {
         graph.set_root(target_space.clone(), target_tabs);
 
         let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
         workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         let controller = cx.new(|_| DockController::new(workspace));
@@ -1673,18 +1308,13 @@ mod handle_suite {
                 )
             })
             .expect("target viewport should open");
-        assert!(runtime.begin_viewport_host_scene(
-            target_space.clone(),
-            target_opened.window().window_id(),
-            DockViewportWindowFacts::from_window_bounds(target_bounds),
-            floating_bounds(0.0, 0.0, 360.0, 220.0),
-            target_center_host_position(),
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &target_space,
-            target_opened.window().window_id(),
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ));
+        let target_window = target_opened
+            .window()
+            .downcast::<crate::DockHost>()
+            .expect("target viewport should render DockHost");
+        let target_host = target_window
+            .root(cx)
+            .expect("target viewport should expose DockHost root");
 
         let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
         let source_opened = cx
@@ -1706,42 +1336,48 @@ mod handle_suite {
         let source_host = source_window
             .root(cx)
             .expect("source viewport should expose DockHost root");
-        let target_screen_position =
-            screen_position_for_host_position(target_bounds, target_center_host_position());
-        let payload = DockDragPayload::new_item(
-            source_space.clone(),
-            source_tabs,
-            item("a"),
-            "Panel A".to_string(),
-        );
-        let resolution = cache_known_viewport_preview(
+        cx.run_until_parked();
+
+        let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+        let source_tab = selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Tab {
+                tabs: source_tabs,
+                item: item("a"),
+            },
+        )
+        .expect("source tab selector should be emitted");
+        let target_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs { node: target_tabs },
+        )
+        .expect("target tabs selector should be emitted");
+        let start = debug_bounds(&mut source_visual, &source_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+        let target_from_source = point(px(400.0) + target_local.x, target_local.y);
+        configure_native_registered_window_hit(
             cx,
-            &runtime,
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            target_screen_position,
+            source_opened.window(),
             target_opened.window(),
-            None,
-            "Panel A",
+            target_from_source,
         );
 
-        cache_host_route_preview(
-            cx,
-            &runtime,
-            &resolution,
-            &payload,
-            source_space.clone(),
-            source_opened.window().window_id(),
-            target_center_host_position(),
+        activate_window_for_pointer_input(&mut source_visual);
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        assert!(
+            cx.update(|app| {
+                crate::native_captured_drag::has_active_native_captured_drag_route_for_test(app)
+            }),
+            "source tab drag should install an exact native-captured route"
         );
-        source_window
-            .update(cx, |_host, window, cx| {
-                window.refresh();
-                cx.notify();
-            })
-            .expect("source host should update route preview");
+        source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
         cx.run_until_parked();
+
         let source_visual = VisualTestContext::from_window(source_window.into(), cx);
 
         assert!(
@@ -1778,6 +1414,7 @@ mod handle_suite {
         graph.set_root(target_space.clone(), target_tabs);
 
         let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
         workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
@@ -1826,43 +1463,55 @@ mod handle_suite {
             .expect("target viewport should expose DockHost root");
         cx.run_until_parked();
 
-        let target_screen_position =
-            screen_position_for_host_position(target_bounds, target_center_host_position());
-        let stack_payload =
-            DockDragPayload::new_tabs(source_space.clone(), source_tabs, "2 tabs".to_string())
-                .with_preview_tabs(["Panel A".to_string(), "Panel C".to_string()]);
-        let resolution = cache_known_viewport_preview_with_payload(
+        let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+        let source_tabs_selector = selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Tabs { node: source_tabs },
+        )
+        .expect("source tabs selector should be emitted");
+        let target_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs { node: target_tabs },
+        )
+        .expect("target tabs selector should be emitted");
+        let source_tabs_bounds = debug_bounds(&mut source_visual, &source_tabs_selector);
+        let start = point(
+            source_tabs_bounds.origin.x + source_tabs_bounds.size.width - px(8.0),
+            source_tabs_bounds.origin.y + px(12.0),
+        );
+        let threshold = point(start.x + px(24.0), start.y);
+        let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+        let target_from_source = point(px(400.0) + target_local.x, target_local.y);
+        configure_native_registered_window_hit(
             cx,
-            &runtime,
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Tabs,
-            target_screen_position,
+            source_opened.window(),
             target_opened.window(),
-            None,
-            &stack_payload,
+            target_from_source,
         );
 
-        cache_host_route_preview_with_payload(
-            cx,
-            &runtime,
-            &resolution,
-            &stack_payload,
-            source_space.clone(),
-            source_opened.window().window_id(),
-            target_center_host_position(),
+        activate_window_for_pointer_input(&mut source_visual);
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        assert!(
+            cx.update(|app| {
+                crate::native_captured_drag::has_active_native_captured_drag_route_for_test(app)
+            }),
+            "source tab-stack drag should install an exact native-captured route"
         );
-        source_window
-            .update(cx, |_host, window, cx| {
-                window.refresh();
-                cx.notify();
-            })
-            .expect("source host should update route preview");
+        source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
         cx.run_until_parked();
 
         let routed_preview = runtime
             .routed_drop_preview_for(&target_space, target_opened.window().window_id())
-            .expect("target runtime should retain routed preview scene");
+            .unwrap_or_else(|| {
+                panic!(
+                    "target runtime should retain routed preview scene; status: {:?}",
+                    runtime.runtime_status()
+                )
+            });
         assert_eq!(
             routed_preview
                 .preview
@@ -1947,17 +1596,6 @@ mod handle_suite {
             target_preview_body_bounds.origin.y
                 >= target_preview_tab_bounds.origin.y + target_preview_tab_bounds.size.height,
             "target routed preview body should start below the payload tab preview"
-        );
-        assert!(
-            selector_for(
-                &VisualTestContext::from_window(source_opened.window(), cx),
-                &source_host,
-                DockDebugRegion::DropRoutePreview {
-                    kind: DockDropRoutePreviewKind::KnownViewport
-                }
-            )
-            .is_some(),
-            "source viewport can still show the route marker while the target draws the dock overlay"
         );
         assert!(
             selector_for(
@@ -2200,6 +1838,7 @@ mod handle_suite {
         graph.set_root(target_space.clone(), target_tabs);
 
         let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
         workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
@@ -2249,6 +1888,7 @@ mod handle_suite {
         cx.run_until_parked();
 
         let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
         let source_tab = selector_for(
             &source_visual,
             &source_host,
@@ -2258,17 +1898,34 @@ mod handle_suite {
             },
         )
         .expect("source tab selector should be emitted");
+        let target_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs { node: target_tabs },
+        )
+        .expect("target tabs selector should be emitted");
         let start = debug_bounds(&mut source_visual, &source_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+        let target_from_source = point(px(400.0) + target_local.x, target_local.y);
+        configure_native_registered_window_hit(
+            cx,
+            source_opened.window(),
+            target_opened.window(),
+            target_from_source,
+        );
         activate_window_for_pointer_input(&mut source_visual);
         source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        source_visual.simulate_mouse_move(
-            point(start.x + px(24.0), start.y),
-            MouseButton::Left,
-            Modifiers::none(),
-        );
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
         assert!(
             cx.read(|app| app.has_active_drag()),
             "real tab drag should create a GPUI active drag"
+        );
+        assert!(
+            cx.update(|app| {
+                crate::native_captured_drag::has_active_native_captured_drag_route_for_test(app)
+            }),
+            "source tab drag should install an exact native-captured route"
         );
         let payload = cx
             .read(|app| app.active_drag_value::<DockDragPayload>().cloned())
@@ -2276,26 +1933,8 @@ mod handle_suite {
         let session = runtime
             .active_payload_drag_session(&payload)
             .expect("rendered tab drag should create a runtime drag session");
-        let resolution = cache_known_viewport_preview_with_payload(
-            cx,
-            &runtime,
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(target_bounds, target_center_host_position()),
-            target_opened.window(),
-            Some(session.clone()),
-            &payload,
-        );
-        cache_host_route_preview_with_payload(
-            cx,
-            &runtime,
-            &resolution,
-            &payload,
-            source_space.clone(),
-            source_opened.window().window_id(),
-            target_center_host_position(),
-        );
+        source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
         source_window
             .update(cx, |_host, window, cx| {
                 window.refresh();

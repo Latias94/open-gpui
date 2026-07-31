@@ -3,7 +3,9 @@ use crate::drop_runtime::DockHostDropScene;
 use crate::viewport_close::{DockViewportCloseFinalizeKey, DockViewportShouldCloseFinalizeKey};
 #[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
-pub(crate) use crate::viewport_tear_off_placement::suggested_tear_off_window_bounds;
+pub(crate) use crate::viewport_tear_off_placement::{
+    suggested_tear_off_window_bounds, suggested_tear_off_window_bounds_from_native_frame,
+};
 #[cfg(test)]
 use crate::viewport_window_lifecycle::DockViewportReusableWindow;
 use crate::{
@@ -25,14 +27,14 @@ use crate::{
     DockViewportRuntimeLineageActivationOutcome, DockViewportRuntimeLineageFreezeOutcome,
     DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportRuntimeWorkContext,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
-    DockViewportSurfaceShutdownEffects, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
-    DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
-    DockViewportTearOffPlacement, DockViewportTearOffPlacementPolicy, DockViewportTearOffRequest,
-    DockViewportTearOffSourceStatus, DockViewportWindowAuthority, DockViewportWindowCloseEffect,
-    DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOpenAttemptKey,
-    DockViewportWindowOwnership, DockViewportWindowRetirement, DockViewportWindowRetirementKey,
-    DockViewportWindowRole, DockViewportWorkspaceRouteFacts,
+    DockViewportSurfaceShutdownEffects, DockViewportSurfaceShutdownReservation,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportTearOffCompleted, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffPending, DockViewportTearOffPlacement, DockViewportTearOffPlacementPolicy,
+    DockViewportTearOffRequest, DockViewportTearOffSourceStatus, DockViewportWindowAuthority,
+    DockViewportWindowCloseEffect, DockViewportWindowEffects, DockViewportWindowFacts,
+    DockViewportWindowOpenAttemptKey, DockViewportWindowOwnership, DockViewportWindowRetirement,
+    DockViewportWindowRetirementKey, DockViewportWindowRole, DockViewportWorkspaceRouteFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     extend_unique_windows,
@@ -426,6 +428,7 @@ pub(crate) struct DockViewportPreparedShouldClose {
     controller: Entity<DockController>,
     expected_registration: Option<DockViewportRegistrationKey>,
     finalize_key: DockViewportShouldCloseFinalizeKey,
+    request_update_generation: Option<u64>,
     outcome: DockViewportShouldCloseOutcome,
     close_policy: DockViewportClosePolicy,
     focused_item: Option<DockItemId>,
@@ -435,6 +438,7 @@ pub(crate) struct DockViewportPreparedShouldClose {
 pub(crate) struct DockViewportAppliedShouldClose {
     expected_registration: Option<DockViewportRegistrationKey>,
     finalize_key: DockViewportShouldCloseFinalizeKey,
+    request_update_generation: Option<u64>,
     outcome: DockViewportShouldCloseOutcome,
     plan_mutation: DockViewportShouldClosePlanMutation,
     invalidate_route: bool,
@@ -502,6 +506,7 @@ impl DockViewportPreparedShouldClose {
             controller,
             expected_registration,
             finalize_key,
+            request_update_generation,
             mut outcome,
             close_policy,
             focused_item,
@@ -563,6 +568,7 @@ impl DockViewportPreparedShouldClose {
         DockViewportAppliedShouldClose {
             expected_registration,
             finalize_key,
+            request_update_generation,
             invalidate_route: !close_already_requested
                 && outcome.status == DockViewportShouldCloseStatus::Allowed,
             outcome,
@@ -832,10 +838,10 @@ impl DockViewportRuntime {
         outcome
     }
 
-    pub(crate) fn begin_surface_shutdown(
+    pub(crate) fn freeze_surface_shutdown(
         &mut self,
         lease: crate::surface::window_session::DockSurfaceWindowSessionLease,
-    ) -> Option<DockViewportSurfaceShutdownEffects> {
+    ) -> Option<DockViewportSurfaceShutdownReservation> {
         let mut admission = self.admission.get();
         let outcome = admission.freeze_surface(lease);
         self.admission.set(admission);
@@ -847,6 +853,21 @@ impl DockViewportRuntime {
         }
 
         let windows = self.window_ownership.freeze_surface(lease);
+        Some(DockViewportSurfaceShutdownReservation::new(lease, windows))
+    }
+
+    pub(crate) fn commit_surface_shutdown(
+        &mut self,
+        reservation: DockViewportSurfaceShutdownReservation,
+    ) -> DockViewportSurfaceShutdownEffects {
+        let (lease, windows) = reservation.into_parts();
+        if !self.admits_frozen_surface_shutdown(lease) {
+            return DockViewportSurfaceShutdownEffects::new(
+                lease,
+                windows,
+                DockViewportRuntimeUpdate::default(),
+            );
+        }
         let lineage = crate::DockViewportRuntimeLineage::Surface(lease);
         let work_context = DockViewportRuntimeWorkContext::new(lineage, None);
         let spaces = self
@@ -873,11 +894,7 @@ impl DockViewportRuntime {
         self.close_coordinator = DockViewportCloseCoordinator::default();
         self.routed_drop_preview = DockViewportRoutedDropPreviewState::default();
         self.status = DockViewportRuntimeStatus::default();
-        Some(DockViewportSurfaceShutdownEffects::new(
-            lease,
-            windows,
-            cleanup_update,
-        ))
+        DockViewportSurfaceShutdownEffects::new(lease, windows, cleanup_update)
     }
 
     pub(crate) fn admits_frozen_surface_shutdown(
@@ -1030,15 +1047,14 @@ impl DockViewportRuntime {
         let source_window = self
             .adapter
             .window_for_space(payload.identity().source_space());
-        let session = self.payload_drag.begin(
+        self.clear_routed_drop_preview();
+        self.payload_drag.begin(
             lineage,
             payload,
             focus_item,
             source_window,
             drag_visual_style,
-        );
-        self.clear_routed_drop_preview();
-        session
+        )
     }
 
     pub(crate) fn update_payload_drag_tear_off_geometry(
@@ -1071,6 +1087,7 @@ impl DockViewportRuntime {
         self.payload_drag.drag_visual_style(session).cloned()
     }
 
+    #[cfg(test)]
     pub(crate) fn active_payload_drag_source_window_id(
         &self,
         payload: &DockDragPayload,
@@ -1087,40 +1104,28 @@ impl DockViewportRuntime {
         (window.window_id() == identity.window_id()).then_some(window)
     }
 
-    pub(crate) fn record_payload_drag_hovered_viewport(
-        &mut self,
-        session: &DockRuntimeDragSession,
-        space: DockSpaceId,
-        window_id: WindowId,
-    ) -> bool {
-        if !self.payload_drag.matches_session(Some(session)) {
-            return false;
-        }
-        if !self.adapter.is_live_window_for_space(&space, window_id) {
-            return false;
-        }
-        self.payload_drag
-            .record_last_hovered_viewport_identity(Some(DockViewportIdentity::new(
-                space, window_id,
-            )))
-    }
-
     pub(crate) fn finish_payload_drag(
         &mut self,
         session: &DockRuntimeDragSession,
     ) -> DockViewportRuntimeUpdate {
+        if self
+            .admission
+            .get()
+            .frozen_surface_lease()
+            .is_some_and(|lease| {
+                session.lineage() == crate::DockViewportRuntimeLineage::Surface(lease)
+            })
+        {
+            return DockViewportRuntimeUpdate::default();
+        }
         let Some(finish) = self.payload_drag.finish(session) else {
             return DockViewportRuntimeUpdate::default();
         };
         let last_routed_window = finish
             .last_routed_viewport_identity()
             .and_then(|identity| self.window_for_viewport_identity(identity));
-        let last_hovered_window = finish
-            .last_hovered_viewport_identity()
-            .and_then(|identity| self.window_for_viewport_identity(identity));
         let mut update = self.clear_routed_drop_preview_for_drag_session(Some(session));
         update.extend_windows(last_routed_window);
-        update.extend_windows(last_hovered_window);
         update.mark_changed(true);
         update
     }
@@ -1681,6 +1686,15 @@ impl DockViewportRuntime {
         snapshot: DockViewportHostSceneSnapshot,
         window_facts: DockViewportWindowFacts,
     ) -> Option<DockViewportHostSceneRegistration> {
+        self.commit_viewport_host_scene_snapshot_at_update(snapshot, window_facts, None)
+    }
+
+    pub(crate) fn commit_viewport_host_scene_snapshot_at_update(
+        &mut self,
+        snapshot: DockViewportHostSceneSnapshot,
+        window_facts: DockViewportWindowFacts,
+        scene_update_generation: Option<u64>,
+    ) -> Option<DockViewportHostSceneRegistration> {
         if !self.admits_registration(snapshot.registration_key()) {
             return None;
         }
@@ -1691,7 +1705,11 @@ impl DockViewportRuntime {
         if !current_identity.matches(&space, window_id) {
             return None;
         }
-        let close_cancelled = if self.adapter.window_close_requested(window_id) {
+        let close_cancelled = if self.adapter.window_close_requested(window_id)
+            && self
+                .close_coordinator
+                .scene_commit_can_cancel_window_close(window_id, scene_update_generation)
+        {
             self.cancel_window_close_request(window_id).changed()
         } else {
             false
@@ -1706,6 +1724,7 @@ impl DockViewportRuntime {
         Some(registration)
     }
 
+    #[cfg(test)]
     pub(crate) fn discard_viewport_host_scene_frame(
         &mut self,
         space: &DockSpaceId,
@@ -1739,6 +1758,14 @@ impl DockViewportRuntime {
             return DockViewportRuntimeUpdate::default();
         }
         self.finalize_discarded_viewport_host_scene(registration.clone())
+    }
+
+    pub(crate) fn is_current_viewport_host_scene_frame(
+        &self,
+        frame: &DockViewportHostSceneFrame,
+    ) -> bool {
+        self.admits_registration(frame.registration_key())
+            && self.frame_coordinator.host_scenes().is_current_frame(frame)
     }
 
     fn finalize_discarded_viewport_host_scene(
@@ -2647,16 +2674,6 @@ impl DockViewportRuntime {
             .cloned()
     }
 
-    #[cfg(test)]
-    pub(crate) fn last_hovered_viewport_identity_for_drag_session(
-        &self,
-        session: Option<&DockRuntimeDragSession>,
-    ) -> Option<DockViewportIdentity> {
-        self.payload_drag
-            .last_hovered_viewport_identity(session)
-            .cloned()
-    }
-
     pub(crate) fn begin_tear_off_request_with_focus(
         &mut self,
         request: DockViewportTearOffRequest,
@@ -3174,9 +3191,18 @@ impl DockViewportRuntime {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_window_should_close(
         &mut self,
         window_id: WindowId,
+    ) -> DockViewportPreparedShouldClose {
+        self.prepare_window_should_close_at_update(window_id, None)
+    }
+
+    pub(crate) fn prepare_window_should_close_at_update(
+        &mut self,
+        window_id: WindowId,
+        request_update_generation: Option<u64>,
     ) -> DockViewportPreparedShouldClose {
         let close_already_requested = self.adapter.window_close_requested(window_id);
         let close_policy = self.close_policy();
@@ -3200,6 +3226,7 @@ impl DockViewportRuntime {
             controller: self.controller.clone(),
             expected_registration,
             finalize_key,
+            request_update_generation,
             outcome,
             close_policy,
             focused_item,
@@ -3214,6 +3241,7 @@ impl DockViewportRuntime {
         let DockViewportAppliedShouldClose {
             expected_registration,
             finalize_key,
+            request_update_generation,
             outcome,
             plan_mutation,
             invalidate_route,
@@ -3238,8 +3266,14 @@ impl DockViewportRuntime {
             };
         }
         if let DockViewportShouldClosePlanMutation::Replace(plan) = plan_mutation {
-            self.close_coordinator
-                .replace_window_close_plan(outcome.window_id, plan);
+            let request_update_generation = request_update_generation.filter(|_| {
+                invalidate_route && outcome.status == DockViewportShouldCloseStatus::Allowed
+            });
+            self.close_coordinator.replace_window_close_plan(
+                outcome.window_id,
+                plan,
+                request_update_generation,
+            );
         }
         let affected_windows = if invalidate_route {
             self.apply_allowed_should_close_route_invalidation(&outcome)
@@ -3263,7 +3297,9 @@ impl DockViewportRuntime {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockViewportShouldCloseRefresh {
-        let applied = self.prepare_window_should_close(window_id).apply(cx);
+        let applied = self
+            .prepare_window_should_close_at_update(window_id, Some(cx.current_update_generation()))
+            .apply(cx);
         self.finalize_window_should_close(applied).into_refresh()
     }
 
@@ -3357,17 +3393,20 @@ mod lineage_drop_tests {
                 terminal_ticket_count: 1,
             }
         );
-        let shutdown_effects = runtime
-            .begin_surface_shutdown(lease)
+        let shutdown_reservation = runtime
+            .freeze_surface_shutdown(lease)
             .expect("the active surface generation should freeze");
         assert_eq!(
-            shutdown_effects
+            shutdown_reservation
                 .windows()
                 .iter()
                 .map(|(_, window)| window.window_id())
                 .collect::<Vec<_>>(),
             vec![expected_window.window_id()]
         );
+        let _ = runtime
+            .commit_surface_shutdown(shutdown_reservation)
+            .into_parts();
         assert!(runtime.settle_surface_window_terminal(lease, expected_window.window_id()));
         assert_eq!(
             session.mark_runtime_empty(lease),

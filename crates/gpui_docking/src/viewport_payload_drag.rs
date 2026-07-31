@@ -25,7 +25,6 @@ struct DockViewportActivePayloadDrag {
     drag_visual_style: DockDragVisualStyle,
     source_window: Option<AnyWindowHandle>,
     last_routed_viewport_identity: Option<DockViewportIdentity>,
-    last_hovered_viewport_identity: Option<DockViewportIdentity>,
 }
 
 impl DockViewportPayloadDragState {
@@ -58,8 +57,7 @@ impl DockViewportPayloadDragState {
             .active
             .take()
             .expect("active drag should match the requested session");
-        let last_routed_viewport_identity = active.last_routed_viewport_identity.clone();
-        let last_hovered_viewport_identity = active.last_hovered_viewport_identity.clone();
+        let last_routed_viewport_identity = active.last_routed_viewport_identity;
         if self
             .tear_off_geometry
             .is_some_and(|geometry| geometry.matches_drag_session(session))
@@ -68,7 +66,6 @@ impl DockViewportPayloadDragState {
         }
         Some(DockViewportPayloadDragFinish {
             last_routed_viewport_identity,
-            last_hovered_viewport_identity,
         })
     }
 
@@ -108,6 +105,7 @@ impl DockViewportPayloadDragState {
             .map(|drag| drag.session().clone())
     }
 
+    #[cfg(test)]
     pub(crate) fn active_source_window_id_for_payload(
         &self,
         payload: &DockDragPayload,
@@ -171,28 +169,6 @@ impl DockViewportPayloadDragState {
         true
     }
 
-    pub(crate) fn record_last_hovered_viewport_identity(
-        &mut self,
-        identity: Option<DockViewportIdentity>,
-    ) -> bool {
-        let Some(active) = self.active.as_mut() else {
-            return false;
-        };
-        active.record_last_hovered_viewport_identity(identity);
-        true
-    }
-
-    pub(crate) fn last_hovered_viewport_identity(
-        &self,
-        session: Option<&DockRuntimeDragSession>,
-    ) -> Option<&DockViewportIdentity> {
-        let session = session?;
-        self.active
-            .as_ref()
-            .filter(|drag| drag.matches_session(session))
-            .and_then(DockViewportActivePayloadDrag::last_hovered_viewport_identity)
-    }
-
     #[cfg(test)]
     pub(crate) fn last_routed_viewport_identity(
         &self,
@@ -205,18 +181,21 @@ impl DockViewportPayloadDragState {
             .and_then(DockViewportActivePayloadDrag::last_routed_viewport_identity)
     }
 
-    pub(crate) fn clear_last_viewport_identity_if_window_matches(&mut self, window_id: WindowId) {
+    pub(crate) fn clear_last_routed_viewport_identity_if_window_matches(
+        &mut self,
+        window_id: WindowId,
+    ) {
         if let Some(active) = self.active.as_mut() {
-            active.clear_last_viewport_identity_if_window_matches(window_id);
+            active.clear_last_routed_viewport_identity_if_window_matches(window_id);
         }
     }
 
-    pub(crate) fn clear_last_viewport_identity_for_session(
+    pub(crate) fn clear_last_routed_viewport_identity_for_session(
         &mut self,
         session: &DockRuntimeDragSession,
     ) {
         if let Some(active) = self.active.as_mut() {
-            active.clear_last_viewport_identity_for_session(session);
+            active.clear_last_routed_viewport_identity_for_session(session);
         }
     }
 
@@ -234,16 +213,11 @@ impl DockViewportPayloadDragState {
 
 pub(crate) struct DockViewportPayloadDragFinish {
     last_routed_viewport_identity: Option<DockViewportIdentity>,
-    last_hovered_viewport_identity: Option<DockViewportIdentity>,
 }
 
 impl DockViewportPayloadDragFinish {
     pub(crate) fn last_routed_viewport_identity(&self) -> Option<&DockViewportIdentity> {
         self.last_routed_viewport_identity.as_ref()
-    }
-
-    pub(crate) fn last_hovered_viewport_identity(&self) -> Option<&DockViewportIdentity> {
-        self.last_hovered_viewport_identity.as_ref()
     }
 }
 
@@ -271,7 +245,6 @@ impl DockViewportActivePayloadDrag {
             drag_visual_style,
             source_window,
             last_routed_viewport_identity: None,
-            last_hovered_viewport_identity: None,
         }
     }
 
@@ -283,6 +256,7 @@ impl DockViewportActivePayloadDrag {
         &self.drag_visual_style
     }
 
+    #[cfg(test)]
     fn source_window(&self) -> Option<AnyWindowHandle> {
         self.source_window
     }
@@ -299,22 +273,12 @@ impl DockViewportActivePayloadDrag {
         self.last_routed_viewport_identity = identity;
     }
 
-    fn record_last_hovered_viewport_identity(&mut self, identity: Option<DockViewportIdentity>) {
-        if let Some(identity) = identity {
-            self.last_hovered_viewport_identity = Some(identity);
-        }
-    }
-
     #[cfg(test)]
     fn last_routed_viewport_identity(&self) -> Option<&DockViewportIdentity> {
         self.last_routed_viewport_identity.as_ref()
     }
 
-    fn last_hovered_viewport_identity(&self) -> Option<&DockViewportIdentity> {
-        self.last_hovered_viewport_identity.as_ref()
-    }
-
-    fn clear_last_viewport_identity_if_window_matches(&mut self, window_id: WindowId) {
+    fn clear_last_routed_viewport_identity_if_window_matches(&mut self, window_id: WindowId) {
         if self
             .last_routed_viewport_identity
             .as_ref()
@@ -322,19 +286,14 @@ impl DockViewportActivePayloadDrag {
         {
             self.last_routed_viewport_identity = None;
         }
-        if self
-            .last_hovered_viewport_identity
-            .as_ref()
-            .is_some_and(|identity| identity.window_id() == window_id)
-        {
-            self.last_hovered_viewport_identity = None;
-        }
     }
 
-    fn clear_last_viewport_identity_for_session(&mut self, session: &DockRuntimeDragSession) {
+    fn clear_last_routed_viewport_identity_for_session(
+        &mut self,
+        session: &DockRuntimeDragSession,
+    ) {
         if self.matches_session(session) {
             self.last_routed_viewport_identity = None;
-            self.last_hovered_viewport_identity = None;
         }
     }
 }

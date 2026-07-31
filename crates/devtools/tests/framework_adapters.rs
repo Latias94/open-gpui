@@ -525,6 +525,7 @@ fn framework_adapters_convert_docking_runtime_status() {
         platform_viewport_windows: true,
         global_window_bounds: true,
         window_stack: false,
+        window_hit_stack: true,
         display_work_area: true,
         dpi_scale: true,
         hovered_window_ignores_no_input: false,

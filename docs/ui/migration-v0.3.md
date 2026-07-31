@@ -662,13 +662,25 @@ surface and gives every floating container a blocking boundary across its comple
 splitter and composite-floating drags retain the Dock host capture owner. Standard GPUI payload
 drags use the source element's stable owner and acquire it only after crossing the drag threshold,
 so `on_drag` sources must call `.id(...)` first and removal of that binding produces terminal
-cancellation without capturing ordinary clicks. A frame-scoped listener inside each rendered `DockHost` receives
-terminal cancellation from the old committed frame and clears only that host's runtime session,
-preview, anchor, and outside-release poll. It does not leave a window-global observer after the host
-is suppressed or removed. Establish component payload state only after policy and checked geometry
-accept the underlying drag session, and defer rollback when the framework writes its active drag
-after the constructor returns. Do not flatten transformed overlays into one hit list, treat only
-dividers as occluding, or leave component drag state dependent on receiving a normal mouse-up.
+cancellation without capturing ordinary clicks. A frame-scoped listener inside each rendered
+`DockHost` receives terminal cancellation from the old committed frame and clears only that host's
+matching runtime session, preview, anchor, and captured native route. It does not leave a
+window-global observer after the host is suppressed or removed.
+
+Delete integrations with `host_outside_release`, `Platform::mouse_button_is_pressed`, and any 16 ms
+release polling task. A native Dock payload drag now prepares one exact-generation consumer from
+`DragStartGeometry`; GPUI activates it with the source drag and delivers immutable physical move,
+release, or cancellation facts after application and window borrows are released. Cross-window
+routing requires a point-scoped `window_hit_stack` observation with coherent target geometry. A
+target window does not need to receive raw pointer input, and its local listener is not
+cross-window release authority. Missing capability, an opaque barrier, a foreign Dock surface,
+stale scene or session generations, and malformed physical facts fail closed and clear or reject
+the current route instead of reusing a prior preview. The source `MouseUp` locks the route's point,
+observation, generation, and ingress sequence; later capture-change cleanup cannot replace that
+terminal result. Establish component payload state only after policy and checked geometry accept
+the underlying drag session, and defer rollback when the framework writes its active drag after the
+constructor returns. Do not flatten transformed overlays into one hit list, treat only dividers as
+occluding, or leave component drag state dependent on target-window mouse delivery.
 
 Motion remains below GPUI. Sample `MotionProjection::try_transform_sample` and convert it in a
 consumer that depends on both crates, such as

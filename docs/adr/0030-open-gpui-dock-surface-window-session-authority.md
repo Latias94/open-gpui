@@ -64,9 +64,20 @@ Direct native anchor destruction enters the same convergence path and freezes de
 regardless of logical-close observer order. App shutdown has an explicit pre-clear freeze/snapshot
 path and a post-clear confirmed-absent path; it does not wait for close observers that registry
 clearing does not emit. Reopen remains rejected while even one exact native terminal is delayed.
-Delayed callbacks validate their old lineage and cannot affect a reopened generation. Native
-`transient_for` ownership is a supported presentation/grouping hint bound to the exact session
-anchor, not the lifetime authority.
+Delayed callbacks validate their old lineage and cannot affect a reopened generation. Managed
+viewports are peer top-level windows by default. Dock never derives native `transient_for`
+ownership from the surface anchor or the window that requested an open; callers may opt into an
+explicit presentation/grouping owner when their product semantics require one, and that hint is
+not the lifetime authority.
+
+GPUI prepares each native pointer-capture release once, before post-borrow dispatch can be delayed,
+and every retry reuses the platform pointer-session identity captured by that prepared operation.
+A stale release is therefore an idempotent no-op against a newer pointer session. During App
+shutdown, logical window-registry retirement is allowed to start before the capture-release fence
+settles; the exact native-window terminal is the final capture-release fact when the platform keeps
+rejecting an explicit release. Native window retirement retains the platform window owner across a
+failed destroy request and retries it, so registry removal never drops the only owner of a live
+native window.
 
 `DockSurfaceViewports` replaces the misleading `DockSurfaceViewportSession` name without an alias.
 Managed readiness/open results expose `SessionInactive`; primary opening returns typed opened,
@@ -88,6 +99,8 @@ host APIs rather than borrowing a facade session.
 - Two surfaces may use identical logical space ids without sharing window ownership or generation.
 - Reopen is rejected until the prior anchor, runtime registry, and terminal ticket snapshot have
   converged, so delayed native callbacks fail closed.
+- A saturated capture-release retry cannot block native retirement forever, and an earlier prepared
+  release cannot clear a newer pointer session.
 - GPUI classifies window construction failures by exact stage; Dock maps those stages into typed
   rollback categories instead of exposing an opaque `anyhow` string.
 - Forced surface shutdown does not merge layout, restore focus, or honor a child close veto.

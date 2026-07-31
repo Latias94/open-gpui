@@ -140,49 +140,9 @@ impl DockViewportRuntime {
             DockViewportFocusStampFallbackPermit::from_backend_focus(backend_focus),
         );
         DockViewportBackendRouteRequest {
-            request: self.with_runtime_fallback_route_context(request),
+            request: self.with_focus_stamp_fallback_context(request),
             changed,
         }
-    }
-
-    fn with_runtime_fallback_route_context(
-        &self,
-        request: DockViewportDropRouteRequest,
-    ) -> DockViewportDropRouteRequest {
-        let request = self.with_drag_last_hovered_viewport_context(request);
-        self.with_focus_stamp_fallback_context(request)
-    }
-
-    fn with_drag_last_hovered_viewport_context(
-        &self,
-        request: DockViewportDropRouteRequest,
-    ) -> DockViewportDropRouteRequest {
-        if request.release_origin() != crate::interaction::DockPayloadDropReleaseOrigin::HoveredHost
-        {
-            return request;
-        }
-        let Some(drag_session) = request.drag_session() else {
-            return request;
-        };
-        if !self.payload_drag.matches_session(Some(drag_session)) {
-            return request;
-        }
-        let Some(identity) = self
-            .payload_drag
-            .last_hovered_viewport_identity(Some(drag_session))
-        else {
-            return request;
-        };
-        let Some(window) = self.adapter.window_for_space(identity.space()) else {
-            return request;
-        };
-        if window.window_id() != identity.window_id() {
-            return request;
-        }
-        if self.adapter.window_route_ready(identity.window_id()) != Some(true) {
-            return request;
-        }
-        request.with_drag_last_hovered_viewport_window(identity.window_id())
     }
 
     fn with_focus_stamp_fallback_context(

@@ -1,11 +1,9 @@
 use crate::{
     DockController, DockGraph, DockSpaceId, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
     DockSurfaceViewportOpenOutcome, DockViewportRuntimeHandle, DockWorkspace,
-    viewport_runtime_handle::DockViewportNativeOwnerError,
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Empty, PlatformWindowCreationCapabilities, QuitMode,
-    TestAppContext, WindowCreationSupport, WindowInitialPresentationOrder, WindowOptions, px, size,
+    AnyWindowHandle, App, AppContext as _, Empty, TestAppContext, WindowOptions, px, size,
 };
 
 fn managed_surface(cx: &mut App) -> DockSurface {
@@ -39,23 +37,10 @@ fn transient_owner(window: AnyWindowHandle, cx: &mut TestAppContext) -> Option<A
         .expect("the viewport window should remain live")
 }
 
-macro_rules! assert_owner_mismatch {
-    ($error:expr, expected: $expected:expr, requested: $requested:expr) => {{
-        let error = $error
-            .downcast_ref::<DockViewportNativeOwnerError>()
-            .expect("the owner mismatch should retain its domain error");
-        assert_eq!(
-            *error,
-            DockViewportNativeOwnerError::ManagedOwnerMismatch {
-                expected: $expected,
-                requested: $requested,
-            }
-        );
-    }};
-}
-
 #[open_gpui::test]
-fn managed_viewports_use_the_exact_anchor_even_when_opened_from_a_child(cx: &mut TestAppContext) {
+fn managed_viewports_default_to_peer_top_levels_even_when_opened_from_a_child(
+    cx: &mut TestAppContext,
+) {
     let (surface, anchor, child) = cx.update(|cx| {
         let surface = managed_surface(cx);
         let anchor = open_primary(&surface, cx);
@@ -63,7 +48,7 @@ fn managed_viewports_use_the_exact_anchor_even_when_opened_from_a_child(cx: &mut
         (surface, anchor, child)
     });
 
-    assert_eq!(transient_owner(child, cx), Some(anchor));
+    assert_eq!(transient_owner(child, cx), None);
 
     let runtime = cx.update(|cx| surface.viewport_runtime(cx));
     let grandchild = child
@@ -80,14 +65,14 @@ fn managed_viewports_use_the_exact_anchor_even_when_opened_from_a_child(cx: &mut
         .window();
 
     assert_ne!(child, anchor);
-    assert_eq!(transient_owner(grandchild, cx), Some(anchor));
+    assert_eq!(transient_owner(grandchild, cx), None);
 }
 
 #[open_gpui::test]
-fn managed_viewport_rejects_an_explicit_alien_owner(cx: &mut TestAppContext) {
-    let (surface, runtime, anchor, alien, alien_owner) = cx.update(|cx| {
+fn managed_viewport_preserves_an_explicit_owner(cx: &mut TestAppContext) {
+    let (surface, runtime, alien, alien_owner) = cx.update(|cx| {
         let surface = managed_surface(cx);
-        let anchor = open_primary(&surface, cx);
+        let _anchor = open_primary(&surface, cx);
         let alien: AnyWindowHandle = cx
             .open_window(WindowOptions::default(), |_, cx| cx.new(|_| Empty))
             .expect("the alien top-level window should open")
@@ -96,13 +81,13 @@ fn managed_viewport_rejects_an_explicit_alien_owner(cx: &mut TestAppContext) {
             .transient_window_owner(alien)
             .expect("the committed alien window should produce a typed owner token");
         let runtime = surface.viewport_runtime(cx);
-        (surface, runtime, anchor, alien, alien_owner)
+        (surface, runtime, alien, alien_owner)
     });
 
-    let error = cx
+    let viewport = cx
         .update(|cx| {
             runtime.open_viewport_unchecked_policy(
-                "alien-rejected",
+                "explicit-owner",
                 WindowOptions {
                     transient_for: Some(alien_owner),
                     ..Default::default()
@@ -110,68 +95,20 @@ fn managed_viewport_rejects_an_explicit_alien_owner(cx: &mut TestAppContext) {
                 cx,
             )
         })
-        .expect_err("a managed viewport must reject a non-anchor owner");
+        .expect("a managed viewport should preserve an explicit owner")
+        .window();
 
-    assert_owner_mismatch!(error, expected: anchor, requested: alien);
-    let rejected_space = DockSpaceId::from("alien-rejected");
-    assert!(!cx.update(|cx| surface.is_viewport_open(&rejected_space, cx)));
+    assert_eq!(transient_owner(viewport, cx), Some(alien));
+    let explicit_space = DockSpaceId::from("explicit-owner");
+    assert!(cx.update(|cx| surface.is_viewport_open(&explicit_space, cx)));
 }
 
 #[open_gpui::test]
-fn stale_g1_anchor_token_cannot_own_a_g2_viewport(cx: &mut TestAppContext) {
-    cx.update(|cx| cx.set_quit_mode(QuitMode::Explicit));
-    let (surface, g1_anchor, g1_owner) = cx.update(|cx| {
-        let surface = managed_surface(cx);
-        let g1_anchor = open_primary(&surface, cx);
-        let g1_owner = cx
-            .transient_window_owner(g1_anchor)
-            .expect("the committed G1 anchor should produce an owner token");
-        (surface, g1_anchor, g1_owner)
-    });
-
-    assert!(
-        !cx.simulate_window_close(g1_anchor),
-        "the surface guard should hold G1 until its shutdown converges"
-    );
-    cx.update(|_| {});
-    cx.run_until_parked();
-
-    let (g2_anchor, runtime) = cx.update(|cx| {
-        let g2_anchor = open_primary(&surface, cx);
-        (g2_anchor, surface.viewport_runtime(cx))
-    });
-    assert_ne!(g1_anchor, g2_anchor);
-
-    let error = cx
-        .update(|cx| {
-            runtime.open_viewport_unchecked_policy(
-                "stale-g1-owner",
-                WindowOptions {
-                    transient_for: Some(g1_owner),
-                    ..Default::default()
-                },
-                cx,
-            )
-        })
-        .expect_err("a stale G1 anchor token must not own a G2 viewport");
-
-    assert_owner_mismatch!(error, expected: g2_anchor, requested: g1_anchor);
-    let stale_space = DockSpaceId::from("stale-g1-owner");
-    assert!(!cx.update(|cx| surface.is_viewport_open(&stale_space, cx)));
-}
-
-#[open_gpui::test]
-fn managed_viewport_omits_default_owner_when_the_backend_is_unsupported(cx: &mut TestAppContext) {
-    cx.set_platform_window_creation_capabilities(PlatformWindowCreationCapabilities {
-        focus_on_appearing: WindowCreationSupport::Supported,
-        transient_for: WindowCreationSupport::Unsupported,
-        initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
-    });
-
+fn managed_viewport_uses_no_owner_by_default(cx: &mut TestAppContext) {
     let viewport = cx.update(|cx| {
         let surface = managed_surface(cx);
         let _anchor = open_primary(&surface, cx);
-        open_managed_viewport(&surface, "unsupported-owner", cx)
+        open_managed_viewport(&surface, "peer", cx)
     });
 
     assert_eq!(transient_owner(viewport, cx), None);

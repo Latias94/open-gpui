@@ -331,13 +331,25 @@ impl Window {
         self.captured_pointer.is_some()
     }
 
+    pub(crate) fn can_commit_pointer_session_start(&self) -> bool {
+        !self.removed && self.removal_state == super::WindowRemovalState::Open
+    }
+
+    pub(crate) fn owns_pointer_capture(
+        &self,
+        handle: PointerCaptureHandle,
+        button: MouseButton,
+    ) -> bool {
+        self.captured_pointer
+            .is_some_and(|captured| captured.handle == handle && captured.button == button)
+            && self.pressed_mouse_buttons.contains(button)
+    }
+
     /// Dispatches one terminal cancellation and clears the current pointer session.
     ///
     /// Callers inside an input handler must defer this operation until the current dispatch ends.
     pub fn cancel_pointer_session(&mut self, reason: PointerCancelReason, cx: &mut App) {
-        if self.flush_pending_pointer_cancellation(cx) {
-            return;
-        }
+        self.flush_pending_pointer_cancellations(cx);
         if !self.has_active_pointer_session(cx) {
             return;
         }
@@ -346,15 +358,56 @@ impl Window {
             PlatformInput::PointerCanceled(PointerCancelEvent { reason }),
             cx,
         );
-        self.clear_pointer_session(cx);
+        if self.has_active_pointer_session(cx) {
+            self.clear_pointer_session(reason, cx);
+        }
     }
 
-    pub(super) fn clear_pointer_session(&mut self, cx: &mut App) {
+    pub(super) fn clear_pointer_session(&mut self, reason: PointerCancelReason, cx: &mut App) {
+        let had_session = self.has_active_pointer_session(cx);
+        let native_release = cx.reserve_active_native_captured_drag_pointer_cancellation(
+            self.handle.window_id(),
+            reason,
+        );
         self.pressed_mouse_buttons.clear();
         self.captured_pointer = None;
-        if cx.clear_active_drag_for_window(self.handle.window_id()) {
+        let (active_drag_cleared, captured_drag_generation) =
+            cx.clear_active_drag_for_window(self.handle.window_id());
+        if native_release.is_some() || active_drag_cleared {
             self.refresh();
         }
+        let native_release = native_release.or_else(|| {
+            if had_session {
+                cx.reserve_native_pointer_capture_release(
+                    self.handle.window_id(),
+                    captured_drag_generation,
+                )
+            } else {
+                None
+            }
+        });
+        if let Some(release) = native_release {
+            self.platform_command_sink
+                .settle_pointer_capture_release(release, true);
+        }
+    }
+
+    pub(crate) fn queue_native_captured_drag_pointer_cancellation(
+        &mut self,
+        owner: Option<PointerCaptureHandle>,
+        button: MouseButton,
+        reason: PointerCancelReason,
+        native_release: crate::NativePointerCaptureReleaseToken,
+        cx: &mut App,
+    ) {
+        self.refresh();
+        self.queue_exact_pointer_session_cancellation(
+            owner,
+            button,
+            reason,
+            Some(native_release),
+            cx,
+        );
     }
 
     fn ensure_pointer_capture_window(
@@ -399,65 +452,134 @@ impl Window {
             .then_some(hitbox)
     }
 
-    pub(super) fn queue_pointer_session_cancellation(
+    pub(crate) fn queue_pointer_session_cancellation(
         &mut self,
         owner: PointerCaptureHandle,
         reason: PointerCancelReason,
         cx: &mut App,
     ) {
-        if self.pending_pointer_cancellation.is_some() {
-            return;
-        }
-        let target = self.pointer_capture_hitbox_for_handle_in_frame(owner, &self.rendered_frame);
-
-        if self
+        let button = self
             .captured_pointer
-            .is_some_and(|captured| captured.handle == owner)
-        {
+            .filter(|captured| captured.handle == owner)
+            .map(|captured| captured.button)
+            .or_else(|| {
+                cx.active_drag.as_ref().and_then(|drag| {
+                    (drag.window_id == self.handle.window_id() && drag.source == Some(owner))
+                        .then_some(drag.button)
+                })
+            });
+        let Some(button) = button else {
+            return;
+        };
+        let native_release =
+            cx.reserve_native_pointer_capture_release(self.handle.window_id(), None);
+        self.queue_exact_pointer_session_cancellation(
+            Some(owner),
+            button,
+            reason,
+            native_release,
+            cx,
+        );
+    }
+
+    fn queue_exact_pointer_session_cancellation(
+        &mut self,
+        owner: Option<PointerCaptureHandle>,
+        button: MouseButton,
+        reason: PointerCancelReason,
+        native_release: Option<crate::NativePointerCaptureReleaseToken>,
+        cx: &mut App,
+    ) {
+        let target = owner.and_then(|owner| {
+            self.pointer_capture_hitbox_for_handle_in_frame(owner, &self.rendered_frame)
+        });
+        let captured_owner_matches = self
+            .captured_pointer
+            .is_some_and(|captured| Some(captured.handle) == owner && captured.button == button);
+        if captured_owner_matches {
             self.captured_pointer = None;
         }
         if cx.active_drag.as_ref().is_some_and(|drag| {
-            drag.window_id == self.handle.window_id() && drag.source == Some(owner)
+            drag.window_id == self.handle.window_id()
+                && drag.button == button
+                && (drag.source == owner || (drag.source.is_none() && captured_owner_matches))
         }) {
             cx.active_drag = None;
+            cx.retire_native_captured_drag_authority();
             self.refresh();
+        }
+        let button_remains_owned = self
+            .captured_pointer
+            .is_some_and(|captured| captured.button == button)
+            || cx.active_drag.as_ref().is_some_and(|drag| {
+                drag.window_id == self.handle.window_id() && drag.button == button
+            });
+        if !button_remains_owned && self.pressed_mouse_buttons.contains(button) {
+            self.pressed_mouse_buttons.remove(button);
         }
         let mut listeners = self.rendered_frame.pointer_cancel_listeners.clone();
         listeners.retain(|output| output.value.is_some());
-        self.pending_pointer_cancellation = Some(PendingPointerCancellation {
-            event: PointerCancelEvent { reason },
-            target,
-            listeners,
-        });
+        let schedule_flush = self.pending_pointer_cancellations.is_empty();
+        self.pending_pointer_cancellations
+            .push_back(PendingPointerCancellation {
+                event: PointerCancelEvent { reason },
+                target,
+                listeners,
+                native_release,
+            });
 
-        let window = self.handle;
-        cx.defer(move |cx| {
-            window
-                .update(cx, |_, window, cx| {
-                    window.flush_pending_pointer_cancellation(cx);
-                })
-                .ok();
-        });
+        if schedule_flush {
+            let window = self.handle;
+            cx.defer(move |cx| {
+                window
+                    .update(cx, |_, window, cx| {
+                        window.flush_pending_pointer_cancellations(cx);
+                    })
+                    .ok();
+            });
+        }
     }
 
-    pub(super) fn flush_pending_pointer_cancellation(&mut self, cx: &mut App) -> bool {
-        let Some(pending) = self.pending_pointer_cancellation.take() else {
-            return false;
-        };
-
-        let mut current_listeners = mem::replace(
-            &mut self.rendered_frame.pointer_cancel_listeners,
-            pending.listeners,
-        );
-        let _target = pending
-            .target
-            .map(|target| MouseEventTargetGuard::enter(self.mouse_event_target.clone(), target));
-        self.dispatch_event(PlatformInput::PointerCanceled(pending.event), cx);
-        mem::swap(
-            &mut self.rendered_frame.pointer_cancel_listeners,
-            &mut current_listeners,
-        );
-        true
+    pub(crate) fn flush_pending_pointer_cancellations(&mut self, cx: &mut App) -> bool {
+        let mut flushed = false;
+        let mut first_panic = None;
+        while let Some(pending) = self.pending_pointer_cancellations.pop_front() {
+            flushed = true;
+            let mut current_listeners = mem::replace(
+                &mut self.rendered_frame.pointer_cancel_listeners,
+                pending.listeners,
+            );
+            let target = pending.target.map(|target| {
+                MouseEventTargetGuard::enter(self.mouse_event_target.clone(), target)
+            });
+            let previous_settlement =
+                mem::replace(&mut self.pointer_cancel_session_already_settled, true);
+            let dispatch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.dispatch_event_without_pending_pointer_cancellations(
+                    PlatformInput::PointerCanceled(pending.event),
+                    cx,
+                );
+            }));
+            self.pointer_cancel_session_already_settled = previous_settlement;
+            drop(target);
+            mem::swap(
+                &mut self.rendered_frame.pointer_cancel_listeners,
+                &mut current_listeners,
+            );
+            if let Some(release) = pending.native_release {
+                self.platform_command_sink
+                    .settle_pointer_capture_release(release, !self.has_active_pointer_session(cx));
+            }
+            if first_panic.is_none()
+                && let Err(payload) = dispatch
+            {
+                first_panic = Some(payload);
+            }
+        }
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
+        flushed
     }
 
     /// Binds a stable pointer capture handle to a hitbox in the frame being built.
@@ -508,8 +630,10 @@ impl Window {
     }
 
     pub(super) fn finish_mouse_session_event(&mut self, event: &dyn std::any::Any, cx: &mut App) {
-        if event.is::<PointerCancelEvent>() {
-            self.clear_pointer_session(cx);
+        if let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
+            if !self.pointer_cancel_session_already_settled {
+                self.clear_pointer_session(event.reason, cx);
+            }
             return;
         }
 
@@ -530,6 +654,7 @@ impl Window {
                 .is_some_and(|drag| drag.window_id == window_id && drag.button == event.button)
             {
                 cx.active_drag = None;
+                cx.retire_native_captured_drag_authority();
                 self.refresh();
             }
 

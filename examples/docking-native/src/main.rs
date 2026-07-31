@@ -1161,6 +1161,7 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
         platform_viewport_windows: false,
         global_window_bounds: true,
         window_stack: true,
+        window_hit_stack: true,
         display_work_area: true,
         dpi_scale: true,
         hovered_window_ignores_no_input: false,
@@ -1405,10 +1406,11 @@ fn route_capability_summary(capabilities: Option<&DockViewportPlatformCapability
     capabilities
         .map(|capabilities| {
             format!(
-                "platform-windows={}, bounds={}, stack={}, hover-through-no-input={}",
+                "platform-windows={}, bounds={}, stack={}, point-hit-stack={}, hover-through-no-input={}",
                 capability_flag(capabilities.platform_viewport_windows),
                 capability_flag(capabilities.global_window_bounds),
                 capability_flag(capabilities.window_stack),
+                capability_flag(capabilities.window_hit_stack),
                 capability_flag(capabilities.hovered_window_ignores_no_input),
             )
         })
@@ -2251,7 +2253,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
+    use open_gpui::{
+        DevicePixels, Modifiers, MouseButton, PlatformWindowHit, PlatformWindowHitStack,
+        PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, TestAppContext,
+        VisualTestContext,
+    };
     use open_gpui_docking::{
         DockClassId, DockPolicyError, DockSurfaceWindowSessionPhase,
         advanced::{
@@ -2334,22 +2340,27 @@ mod tests {
     }
 
     fn simulate_cross_window_left_drag(
+        cx: &TestAppContext,
         source: &mut VisualTestContext,
         target: &mut VisualTestContext,
         start: open_gpui::Point<Pixels>,
         end: open_gpui::Point<Pixels>,
     ) {
         let threshold = point(start.x + px(24.0), start.y);
-        begin_left_drag(source, start, threshold);
-        continue_cross_window_left_drag(target, end);
-        end_cross_window_left_drag(target, end);
+        begin_left_drag(cx, source, target, start, threshold, end);
+        continue_cross_window_left_drag(cx, source, target, end);
+        end_cross_window_left_drag(cx, source, target, end);
     }
 
     fn begin_left_drag(
+        cx: &TestAppContext,
         source: &mut VisualTestContext,
+        target: &mut VisualTestContext,
         start: open_gpui::Point<Pixels>,
         threshold: open_gpui::Point<Pixels>,
+        initial_target_position: open_gpui::Point<Pixels>,
     ) {
+        configure_native_registered_window_hit(cx, source, target, initial_target_position);
         source.set_platform_hovered_window(Some(source.window_handle()));
         source.update(|window, _| window.activate_window());
         source.run_until_parked();
@@ -2362,19 +2373,74 @@ mod tests {
     }
 
     fn continue_cross_window_left_drag(
+        cx: &TestAppContext,
+        source: &mut VisualTestContext,
         target: &mut VisualTestContext,
         position: open_gpui::Point<Pixels>,
     ) {
-        target.set_platform_hovered_window(Some(target.window_handle()));
-        target.simulate_mouse_move(position, MouseButton::Left, Modifiers::none());
+        let source_position = configure_native_registered_window_hit(cx, source, target, position);
+        source.simulate_mouse_move(source_position, MouseButton::Left, Modifiers::none());
     }
 
     fn end_cross_window_left_drag(
+        cx: &TestAppContext,
+        source: &mut VisualTestContext,
         target: &mut VisualTestContext,
         position: open_gpui::Point<Pixels>,
     ) {
-        target.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
-        target.set_platform_hovered_window(None);
+        let source_position = configure_native_registered_window_hit(cx, source, target, position);
+        source.simulate_mouse_up(source_position, MouseButton::Left, Modifiers::none());
+        source.set_platform_hovered_window(None);
+    }
+
+    fn configure_native_registered_window_hit(
+        cx: &TestAppContext,
+        source: &mut VisualTestContext,
+        target: &mut VisualTestContext,
+        target_position: open_gpui::Point<Pixels>,
+    ) -> open_gpui::Point<Pixels> {
+        let source_size = source.update(|window, _| window.viewport_size());
+        let target_size = target.update(|window, _| window.viewport_size());
+        let target_offset = source_size.width + px(40.0);
+        let source_position = point(target_offset + target_position.x, target_position.y);
+        let to_device = |value: Pixels| DevicePixels((value.as_f32() * 2.0).round() as i32);
+        let source_bounds = Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(to_device(source_size.width), to_device(source_size.height)),
+        );
+        let target_bounds = Bounds::new(
+            point(to_device(target_offset), DevicePixels(0)),
+            size(to_device(target_size.width), to_device(target_size.height)),
+        );
+        cx.set_platform_window_physical_client_geometry(
+            source.window_handle(),
+            Some(source_bounds),
+            2.0,
+        );
+        cx.set_platform_window_physical_client_geometry(
+            target.window_handle(),
+            Some(target_bounds),
+            2.0,
+        );
+        let coverage = PlatformWindowPhysicalCoverage::try_new(target_bounds)
+            .expect("target coverage should be representable");
+        let geometry = PlatformWindowPhysicalGeometry::try_new(target_bounds, 2.0)
+            .expect("target physical geometry should be representable");
+        cx.set_platform_window_hit_stack(
+            PlatformWindowHitStack::try_available(
+                point(
+                    to_device(target_offset + target_position.x),
+                    to_device(target_position.y),
+                ),
+                vec![PlatformWindowHit::RegisteredApplication {
+                    window: target.window_handle(),
+                    coverage,
+                    geometry,
+                }],
+            )
+            .expect("registered target hit observation should be valid"),
+        );
+        source_position
     }
 
     fn open_dogfood_viewport(
@@ -2834,8 +2900,15 @@ mod tests {
         let end = debug_bounds(&mut primary_visual, tabs_selector(SPACE, editor_tabs)).center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        begin_left_drag(&mut secondary_visual, start, threshold);
-        continue_cross_window_left_drag(&mut primary_visual, end);
+        begin_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            start,
+            threshold,
+            end,
+        );
+        continue_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
         assert!(
             debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
@@ -2845,7 +2918,7 @@ mod tests {
             "primary viewport should render a host-local drop preview during cross-window drag"
         );
 
-        end_cross_window_left_drag(&mut primary_visual, end);
+        end_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -2918,7 +2991,7 @@ mod tests {
         );
         let end = debug_bounds(&mut primary_visual, tabs_selector(SPACE, editor_tabs)).center();
 
-        simulate_cross_window_left_drag(&mut secondary_visual, &mut primary_visual, start, end);
+        simulate_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, start, end);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -2984,8 +3057,20 @@ mod tests {
         let editor_hover = editor_bounds.center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        begin_left_drag(&mut secondary_visual, start, threshold);
-        continue_cross_window_left_drag(&mut primary_visual, editor_hover);
+        begin_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            start,
+            threshold,
+            editor_hover,
+        );
+        continue_cross_window_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            editor_hover,
+        );
         cx.run_until_parked();
 
         let left_edge = debug_bounds(
@@ -2993,7 +3078,7 @@ mod tests {
             drop_guide_selector(SPACE, editor_tabs, DropZone::Left),
         )
         .center();
-        continue_cross_window_left_drag(&mut primary_visual, left_edge);
+        continue_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, left_edge);
         cx.run_until_parked();
         assert!(
             debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
@@ -3003,7 +3088,7 @@ mod tests {
             "primary editor stack should render a left-edge split preview"
         );
 
-        end_cross_window_left_drag(&mut primary_visual, left_edge);
+        end_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, left_edge);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -3096,8 +3181,15 @@ mod tests {
         .center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        begin_left_drag(&mut secondary_visual, start, threshold);
-        continue_cross_window_left_drag(&mut primary_visual, end);
+        begin_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            start,
+            threshold,
+            end,
+        );
+        continue_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
 
         assert!(
@@ -3108,7 +3200,7 @@ mod tests {
             "primary viewport should render a drop preview on the floating title bar"
         );
 
-        end_cross_window_left_drag(&mut primary_visual, end);
+        end_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -3187,15 +3279,27 @@ mod tests {
         let target_hover = target_bounds.center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        begin_left_drag(&mut secondary_visual, start, threshold);
-        continue_cross_window_left_drag(&mut primary_visual, target_hover);
+        begin_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            start,
+            threshold,
+            target_hover,
+        );
+        continue_cross_window_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            target_hover,
+        );
         cx.run_until_parked();
         let end = debug_bounds(
             &mut primary_visual,
             drop_guide_selector(SPACE, problem_tabs, zone),
         )
         .center();
-        continue_cross_window_left_drag(&mut primary_visual, end);
+        continue_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
 
         assert!(
@@ -3206,7 +3310,7 @@ mod tests {
             "primary viewport should render a {zone:?} drop preview inside the floating stack"
         );
 
-        end_cross_window_left_drag(&mut primary_visual, end);
+        end_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -3368,10 +3472,17 @@ mod tests {
         .center();
         let threshold = point(start.x + px(24.0), start.y);
 
-        begin_left_drag(&mut secondary_visual, start, threshold);
-        continue_cross_window_left_drag(&mut primary_visual, end);
+        begin_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            start,
+            threshold,
+            end,
+        );
+        continue_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
-        end_cross_window_left_drag(&mut primary_visual, end);
+        end_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, end);
         cx.run_until_parked();
 
         let merged_problem_tabs = controller.read_with(cx, |controller, _| {
@@ -3394,15 +3505,27 @@ mod tests {
         let diff_hover = diff_end.center();
         let diff_threshold = point(diff_start.x + px(24.0), diff_start.y);
 
-        begin_left_drag(&mut secondary_visual, diff_start, diff_threshold);
-        continue_cross_window_left_drag(&mut primary_visual, diff_hover);
+        begin_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            diff_start,
+            diff_threshold,
+            diff_hover,
+        );
+        continue_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, diff_hover);
         cx.run_until_parked();
         let diff_target = debug_bounds(
             &mut primary_visual,
             drop_guide_selector(SPACE, merged_problem_tabs, DropZone::Bottom),
         )
         .center();
-        continue_cross_window_left_drag(&mut primary_visual, diff_target);
+        continue_cross_window_left_drag(
+            cx,
+            &mut secondary_visual,
+            &mut primary_visual,
+            diff_target,
+        );
         cx.run_until_parked();
 
         assert!(
@@ -3413,7 +3536,7 @@ mod tests {
             "primary viewport should render a split preview inside the floating stack"
         );
 
-        end_cross_window_left_drag(&mut primary_visual, diff_target);
+        end_cross_window_left_drag(cx, &mut secondary_visual, &mut primary_visual, diff_target);
         cx.run_until_parked();
 
         controller.read_with(cx, |controller, _| {
@@ -3740,6 +3863,7 @@ mod tests {
             platform_viewport_windows: true,
             global_window_bounds: true,
             window_stack: false,
+            window_hit_stack: true,
             display_work_area: true,
             dpi_scale: false,
             hovered_window_ignores_no_input: true,
@@ -3767,7 +3891,7 @@ mod tests {
 
         assert_eq!(
             route_capability_summary(Some(&capabilities)),
-            "platform-windows=yes, bounds=yes, stack=no, hover-through-no-input=yes"
+            "platform-windows=yes, bounds=yes, stack=no, point-hit-stack=yes, hover-through-no-input=yes"
         );
         assert_eq!(
             window_profile_summary(&window_profiles),
@@ -3877,6 +4001,7 @@ mod tests {
             platform_viewport_windows: false,
             global_window_bounds: true,
             window_stack: false,
+            window_hit_stack: true,
             display_work_area: true,
             dpi_scale: true,
             hovered_window_ignores_no_input: false,

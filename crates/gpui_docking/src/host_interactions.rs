@@ -13,7 +13,8 @@ use crate::{
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
     workspace_move_validation::dock_target_validator,
 };
-use open_gpui::{AppContext as _, Bounds, Context, Pixels, Point, Window};
+use open_gpui::{AppContext as _, Bounds, Context, DragStartGeometry, Pixels, Point, Window};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
 pub(crate) struct DockHostTabDragBegin {
     pub(crate) outcome: DockHostInteractionOutcome,
@@ -51,16 +52,70 @@ impl DockHost {
         &mut self,
         payload: &DockDragPayload,
         drag_visual_style: crate::DockDragVisualStyle,
+        drag_start: Option<&DragStartGeometry>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockRuntimeDragSession {
-        self.viewport_runtime()
-            .begin_payload_drag_from_window_with_drag_visual_style(
-                payload,
-                drag_visual_style,
-                window,
-                cx,
-            )
+        let runtime = self.viewport_runtime().clone();
+        let source_window = window.window_handle().window_id();
+        let native_route_context =
+            (drag_start.is_some() && cx.viewport_capabilities().window_hit_stack).then(|| {
+                let work_context = self
+                    .runtime_work_context(cx)
+                    .expect("a rendered payload drag requires one admitted runtime work context");
+                let source_binding = self
+                    .current_window_binding()
+                    .expect("a rendered payload drag requires one current source-window binding");
+                assert!(
+                    self.accepts_window_callback(Some(source_binding), source_window),
+                    "a rendered payload drag must start from its current bound source window"
+                );
+                (work_context, source_binding)
+            });
+        let session =
+            runtime.begin_payload_drag_with_drag_visual_style(payload, drag_visual_style, cx);
+        let mut route_receipt = None;
+        let start = catch_unwind(AssertUnwindSafe(|| {
+            self.interaction_mut()
+                .bind_payload_drag_anchor_session(payload, &session);
+            if let (Some(drag_start), Some((work_context, source_binding))) =
+                (drag_start, native_route_context)
+            {
+                route_receipt = Some(
+                    crate::native_captured_drag::begin_native_captured_drag_route(
+                        runtime.clone(),
+                        work_context,
+                        session.clone(),
+                        payload.clone(),
+                        source_window,
+                        cx.entity().downgrade(),
+                        source_binding,
+                        drag_start,
+                        cx,
+                    ),
+                );
+            }
+            let deferred_runtime = runtime.clone();
+            let deferred_payload = payload.clone();
+            let deferred_session = session.clone();
+            cx.defer(move |cx| {
+                if deferred_runtime.active_payload_drag_session(&deferred_payload)
+                    == Some(deferred_session)
+                {
+                    deferred_runtime.reconcile_viewport_frame_except_window(source_window, cx);
+                }
+            });
+        }));
+        if let Err(payload) = start {
+            if let Some(receipt) = route_receipt.as_ref() {
+                crate::native_captured_drag::rollback_native_captured_drag_route_start(receipt, cx);
+            }
+            self.interaction_mut()
+                .clear_payload_drag_anchor_for_session(&session);
+            runtime.abort_payload_drag_start(&session);
+            resume_unwind(payload);
+        }
+        session
     }
 
     pub(crate) fn begin_tab_item_drag_interaction(
@@ -69,12 +124,13 @@ impl DockHost {
         item: DockItemId,
         payload: &DockDragPayload,
         drag_visual_style: crate::DockDragVisualStyle,
+        drag_start: Option<&DragStartGeometry>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostTabDragBegin {
         let outcome = self.select_tab_interaction(tabs, item, cx);
         let drag_session =
-            self.begin_payload_drag_interaction(payload, drag_visual_style, window, cx);
+            self.begin_payload_drag_interaction(payload, drag_visual_style, drag_start, window, cx);
         DockHostTabDragBegin {
             outcome,
             drag_session,

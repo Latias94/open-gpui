@@ -4,10 +4,11 @@ use crate::{
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHeadlessRenderer,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
-    PlatformWindowMutationCapabilities, PromptButton, ScreenCaptureFrame, ScreenCaptureSource,
-    ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow, ThermalState,
-    WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
-    WindowMutationSupport, WindowParams, size,
+    PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PromptButton,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowCoordinateSpace,
+    WindowCreationSupport, WindowInitialPresentationOrder, WindowMutationSupport, WindowParams,
+    size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -30,6 +31,7 @@ pub(crate) struct TestPlatform {
     pub(crate) hovered_window_available: RefCell<bool>,
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     window_stack: RefCell<Option<Vec<TestWindow>>>,
+    window_hit_stack: RefCell<Option<PlatformWindowHitStack>>,
     platform_viewport_windows: RefCell<bool>,
     pointer_input_mutation_supported: RefCell<bool>,
     window_creation_capabilities_override: RefCell<Option<PlatformWindowCreationCapabilities>>,
@@ -156,6 +158,7 @@ impl TestPlatform {
             hovered_window_available: RefCell::new(true),
             hovered_window: Default::default(),
             window_stack: Default::default(),
+            window_hit_stack: Default::default(),
             platform_viewport_windows: RefCell::new(true),
             pointer_input_mutation_supported: RefCell::new(true),
             window_creation_capabilities_override: RefCell::new(None),
@@ -412,6 +415,10 @@ impl TestPlatform {
         *self.window_stack.borrow_mut() = windows;
     }
 
+    pub(crate) fn set_window_hit_stack(&self, stack: PlatformWindowHitStack) {
+        self.window_hit_stack.replace(Some(stack));
+    }
+
     pub(crate) fn set_mouse_button_is_pressed(&self, button: MouseButton, pressed: Option<bool>) {
         let mut buttons = self.pressed_mouse_buttons.lock();
         match pressed {
@@ -623,11 +630,29 @@ impl Platform for TestPlatform {
         })
     }
 
+    fn window_hit_stack_at(&self, point: Point<DevicePixels>) -> PlatformWindowHitStack {
+        self.window_hit_stack
+            .borrow()
+            .as_ref()
+            .filter(|stack| {
+                stack
+                    .observation()
+                    .is_some_and(|observation| observation.sampled_point() == point)
+            })
+            .cloned()
+            .unwrap_or(PlatformWindowHitStack::Unavailable)
+    }
+
     fn viewport_capabilities(&self) -> crate::PlatformViewportCapabilities {
         crate::PlatformViewportCapabilities {
             platform_viewport_windows: *self.platform_viewport_windows.borrow(),
             global_window_bounds: true,
             window_stack: self.window_stack.borrow().is_some(),
+            window_hit_stack: self
+                .window_hit_stack
+                .borrow()
+                .as_ref()
+                .is_some_and(|stack| stack.observation().is_some()),
             display_work_area: true,
             dpi_scale: true,
             hovered_window_ignores_no_input: true,

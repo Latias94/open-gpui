@@ -261,8 +261,30 @@ pub(crate) enum DockSurfaceWindowSessionTerminalOutcome {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockSurfaceWindowSessionCloseDispatchOutcome {
     Claimed,
-    AlreadyClaimed,
+    AlreadyDispatching,
+    AlreadyDispatched,
     AlreadyTerminal,
+    UnknownWindow,
+    StaleLease,
+    NotShuttingDown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockSurfaceWindowSessionCloseDispatchCommitOutcome {
+    Dispatched,
+    AlreadyTerminal,
+    NotDispatching,
+    UnknownWindow,
+    StaleLease,
+    NotShuttingDown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockSurfaceWindowSessionCloseDispatchRetryOutcome {
+    Pending,
+    AlreadyPending,
+    AlreadyTerminal,
+    NotDispatching,
     UnknownWindow,
     StaleLease,
     NotShuttingDown,
@@ -290,16 +312,35 @@ pub(crate) enum DockSurfaceWindowSessionShutdownConvergenceOutcome {
 #[derive(Debug)]
 struct DockSurfaceWindowSessionTerminalTicket {
     window_id: WindowId,
-    close_dispatched: bool,
-    terminal: Option<DockSurfaceWindowSessionTerminalDisposition>,
+    state: DockSurfaceWindowSessionCloseTicketState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockSurfaceWindowSessionCloseTicketState {
+    Pending,
+    Dispatching,
+    Dispatched,
+    Terminal(DockSurfaceWindowSessionTerminalDisposition),
 }
 
 impl DockSurfaceWindowSessionTerminalTicket {
     fn pending(window_id: WindowId) -> Self {
         Self {
             window_id,
-            close_dispatched: false,
-            terminal: None,
+            state: DockSurfaceWindowSessionCloseTicketState::Pending,
+        }
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.terminal_disposition().is_some()
+    }
+
+    fn terminal_disposition(&self) -> Option<DockSurfaceWindowSessionTerminalDisposition> {
+        match self.state {
+            DockSurfaceWindowSessionCloseTicketState::Terminal(disposition) => Some(disposition),
+            DockSurfaceWindowSessionCloseTicketState::Pending
+            | DockSurfaceWindowSessionCloseTicketState::Dispatching
+            | DockSurfaceWindowSessionCloseTicketState::Dispatched => None,
         }
     }
 }
@@ -369,7 +410,7 @@ impl DockSurfaceWindowSession {
                     generation: lease.generation,
                     pending_terminal_tickets: terminal_tickets
                         .iter()
-                        .filter(|ticket| ticket.terminal.is_none())
+                        .filter(|ticket| !ticket.is_terminal())
                         .count(),
                 });
             }
@@ -491,7 +532,7 @@ impl DockSurfaceWindowSession {
             } if *current == lease => Some(
                 terminal_tickets
                     .iter()
-                    .filter(|ticket| ticket.terminal.is_none())
+                    .filter(|ticket| !ticket.is_terminal())
                     .map(|ticket| ticket.window_id)
                     .collect(),
             ),
@@ -617,11 +658,17 @@ impl DockSurfaceWindowSession {
                 else {
                     return DockSurfaceWindowSessionTerminalOutcome::UnknownWindow;
                 };
-                if ticket.terminal.is_some() {
-                    DockSurfaceWindowSessionTerminalOutcome::AlreadyTerminal
-                } else {
-                    ticket.terminal = Some(disposition);
-                    DockSurfaceWindowSessionTerminalOutcome::Settled
+                match ticket.state {
+                    DockSurfaceWindowSessionCloseTicketState::Terminal(_) => {
+                        DockSurfaceWindowSessionTerminalOutcome::AlreadyTerminal
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Pending
+                    | DockSurfaceWindowSessionCloseTicketState::Dispatching
+                    | DockSurfaceWindowSessionCloseTicketState::Dispatched => {
+                        ticket.state =
+                            DockSurfaceWindowSessionCloseTicketState::Terminal(disposition);
+                        DockSurfaceWindowSessionTerminalOutcome::Settled
+                    }
                 }
             }
             DockSurfaceWindowSessionState::ShuttingDown { .. } => {
@@ -651,13 +698,20 @@ impl DockSurfaceWindowSession {
                 else {
                     return DockSurfaceWindowSessionCloseDispatchOutcome::UnknownWindow;
                 };
-                if ticket.terminal.is_some() {
-                    DockSurfaceWindowSessionCloseDispatchOutcome::AlreadyTerminal
-                } else if ticket.close_dispatched {
-                    DockSurfaceWindowSessionCloseDispatchOutcome::AlreadyClaimed
-                } else {
-                    ticket.close_dispatched = true;
-                    DockSurfaceWindowSessionCloseDispatchOutcome::Claimed
+                match ticket.state {
+                    DockSurfaceWindowSessionCloseTicketState::Pending => {
+                        ticket.state = DockSurfaceWindowSessionCloseTicketState::Dispatching;
+                        DockSurfaceWindowSessionCloseDispatchOutcome::Claimed
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Dispatching => {
+                        DockSurfaceWindowSessionCloseDispatchOutcome::AlreadyDispatching
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Dispatched => {
+                        DockSurfaceWindowSessionCloseDispatchOutcome::AlreadyDispatched
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Terminal(_) => {
+                        DockSurfaceWindowSessionCloseDispatchOutcome::AlreadyTerminal
+                    }
                 }
             }
             DockSurfaceWindowSessionState::ShuttingDown { .. } => {
@@ -667,6 +721,90 @@ impl DockSurfaceWindowSession {
                 DockSurfaceWindowSessionCloseDispatchOutcome::NotShuttingDown
             }
             _ => DockSurfaceWindowSessionCloseDispatchOutcome::StaleLease,
+        }
+    }
+
+    pub(crate) fn mark_close_dispatched(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        window_id: WindowId,
+    ) -> DockSurfaceWindowSessionCloseDispatchCommitOutcome {
+        match &mut self.state {
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease: current,
+                terminal_tickets,
+                ..
+            } if *current == lease => {
+                let Some(ticket) = terminal_tickets
+                    .iter_mut()
+                    .find(|ticket| ticket.window_id == window_id)
+                else {
+                    return DockSurfaceWindowSessionCloseDispatchCommitOutcome::UnknownWindow;
+                };
+                match ticket.state {
+                    DockSurfaceWindowSessionCloseTicketState::Dispatching => {
+                        ticket.state = DockSurfaceWindowSessionCloseTicketState::Dispatched;
+                        DockSurfaceWindowSessionCloseDispatchCommitOutcome::Dispatched
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Terminal(_) => {
+                        DockSurfaceWindowSessionCloseDispatchCommitOutcome::AlreadyTerminal
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Pending
+                    | DockSurfaceWindowSessionCloseTicketState::Dispatched => {
+                        DockSurfaceWindowSessionCloseDispatchCommitOutcome::NotDispatching
+                    }
+                }
+            }
+            DockSurfaceWindowSessionState::ShuttingDown { .. } => {
+                DockSurfaceWindowSessionCloseDispatchCommitOutcome::StaleLease
+            }
+            DockSurfaceWindowSessionState::Active { lease: current } if *current == lease => {
+                DockSurfaceWindowSessionCloseDispatchCommitOutcome::NotShuttingDown
+            }
+            _ => DockSurfaceWindowSessionCloseDispatchCommitOutcome::StaleLease,
+        }
+    }
+
+    pub(crate) fn retry_close_dispatch(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        window_id: WindowId,
+    ) -> DockSurfaceWindowSessionCloseDispatchRetryOutcome {
+        match &mut self.state {
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease: current,
+                terminal_tickets,
+                ..
+            } if *current == lease => {
+                let Some(ticket) = terminal_tickets
+                    .iter_mut()
+                    .find(|ticket| ticket.window_id == window_id)
+                else {
+                    return DockSurfaceWindowSessionCloseDispatchRetryOutcome::UnknownWindow;
+                };
+                match ticket.state {
+                    DockSurfaceWindowSessionCloseTicketState::Dispatching => {
+                        ticket.state = DockSurfaceWindowSessionCloseTicketState::Pending;
+                        DockSurfaceWindowSessionCloseDispatchRetryOutcome::Pending
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Pending => {
+                        DockSurfaceWindowSessionCloseDispatchRetryOutcome::AlreadyPending
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Dispatched => {
+                        DockSurfaceWindowSessionCloseDispatchRetryOutcome::NotDispatching
+                    }
+                    DockSurfaceWindowSessionCloseTicketState::Terminal(_) => {
+                        DockSurfaceWindowSessionCloseDispatchRetryOutcome::AlreadyTerminal
+                    }
+                }
+            }
+            DockSurfaceWindowSessionState::ShuttingDown { .. } => {
+                DockSurfaceWindowSessionCloseDispatchRetryOutcome::StaleLease
+            }
+            DockSurfaceWindowSessionState::Active { lease: current } if *current == lease => {
+                DockSurfaceWindowSessionCloseDispatchRetryOutcome::NotShuttingDown
+            }
+            _ => DockSurfaceWindowSessionCloseDispatchRetryOutcome::StaleLease,
         }
     }
 
@@ -683,7 +821,7 @@ impl DockSurfaceWindowSession {
             } if *current == lease => {
                 let pending_terminal_tickets = terminal_tickets
                     .iter()
-                    .filter(|ticket| ticket.terminal.is_none())
+                    .filter(|ticket| !ticket.is_terminal())
                     .count();
                 if !*runtime_empty || pending_terminal_tickets != 0 {
                     return DockSurfaceWindowSessionShutdownConvergenceOutcome::Waiting {
@@ -714,6 +852,17 @@ impl DockSurfaceWindowSession {
         matches!(
             &self.state,
             DockSurfaceWindowSessionState::Active { lease: current } if *current == lease
+        )
+    }
+
+    /// Returns whether `lease` still owns the current shutdown transition.
+    ///
+    /// Post-borrow native release callbacks must use this exact check before applying close
+    /// effects so a delayed terminal from G1 cannot act on a later G2 session.
+    pub(crate) fn is_shutting_down(&self, lease: DockSurfaceWindowSessionLease) -> bool {
+        matches!(
+            &self.state,
+            DockSurfaceWindowSessionState::ShuttingDown { lease: current, .. } if *current == lease
         )
     }
 
@@ -759,7 +908,7 @@ impl DockSurfaceWindowSession {
                 terminal_ticket_count: terminal_tickets.len(),
                 pending_terminal_ticket_count: terminal_tickets
                     .iter()
-                    .filter(|ticket| ticket.terminal.is_none())
+                    .filter(|ticket| !ticket.is_terminal())
                     .count(),
                 runtime_empty: Some(*runtime_empty),
             },

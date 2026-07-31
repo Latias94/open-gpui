@@ -83,8 +83,6 @@ pub(crate) enum DockViewportTrustedHoveredSignal {
 pub(crate) struct DockViewportTargetContext {
     /// Trusted backend hovered-window signal.
     trusted_hovered_signal: DockViewportTrustedHoveredSignal,
-    /// ImGui-style drag fallback used when the backend hovered-window signal is unavailable.
-    drag_last_hovered_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: DockViewportFrontToBackWindowStack,
 }
@@ -93,7 +91,6 @@ pub(crate) struct DockViewportTargetContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportWindowSignals {
     pub(crate) trusted_hovered_signal: DockViewportTrustedHoveredSignal,
-    pub(crate) drag_last_hovered_window: Option<WindowId>,
     pub(crate) window_stack: DockViewportFrontToBackWindowStack,
 }
 
@@ -113,7 +110,6 @@ impl DockViewportTargetContext {
     ) -> Self {
         Self {
             trusted_hovered_signal,
-            drag_last_hovered_window: None,
             window_stack,
         }
     }
@@ -134,10 +130,6 @@ impl DockViewportTargetContext {
 
     pub(crate) fn trusted_hovered_window(&self) -> Option<WindowId> {
         self.trusted_hovered_signal.trusted_window()
-    }
-
-    pub(crate) fn drag_last_hovered_window(&self) -> Option<WindowId> {
-        self.drag_last_hovered_window
     }
 
     pub(crate) fn trusted_hovered_window_matches_event_receiver(
@@ -172,24 +164,6 @@ impl DockViewportTargetContext {
         self
     }
 
-    pub(crate) fn without_drag_last_hovered_window(mut self) -> Self {
-        self.drag_last_hovered_window = None;
-        self
-    }
-
-    pub(crate) fn with_drag_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
-        self.drag_last_hovered_window = Some(window_id);
-        self
-    }
-
-    pub(crate) fn with_optional_drag_last_hovered_window(
-        mut self,
-        window_id: Option<WindowId>,
-    ) -> Self {
-        self.drag_last_hovered_window = window_id;
-        self
-    }
-
     pub(crate) fn with_focus_stamp_window_stack(
         mut self,
         windows: impl IntoIterator<Item = WindowId>,
@@ -214,7 +188,6 @@ impl DockViewportTargetContext {
     pub(crate) fn into_window_signals(self) -> DockViewportWindowSignals {
         DockViewportWindowSignals {
             trusted_hovered_signal: self.trusted_hovered_signal,
-            drag_last_hovered_window: self.drag_last_hovered_window,
             window_stack: self.window_stack,
         }
     }
@@ -301,44 +274,6 @@ mod tests {
             context.window_stack_source(),
             DockViewportWindowStackSource::Platform
         );
-    }
-
-    #[test]
-    fn drag_last_hovered_viewport_is_separate_from_trusted_hovered_signal() {
-        let last_hovered = WindowId::from(7);
-        let current_hovered = WindowId::from(9);
-
-        let unavailable = DockViewportTargetContext::default()
-            .with_drag_last_hovered_viewport_window(last_hovered);
-        assert_eq!(unavailable.trusted_hovered_window(), None);
-        assert_eq!(unavailable.drag_last_hovered_window(), Some(last_hovered));
-
-        let trusted_current = DockViewportTargetContext::from_window_signals(
-            DockViewportTrustedHoveredSignal::Trusted(current_hovered),
-            DockViewportFrontToBackWindowStack::default(),
-        )
-        .with_drag_last_hovered_viewport_window(last_hovered);
-        assert_eq!(
-            trusted_current.trusted_hovered_window(),
-            Some(current_hovered),
-            "fresh backend hovered-window signal wins over the drag's last hovered viewport"
-        );
-        assert_eq!(
-            trusted_current.drag_last_hovered_window(),
-            Some(last_hovered)
-        );
-
-        let trusted_none = DockViewportTargetContext::from_window_signals(
-            DockViewportTrustedHoveredSignal::TrustedNone,
-            DockViewportFrontToBackWindowStack::default(),
-        )
-        .with_drag_last_hovered_viewport_window(last_hovered);
-        assert_eq!(
-            trusted_none.trusted_hovered_signal(),
-            DockViewportTrustedHoveredSignal::TrustedNone,
-            "explicit hovered=None remains authoritative outside the drag fallback path"
-        );
-        assert_eq!(trusted_none.drag_last_hovered_window(), Some(last_hovered));
     }
 
     #[test]

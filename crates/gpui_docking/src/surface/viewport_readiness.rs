@@ -88,6 +88,8 @@ pub struct DockSurfaceViewportPlatformCapabilities {
     pub global_window_bounds: bool,
     /// The platform can report application windows in front-to-back order.
     pub window_stack: bool,
+    /// The platform can classify the complete native top-level stack at one physical point.
+    pub window_hit_stack: bool,
     /// Display visible bounds exclude system-reserved work areas.
     pub display_work_area: bool,
     /// Per-window DPI scale facts are reliable for placement decisions.
@@ -666,6 +668,7 @@ impl From<PlatformViewportCapabilities> for DockSurfaceViewportPlatformCapabilit
             platform_viewport_windows: capabilities.platform_viewport_windows,
             global_window_bounds: capabilities.global_window_bounds,
             window_stack: capabilities.window_stack,
+            window_hit_stack: capabilities.window_hit_stack,
             display_work_area: capabilities.display_work_area,
             dpi_scale: capabilities.dpi_scale,
             hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,

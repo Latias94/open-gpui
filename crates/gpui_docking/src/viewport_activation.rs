@@ -872,11 +872,6 @@ mod tests {
             &[("a", "Panel A", "A")],
             size(px(320.0), px(240.0)),
         );
-        host.update(cx, |host, _| {
-            assert!(host.request_viewport_focus_command(
-                DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("a"))
-            ));
-        });
         let activation = DockViewportActivationTransaction::registered(
             current_registration(cx, &host, window.window_id()),
             window,
@@ -887,7 +882,21 @@ mod tests {
             .update(cx, |_, window, _| window.activate_window())
             .expect("viewport should become the backend-focused window");
 
-        let outcome = cx.update(|app| apply_viewport_activation_transaction(Some(activation), app));
+        let outcome = window
+            .update(cx, |host, window, cx| {
+                assert!(host.request_viewport_focus_command(
+                    DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(
+                        "a"
+                    ),),
+                ));
+                apply_viewport_activation_transaction_from_window(
+                    Some(activation),
+                    host,
+                    window,
+                    cx,
+                )
+            })
+            .expect("viewport should remain live");
 
         assert_eq!(
             outcome,
@@ -918,30 +927,34 @@ mod tests {
             window,
             DockViewportFocusRequest::panel("a"),
         );
-        host.update(cx, |host, _| {
-            assert!(
-                host.viewport_runtime()
-                    .record_confirmed_backend_focus_for_window(window.window_id())
-            );
-            assert!(host.request_viewport_focus_command(
-                DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("a"))
-            ));
-            assert!(
-                host.viewport_runtime()
-                    .record_pending_activation(activation.clone())
-            );
-        });
         window
             .update(cx, |_, window, _| window.activate_window())
             .expect("viewport should be backend-focused before applying pending activation");
 
-        let (outcome, pending_activation) = cx.update(|app| {
-            let outcome = apply_viewport_activation_transaction(Some(activation), app);
-            let pending_activation = app.read_entity(&host, |host, _| {
-                host.viewport_runtime().pending_activation()
-            });
-            (outcome, pending_activation)
-        });
+        let (outcome, pending_activation) = window
+            .update(cx, |host, window, cx| {
+                let _ = host
+                    .viewport_runtime()
+                    .record_confirmed_backend_focus_for_window(window.window_handle().window_id());
+                assert!(host.request_viewport_focus_command(
+                    DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(
+                        "a"
+                    ),),
+                ));
+                assert!(
+                    host.viewport_runtime()
+                        .record_pending_activation(activation.clone())
+                );
+                let outcome = apply_viewport_activation_transaction_from_window(
+                    Some(activation),
+                    host,
+                    window,
+                    cx,
+                );
+                let pending_activation = host.viewport_runtime().pending_activation();
+                (outcome, pending_activation)
+            })
+            .expect("viewport should remain live");
 
         assert_eq!(
             outcome,
@@ -996,53 +1009,54 @@ mod tests {
             &[("a", "Panel A", "A")],
             size(px(320.0), px(240.0)),
         );
-        host.update(cx, |host, _| {
-            assert!(host.request_viewport_focus_command(
-                DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("a"))
-            ));
-        });
         let activation = DockViewportActivationTransaction::registered(
             current_registration(cx, &host, window.window_id()),
             window,
             DockViewportFocusRequest::panel("a"),
         );
 
-        let (outcome, pending_request, pending_source) = cx.update(|app| {
-            let outcome = apply_viewport_activation_transaction(Some(activation), app);
-            let (pending_request, pending_source) = app.read_entity(&host, |host, _| {
-                (
-                    host.pending_focus_command()
-                        .map(|command| command.request().clone()),
-                    host.pending_focus_command().map(|command| command.source()),
-                )
-            });
-            (outcome, pending_request, pending_source)
-        });
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("viewport should become the backend-focused window");
+        let (outcome, pending_request, pending_source) = window
+            .update(cx, |host, window, cx| {
+                let _ = host
+                    .viewport_runtime()
+                    .record_confirmed_backend_focus_for_window(window.window_handle().window_id());
+                assert!(host.request_viewport_focus_command(
+                    DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel(
+                        "a"
+                    ),),
+                ));
+                let outcome = apply_viewport_activation_transaction_from_window(
+                    Some(activation),
+                    host,
+                    window,
+                    cx,
+                );
+                let pending_request = host
+                    .pending_focus_command()
+                    .map(|command| command.request().clone());
+                let pending_source = host.pending_focus_command().map(|command| command.source());
+                (outcome, pending_request, pending_source)
+            })
+            .expect("viewport should remain live");
 
         assert_eq!(
             outcome,
             DockViewportActivationApplyOutcome::Applied {
                 changed: true,
-                focus_command_queued: false,
-                window_activation_requested: true,
-                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
-                backend_focus_apply: recorded_pending_backend_focus(),
+                focus_command_queued: true,
+                window_activation_requested: false,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetFocused,
+                backend_focus_apply: unchanged_backend_focus_apply(),
             }
         );
         assert_eq!(pending_request, Some(DockViewportFocusRequest::panel("a")));
         assert_eq!(
             pending_source,
-            Some(DockViewportFocusCommandSource::PlatformActivation)
-        );
-
-        assert_eq!(
-            cx.read_entity(&host, |host, _| {
-                host.viewport_runtime()
-                    .pending_activation()
-                    .map(|activation| activation.focus_request().clone())
-            }),
-            Some(DockViewportFocusRequest::panel("a")),
-            "viewport activation waits for backend focus before overriding platform activation"
+            Some(DockViewportFocusCommandSource::ViewportActivation),
+            "confirmed viewport activation should replace the lower-priority platform restore"
         );
     }
 
@@ -1057,11 +1071,6 @@ mod tests {
             &[("a", "Panel A", "A")],
             size(px(320.0), px(240.0)),
         );
-        host.update(cx, |host, _| {
-            assert!(host.request_viewport_focus_command(
-                DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("a"))
-            ));
-        });
         visual.deactivate_window();
         let activation = DockViewportActivationTransaction::registered(
             current_registration(cx, &host, window.window_id()),
@@ -1069,14 +1078,25 @@ mod tests {
             DockViewportFocusRequest::panel("a"),
         );
 
-        let (outcome, pending_request) = cx.update(|app| {
-            let outcome = apply_viewport_activation_transaction(Some(activation), app);
-            let pending_request = app.read_entity(&host, |host, _| {
-                host.pending_focus_command()
-                    .map(|command| command.request().clone())
-            });
-            (outcome, pending_request)
-        });
+        let (outcome, pending_request) = window
+            .update(cx, |host, window, cx| {
+                assert!(host.request_viewport_focus_command(
+                    DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(
+                        "a"
+                    ),),
+                ));
+                let outcome = apply_viewport_activation_transaction_from_window(
+                    Some(activation),
+                    host,
+                    window,
+                    cx,
+                );
+                let pending_request = host
+                    .pending_focus_command()
+                    .map(|command| command.request().clone());
+                (outcome, pending_request)
+            })
+            .expect("viewport should remain live");
         cx.run_until_parked();
         let active = window
             .update(cx, |_, window, _| window.is_window_active())
@@ -1201,21 +1221,27 @@ mod tests {
             size(px(320.0), px(240.0)),
         );
 
-        let changed = host.update(cx, |host, _| {
+        let (changed, pending) = host.update(cx, |host, _| {
             assert!(host.request_viewport_focus_command(
                 DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("a"))
             ));
-            host.request_viewport_focus_command(DockViewportFocusCommand::platform_activation(
-                DockViewportFocusRequest::panel("a"),
-            ))
-        });
-        let pending = cx.read_entity(&host, |host, _| {
-            host.pending_focus_command()
-                .map(|command| command.request().clone())
+            let changed = host.request_viewport_focus_command(
+                DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("a")),
+            );
+            let pending = host
+                .pending_focus_command()
+                .map(|command| (command.request().clone(), command.source()));
+            (changed, pending)
         });
 
         assert!(!changed);
-        assert_eq!(pending, Some(DockViewportFocusRequest::panel("a")));
+        assert_eq!(
+            pending,
+            Some((
+                DockViewportFocusRequest::panel("a"),
+                DockViewportFocusCommandSource::ViewportActivation,
+            ))
+        );
     }
 
     #[open_gpui::test]
@@ -1228,23 +1254,29 @@ mod tests {
             size(px(320.0), px(240.0)),
         );
 
-        let changed = host.update(cx, |host, _| {
+        let (changed, pending) = host.update(cx, |host, _| {
             assert!(
                 host.request_viewport_focus_command(DockViewportFocusCommand::new(
                     DockViewportFocusCommandSource::CloseRecovery,
                     DockViewportFocusRequest::panel("a"),
                 ))
             );
-            host.request_viewport_focus_command(DockViewportFocusCommand::platform_activation(
-                DockViewportFocusRequest::panel("a"),
-            ))
-        });
-        let pending = cx.read_entity(&host, |host, _| {
-            host.pending_focus_command()
-                .map(|command| command.request().clone())
+            let changed = host.request_viewport_focus_command(
+                DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("a")),
+            );
+            let pending = host
+                .pending_focus_command()
+                .map(|command| (command.request().clone(), command.source()));
+            (changed, pending)
         });
 
         assert!(!changed);
-        assert_eq!(pending, Some(DockViewportFocusRequest::panel("a")));
+        assert_eq!(
+            pending,
+            Some((
+                DockViewportFocusRequest::panel("a"),
+                DockViewportFocusCommandSource::CloseRecovery,
+            ))
+        );
     }
 }

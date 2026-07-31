@@ -36,10 +36,11 @@ use crate::{
     Bounds, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, FocusId, Font, FontId,
     FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, ModifiersChangedEvent, MouseButton, NativeInputBoundary,
-    NativeInputHandlerOperation, NativeInvariantFailure, Pixels, PlatformInput, Point, Priority,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    WindowId, WindowMutationRequest, geometry::ResolvedSubtreeTransform, hash, point, px, size,
+    NativeInputHandlerOperation, NativeInvariantFailure, Pixels, PlatformInput, Point,
+    PointerCancelReason, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, Window, WindowControlArea, WindowId, WindowMutationRequest,
+    geometry::ResolvedSubtreeTransform, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -86,6 +87,289 @@ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream}
 #[cfg(any(test, feature = "test-support"))]
 pub use visual_test::VisualTestPlatform;
 
+/// One immutable observation of a platform window's physical client geometry.
+///
+/// The client bounds and scale factor belong to the same validated observation. Consumers should
+/// retain this value while converting related points instead of sampling those facts separately.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlatformWindowPhysicalGeometry {
+    client_bounds: Bounds<DevicePixels>,
+    scale_factor: f32,
+}
+
+/// One checked native top-level coverage rectangle in physical desktop coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlatformWindowPhysicalCoverage {
+    bounds: Bounds<DevicePixels>,
+}
+
+/// One physical pointer observation retained only for the active native input callback.
+///
+/// Platform backends use this frame to prevent a logical-coordinate round trip from mixing the
+/// input event's DPI with a later window DPI observation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlatformNativePointerPhysicalFrame {
+    global_position: Point<DevicePixels>,
+    source_geometry: PlatformWindowPhysicalGeometry,
+}
+
+impl PlatformNativePointerPhysicalFrame {
+    /// Creates a callback-scoped physical pointer observation.
+    #[doc(hidden)]
+    pub fn new(
+        global_position: Point<DevicePixels>,
+        source_geometry: PlatformWindowPhysicalGeometry,
+    ) -> Self {
+        Self {
+            global_position,
+            source_geometry,
+        }
+    }
+
+    /// Returns the pointer position in the physical desktop coordinate space.
+    pub fn global_position(self) -> Point<DevicePixels> {
+        self.global_position
+    }
+
+    /// Returns the source geometry interpreted with the input event's DPI.
+    pub fn source_geometry(self) -> PlatformWindowPhysicalGeometry {
+        self.source_geometry
+    }
+}
+
+impl PlatformWindowPhysicalGeometry {
+    /// Creates a physical geometry observation when its bounds and scale are representable.
+    pub fn try_new(client_bounds: Bounds<DevicePixels>, scale_factor: f32) -> Option<Self> {
+        if checked_physical_bounds_end(client_bounds).is_none()
+            || !scale_factor.is_finite()
+            || scale_factor <= 0.0
+        {
+            return None;
+        }
+        Some(Self {
+            client_bounds,
+            scale_factor,
+        })
+    }
+
+    /// Returns the client bounds in physical desktop coordinates.
+    pub fn client_bounds(self) -> Bounds<DevicePixels> {
+        self.client_bounds
+    }
+
+    /// Returns the DPI scale sampled with the client bounds.
+    pub fn scale_factor(self) -> f32 {
+        self.scale_factor
+    }
+
+    /// Returns whether a physical desktop point is inside the observed client area.
+    pub fn contains_global(self, point: Point<DevicePixels>) -> bool {
+        checked_physical_bounds_contains(self.client_bounds, point)
+    }
+
+    /// Converts a client-local logical point into physical desktop coordinates.
+    pub fn local_to_global(self, point: Point<Pixels>) -> Option<Point<DevicePixels>> {
+        Some(crate::point(
+            checked_logical_to_global_device_coordinate(
+                self.client_bounds.origin.x,
+                point.x,
+                self.scale_factor,
+            )?,
+            checked_logical_to_global_device_coordinate(
+                self.client_bounds.origin.y,
+                point.y,
+                self.scale_factor,
+            )?,
+        ))
+    }
+
+    /// Converts a physical desktop point into client-local logical coordinates.
+    pub fn global_to_local(self, point: Point<DevicePixels>) -> Option<Point<Pixels>> {
+        Some(crate::point(
+            checked_global_device_to_logical_coordinate(
+                point.x,
+                self.client_bounds.origin.x,
+                self.scale_factor,
+            )?,
+            checked_global_device_to_logical_coordinate(
+                point.y,
+                self.client_bounds.origin.y,
+                self.scale_factor,
+            )?,
+        ))
+    }
+}
+
+impl PlatformWindowPhysicalCoverage {
+    /// Creates a checked physical coverage rectangle.
+    pub fn try_new(bounds: Bounds<DevicePixels>) -> Option<Self> {
+        checked_physical_bounds_end(bounds)?;
+        Some(Self { bounds })
+    }
+
+    /// Returns the checked physical bounds.
+    pub fn bounds(self) -> Bounds<DevicePixels> {
+        self.bounds
+    }
+
+    /// Returns whether the sampled physical point is inside this coverage.
+    pub fn contains(self, point: Point<DevicePixels>) -> bool {
+        checked_physical_bounds_contains(self.bounds, point)
+    }
+}
+
+fn checked_physical_bounds_end(
+    bounds: Bounds<DevicePixels>,
+) -> Option<(DevicePixels, DevicePixels)> {
+    if bounds.size.width.0 < 0 || bounds.size.height.0 < 0 {
+        return None;
+    }
+    Some((
+        DevicePixels(bounds.origin.x.0.checked_add(bounds.size.width.0)?),
+        DevicePixels(bounds.origin.y.0.checked_add(bounds.size.height.0)?),
+    ))
+}
+
+fn checked_physical_bounds_contains(
+    bounds: Bounds<DevicePixels>,
+    point: Point<DevicePixels>,
+) -> bool {
+    let Some((right, bottom)) = checked_physical_bounds_end(bounds) else {
+        return false;
+    };
+    point.x.0 >= bounds.origin.x.0
+        && point.x.0 < right.0
+        && point.y.0 >= bounds.origin.y.0
+        && point.y.0 < bottom.0
+}
+
+fn checked_logical_to_global_device_coordinate(
+    origin: DevicePixels,
+    value: Pixels,
+    scale_factor: f32,
+) -> Option<DevicePixels> {
+    let value = f64::from(value.as_f32());
+    let scale_factor = f64::from(scale_factor);
+    let physical = f64::from(origin.0) + value * scale_factor;
+    if !physical.is_finite() || physical < f64::from(i32::MIN) || physical > f64::from(i32::MAX) {
+        return None;
+    }
+    Some(DevicePixels(physical.round() as i32))
+}
+
+fn checked_global_device_to_logical_coordinate(
+    value: DevicePixels,
+    origin: DevicePixels,
+    scale_factor: f32,
+) -> Option<Pixels> {
+    let logical = (f64::from(value.0) - f64::from(origin.0)) / f64::from(scale_factor);
+    if !logical.is_finite() || logical < -(f32::MAX as f64) || logical > f32::MAX as f64 {
+        return None;
+    }
+    Some(px(logical as f32))
+}
+
+/// One classified native top-level window covering a sampled physical desktop point.
+///
+/// Native handles remain backend-private. Registered application windows retain their complete
+/// GPUI handle, while every other covering top-level is an opaque routing barrier.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlatformWindowHit {
+    /// A currently registered application window and its same-observation native geometry.
+    RegisteredApplication {
+        /// The complete GPUI handle matched to the exact native window generation.
+        window: AnyWindowHandle,
+        /// The native top-level bounds that cover the sampled physical point.
+        coverage: PlatformWindowPhysicalCoverage,
+        /// The target client geometry sampled as one immutable observation.
+        geometry: PlatformWindowPhysicalGeometry,
+    },
+    /// A visible ordinary, foreign-process, unregistered, or otherwise unknown top-level window.
+    OpaqueBarrier {
+        /// The native top-level bounds that cover the sampled physical point.
+        coverage: PlatformWindowPhysicalCoverage,
+    },
+}
+
+impl PlatformWindowHit {
+    /// Returns the checked top-level coverage for this entry.
+    pub fn coverage(self) -> PlatformWindowPhysicalCoverage {
+        match self {
+            Self::RegisteredApplication { coverage, .. } | Self::OpaqueBarrier { coverage } => {
+                coverage
+            }
+        }
+    }
+}
+
+/// One immutable hit observation bound to exactly one sampled physical point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlatformWindowHitObservation {
+    sampled_point: Point<DevicePixels>,
+    hits: Vec<PlatformWindowHit>,
+}
+
+impl PlatformWindowHitObservation {
+    /// Creates an observation when every entry covers the sampled point.
+    pub fn try_new(
+        sampled_point: Point<DevicePixels>,
+        hits: Vec<PlatformWindowHit>,
+    ) -> Option<Self> {
+        if hits
+            .iter()
+            .any(|hit| !hit.coverage().contains(sampled_point))
+        {
+            return None;
+        }
+        Some(Self {
+            sampled_point,
+            hits,
+        })
+    }
+
+    /// Returns the physical desktop point this observation classifies.
+    pub fn sampled_point(&self) -> Point<DevicePixels> {
+        self.sampled_point
+    }
+
+    /// Returns the classified entries in front-to-back order through the first terminal.
+    pub fn hits(&self) -> &[PlatformWindowHit] {
+        &self.hits
+    }
+}
+
+/// Availability and contents of a point-scoped native window hit stack.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum PlatformWindowHitStack {
+    /// The backend cannot provide a complete classified stack for the sampled point.
+    #[default]
+    Unavailable,
+    /// A complete front-to-back observation bound to its sampled physical desktop point.
+    Available(PlatformWindowHitObservation),
+}
+
+impl PlatformWindowHitStack {
+    /// Creates an available point-bound observation or fails closed when it is malformed.
+    pub fn try_available(
+        sampled_point: Point<DevicePixels>,
+        hits: Vec<PlatformWindowHit>,
+    ) -> Option<Self> {
+        Some(Self::Available(PlatformWindowHitObservation::try_new(
+            sampled_point,
+            hits,
+        )?))
+    }
+
+    /// Returns the available observation, if the backend produced one.
+    pub fn observation(&self) -> Option<&PlatformWindowHitObservation> {
+        match self {
+            Self::Available(observation) => Some(observation),
+            Self::Unavailable => None,
+        }
+    }
+}
+
 /// Platform support relevant to ImGui-style multi-viewport docking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlatformViewportCapabilities {
@@ -95,6 +379,8 @@ pub struct PlatformViewportCapabilities {
     pub global_window_bounds: bool,
     /// The platform can report application windows in front-to-back order.
     pub window_stack: bool,
+    /// The platform can classify every native top-level covering a sampled physical point.
+    pub window_hit_stack: bool,
     /// Display visible bounds exclude system-reserved work areas.
     pub display_work_area: bool,
     /// Per-window DPI scale facts are reliable for placement decisions.
@@ -726,6 +1012,9 @@ pub trait Platform: 'static {
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }
+    fn window_hit_stack_at(&self, _point: Point<DevicePixels>) -> PlatformWindowHitStack {
+        PlatformWindowHitStack::Unavailable
+    }
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
     }
@@ -1004,6 +1293,55 @@ pub enum PlatformWindowCommandOutcome {
     Rejected,
 }
 
+/// The synchronous result of a post-borrow native pointer-capture release.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformPointerCaptureReleaseOutcome {
+    /// The backend released the native capture owned by this window.
+    Released,
+    /// The native window was already terminal, so no capture can remain.
+    NativeWindowTerminal,
+    /// The backend could not prove terminal release and GPUI must retry.
+    Rejected,
+}
+
+/// The synchronous result of asking a platform window to begin native retirement.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformNativeWindowRetirementOutcome {
+    /// Native retirement was accepted. GPUI may release the platform-window owner while awaiting
+    /// the terminal callback.
+    Accepted,
+    /// The native window is already terminal.
+    NativeWindowTerminal,
+    /// Retirement was not accepted and must be retried while retaining the platform-window owner.
+    Rejected,
+}
+
+/// A backend-owned pointer-capture release prepared against one exact pointer session.
+///
+/// Preparation may run while GPUI owns its application borrow, so it must only snapshot
+/// backend-owned memory. The retained operation performs the native effect later, after the
+/// application borrow has been returned. Retries clone and reuse the same snapshot.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PreparedPlatformPointerCaptureRelease {
+    dispatch: Rc<dyn Fn() -> PlatformPointerCaptureReleaseOutcome>,
+}
+
+impl PreparedPlatformPointerCaptureRelease {
+    #[doc(hidden)]
+    pub fn new(dispatch: impl Fn() -> PlatformPointerCaptureReleaseOutcome + 'static) -> Self {
+        Self {
+            dispatch: Rc::new(dispatch),
+        }
+    }
+
+    pub(crate) fn dispatch(&self) -> PlatformPointerCaptureReleaseOutcome {
+        (self.dispatch)()
+    }
+}
+
 /// One must-immediate native input callback installed into a platform backend.
 #[doc(hidden)]
 pub struct PlatformInputCallback {
@@ -1112,6 +1450,21 @@ struct NativeInputDiagnosticTarget {
 }
 
 impl NativeInputDiagnosticTarget {
+    fn reserve_reentrant_pointer_cancel(
+        &self,
+        slot_generation: u64,
+        reason: PointerCancelReason,
+    ) -> NativePointerCancelReservation {
+        let Some(app) = self.app.upgrade() else {
+            return NativePointerCancelReservation::ApplicationGone;
+        };
+        if app.reserve_reentrant_pointer_cancel(self.window_id, slot_generation, reason) {
+            NativePointerCancelReservation::Reserved
+        } else {
+            NativePointerCancelReservation::IngressClosed
+        }
+    }
+
     fn record_invariant(
         &self,
         boundary: NativeInputBoundary,
@@ -1139,12 +1492,33 @@ impl NativeInputDiagnosticTarget {
     }
 }
 
+/// Result of locking a terminal pointer cancellation at a native callback boundary.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativePointerCancelReservation {
+    Reserved,
+    UnleasedTestFallback,
+    NoActiveCallback,
+    MissingDiagnosticTarget,
+    ApplicationGone,
+    IngressClosed,
+    RetiredSlot,
+}
+
+#[derive(Clone)]
+struct PlatformInputPanicRecovery {
+    generation: u64,
+    target: NativeInputDiagnosticTarget,
+}
+
 #[derive(Default)]
 struct PlatformInputCallbackSlotState {
     generation: u64,
     checked_out_generation: Option<u64>,
     callback: Option<PlatformInputCallback>,
     diagnostic_target: Option<NativeInputDiagnosticTarget>,
+    panic_recovery: Option<PlatformInputPanicRecovery>,
+    allow_unleased_test_dispatch: bool,
     terminal: bool,
 }
 
@@ -1167,6 +1541,8 @@ impl PlatformInputCallbackSlot {
                 .generation
                 .checked_add(1)
                 .expect("platform input callback generation overflowed");
+            state.panic_recovery = None;
+            state.allow_unleased_test_dispatch = callback.allow_unleased_test_dispatch;
             state.diagnostic_target = callback.diagnostic_target.clone();
             state.callback.replace(callback)
         };
@@ -1185,6 +1561,63 @@ impl PlatformInputCallbackSlot {
             checkout.panic_invariant(NativeInvariantFailure::MissingLease);
         }
         (checkout.callback_mut().callback)(input)
+    }
+
+    /// Reserves a terminal pointer-cancel fact while the ordinary input callback is checked out.
+    ///
+    /// This is intentionally narrower than deferred raw-input dispatch. Native backends use it
+    /// only when capture loss synchronously re-enters the active callback stack.
+    #[doc(hidden)]
+    pub fn reserve_reentrant_pointer_cancel(
+        &self,
+        reason: PointerCancelReason,
+    ) -> NativePointerCancelReservation {
+        let (slot_generation, target) = {
+            let state = self.state.borrow();
+            let Some(slot_generation) = state.checked_out_generation else {
+                return NativePointerCancelReservation::NoActiveCallback;
+            };
+            let Some(target) = state.diagnostic_target.clone() else {
+                return if state.allow_unleased_test_dispatch {
+                    NativePointerCancelReservation::UnleasedTestFallback
+                } else {
+                    NativePointerCancelReservation::MissingDiagnosticTarget
+                };
+            };
+            (slot_generation, target)
+        };
+        target.reserve_reentrant_pointer_cancel(slot_generation, reason)
+    }
+
+    /// Locks a terminal cancellation after a native backend catches an input panic.
+    #[doc(hidden)]
+    pub fn reserve_pointer_cancel_after_callback_panic(
+        &self,
+        reason: PointerCancelReason,
+    ) -> NativePointerCancelReservation {
+        let (slot_generation, target) = {
+            let mut state = self.state.borrow_mut();
+            if let Some(slot_generation) = state.checked_out_generation {
+                let Some(target) = state.diagnostic_target.clone() else {
+                    return if state.allow_unleased_test_dispatch {
+                        NativePointerCancelReservation::UnleasedTestFallback
+                    } else {
+                        NativePointerCancelReservation::MissingDiagnosticTarget
+                    };
+                };
+                (slot_generation, target)
+            } else if let Some(recovery) = state.panic_recovery.take() {
+                if state.terminal || recovery.generation != state.generation {
+                    return NativePointerCancelReservation::NoActiveCallback;
+                }
+                (recovery.generation, recovery.target)
+            } else if state.terminal {
+                return NativePointerCancelReservation::RetiredSlot;
+            } else {
+                return NativePointerCancelReservation::NoActiveCallback;
+            }
+        };
+        target.reserve_reentrant_pointer_cancel(slot_generation, reason)
     }
 
     /// Permanently retires this window's callback slot.
@@ -1231,21 +1664,6 @@ impl PlatformInputCallbackCheckout {
                     "retired platform input callback slot generation={generation} has no diagnostic target"
                 );
             }
-            if state.callback.is_none() {
-                let generation = state.generation;
-                let diagnostic_target = state.diagnostic_target.clone();
-                drop(state);
-                if let Some(target) = diagnostic_target {
-                    target.panic_invariant(
-                        NativeInputBoundary::PlatformInput,
-                        generation,
-                        NativeInvariantFailure::MissingSlot,
-                    );
-                }
-                panic!(
-                    "unbound platform input callback slot generation={generation} has no diagnostic target"
-                );
-            }
             if state.checked_out_generation.is_some() {
                 let generation = state.generation;
                 let diagnostic_target = state.diagnostic_target.clone();
@@ -1261,11 +1679,27 @@ impl PlatformInputCallbackCheckout {
                     "unbound platform input callback slot generation={generation} re-entered without a diagnostic target"
                 );
             }
+            if state.callback.is_none() {
+                let generation = state.generation;
+                let diagnostic_target = state.diagnostic_target.clone();
+                drop(state);
+                if let Some(target) = diagnostic_target {
+                    target.panic_invariant(
+                        NativeInputBoundary::PlatformInput,
+                        generation,
+                        NativeInvariantFailure::MissingSlot,
+                    );
+                }
+                panic!(
+                    "unbound platform input callback slot generation={generation} has no diagnostic target"
+                );
+            }
             let callback = state
                 .callback
                 .take()
                 .expect("checked platform input callback must remain installed");
             let generation = state.generation;
+            state.panic_recovery = None;
             state.checked_out_generation = Some(generation);
             (generation, callback)
         };
@@ -1296,6 +1730,15 @@ impl PlatformInputCallbackCheckout {
 
 impl Drop for PlatformInputCallbackCheckout {
     fn drop(&mut self) {
+        let panic_recovery = std::thread::panicking().then(|| {
+            self.callback
+                .as_ref()
+                .and_then(|callback| callback.diagnostic_target.clone())
+                .map(|target| PlatformInputPanicRecovery {
+                    generation: self.generation,
+                    target,
+                })
+        });
         let retired_callback = {
             let mut state = self.slot.state.borrow_mut();
             if state.checked_out_generation == Some(self.generation) {
@@ -1303,6 +1746,12 @@ impl Drop for PlatformInputCallbackCheckout {
                 if state.generation == self.generation && state.callback.is_none() {
                     state.callback = self.callback.take();
                 }
+            }
+            if let Some(panic_recovery) = panic_recovery.flatten()
+                && !state.terminal
+                && state.generation == self.generation
+            {
+                state.panic_recovery = Some(panic_recovery);
             }
             self.callback.take()
         };
@@ -1318,20 +1767,47 @@ impl Drop for PlatformInputCallbackCheckout {
 /// extend native window lifetime.
 #[doc(hidden)]
 #[derive(Clone)]
-pub struct PlatformWindowCommandDispatcher(
-    Rc<dyn Fn(PlatformWindowCommand) -> PlatformWindowCommandOutcome>,
-);
+pub struct PlatformWindowCommandDispatcher {
+    dispatch_command: Rc<dyn Fn(PlatformWindowCommand) -> PlatformWindowCommandOutcome>,
+    prepare_pointer_capture_release: Rc<dyn Fn(u64) -> PreparedPlatformPointerCaptureRelease>,
+}
 
 impl PlatformWindowCommandDispatcher {
     #[doc(hidden)]
     pub fn new(
         dispatch: impl Fn(PlatformWindowCommand) -> PlatformWindowCommandOutcome + 'static,
     ) -> Self {
-        Self(Rc::new(dispatch))
+        Self {
+            dispatch_command: Rc::new(dispatch),
+            prepare_pointer_capture_release: Rc::new(|_| {
+                PreparedPlatformPointerCaptureRelease::new(|| {
+                    PlatformPointerCaptureReleaseOutcome::Released
+                })
+            }),
+        }
+    }
+
+    /// Creates a dispatcher with a backend-owned native pointer-capture release operation.
+    #[doc(hidden)]
+    pub fn new_with_pointer_capture_release(
+        dispatch: impl Fn(PlatformWindowCommand) -> PlatformWindowCommandOutcome + 'static,
+        prepare_pointer_capture_release: impl Fn(u64) -> PreparedPlatformPointerCaptureRelease + 'static,
+    ) -> Self {
+        Self {
+            dispatch_command: Rc::new(dispatch),
+            prepare_pointer_capture_release: Rc::new(prepare_pointer_capture_release),
+        }
     }
 
     pub(crate) fn dispatch(&self, command: PlatformWindowCommand) -> PlatformWindowCommandOutcome {
-        (self.0)(command)
+        (self.dispatch_command)(command)
+    }
+
+    pub(crate) fn prepare_pointer_capture_release(
+        &self,
+        release_generation: u64,
+    ) -> PreparedPlatformPointerCaptureRelease {
+        (self.prepare_pointer_capture_release)(release_generation)
     }
 }
 
@@ -1581,7 +2057,25 @@ pub struct RequestFrameOptions {
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher;
+    /// Begins native-window retirement without consuming the platform-window owner.
+    ///
+    /// Backends whose object drop is an infallible retirement request may use the default. A
+    /// backend with a fallible native destroy operation must report rejection so GPUI can retain
+    /// the owner and retry.
+    #[doc(hidden)]
+    fn retire_native_window(&self) -> PlatformNativeWindowRetirementOutcome {
+        PlatformNativeWindowRetirementOutcome::Accepted
+    }
     fn bounds(&self) -> Bounds<Pixels>;
+    /// Returns one stable physical client-geometry observation when supported.
+    fn physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
+        None
+    }
+    /// Returns the physical pointer frame scoped to the active native input callback.
+    #[doc(hidden)]
+    fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        None
+    }
     fn is_maximized(&self) -> bool;
     fn is_minimized(&self) -> bool {
         false

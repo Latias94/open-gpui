@@ -84,13 +84,17 @@ cannot synthesize a cross-surface corner. Raw Dock splitter and composite-floati
 stable Dock host capture owner. Standard GPUI payload drags use the source element's stable owner,
 acquired by GPUI only after crossing the drag threshold; `on_drag` therefore requires a stable
 element ID. A frame-scoped cancel listener published by the rendered `DockHost` clears raw drag
-state, payload runtime sessions, previews, anchors, and outside-release polling on
-deactivation, capture revocation, presentation suppression, or window removal. GPUI dispatches the
-terminal cancellation from the old committed frame before replacing its listener journal, so the
-true owner observes cancellation once without leaving a window-global observer after the host
-subtree disappears. A single-tabs floating drag publishes its Dock payload only after floating
-policy accepts the transient session; policy or geometry rejection retracts the GPUI drag and
-capture without leaving a second partial authority.
+state and the matching payload session, preview, anchor, and captured native route on deactivation,
+capture revocation, presentation suppression, or window removal. GPUI dispatches terminal
+cancellation from the old committed frame before replacing its listener journal, so the true owner
+observes cancellation once without leaving a window-global observer after the host subtree
+disappears. Cross-window payload routing is separately bound to the source capture owner's exact
+drag generation and ingress sequence. Its immutable physical callback frame selects a current
+committed host scene without target-window raw input; a terminal fact detaches that exact route
+before effects, and missing or stale geometry fails closed instead of consulting a poll or prior
+preview. A single-tabs floating drag publishes its Dock payload only after floating policy accepts
+the transient session; policy or geometry rejection retracts the GPUI drag and capture without
+leaving a second partial authority.
 
 Ordinary deferred descendants capture the current mapping. `window_portal` is an explicit
 window-coordinate boundary: its anchor is projected before the content mapping resets. The reset

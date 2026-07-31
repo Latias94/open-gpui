@@ -521,7 +521,7 @@ fn route_preview_descriptor_distinguishes_known_and_rejected_markers() {
     )
     .expect("known viewport route should produce a marker");
     let rejected = DockDropRoutePreview::from_route(
-        &DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
+        &DockViewportDropRoute::rejected_by_policy(DockPolicyError::PlatformViewportsDisabled),
         point(px(12.0), px(34.0)),
     )
     .expect("rejected route should produce a marker");
@@ -605,7 +605,7 @@ fn visual_affordance_scene_marks_route_marker_state() {
     )
     .expect("known viewport route should produce a marker");
     let rejected = DockDropRoutePreview::from_route(
-        &DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
+        &DockViewportDropRoute::rejected_by_policy(DockPolicyError::PlatformViewportsDisabled),
         point(px(12.0), px(34.0)),
     )
     .expect("rejected route should produce a marker");

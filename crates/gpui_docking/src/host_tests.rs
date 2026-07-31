@@ -1,6 +1,7 @@
 use crate::{
     DockController, DockGraph, DockNode, DockSpaceId, DockViewportRuntimeHandle, DockWorkspace,
     EditorDockLayoutSpec, debug::DockDebugRegion, host_test_support::*,
+    host_viewport_runtime_test_support::configure_native_registered_window_hit,
 };
 use open_gpui::{
     AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
@@ -238,23 +239,28 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
     let start = debug_bounds(&mut source_visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let target = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    let target_from_source = point(px(400.0) + target.x, target.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_from_source,
+    );
 
     activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
     let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .expect("target host should render a drop preview for cross-window drag");
     assert!(debug_bounds(&mut target_visual, &preview).size.width > px(0.0));
 
-    target_visual.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_up(target_from_source, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    cx.set_platform_hovered_window(None);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(

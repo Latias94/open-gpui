@@ -418,6 +418,7 @@ impl DockDropRuntime {
         self.guide_target.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn scene_position(&self) -> Option<Point<Pixels>> {
         self.scene.as_ref().map(|scene| scene.position)
     }

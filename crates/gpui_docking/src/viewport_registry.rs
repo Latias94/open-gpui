@@ -533,6 +533,11 @@ impl DockViewportSnapshot {
         let window_bounds = Some(window_facts.window_bounds);
         let current_bounds = Some(window_facts.current_bounds);
         let input_mask = window_facts.input_mask;
+        let host_geometry_unchanged = self
+            .host_geometry
+            .as_ref()
+            .zip(host_geometry.as_ref())
+            .is_some_and(|(current, next)| current.has_same_native_routing_geometry(next));
         let placement_changed = self.display_id != display_id
             || self.window_bounds != window_bounds
             || self
@@ -546,9 +551,10 @@ impl DockViewportSnapshot {
             && self.display_id == display_id
             && self.window_bounds == window_bounds
             && self.current_bounds == current_bounds
-            && self.host_geometry == host_geometry
+            && host_geometry_unchanged
         {
             let changed = self.input_mask != input_mask || self.platform_requests.resize_requested;
+            self.host_geometry = host_geometry;
             self.input_mask = input_mask;
             self.platform_requests.resize_requested = false;
             return DockViewportWindowFactsChange {
@@ -1223,6 +1229,15 @@ mod tests {
         );
         assert!(initial.changed);
         assert!(initial.placement_changed);
+        let initial_generation = snapshot.facts_generation();
+
+        let semantically_identical = snapshot.update_route_facts_with_change(
+            facts,
+            DockViewportHostGeometry::identity_with_hit_region_for_test(host_bounds, host_bounds),
+        );
+        assert!(!semantically_identical.changed);
+        assert!(!semantically_identical.placement_changed);
+        assert_eq!(snapshot.facts_generation(), initial_generation);
 
         let smaller_hit_region = Bounds::new(
             open_gpui::point(open_gpui::px(8.0), open_gpui::px(8.0)),
@@ -1236,6 +1251,7 @@ mod tests {
             ),
         );
         assert!(hit_region_only.changed);
+        assert_eq!(snapshot.facts_generation(), initial_generation + 1);
         assert!(
             !hit_region_only.placement_changed,
             "the serialized host bounds did not change"

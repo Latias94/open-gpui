@@ -6,11 +6,12 @@ use std::{
 use accesskit::{Action as AccessibleAction, ActionRequest, TreeId};
 
 use crate::{
-    AppContext, Bounds, Context, Corners, Hitbox, HitboxBehavior, InteractiveElement, IntoElement,
-    ListAlignment, ListHorizontalSizingBehavior, ListState, Modifiers, ParentElement, Pixels,
-    Point, PortalAnchorExt, PortalAnchorHandle, Render, Role, StatefulInteractiveElement, Styled,
-    SubtreeClip, SubtreeClipExt, TestAppContext, UniformListScrollHandle, Window, canvas, deferred,
-    div, list, point, portal_anchor_follower, px, rems, size, uniform_list, window_portal,
+    AppContext, Bounds, Context, Corners, Hitbox, HitboxBehavior, HitboxId, InteractiveElement,
+    IntoElement, ListAlignment, ListHorizontalSizingBehavior, ListState, Modifiers, ParentElement,
+    Pixels, Point, PortalAnchorExt, PortalAnchorHandle, Render, Role, StatefulInteractiveElement,
+    Styled, SubtreeClip, SubtreeClipExt, TestAppContext, UniformListScrollHandle, Window, canvas,
+    deferred, div, list, point, portal_anchor_follower, px, rems, size, uniform_list,
+    window_portal,
 };
 
 fn circular_clip(radius: f32) -> SubtreeClip {
@@ -593,6 +594,116 @@ fn prepared_clip_scope_restores_parent_after_early_return(cx: &mut TestAppContex
             .expect("sibling hitbox missing")
             .contains_window_point(corner)
     );
+}
+
+#[open_gpui::test]
+fn committed_point_target_rank_respects_order_occlusion_and_exact_clips(cx: &mut TestAppContext) {
+    let hitboxes = Rc::new(RefCell::new(None::<[HitboxId; 7]>));
+    let visual = cx.add_empty_window();
+    visual.draw(Point::default(), size(px(300.0), px(120.0)), {
+        let hitboxes = hitboxes.clone();
+        move |_, _| {
+            canvas(
+                move |_, window, _| {
+                    let overlap = Bounds::new(point(px(10.0), px(10.0)), size(px(40.0), px(40.0)));
+                    let overlap_back = window.insert_hitbox(overlap, HitboxBehavior::Normal).id;
+                    let overlap_front = window.insert_hitbox(overlap, HitboxBehavior::Normal).id;
+
+                    let blocked = Bounds::new(point(px(60.0), px(10.0)), size(px(40.0), px(40.0)));
+                    let blocked_back = window.insert_hitbox(blocked, HitboxBehavior::Normal).id;
+                    let blocking_front =
+                        window.insert_hitbox(blocked, HitboxBehavior::BlockMouse).id;
+
+                    let scroll_blocked =
+                        Bounds::new(point(px(110.0), px(10.0)), size(px(40.0), px(40.0)));
+                    let scroll_blocked_back = window
+                        .insert_hitbox(scroll_blocked, HitboxBehavior::Normal)
+                        .id;
+                    let scroll_blocking_front = window
+                        .insert_hitbox(scroll_blocked, HitboxBehavior::BlockMouseExceptScroll)
+                        .id;
+
+                    let clipped_bounds =
+                        Bounds::new(point(px(170.0), px(10.0)), size(px(100.0), px(100.0)));
+                    let prepared =
+                        window.prepare_subtree_clip(&circular_clip(50.0), clipped_bounds);
+                    let clipped = window
+                        .with_prepared_subtree_clip(&prepared, |window| {
+                            window.insert_hitbox(clipped_bounds, HitboxBehavior::Normal)
+                        })
+                        .expect("a freshly prepared clip should enter")
+                        .id;
+
+                    *hitboxes.borrow_mut() = Some([
+                        overlap_back,
+                        overlap_front,
+                        blocked_back,
+                        blocking_front,
+                        scroll_blocked_back,
+                        scroll_blocking_front,
+                        clipped,
+                    ]);
+                },
+                |_, _, _, _| {},
+            )
+            .size_full()
+        }
+    });
+
+    let [
+        overlap_back,
+        overlap_front,
+        blocked_back,
+        blocking_front,
+        scroll_blocked_back,
+        scroll_blocking_front,
+        clipped,
+    ] = hitboxes
+        .borrow()
+        .as_ref()
+        .copied()
+        .expect("the committed frame should publish all test hitboxes");
+
+    visual.update(|window, _| {
+        let overlap_point = point(px(20.0), px(20.0));
+        assert_eq!(
+            overlap_front.window_point_target_rank(overlap_point, window),
+            Some(0)
+        );
+        assert_eq!(
+            overlap_back.window_point_target_rank(overlap_point, window),
+            Some(1)
+        );
+
+        let blocked_point = point(px(70.0), px(20.0));
+        assert_eq!(
+            blocking_front.window_point_target_rank(blocked_point, window),
+            Some(0)
+        );
+        assert_eq!(
+            blocked_back.window_point_target_rank(blocked_point, window),
+            None
+        );
+
+        let scroll_blocked_point = point(px(120.0), px(20.0));
+        assert_eq!(
+            scroll_blocking_front.window_point_target_rank(scroll_blocked_point, window),
+            Some(0)
+        );
+        assert_eq!(
+            scroll_blocked_back.window_point_target_rank(scroll_blocked_point, window),
+            None
+        );
+
+        assert_eq!(
+            clipped.window_point_target_rank(point(px(220.0), px(60.0)), window),
+            Some(0)
+        );
+        assert_eq!(
+            clipped.window_point_target_rank(point(px(171.0), px(11.0)), window),
+            None
+        );
+    });
 }
 
 #[open_gpui::test]

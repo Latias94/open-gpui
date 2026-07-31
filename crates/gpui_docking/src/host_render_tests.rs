@@ -10,6 +10,7 @@ use crate::{
     drag::DockDragPayload,
     drop_scene_fact,
     host_test_support::*,
+    host_viewport_runtime_test_support::configure_native_registered_window_hit,
     presentation_scene::{DockPresentationPane, DockPresentationPaneKind, DockPresentationScene},
     transition_executor::DockTransitionExecutionState,
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
@@ -19,13 +20,13 @@ use crate::{
     },
 };
 use open_gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Entity, FocusHandle,
-    Focusable, HitboxBehavior, InteractiveElement, IntoElement, Modifiers, MouseButton,
-    ParentElement, PlatformWindowDispatch, PlatformWindowMutationTerminal, Render,
-    RequestFrameOptions, StatefulInteractiveElement, Styled, SubtreeClip, SubtreeClipExt,
-    SubtreePresentation, SubtreePresentationExt, SubtreeTransform, SubtreeTransformExt,
-    SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window, WindowMutationDomain,
-    canvas, div, fill, point, px, red, size,
+    AnyView, App, AppContext as _, Bounds, Context, Corners, Entity, FocusHandle, Focusable,
+    HitboxBehavior, InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement,
+    PlatformWindowDispatch, PlatformWindowMutationTerminal, Render, RequestFrameOptions,
+    StatefulInteractiveElement, Styled, SubtreeClip, SubtreeClipExt, SubtreePresentation,
+    SubtreePresentationExt, SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin,
+    TestAppContext, VisualTestContext, Window, WindowMutationDomain, canvas, div, fill, point, px,
+    red, size,
 };
 use open_gpui_motion::{
     MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
@@ -812,34 +813,33 @@ fn rendered_scene_frame_is_published_for_event_receiver_local_routing(cx: &mut T
         .expect("target tabs selector should be emitted");
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let host_position = inner_edge_drop_position(target_bounds, crate::DropZone::Left);
-    let any_window: AnyWindowHandle = window.into();
     let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
-    let (runtime, scene_proof) = cx.update_entity(&host, |host, cx| {
-        host.viewport_runtime()
-            .begin_payload_drag_with_app(&payload, cx);
-        (
-            host.viewport_runtime().clone(),
-            host.interaction().viewport_host_scene_frame().cloned(),
-        )
-    });
-    let scene_proof =
-        scene_proof.expect("rendered host scene frame should be published for routing");
-
-    let request = DockViewportDropRouteRequest::from_platform_signals(
-        space(),
-        left_tabs,
-        DockViewportDropPayload::Item(item("a")),
-        host_position,
-        None,
-        DockViewportPlatformSignals::from_target_context(
-            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
-        )
-        .with_event_receiver_window(any_window)
-        .with_global_window_bounds(false),
-    )
-    .with_event_receiver_local_scene_proof(Some(scene_proof));
-    let resolution =
-        cx.update(|app| runtime.resolve_payload_drop_delivery_for_request(&request, app));
+    let resolution = window
+        .update(cx, |host, window, cx| {
+            host.viewport_runtime()
+                .begin_payload_drag_with_app(&payload, cx);
+            let scene_proof = host
+                .interaction()
+                .viewport_host_scene_frame()
+                .cloned()
+                .expect("rendered host scene frame should be published for routing");
+            let request = DockViewportDropRouteRequest::from_platform_signals(
+                space(),
+                left_tabs,
+                DockViewportDropPayload::Item(item("a")),
+                host_position,
+                None,
+                DockViewportPlatformSignals::from_target_context(
+                    DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+                )
+                .with_event_receiver_window(window.window_handle())
+                .with_global_window_bounds(false),
+            )
+            .with_event_receiver_local_scene_proof(Some(scene_proof));
+            host.viewport_runtime()
+                .resolve_payload_drop_delivery_for_request(&request, cx)
+        })
+        .expect("host window should remain live");
 
     assert!(
         matches!(resolution.route(), DockViewportDropRoute::Local { .. }),
@@ -893,34 +893,33 @@ fn rendered_scene_route_resolves_nested_leaf_edge_from_scene_seeded_frame(cx: &m
         .expect("lower nested tabs selector should be emitted");
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let host_position = inner_edge_drop_position(target_bounds, crate::DropZone::Left);
-    let any_window: AnyWindowHandle = window.into();
     let payload = DockDragPayload::new_item(space(), source_tabs, item("a"), "Panel A".to_string());
-    let (runtime, scene_proof) = cx.update_entity(&host, |host, cx| {
-        host.viewport_runtime()
-            .begin_payload_drag_with_app(&payload, cx);
-        (
-            host.viewport_runtime().clone(),
-            host.interaction().viewport_host_scene_frame().cloned(),
-        )
-    });
-    let scene_proof =
-        scene_proof.expect("rendered host scene frame should be published for routing");
-
-    let request = DockViewportDropRouteRequest::from_platform_signals(
-        space(),
-        source_tabs,
-        DockViewportDropPayload::Item(item("a")),
-        host_position,
-        None,
-        DockViewportPlatformSignals::from_target_context(
-            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
-        )
-        .with_event_receiver_window(any_window)
-        .with_global_window_bounds(false),
-    )
-    .with_event_receiver_local_scene_proof(Some(scene_proof));
-    let resolution =
-        cx.update(|app| runtime.resolve_payload_drop_delivery_for_request(&request, app));
+    let resolution = window
+        .update(cx, |host, window, cx| {
+            host.viewport_runtime()
+                .begin_payload_drag_with_app(&payload, cx);
+            let scene_proof = host
+                .interaction()
+                .viewport_host_scene_frame()
+                .cloned()
+                .expect("rendered host scene frame should be published for routing");
+            let request = DockViewportDropRouteRequest::from_platform_signals(
+                space(),
+                source_tabs,
+                DockViewportDropPayload::Item(item("a")),
+                host_position,
+                None,
+                DockViewportPlatformSignals::from_target_context(
+                    DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+                )
+                .with_event_receiver_window(window.window_handle())
+                .with_global_window_bounds(false),
+            )
+            .with_event_receiver_local_scene_proof(Some(scene_proof));
+            host.viewport_runtime()
+                .resolve_payload_drop_delivery_for_request(&request, cx)
+        })
+        .expect("host window should remain live");
     let target = resolution
         .delivery()
         .and_then(|delivery| delivery.workspace_target())
@@ -1735,7 +1734,7 @@ fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
-    let (_source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
         runtime.clone(),
@@ -1763,6 +1762,13 @@ fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext
         .expect("empty host selector should be emitted");
     let start = debug_bounds(&mut source_visual, &source_tab).center();
     let end = debug_bounds(&mut target_visual, &empty_selector).center();
+    let target_from_source = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_from_source,
+    );
 
     activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
@@ -1771,8 +1777,7 @@ fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext
         MouseButton::Left,
         Modifiers::none(),
     );
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
@@ -1799,7 +1804,6 @@ fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext
         expected_center.draw_bounds,
         "empty host center guide",
     );
-    cx.set_platform_hovered_window(None);
 }
 
 #[open_gpui::test]
@@ -1858,10 +1862,6 @@ fn cross_window_leaf_interior_hover_keeps_guide_only_preview(cx: &mut TestAppCon
         .expect("target window should expose DockHost root");
     cx.run_until_parked();
 
-    let mut source_visual = VisualTestContext::from_window(source_window.into(), cx);
-    start_tab_drag(&mut source_visual, &source_host, source_tabs, "a");
-    cx.run_until_parked();
-
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
     let target_tabs_selector = selector_for(
         &target_visual,
@@ -1874,8 +1874,16 @@ fn cross_window_leaf_interior_hover_keeps_guide_only_preview(cx: &mut TestAppCon
         target_bounds.origin.x + target_bounds.size.width * 0.78,
         target_bounds.origin.y + target_bounds.size.height * 0.5,
     );
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(interior_miss, MouseButton::Left, Modifiers::none());
+    let target_from_source = point(px(400.0) + interior_miss.x, interior_miss.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_from_source,
+    );
+    let mut source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    start_tab_drag(&mut source_visual, &source_host, source_tabs, "a");
+    source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
@@ -1897,7 +1905,6 @@ fn cross_window_leaf_interior_hover_keeps_guide_only_preview(cx: &mut TestAppCon
     ] {
         assert_drop_guide_emitted(&target_visual, &target_host, Some(target_tabs), zone);
     }
-    cx.set_platform_hovered_window(None);
 }
 
 #[open_gpui::test]
@@ -1963,10 +1970,6 @@ fn cross_window_inner_edge_expanded_hit_area_docks(cx: &mut TestAppContext) {
         .expect("target window should expose DockHost root");
     cx.run_until_parked();
 
-    let mut source_visual = VisualTestContext::from_window(source_window.into(), cx);
-    start_tab_drag(&mut source_visual, &source_host, source_tabs, "a");
-    cx.run_until_parked();
-
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
     let target_tabs_selector = selector_for(
         &target_visual,
@@ -1998,19 +2001,26 @@ fn cross_window_inner_edge_expanded_hit_area_docks(cx: &mut TestAppContext) {
         "test point should still be inside the expanded ImGui-style hit area"
     );
 
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(expanded_hit, MouseButton::Left, Modifiers::none());
+    let target_from_source = point(px(400.0) + expanded_hit.x, expanded_hit.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_from_source,
+    );
+    let mut source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    start_tab_drag(&mut source_visual, &source_host, source_tabs, "a");
+    source_visual.simulate_mouse_move(target_from_source, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
     assert_drop_guide_emitted(
         &target_visual,
         &target_host,
         Some(target_tabs),
         crate::DropZone::Right,
     );
-    target_visual.simulate_mouse_up(expanded_hit, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_up(target_from_source, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    cx.set_platform_hovered_window(None);
 
     controller.update(cx, |controller, _| {
         let DockNode::Tabs { items, .. } = controller

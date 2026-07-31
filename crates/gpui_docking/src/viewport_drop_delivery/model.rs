@@ -2,8 +2,9 @@
 use crate::DockWorkspace;
 use crate::{
     DockActionApplyError, DockNodeId, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
-    DockViewportPointerCoordinateSpace, DockViewportRouteProof, DockViewportTearOffRequest,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRejectionReason,
+    DockViewportDropRouteRequest, DockViewportPointerCoordinateSpace, DockViewportRouteProof,
+    DockViewportTearOffRequest,
     drop_target::{DockDropTargetKey, DockResolvedDropTarget},
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
@@ -73,11 +74,22 @@ impl DockViewportResolvedDropRoute {
             DockViewportWorkspaceRouteTarget::Rejected { target, reason } => {
                 Self::with_preview_target(
                     request,
-                    DockViewportDropRoute::Rejected(reason),
+                    DockViewportDropRoute::Rejected(reason.into()),
                     None,
                     Some(target),
                 )
             }
+        }
+    }
+
+    pub(crate) fn foreign_surface_rejection(request: &DockViewportDropRouteRequest) -> Self {
+        Self {
+            route: DockViewportDropRoute::Rejected(
+                DockViewportDropRouteRejectionReason::ForeignSurface,
+            ),
+            delivery: None,
+            preview_target: None,
+            drag_session: request.drag_session().cloned(),
         }
     }
 

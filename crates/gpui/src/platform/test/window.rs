@@ -1,18 +1,20 @@
-#[cfg(test)]
-use crate::DisplayId;
 use crate::{
     A11yCallbacks, AnyWindowHandle, AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome,
     AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds,
     CursorStyle, DevicePixels, DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas,
     PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback,
-    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow,
+    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
+    PlatformNativePointerPhysicalFrame, PlatformPointerCaptureReleaseOutcome, PlatformWindow,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
     PlatformWindowDispatch, PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
-    PlatformWindowPresentOutcome, Point, PromptButton, RequestFrameOptions, Scene, Size,
+    PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPointerCaptureRelease, PromptButton, RequestFrameOptions, Scene, Size,
     TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowCreationFacts, WindowMutationDomain, WindowMutationRequest,
     WindowParams, WindowPlacementState, WindowPlatformFacts,
 };
+#[cfg(test)]
+use crate::{DisplayId, NativePointerCancelReservation, PointerCancelReason};
 use image::RgbaImage;
 use open_gpui_collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
@@ -24,6 +26,13 @@ use std::{
 
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
+    physical_client_bounds: Option<Bounds<DevicePixels>>,
+    scale_factor: f32,
+    native_pointer_physical_frame: Option<PlatformNativePointerPhysicalFrame>,
+    last_native_pointer_physical_frame: Option<PlatformNativePointerPhysicalFrame>,
+    native_pointer_capture_release_count: usize,
+    native_pointer_capture_release_prepare_history: Vec<u64>,
+    native_pointer_capture_release_history: Vec<u64>,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     #[cfg(test)]
@@ -37,6 +46,7 @@ pub(crate) struct TestWindowState {
     renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
     should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
+    native_drop_callback: Option<Box<dyn FnMut()>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: PlatformInputCallbackSlot,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
@@ -66,6 +76,8 @@ pub(crate) struct TestWindowState {
     next_mutation_dispatches: HashMap<WindowMutationDomain, PlatformWindowDispatch>,
     platform_command_callback:
         Option<Box<dyn FnMut(PlatformWindowCommand, TestWindow) -> PlatformWindowCommandOutcome>>,
+    pointer_capture_release_callback:
+        Option<Box<dyn FnMut(u64, TestWindow) -> PlatformPointerCaptureReleaseOutcome>>,
     platform_command_history: Vec<PlatformWindowCommand>,
     initial_presentation_command_outcomes: VecDeque<PlatformWindowCommandOutcome>,
     show_on_initial_presentation: bool,
@@ -83,6 +95,56 @@ pub(crate) struct TestWindowState {
     closed: bool,
     defer_close_callback: bool,
     deferred_close_callback: Option<Box<dyn FnOnce()>>,
+}
+
+struct TestNativePointerPhysicalFrameScope {
+    state: Rc<Mutex<TestWindowState>>,
+    previous: Option<PlatformNativePointerPhysicalFrame>,
+}
+
+impl TestNativePointerPhysicalFrameScope {
+    fn enter(
+        state: Rc<Mutex<TestWindowState>>,
+        frame: Option<PlatformNativePointerPhysicalFrame>,
+    ) -> Self {
+        let previous = {
+            let mut state = state.lock();
+            if let Some(frame) = frame {
+                state.last_native_pointer_physical_frame = Some(frame);
+            }
+            std::mem::replace(&mut state.native_pointer_physical_frame, frame)
+        };
+        Self { state, previous }
+    }
+}
+
+impl Drop for TestNativePointerPhysicalFrameScope {
+    fn drop(&mut self) {
+        self.state.lock().native_pointer_physical_frame = self.previous;
+    }
+}
+
+fn test_native_pointer_physical_frame(
+    event: &PlatformInput,
+    state: &TestWindowState,
+) -> Option<PlatformNativePointerPhysicalFrame> {
+    if matches!(event, PlatformInput::PointerCanceled(_)) {
+        return state.last_native_pointer_physical_frame;
+    }
+    let position = match event {
+        PlatformInput::MouseDown(event) => event.position,
+        PlatformInput::MouseUp(event) => event.position,
+        PlatformInput::MouseMove(event) => event.position,
+        PlatformInput::MouseExited(event) => event.position,
+        _ => return None,
+    };
+    let geometry =
+        PlatformWindowPhysicalGeometry::try_new(state.physical_client_bounds?, state.scale_factor)?;
+    let global_position = geometry.local_to_global(position)?;
+    Some(PlatformNativePointerPhysicalFrame::new(
+        global_position,
+        geometry,
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -174,6 +236,13 @@ impl TestWindow {
         Self(
             Rc::new(Mutex::new(TestWindowState {
                 bounds: params.bounds,
+                physical_client_bounds: None,
+                scale_factor: 2.0,
+                native_pointer_physical_frame: None,
+                last_native_pointer_physical_frame: None,
+                native_pointer_capture_release_count: 0,
+                native_pointer_capture_release_prepare_history: Vec::new(),
+                native_pointer_capture_release_history: Vec::new(),
                 display,
                 #[cfg(test)]
                 requested_display_id: params.display_id,
@@ -186,6 +255,7 @@ impl TestWindow {
                 document_path: None,
                 should_close_handler: None,
                 close_callback: None,
+                native_drop_callback: None,
                 hit_test_window_control_callback: None,
                 input_callback: PlatformInputCallbackSlot::default(),
                 active_status_change_callback: None,
@@ -214,6 +284,7 @@ impl TestWindow {
                 mutation_generations: HashMap::default(),
                 next_mutation_dispatches: HashMap::default(),
                 platform_command_callback: None,
+                pointer_capture_release_callback: None,
                 platform_command_history: Vec::new(),
                 initial_presentation_command_outcomes: initial_presentation_command_outcomes
                     .unwrap_or_default(),
@@ -254,9 +325,41 @@ impl TestWindow {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_pointer_capture_release_callback(
+        &self,
+        callback: impl FnMut(u64, TestWindow) -> PlatformPointerCaptureReleaseOutcome + 'static,
+    ) {
+        let mut state = self.0.lock();
+        if !state.closed {
+            state.pointer_capture_release_callback = Some(Box::new(callback));
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_native_drop_callback(&self, callback: impl FnMut() + 'static) {
+        let mut state = self.0.lock();
+        if !state.closed {
+            state.native_drop_callback = Some(Box::new(callback));
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn platform_command_history(&self) -> Vec<PlatformWindowCommand> {
         self.0.lock().platform_command_history.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_pointer_capture_release_history(&self) -> Vec<u64> {
+        self.0.lock().native_pointer_capture_release_history.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_pointer_capture_release_prepare_history(&self) -> Vec<u64> {
+        self.0
+            .lock()
+            .native_pointer_capture_release_prepare_history
+            .clone()
     }
 
     #[cfg(test)]
@@ -347,6 +450,36 @@ impl TestWindow {
             PlatformWindowCommand::ShowWindowMenu(_)
             | PlatformWindowCommand::StartWindowMove
             | PlatformWindowCommand::StartWindowResize(_) => {}
+        }
+        outcome
+    }
+
+    fn execute_pointer_capture_release(
+        &self,
+        release_generation: u64,
+    ) -> PlatformPointerCaptureReleaseOutcome {
+        let callback = {
+            let mut state = self.0.lock();
+            if state.closed {
+                return PlatformPointerCaptureReleaseOutcome::NativeWindowTerminal;
+            }
+            state
+                .native_pointer_capture_release_history
+                .push(release_generation);
+            state.pointer_capture_release_callback.take()
+        };
+        let outcome = if let Some(mut callback) = callback {
+            let outcome = callback(release_generation, self.clone());
+            let mut state = self.0.lock();
+            if !state.closed && state.pointer_capture_release_callback.is_none() {
+                state.pointer_capture_release_callback = Some(callback);
+            }
+            outcome
+        } else {
+            PlatformPointerCaptureReleaseOutcome::Released
+        };
+        if outcome == PlatformPointerCaptureReleaseOutcome::Released {
+            self.0.lock().native_pointer_capture_release_count += 1;
         }
         outcome
     }
@@ -461,6 +594,30 @@ impl TestWindow {
         }
     }
 
+    pub(crate) fn set_physical_client_geometry(
+        &self,
+        bounds: Option<Bounds<DevicePixels>>,
+        scale_factor: f32,
+    ) {
+        if let Some(bounds) = bounds {
+            PlatformWindowPhysicalGeometry::try_new(bounds, scale_factor)
+                .expect("test physical geometry must be representable");
+        } else {
+            assert!(
+                scale_factor.is_finite() && scale_factor > 0.0,
+                "test window scale factor must be finite and positive"
+            );
+        }
+        let mut state = self.0.lock();
+        state.physical_client_bounds = bounds;
+        state.scale_factor = scale_factor;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_pointer_capture_release_count(&self) -> usize {
+        self.0.lock().native_pointer_capture_release_count
+    }
+
     pub fn simulate_minimize(&mut self) {
         let mut lock = self.0.lock();
         lock.is_minimized = true;
@@ -487,6 +644,30 @@ impl TestWindow {
         if !lock.closed {
             lock.active_status_change_callback = Some(callback);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reserve_reentrant_pointer_cancel_for_test(
+        &self,
+        reason: PointerCancelReason,
+    ) -> NativePointerCancelReservation {
+        self.0
+            .lock()
+            .input_callback
+            .clone()
+            .reserve_reentrant_pointer_cancel(reason)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reserve_pointer_cancel_after_callback_panic_for_test(
+        &self,
+        reason: PointerCancelReason,
+    ) -> NativePointerCancelReservation {
+        self.0
+            .lock()
+            .input_callback
+            .clone()
+            .reserve_pointer_cancel_after_callback_panic(reason)
     }
 
     /// Configures the next structured placement dispatch result.
@@ -641,7 +822,7 @@ impl TestWindow {
     }
 
     fn close(&self) -> bool {
-        let (input_callback, input_handler, callback, retired_callbacks) = {
+        let (input_callback, input_handler, mut native_drop_callback, callback, retired_callbacks) = {
             let mut state = self.0.lock();
             if state.closed {
                 return false;
@@ -666,6 +847,7 @@ impl TestWindow {
             (
                 state.input_callback.clone(),
                 state.input_handler.clone(),
+                state.native_drop_callback.take(),
                 callback,
                 (
                     state.should_close_handler.take(),
@@ -685,6 +867,9 @@ impl TestWindow {
         input_callback.terminate();
         input_handler.terminate();
         drop(retired_callbacks);
+        if let Some(callback) = native_drop_callback.as_mut() {
+            callback();
+        }
         if let Some(callback) = callback {
             callback();
         }
@@ -747,8 +932,25 @@ impl TestWindow {
     }
 
     pub fn simulate_input_result(&mut self, event: PlatformInput) -> DispatchEventResult {
+        let frame = {
+            let state = self.0.lock();
+            test_native_pointer_physical_frame(&event, &state)
+        };
+        self.simulate_input_result_with_native_pointer_physical_frame(event, frame)
+    }
+
+    /// Simulates input with an exact callback-scoped physical pointer frame.
+    #[doc(hidden)]
+    pub fn simulate_input_result_with_native_pointer_physical_frame(
+        &mut self,
+        event: PlatformInput,
+        frame: Option<PlatformNativePointerPhysicalFrame>,
+    ) -> DispatchEventResult {
+        let scope = TestNativePointerPhysicalFrameScope::enter(self.0.clone(), frame);
         let callback = self.0.lock().input_callback.clone();
-        callback.dispatch(event)
+        let result = callback.dispatch(event);
+        drop(scope);
+        result
     }
 
     pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
@@ -787,18 +989,48 @@ impl PlatformWindow for TestWindow {
     }
 
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
-        let window = Rc::downgrade(&self.0);
-        PlatformWindowCommandDispatcher::new(move |command| {
-            if let Some(window) = window.upgrade() {
-                TestWindow(window, false).execute_platform_command(command)
-            } else {
-                PlatformWindowCommandOutcome::Rejected
-            }
-        })
+        let command_window = Rc::downgrade(&self.0);
+        let capture_window = command_window.clone();
+        PlatformWindowCommandDispatcher::new_with_pointer_capture_release(
+            move |command| {
+                if let Some(window) = command_window.upgrade() {
+                    TestWindow(window, false).execute_platform_command(command)
+                } else {
+                    PlatformWindowCommandOutcome::Rejected
+                }
+            },
+            move |release_generation| {
+                if let Some(window) = capture_window.upgrade() {
+                    window
+                        .lock()
+                        .native_pointer_capture_release_prepare_history
+                        .push(release_generation);
+                }
+                let capture_window = capture_window.clone();
+                PreparedPlatformPointerCaptureRelease::new(move || {
+                    if let Some(window) = capture_window.upgrade() {
+                        TestWindow(window, false)
+                            .execute_pointer_capture_release(release_generation)
+                    } else {
+                        PlatformPointerCaptureReleaseOutcome::NativeWindowTerminal
+                    }
+                })
+            },
+        )
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().bounds
+    }
+
+    fn physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
+        let state = self.0.lock();
+        let client_bounds = state.physical_client_bounds?;
+        PlatformWindowPhysicalGeometry::try_new(client_bounds, state.scale_factor)
+    }
+
+    fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        self.0.lock().native_pointer_physical_frame
     }
 
     fn window_bounds(&self) -> WindowBounds {
@@ -881,7 +1113,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        2.0
+        self.0.lock().scale_factor
     }
 
     fn appearance(&self) -> WindowAppearance {
@@ -1095,8 +1327,8 @@ impl PlatformWindow for TestWindow {
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
         let mut state = self.0.lock();
         let size = state.bounds.size;
+        let scale_factor = state.scale_factor;
         if let Some(renderer) = &mut state.renderer {
-            let scale_factor = 2.0;
             let device_size: Size<DevicePixels> = size.to_device_pixels(scale_factor);
             renderer.render_scene_to_image(scene, device_size)
         } else {
@@ -1150,7 +1382,7 @@ fn window_platform_facts(state: &TestWindowState) -> WindowPlatformFacts {
         window_bounds: state.window_bounds,
         inner_window_bounds: state.window_bounds,
         content_size: state.bounds.size,
-        scale_factor: 2.0,
+        scale_factor: state.scale_factor,
         display_id: Some(state.display.id()),
         is_minimized: state.is_minimized,
         is_maximized: state.is_maximized,
@@ -1282,6 +1514,67 @@ mod window_mutation_tests {
         let platform_window = cx.test_window(handle);
         platform_window.clear_platform_command_history();
         (handle, platform_window)
+    }
+
+    #[crate::test]
+    fn physical_client_geometry_converts_through_the_window_scale(cx: &mut TestAppContext) {
+        let (window, platform_window) = open_test_window(cx);
+        platform_window.0.lock().bounds = bounds(-100.0, 50.0, 320.0, 240.0);
+
+        assert_eq!(platform_window.physical_geometry(), None);
+
+        cx.set_platform_window_physical_client_geometry(
+            window,
+            Some(Bounds::new(
+                point(DevicePixels(-1200), DevicePixels(700)),
+                size(DevicePixels(480), DevicePixels(360)),
+            )),
+            1.5,
+        );
+
+        let geometry = platform_window
+            .physical_geometry()
+            .expect("explicit test physical geometry should be observable");
+        assert_eq!(
+            geometry.client_bounds(),
+            Bounds::new(
+                point(DevicePixels(-1200), DevicePixels(700)),
+                size(DevicePixels(480), DevicePixels(360)),
+            )
+        );
+        assert_eq!(
+            geometry.local_to_global(point(px(10.0), px(20.0))),
+            Some(point(DevicePixels(-1185), DevicePixels(730)))
+        );
+        assert_eq!(
+            geometry.global_to_local(point(DevicePixels(-1185), DevicePixels(730))),
+            Some(point(px(10.0), px(20.0)))
+        );
+        assert_eq!(geometry.local_to_global(point(px(f32::NAN), px(0.0))), None);
+        assert_eq!(geometry.local_to_global(point(px(f32::MAX), px(0.0))), None);
+        assert_eq!(
+            PlatformWindowPhysicalGeometry::try_new(
+                Bounds::new(
+                    point(DevicePixels(i32::MAX), DevicePixels(0)),
+                    size(DevicePixels(1), DevicePixels(1)),
+                ),
+                1.0,
+            ),
+            None,
+            "client edges that overflow physical coordinates must fail closed"
+        );
+        let extreme = PlatformWindowPhysicalGeometry::try_new(
+            Bounds::new(
+                point(DevicePixels(i32::MIN), DevicePixels(i32::MIN)),
+                size(DevicePixels(1), DevicePixels(1)),
+            ),
+            1.0,
+        )
+        .expect("extreme integer origins remain representable");
+        assert_eq!(
+            extreme.global_to_local(point(DevicePixels(i32::MAX), DevicePixels(i32::MAX))),
+            Some(point(px(u32::MAX as f32), px(u32::MAX as f32)))
+        );
     }
 
     struct WindowControlView;
@@ -3615,6 +3908,89 @@ mod platform_command_tests {
                 default_prevented: false,
             },
             "unwinding must restore the checked-out platform input callback"
+        );
+    }
+
+    #[crate::test]
+    fn reentrant_native_input_reports_slot_reentry_instead_of_a_missing_slot(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, mut platform_window) = open_test_window(cx);
+        let failure = Rc::new(Cell::new(None));
+        let mut nested_window = platform_window.clone();
+        let _interceptor = cx
+            .update_window(handle, {
+                let failure = failure.clone();
+                move |_, window, _| {
+                    window.intercept_window_mouse_events(move |_, _, _| {
+                        let panic = catch_unwind(AssertUnwindSafe(|| {
+                            nested_window.simulate_input_result(mouse_move_input(20.0))
+                        }))
+                        .expect_err("reentering a checked-out native input slot must panic");
+                        let violation = panic
+                            .downcast_ref::<crate::NativeInputInvariantViolation>()
+                            .expect("slot reentry must preserve the typed invariant violation");
+                        failure.set(Some(violation.failure));
+                    })
+                }
+            })
+            .expect("test window should remain live");
+
+        assert_eq!(
+            platform_window.simulate_input_result(mouse_move_input(10.0)),
+            DispatchEventResult {
+                propagate: true,
+                default_prevented: false,
+            }
+        );
+        assert_eq!(
+            failure.get(),
+            Some(crate::NativeInvariantFailure::SlotReentry)
+        );
+    }
+
+    #[crate::test]
+    fn replacing_a_panicked_native_input_slot_invalidates_its_recovery_generation(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, mut platform_window) = open_test_window(cx);
+        let input_slot = platform_window.0.lock().input_callback.clone();
+        let _interceptor = cx
+            .update_window(handle, |_, window, _| {
+                window.intercept_window_mouse_events(move |_, _, _| {
+                    panic!("injected native input callback panic before slot replacement");
+                })
+            })
+            .expect("test window should remain live");
+
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                platform_window.simulate_input_result(mouse_move_input(10.0))
+            }))
+            .is_err()
+        );
+
+        input_slot.set(PlatformInputCallback::new_for_window(
+            cx.to_async(),
+            handle.window_id(),
+            Box::new(|_| DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            }),
+        ));
+        assert_eq!(
+            input_slot.reserve_pointer_cancel_after_callback_panic(
+                crate::PointerCancelReason::CaptureRevoked,
+            ),
+            crate::NativePointerCancelReservation::NoActiveCallback,
+            "an old panic recovery must not reserve against a replacement generation"
+        );
+        assert_eq!(
+            input_slot.dispatch(mouse_move_input(20.0)),
+            DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            }
         );
     }
 

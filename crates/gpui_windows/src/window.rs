@@ -3,6 +3,7 @@
 use std::{
     cell::{Cell, RefCell},
     num::NonZeroIsize,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
     rc::Rc,
     str::FromStr,
@@ -136,6 +137,8 @@ pub struct WindowsWindowState {
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
     pub last_reported_capslock: Cell<Option<Capslock>>,
     pub hovered: Cell<bool>,
+    /// Last logical client position carried by an exact native pointer callback.
+    pub(crate) last_client_pointer_position: Cell<Option<Point<Pixels>>>,
     pub direct_manipulation: DirectManipulationHandler,
 
     pub renderer: RefCell<DirectXRenderer>,
@@ -152,6 +155,9 @@ pub struct WindowsWindowState {
     pub cursor_visible: Arc<AtomicBool>,
     /// Client-area pointer session and its native capture ownership.
     pub pointer_capture: Cell<WindowsPointerCaptureState>,
+    /// Binds deferred framework release tokens to the native capture session they first target.
+    pub native_pointer_capture_release: WindowsNativePointerCaptureReleaseState,
+    native_pointer_physical_frame: WindowsNativePointerPhysicalFrameState,
     /// Prevents terminal pointer cancellation from re-entering the core input callback.
     pub input_dispatch: Cell<WindowsInputDispatchState>,
     pub pressed_caption_button: Cell<Option<WindowsCaptionButtonAction>>,
@@ -171,10 +177,66 @@ pub struct WindowsWindowState {
     pub(crate) fail_next_pointer_input_frame_change: Cell<bool>,
     #[cfg(test)]
     pub(crate) fail_next_activation_policy_frame_change: Cell<bool>,
+    #[cfg(test)]
+    pub(crate) panic_next_pointer_cancel_reservation: Cell<bool>,
+    #[cfg(test)]
+    pub(crate) replace_next_pointer_capture_acquisition_with: Cell<Option<HWND>>,
+    #[cfg(test)]
+    pub(crate) pointer_capture_release_history: RefCell<Vec<u64>>,
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
     hwnd: HWND,
     pub(crate) a11y: RefCell<Option<A11yState>>,
+}
+
+#[derive(Default)]
+struct WindowsNativePointerPhysicalFrameState {
+    current: Cell<Option<PlatformNativePointerPhysicalFrame>>,
+    invalidation_epoch: Cell<u64>,
+}
+
+impl WindowsNativePointerPhysicalFrameState {
+    fn invalidate_active_scopes(&self) {
+        self.invalidation_epoch
+            .set(self.invalidation_epoch.get().wrapping_add(1));
+        self.current.set(None);
+    }
+}
+
+pub(crate) struct WindowsNativePointerPhysicalFrameScope<'a> {
+    state: &'a WindowsNativePointerPhysicalFrameState,
+    previous: Option<PlatformNativePointerPhysicalFrame>,
+    frame: Option<PlatformNativePointerPhysicalFrame>,
+    entry_epoch: u64,
+}
+
+impl WindowsNativePointerPhysicalFrameScope<'_> {
+    fn enter<'a>(
+        state: &'a WindowsNativePointerPhysicalFrameState,
+        frame: Option<PlatformNativePointerPhysicalFrame>,
+    ) -> WindowsNativePointerPhysicalFrameScope<'a> {
+        let previous = state.current.replace(frame);
+        WindowsNativePointerPhysicalFrameScope {
+            state,
+            previous,
+            frame,
+            entry_epoch: state.invalidation_epoch.get(),
+        }
+    }
+
+    pub(crate) fn frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        self.frame
+    }
+}
+
+impl Drop for WindowsNativePointerPhysicalFrameScope<'_> {
+    fn drop(&mut self) {
+        if self.state.invalidation_epoch.get() == self.entry_epoch {
+            self.state.current.set(self.previous);
+        } else {
+            self.state.current.set(None);
+        }
+    }
 }
 
 pub(crate) struct WindowsWindowInner {
@@ -246,6 +308,8 @@ impl WindowsWindowState {
         let hovered = false;
         let click_state = ClickState::new();
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let native_pointer_capture_release = WindowsNativePointerCaptureReleaseState::default();
+        let native_pointer_physical_frame = WindowsNativePointerPhysicalFrameState::default();
         let input_dispatch = Cell::new(WindowsInputDispatchState::default());
         let pressed_caption_button = None;
         let fullscreen = None;
@@ -275,12 +339,15 @@ impl WindowsWindowState {
             last_reported_modifiers: Cell::new(last_reported_modifiers),
             last_reported_capslock: Cell::new(last_reported_capslock),
             hovered: Cell::new(hovered),
+            last_client_pointer_position: Cell::new(None),
             renderer: RefCell::new(renderer),
             force_render_after_recovery: Cell::new(false),
             click_state,
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             pointer_capture,
+            native_pointer_capture_release,
+            native_pointer_physical_frame,
             input_dispatch,
             pressed_caption_button: Cell::new(pressed_caption_button),
             accepts_pointer_input: Cell::new(accepts_pointer_input),
@@ -295,6 +362,12 @@ impl WindowsWindowState {
             fail_next_pointer_input_frame_change: Cell::new(false),
             #[cfg(test)]
             fail_next_activation_policy_frame_change: Cell::new(false),
+            #[cfg(test)]
+            panic_next_pointer_cancel_reservation: Cell::new(false),
+            #[cfg(test)]
+            replace_next_pointer_capture_acquisition_with: Cell::new(None),
+            #[cfg(test)]
+            pointer_capture_release_history: RefCell::new(Vec::new()),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
             hwnd,
@@ -372,6 +445,101 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
+    #[cfg(test)]
+    pub(crate) fn native_pointer_physical_frame_for_test(
+        &self,
+    ) -> Option<PlatformNativePointerPhysicalFrame> {
+        self.state.native_pointer_physical_frame.current.get()
+    }
+
+    pub(crate) fn native_pointer_physical_frame_scope(
+        &self,
+        client_position: Option<Point<DevicePixels>>,
+        expected_global_position: Option<Point<DevicePixels>>,
+    ) -> WindowsNativePointerPhysicalFrameScope<'_> {
+        let frame = client_position.and_then(|client_position| {
+            self.native_pointer_physical_frame_from_client_position(
+                client_position,
+                expected_global_position,
+            )
+            .inspect_err(|error| {
+                log::trace!("native pointer physical frame unavailable: {error:#}")
+            })
+            .ok()
+        });
+        WindowsNativePointerPhysicalFrameScope::enter(
+            &self.state.native_pointer_physical_frame,
+            frame,
+        )
+    }
+
+    pub(crate) fn mask_native_pointer_physical_frame_scope(
+        &self,
+    ) -> WindowsNativePointerPhysicalFrameScope<'_> {
+        WindowsNativePointerPhysicalFrameScope::enter(
+            &self.state.native_pointer_physical_frame,
+            None,
+        )
+    }
+
+    pub(crate) fn invalidate_native_pointer_physical_frame_scopes(&self) {
+        self.state
+            .native_pointer_physical_frame
+            .invalidate_active_scopes();
+    }
+
+    fn native_pointer_physical_frame_from_client_position(
+        &self,
+        client_position: Point<DevicePixels>,
+        expected_global_position: Option<Point<DevicePixels>>,
+    ) -> Result<PlatformNativePointerPhysicalFrame> {
+        let first_geometry = self.physical_geometry_from_native()?;
+        let mut screen_position = POINT {
+            x: client_position.x.0,
+            y: client_position.y.0,
+        };
+        unsafe { ClientToScreen(self.hwnd, &mut screen_position) }
+            .ok()
+            .context("converting native pointer position to physical desktop coordinates")?;
+        let final_geometry = self.physical_geometry_from_native()?;
+        anyhow::ensure!(
+            first_geometry == final_geometry,
+            "native pointer geometry changed while the callback frame was sampled"
+        );
+        let expected_x = final_geometry
+            .client_bounds()
+            .origin
+            .x
+            .0
+            .checked_add(client_position.x.0)
+            .context("native pointer x-coordinate overflowed physical desktop space")?;
+        let expected_y = final_geometry
+            .client_bounds()
+            .origin
+            .y
+            .0
+            .checked_add(client_position.y.0)
+            .context("native pointer y-coordinate overflowed physical desktop space")?;
+        anyhow::ensure!(
+            screen_position.x == expected_x && screen_position.y == expected_y,
+            "native pointer point and client geometry were sampled from different frames"
+        );
+        if let Some(expected_global_position) = expected_global_position {
+            anyhow::ensure!(
+                screen_position.x == expected_global_position.x.0
+                    && screen_position.y == expected_global_position.y.0,
+                "native pointer point changed while the callback frame was sampled"
+            );
+        }
+        Ok(PlatformNativePointerPhysicalFrame::new(
+            point(
+                DevicePixels(screen_position.x),
+                DevicePixels(screen_position.y),
+            ),
+            final_geometry,
+        ))
+    }
+
     fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = WindowsWindowState::new(
             hwnd,
@@ -517,7 +685,7 @@ impl WindowsWindowInner {
         true
     }
 
-    fn is_native_window_terminal(&self) -> bool {
+    pub(crate) fn is_native_window_terminal(&self) -> bool {
         if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
             return true;
         }
@@ -1596,29 +1764,12 @@ impl WindowsWindowInner {
     }
 
     fn observed_platform_facts_from_native(&self) -> Result<WindowPlatformFacts> {
-        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        if dpi == 0 {
-            anyhow::bail!("failed to read native window DPI");
-        }
-        let scale_factor = dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32;
+        let physical_geometry = self.physical_geometry_from_native()?;
+        let scale_factor = physical_geometry.scale_factor();
         let mut window_rect = RECT::default();
         unsafe { GetWindowRect(self.hwnd, &mut window_rect) }
             .context("failed to read native window bounds")?;
-        let mut client_rect = RECT::default();
-        unsafe { GetClientRect(self.hwnd, &mut client_rect) }
-            .context("failed to read native client bounds")?;
-        let mut client_origin = POINT::default();
-        unsafe { ClientToScreen(self.hwnd, &mut client_origin) }
-            .ok()
-            .context("failed to read native client origin")?;
-        let bounds = Bounds::new(
-            logical_point(client_origin.x as f32, client_origin.y as f32, scale_factor),
-            size(
-                DevicePixels(client_rect.right - client_rect.left),
-                DevicePixels(client_rect.bottom - client_rect.top),
-            )
-            .to_pixels(scale_factor),
-        );
+        let bounds = physical_geometry.client_bounds().to_pixels(scale_factor);
         let mut placement = WINDOWPLACEMENT {
             length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
             ..Default::default()
@@ -1683,6 +1834,59 @@ impl WindowsWindowInner {
             taskbar_visible,
             is_active: self.hwnd == unsafe { GetForegroundWindow() },
         })
+    }
+
+    fn physical_client_bounds_observation(&self) -> Result<Bounds<DevicePixels>> {
+        let mut client_rect = RECT::default();
+        unsafe { GetClientRect(self.hwnd, &mut client_rect) }
+            .context("failed to read native client bounds")?;
+        let mut client_origin = POINT {
+            x: client_rect.left,
+            y: client_rect.top,
+        };
+        unsafe { ClientToScreen(self.hwnd, &mut client_origin) }
+            .ok()
+            .context("failed to read native client origin")?;
+        let width = client_rect
+            .right
+            .checked_sub(client_rect.left)
+            .context("native client width overflowed")?;
+        let height = client_rect
+            .bottom
+            .checked_sub(client_rect.top)
+            .context("native client height overflowed")?;
+        anyhow::ensure!(
+            width >= 0 && height >= 0,
+            "native client bounds were inverted"
+        );
+        Ok(Bounds::new(
+            Point::new(DevicePixels(client_origin.x), DevicePixels(client_origin.y)),
+            size(DevicePixels(width), DevicePixels(height)),
+        ))
+    }
+
+    fn physical_scale_factor_observation(&self) -> Result<f32> {
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        anyhow::ensure!(dpi != 0, "failed to read native window DPI");
+        let scale_factor = dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32;
+        anyhow::ensure!(
+            scale_factor.is_finite() && scale_factor > 0.0,
+            "native window DPI scale was invalid"
+        );
+        Ok(scale_factor)
+    }
+
+    pub(crate) fn physical_geometry_from_native(&self) -> Result<PlatformWindowPhysicalGeometry> {
+        let first_bounds = self.physical_client_bounds_observation()?;
+        let first_scale_factor = self.physical_scale_factor_observation()?;
+        let second_bounds = self.physical_client_bounds_observation()?;
+        let second_scale_factor = self.physical_scale_factor_observation()?;
+        anyhow::ensure!(
+            first_bounds == second_bounds && first_scale_factor == second_scale_factor,
+            "native physical client geometry changed while it was sampled"
+        );
+        PlatformWindowPhysicalGeometry::try_new(second_bounds, second_scale_factor)
+            .context("native physical client geometry was not representable")
     }
 
     fn cached_platform_facts(&self) -> WindowPlatformFacts {
@@ -1800,20 +2004,50 @@ impl WindowsWindowInner {
         terminal: PlatformWindowMutationTerminal,
         facts: WindowPlatformFacts,
     ) {
-        let callback = self.state.callbacks.window_mutation_observation.take();
-        if let Some(mut callback) = callback {
-            callback(PlatformWindowMutationObservation::terminal(
-                domain, generation, terminal, facts,
-            ));
-            self.state
-                .callbacks
-                .window_mutation_observation
-                .set(Some(callback));
-        }
+        let _ = with_windows_callback(
+            &self.state.callbacks.window_mutation_observation,
+            |callback| {
+                callback(PlatformWindowMutationObservation::terminal(
+                    domain, generation, terminal, facts,
+                ));
+            },
+        );
     }
 
     pub(crate) fn system_settings(&self) -> &WindowsSystemSettings {
         &self.system_settings
+    }
+}
+
+/// Invokes a temporarily checked-out native callback and restores it during unwinding.
+/// A callback installed reentrantly is authoritative and replaces the checked-out callback.
+pub(crate) fn with_windows_callback<T, R>(
+    slot: &Cell<Option<T>>,
+    invoke: impl FnOnce(&mut T) -> R,
+) -> Option<R> {
+    let callback = slot.take()?;
+    let mut checkout = WindowsCallbackCheckout {
+        slot,
+        callback: Some(callback),
+    };
+    Some(invoke(checkout.callback.as_mut().expect(
+        "checked-out Windows callback must remain available",
+    )))
+}
+
+struct WindowsCallbackCheckout<'a, T> {
+    slot: &'a Cell<Option<T>>,
+    callback: Option<T>,
+}
+
+impl<T> Drop for WindowsCallbackCheckout<'_, T> {
+    fn drop(&mut self) {
+        let replacement = self.slot.take();
+        if let Some(replacement) = replacement {
+            self.slot.set(Some(replacement));
+        } else {
+            self.slot.set(self.callback.take());
+        }
     }
 }
 
@@ -2317,32 +2551,87 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
-        let window = Rc::downgrade(&self.0);
-        PlatformWindowCommandDispatcher::new(move |command| {
-            let Some(window) = window.upgrade() else {
-                return PlatformWindowCommandOutcome::Rejected;
-            };
-            if window.is_native_window_terminal() {
-                return PlatformWindowCommandOutcome::Rejected;
-            }
+        let command_window = Rc::downgrade(&self.0);
+        let capture_window = command_window.clone();
+        PlatformWindowCommandDispatcher::new_with_pointer_capture_release(
+            move |command| {
+                let Some(window) = command_window.upgrade() else {
+                    return PlatformWindowCommandOutcome::Rejected;
+                };
+                if window.is_native_window_terminal() {
+                    return PlatformWindowCommandOutcome::Rejected;
+                }
 
-            match command {
-                PlatformWindowCommand::CompleteInitialPresentation { activate } => {
-                    window.complete_initial_presentation(activate)
+                match command {
+                    PlatformWindowCommand::CompleteInitialPresentation { activate } => {
+                        window.complete_initial_presentation(activate)
+                    }
+                    PlatformWindowCommand::Activate => window.activate_now(),
+                    // Preserve the existing Windows behavior for currently unsupported commands.
+                    PlatformWindowCommand::ShowWindowMenu(_)
+                    | PlatformWindowCommand::StartWindowMove
+                    | PlatformWindowCommand::StartWindowResize(_) => {
+                        PlatformWindowCommandOutcome::Rejected
+                    }
                 }
-                PlatformWindowCommand::Activate => window.activate_now(),
-                // Preserve the existing Windows behavior for currently unsupported commands.
-                PlatformWindowCommand::ShowWindowMenu(_)
-                | PlatformWindowCommand::StartWindowMove
-                | PlatformWindowCommand::StartWindowResize(_) => {
-                    PlatformWindowCommandOutcome::Rejected
-                }
-            }
-        })
+            },
+            move |release_generation| {
+                let expected_pointer_session_epoch = capture_window.upgrade().map(|window| {
+                    window
+                        .state
+                        .native_pointer_capture_release
+                        .current_pointer_session_epoch()
+                });
+                let capture_window = capture_window.clone();
+                PreparedPlatformPointerCaptureRelease::new(move || {
+                    let Some(window) = capture_window.upgrade() else {
+                        return PlatformPointerCaptureReleaseOutcome::NativeWindowTerminal;
+                    };
+                    let Some(expected_pointer_session_epoch) = expected_pointer_session_epoch
+                    else {
+                        return PlatformPointerCaptureReleaseOutcome::NativeWindowTerminal;
+                    };
+                    if window.is_native_window_terminal() {
+                        return PlatformPointerCaptureReleaseOutcome::NativeWindowTerminal;
+                    }
+
+                    window.release_native_pointer_capture_after_framework_cancel(
+                        release_generation,
+                        expected_pointer_session_epoch,
+                    )
+                })
+            },
+        )
+    }
+
+    fn retire_native_window(&self) -> PlatformNativeWindowRetirementOutcome {
+        if self.0.is_native_window_terminal() {
+            return PlatformNativeWindowRetirementOutcome::NativeWindowTerminal;
+        }
+        if !self.0.destroy_native_window() {
+            return if self.0.is_native_window_terminal() {
+                PlatformNativeWindowRetirementOutcome::NativeWindowTerminal
+            } else {
+                PlatformNativeWindowRetirementOutcome::Rejected
+            };
+        }
+        if self.0.is_native_window_terminal() {
+            PlatformNativeWindowRetirementOutcome::NativeWindowTerminal
+        } else {
+            PlatformNativeWindowRetirementOutcome::Accepted
+        }
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
         self.state.bounds()
+    }
+
+    fn physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
+        self.0.physical_geometry_from_native().ok()
+    }
+
+    fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
+        self.state.native_pointer_physical_frame.current.get()
     }
 
     fn is_maximized(&self) -> bool {
@@ -3176,6 +3465,44 @@ unsafe extern "system" fn window_procedure(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let dispatch = catch_unwind(AssertUnwindSafe(|| unsafe {
+        window_procedure_inner(hwnd, msg, wparam, lparam)
+    }));
+    match dispatch {
+        Ok(result) => result,
+        Err(payload) => {
+            log::error!("caught a panic at the Win32 window-procedure boundary for message {msg}");
+            let ptr =
+                unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Rc<WindowsWindowInner>;
+            if !ptr.is_null() {
+                if let Err(recovery_payload) = catch_unwind(AssertUnwindSafe(|| unsafe {
+                    (&*ptr).settle_pointer_input_after_callback_panic(msg, wparam);
+                })) {
+                    log::error!(
+                        "Win32 window-procedure panic recovery also panicked for message {msg}"
+                    );
+                    std::mem::forget(recovery_payload);
+                }
+                if matches!(msg, WM_NCCREATE | WM_NCDESTROY)
+                    && let Err(finalizer_payload) = catch_unwind(AssertUnwindSafe(|| unsafe {
+                        release_native_window_owner(hwnd, ptr);
+                    }))
+                {
+                    log::error!(
+                        "Win32 native-window owner finalization panicked for message {msg}"
+                    );
+                    std::mem::forget(finalizer_payload);
+                }
+            }
+            // An arbitrary panic payload may itself panic from Drop. Leaking only this failed
+            // payload keeps Rust unwinding from ever crossing the system ABI boundary.
+            std::mem::forget(payload);
+            LRESULT(0)
+        }
+    }
+}
+
+unsafe fn window_procedure_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if msg == WM_NCCREATE {
         let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
@@ -3210,11 +3537,15 @@ unsafe extern "system" fn window_procedure(
     let result = inner.handle_msg(hwnd, msg, wparam, lparam);
 
     if msg == WM_NCDESTROY {
-        unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
-        unsafe { drop(Box::from_raw(ptr)) };
+        unsafe { release_native_window_owner(hwnd, ptr) };
     }
 
     result
+}
+
+unsafe fn release_native_window_owner(hwnd: HWND, ptr: *mut Rc<WindowsWindowInner>) {
+    unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
+    unsafe { drop(Box::from_raw(ptr)) };
 }
 
 pub(crate) fn window_from_hwnd(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
@@ -3413,9 +3744,21 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClickState, StyleAndBounds, WindowOpenState, non_rude_hwnd_for_fullscreen};
-    use open_gpui::{DevicePixels, MouseButton, WindowBounds, point};
+    use super::{
+        ClickState, StyleAndBounds, WindowOpenState, WindowsNativePointerPhysicalFrameScope,
+        WindowsNativePointerPhysicalFrameState, non_rude_hwnd_for_fullscreen,
+        with_windows_callback,
+    };
+    use open_gpui::{
+        Bounds, DevicePixels, MouseButton, PlatformNativePointerPhysicalFrame,
+        PlatformWindowPhysicalGeometry, WindowBounds, point, size,
+    };
     use std::time::Duration;
+    use std::{
+        cell::Cell,
+        panic::{AssertUnwindSafe, catch_unwind},
+        rc::Rc,
+    };
     use windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE;
 
     #[test]
@@ -3493,5 +3836,132 @@ mod tests {
             cx: 0,
             cy: 0,
         })));
+    }
+
+    #[test]
+    fn native_pointer_physical_frame_scope_is_nested_and_callback_local() {
+        let frame = |offset| {
+            PlatformNativePointerPhysicalFrame::new(
+                point(DevicePixels(offset + 1), DevicePixels(offset + 2)),
+                PlatformWindowPhysicalGeometry::try_new(
+                    Bounds::new(
+                        point(DevicePixels(offset), DevicePixels(offset)),
+                        size(DevicePixels(800), DevicePixels(600)),
+                    ),
+                    1.5,
+                )
+                .unwrap(),
+            )
+        };
+        let outer_frame = frame(10);
+        let inner_frame = frame(20);
+        let state = WindowsNativePointerPhysicalFrameState::default();
+
+        {
+            let outer = WindowsNativePointerPhysicalFrameScope::enter(&state, Some(outer_frame));
+            assert_eq!(outer.frame(), Some(outer_frame));
+            assert_eq!(state.current.get(), Some(outer_frame));
+
+            {
+                let inner =
+                    WindowsNativePointerPhysicalFrameScope::enter(&state, Some(inner_frame));
+                assert_eq!(inner.frame(), Some(inner_frame));
+                assert_eq!(state.current.get(), Some(inner_frame));
+            }
+
+            assert_eq!(state.current.get(), Some(outer_frame));
+        }
+
+        assert_eq!(state.current.get(), None);
+    }
+
+    #[test]
+    fn unavailable_native_pointer_frame_masks_an_outer_frame_until_scope_exit() {
+        let outer_frame = PlatformNativePointerPhysicalFrame::new(
+            point(DevicePixels(11), DevicePixels(12)),
+            PlatformWindowPhysicalGeometry::try_new(
+                Bounds::new(
+                    point(DevicePixels(10), DevicePixels(10)),
+                    size(DevicePixels(800), DevicePixels(600)),
+                ),
+                1.5,
+            )
+            .unwrap(),
+        );
+        let state = WindowsNativePointerPhysicalFrameState {
+            current: Cell::new(Some(outer_frame)),
+            invalidation_epoch: Cell::new(0),
+        };
+
+        {
+            let unavailable = WindowsNativePointerPhysicalFrameScope::enter(&state, None);
+            assert_eq!(unavailable.frame(), None);
+            assert_eq!(state.current.get(), None);
+        }
+
+        assert_eq!(state.current.get(), Some(outer_frame));
+    }
+
+    #[test]
+    fn capture_loss_invalidates_the_entire_active_physical_frame_chain() {
+        let outer_frame = PlatformNativePointerPhysicalFrame::new(
+            point(DevicePixels(31), DevicePixels(32)),
+            PlatformWindowPhysicalGeometry::try_new(
+                Bounds::new(
+                    point(DevicePixels(30), DevicePixels(30)),
+                    size(DevicePixels(800), DevicePixels(600)),
+                ),
+                1.5,
+            )
+            .unwrap(),
+        );
+        let state = WindowsNativePointerPhysicalFrameState::default();
+
+        {
+            let outer = WindowsNativePointerPhysicalFrameScope::enter(&state, Some(outer_frame));
+            assert_eq!(outer.frame(), Some(outer_frame));
+            state.invalidate_active_scopes();
+            assert_eq!(state.current.get(), None);
+        }
+
+        assert_eq!(state.current.get(), None);
+    }
+
+    #[test]
+    fn ordinary_callback_checkout_restores_the_callback_after_panic() {
+        let call_count = Rc::new(Cell::new(0usize));
+        let callback = Cell::new(Some(Box::new({
+            let call_count = call_count.clone();
+            move || {
+                let next = call_count.get() + 1;
+                call_count.set(next);
+                if next == 1 {
+                    panic!("injected ordinary callback panic");
+                }
+            }
+        }) as Box<dyn FnMut()>));
+
+        let first = catch_unwind(AssertUnwindSafe(|| {
+            let _ = with_windows_callback(&callback, |callback| callback());
+        }));
+        assert!(first.is_err());
+
+        let _ = with_windows_callback(&callback, |callback| callback());
+        assert_eq!(call_count.get(), 2);
+    }
+
+    #[test]
+    fn ordinary_callback_checkout_preserves_a_reentrant_replacement_during_unwind() {
+        let callback = Cell::new(Some(1u8));
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            let _ = with_windows_callback(&callback, |_| {
+                callback.set(Some(2));
+                panic!("injected callback panic after replacement");
+            });
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(callback.take(), Some(2));
     }
 }

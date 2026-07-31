@@ -59,6 +59,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     cmp,
+    collections::VecDeque,
     fmt::{Debug, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -596,6 +597,7 @@ struct PendingPointerCancellation {
     event: PointerCancelEvent,
     target: Option<HitboxId>,
     listeners: Vec<FrameOutput<Option<AnyPointerCancelListener>>>,
+    native_release: Option<crate::NativePointerCaptureReleaseToken>,
 }
 
 #[derive(Clone)]
@@ -666,6 +668,23 @@ impl HitboxId {
 }
 
 impl HitboxId {
+    /// Returns this hitbox's front-to-back target rank at a displayed window point.
+    ///
+    /// The query uses the complete committed-frame hit-test order. `Some(0)` is the frontmost
+    /// target, while larger ranks remain in the foreground target set. `None` means the hitbox is
+    /// absent from the committed frame, does not contain the point after transforms and clipping,
+    /// is inactive, or is behind [`HitboxBehavior::BlockMouse`] or
+    /// [`HitboxBehavior::BlockMouseExceptScroll`]. Pointer capture and the current input modality
+    /// do not affect this physical point query.
+    pub fn window_point_target_rank(self, point: Point<Pixels>, window: &Window) -> Option<usize> {
+        let hit_test = window.rendered_frame.hit_test(point);
+        hit_test
+            .ids
+            .iter()
+            .take(hit_test.hover_hitbox_count)
+            .position(|id| *id == self)
+    }
+
     /// Checks if the hitbox with this ID is physically hovered. Returns `false` during keyboard
     /// input modality so that keyboard navigation suppresses hover highlights. Use this for visual
     /// hover, cursors, tooltips, and drag-over state; mouse-button handlers should use
@@ -1439,7 +1458,8 @@ pub struct Window {
     pressed_mouse_buttons: PressedMouseButtons,
     /// The stable owner that has captured the pointer, if any.
     captured_pointer: Option<PointerCapture>,
-    pending_pointer_cancellation: Option<PendingPointerCancellation>,
+    pending_pointer_cancellations: VecDeque<PendingPointerCancellation>,
+    pointer_cancel_session_already_settled: bool,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     pub(crate) a11y: A11y,
@@ -2350,7 +2370,8 @@ impl Window {
             image_cache_stack: Vec::new(),
             pressed_mouse_buttons: PressedMouseButtons::default(),
             captured_pointer: None,
-            pending_pointer_cancellation: None,
+            pending_pointer_cancellations: VecDeque::new(),
+            pointer_cancel_session_already_settled: false,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
             a11y: A11y::new(
@@ -2802,7 +2823,7 @@ impl Window {
         retain_first_window_cleanup_panic(
             &mut first_panic,
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.clear_pointer_session(cx);
+                self.clear_pointer_session(PointerCancelReason::WindowClosed, cx);
             })),
             "pointer-session terminal cleanup",
         );
@@ -8808,7 +8829,7 @@ impl Window {
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         let incoming_pointer_cancel = matches!(&event, PlatformInput::PointerCanceled(_));
-        if self.flush_pending_pointer_cancellation(cx) && incoming_pointer_cancel {
+        if self.flush_pending_pointer_cancellations(cx) && incoming_pointer_cancel {
             return self
                 .last_dispatch_event_result
                 .unwrap_or(DispatchEventResult {
@@ -8816,6 +8837,14 @@ impl Window {
                     default_prevented: false,
                 });
         }
+        self.dispatch_event_without_pending_pointer_cancellations(event, cx)
+    }
+
+    fn dispatch_event_without_pending_pointer_cancellations(
+        &mut self,
+        event: PlatformInput,
+        cx: &mut App,
+    ) -> DispatchEventResult {
         self.with_input_transaction(cx, move |window, cx| window.dispatch_event_inner(event, cx))
     }
 
@@ -8876,103 +8905,128 @@ impl Window {
         if let Some(event) = event.downcast_ref::<crate::MouseDownEvent>() {
             self.pressed_mouse_buttons.insert(event.button);
         }
-        let is_pointer_cancel = event.is::<PointerCancelEvent>();
-        let exited_window = event.is::<crate::MouseExitEvent>();
-        let hit_test = if exited_window {
-            HitTest::default()
-        } else {
-            self.rendered_frame.hit_test(self.mouse_position())
-        };
-        if exited_window || hit_test != self.mouse_hit_test {
-            self.mouse_hit_test = hit_test;
-            self.reset_cursor_style(cx);
-        }
+        cx.lock_native_captured_drag_event(self.handle.window_id(), self, event);
+        let dispatch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let is_pointer_cancel = event.is::<PointerCancelEvent>();
+            let exited_window = event.is::<crate::MouseExitEvent>();
+            let hit_test = if exited_window {
+                HitTest::default()
+            } else {
+                self.rendered_frame.hit_test(self.mouse_position())
+            };
+            if exited_window || hit_test != self.mouse_hit_test {
+                self.mouse_hit_test = hit_test;
+                self.reset_cursor_style(cx);
+            }
 
-        let routes_to_captured_target = event.is::<crate::MouseDownEvent>()
-            || event.is::<MouseUpEvent>()
-            || event.is::<MouseMoveEvent>()
-            || event.is::<crate::MousePressureEvent>()
-            || is_pointer_cancel;
-        let _captured_target = routes_to_captured_target
-            .then(|| self.captured_pointer_hitbox())
-            .flatten()
-            .map(|hitbox| MouseEventTargetGuard::enter(self.mouse_event_target.clone(), hitbox));
+            let routes_to_captured_target = !self.pointer_cancel_session_already_settled
+                && (event.is::<crate::MouseDownEvent>()
+                    || event.is::<MouseUpEvent>()
+                    || event.is::<MouseMoveEvent>()
+                    || event.is::<crate::MousePressureEvent>()
+                    || is_pointer_cancel);
+            let _captured_target = routes_to_captured_target
+                .then(|| self.captured_pointer_hitbox())
+                .flatten()
+                .map(|hitbox| {
+                    MouseEventTargetGuard::enter(self.mouse_event_target.clone(), hitbox)
+                });
 
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        if !is_pointer_cancel && self.is_inspector_picking(cx) {
-            self.handle_inspector_mouse_event(event, cx);
-            // When inspector is picking, all other mouse handling is skipped.
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            let inspector_picking = !is_pointer_cancel && self.is_inspector_picking(cx);
+            #[cfg(not(any(feature = "inspector", debug_assertions)))]
+            let inspector_picking = false;
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            if inspector_picking {
+                self.handle_inspector_mouse_event(event, cx);
+            }
+
+            if !inspector_picking && let Some(event) = WindowMouseEvent::from_any(event) {
+                self.mouse_interceptors.clone().retain(&(), |interceptor| {
+                    if is_pointer_cancel || cx.propagate_event {
+                        interceptor(event, self, cx)
+                    } else {
+                        true
+                    }
+                });
+            }
+
+            if !inspector_picking && let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
+                let mut listeners = mem::take(&mut self.rendered_frame.pointer_cancel_listeners);
+                let listener_result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        for output in &mut listeners {
+                            if output.is_valid()
+                                && let Some(listener) = output.value.as_ref()
+                            {
+                                listener.borrow_mut()(event, DispatchPhase::Capture, self, cx);
+                            }
+                        }
+                        for output in listeners.iter_mut().rev() {
+                            if output.is_valid()
+                                && let Some(listener) = output.value.as_ref()
+                            {
+                                listener.borrow_mut()(event, DispatchPhase::Bubble, self, cx);
+                            }
+                        }
+                    }));
+                self.rendered_frame.pointer_cancel_listeners = listeners;
+                if let Err(payload) = listener_result {
+                    std::panic::resume_unwind(payload);
+                }
+            } else if !inspector_picking {
+                let mut listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
+                let listener_result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        // Capture phase, events bubble from back to front. Handlers for this phase are
+                        // used for special purposes, such as detecting events outside of a given Bounds.
+                        if cx.propagate_event {
+                            for output in &mut listeners {
+                                if !output.is_valid() {
+                                    continue;
+                                }
+                                let Some(listener) = output.value.as_mut() else {
+                                    continue;
+                                };
+                                listener(event, DispatchPhase::Capture, self, cx);
+                                if !cx.propagate_event {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Bubble phase, where most normal handlers do their work.
+                        if cx.propagate_event {
+                            for output in listeners.iter_mut().rev() {
+                                if !output.is_valid() {
+                                    continue;
+                                }
+                                let Some(listener) = output.value.as_mut() else {
+                                    continue;
+                                };
+                                listener(event, DispatchPhase::Bubble, self, cx);
+                                if !cx.propagate_event {
+                                    break;
+                                }
+                            }
+                        }
+                    }));
+                self.rendered_frame.mouse_listeners = listeners;
+                if let Err(payload) = listener_result {
+                    std::panic::resume_unwind(payload);
+                }
+            }
+        }));
+        let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.finish_mouse_session_event(event, cx);
-            return;
+        }));
+        match (dispatch, cleanup) {
+            (Ok(()), Ok(())) => {}
+            (Err(payload), Ok(())) | (Err(payload), Err(_)) => {
+                std::panic::resume_unwind(payload);
+            }
+            (Ok(()), Err(payload)) => std::panic::resume_unwind(payload),
         }
-
-        if let Some(event) = WindowMouseEvent::from_any(event) {
-            self.mouse_interceptors.clone().retain(&(), |interceptor| {
-                if is_pointer_cancel || cx.propagate_event {
-                    interceptor(event, self, cx)
-                } else {
-                    true
-                }
-            });
-        }
-
-        if let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
-            let mut listeners = mem::take(&mut self.rendered_frame.pointer_cancel_listeners);
-            for output in &mut listeners {
-                if output.is_valid()
-                    && let Some(listener) = output.value.as_ref()
-                {
-                    listener.borrow_mut()(event, DispatchPhase::Capture, self, cx);
-                }
-            }
-            for output in listeners.iter_mut().rev() {
-                if output.is_valid()
-                    && let Some(listener) = output.value.as_ref()
-                {
-                    listener.borrow_mut()(event, DispatchPhase::Bubble, self, cx);
-                }
-            }
-            self.rendered_frame.pointer_cancel_listeners = listeners;
-        } else {
-            let mut listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
-
-            // Capture phase, events bubble from back to front. Handlers for this phase are used for
-            // special purposes, such as detecting events outside of a given Bounds.
-            if cx.propagate_event {
-                for output in &mut listeners {
-                    if !output.is_valid() {
-                        continue;
-                    }
-                    let Some(listener) = output.value.as_mut() else {
-                        continue;
-                    };
-                    listener(event, DispatchPhase::Capture, self, cx);
-                    if !cx.propagate_event {
-                        break;
-                    }
-                }
-            }
-
-            // Bubble phase, where most normal handlers do their work.
-            if cx.propagate_event {
-                for output in listeners.iter_mut().rev() {
-                    if !output.is_valid() {
-                        continue;
-                    }
-                    let Some(listener) = output.value.as_mut() else {
-                        continue;
-                    };
-                    listener(event, DispatchPhase::Bubble, self, cx);
-                    if !cx.propagate_event {
-                        break;
-                    }
-                }
-            }
-
-            self.rendered_frame.mouse_listeners = listeners;
-        }
-
-        self.finish_mouse_session_event(event, cx);
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {

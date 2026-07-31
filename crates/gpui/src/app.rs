@@ -71,6 +71,7 @@ mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod headless_app_context;
 mod native_callback_diagnostics;
+mod native_captured_drag;
 mod native_event_ingress;
 mod native_platform_commands;
 mod native_query_snapshot;
@@ -90,10 +91,28 @@ pub use native_callback_diagnostics::{
     NativeCallbackKind, NativeInputBoundary, NativeInputDeliveryResult,
     NativeInputHandlerOperation, NativeInvariantFailure, NativePlatformCommandKind,
 };
-pub(crate) use native_platform_commands::PlatformWindowCommandSink;
+pub(crate) use native_captured_drag::NativeCapturedDragStartToken;
+use native_captured_drag::{ActiveNativeCapturedDragAuthority, WindowUpdateProvenance};
+pub use native_captured_drag::{
+    NativeCapturedDragEvent, NativeCapturedDragGeneration, NativeCapturedDragPhase,
+    NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal, NativeIngressSequence,
+    PreparedNativeCapturedDragConsumer,
+};
+pub(crate) use native_platform_commands::{
+    NativePointerCaptureReleaseToken, PlatformWindowCommandSink,
+};
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
+
+fn retain_first_app_shutdown_panic(
+    first: &mut Option<Box<dyn std::any::Any + Send>>,
+    candidate: Option<Box<dyn std::any::Any + Send>>,
+) {
+    if first.is_none() {
+        *first = candidate;
+    }
+}
 
 /// Stage at which a synchronous GPUI window-open transaction failed.
 #[non_exhaustive]
@@ -659,6 +678,8 @@ pub struct App {
 
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
+    active_native_captured_drag: Option<ActiveNativeCapturedDragAuthority>,
+    next_native_captured_drag_generation: u64,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) entities: EntityMap,
@@ -729,6 +750,7 @@ pub struct App {
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
 
     pub(crate) window_update_stack: Vec<WindowId>,
+    window_update_provenance: WindowUpdateProvenance,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
     /// Whether the app was created by [`Application::new_inaccessible`]. No
@@ -736,6 +758,7 @@ pub struct App {
     pub(crate) accessibility_force_disabled: bool,
     flushing_effects: bool,
     pending_updates: usize,
+    current_update_generation: u64,
     quit_mode: QuitMode,
     quitting: bool,
     window_open_barrier_depth: usize,
@@ -818,7 +841,10 @@ impl App {
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,
+                current_update_generation: 0,
                 active_drag: None,
+                active_native_captured_drag: None,
+                next_native_captured_drag_generation: 0,
                 background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -830,6 +856,7 @@ impl App {
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
                 window_update_stack: Vec::new(),
+                window_update_provenance: WindowUpdateProvenance::Ordinary,
                 window_handles: FxHashMap::default(),
                 window_profiles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
@@ -984,6 +1011,22 @@ impl App {
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
     /// will be given `SHUTDOWN_TIMEOUT` to complete before exiting.
     pub fn shutdown(&mut self) {
+        self.begin_shutdown_with_window_open_barrier(false);
+    }
+
+    pub(super) fn shutdown_from_native_quit(&mut self) {
+        self.begin_shutdown_with_window_open_barrier(true);
+    }
+
+    fn begin_shutdown_with_window_open_barrier(&mut self, terminate_ingress: bool) {
+        let Some(app_cell) = self.this.upgrade() else {
+            return;
+        };
+        let (shutdown_generation, newly_started) =
+            app_cell.begin_shutdown_fence(terminate_ingress, self.quitting);
+        if !newly_started {
+            return;
+        }
         self.window_open_epoch = self
             .window_open_epoch
             .checked_add(1)
@@ -992,36 +1035,54 @@ impl App {
             .window_open_barrier_depth
             .checked_add(1)
             .expect("window-open shutdown barrier overflowed");
-        let was_quitting = self.quitting;
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            self.shutdown_with_window_open_barrier()
-        }));
-        self.quitting = was_quitting;
-        self.window_open_barrier_depth -= 1;
-
-        if let Err(payload) = result {
-            resume_unwind(payload);
-        }
-    }
-
-    fn shutdown_with_window_open_barrier(&mut self) {
         let mut futures = Vec::new();
+        let mut first_panic = None;
 
         for observer in self.quit_observers.remove(&()) {
-            futures.push(observer(self));
+            let future = match catch_unwind(AssertUnwindSafe(|| observer(self))) {
+                Ok(future) => AssertUnwindSafe(future).catch_unwind().boxed_local(),
+                Err(payload) => futures::future::ready(Err(payload)).boxed_local(),
+            };
+            futures.push(future);
         }
 
-        window_registry::clear(self);
-        self.flush_effects();
-        self.quitting = true;
-
         let futures = futures::future::join_all(futures);
-        if self
+        match self
             .foreground_executor
             .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
-            .is_err()
         {
-            log::error!("timed out waiting on app_will_quit");
+            Ok(results) => {
+                for result in results {
+                    retain_first_app_shutdown_panic(&mut first_panic, result.err());
+                }
+            }
+            Err(_) => log::error!("timed out waiting on app_will_quit"),
+        }
+
+        // Quit observers own domain-specific shutdown effects. They must get the first chance to
+        // attach a generation-fenced capture-release continuation before the generic fallback
+        // revokes an otherwise still-active captured drag.
+        let drag_cancellation = catch_unwind(AssertUnwindSafe(|| {
+            self.cancel_active_native_captured_drag(crate::PointerCancelReason::WindowClosed);
+        }));
+        retain_first_app_shutdown_panic(&mut first_panic, drag_cancellation.err());
+        app_cell.finish_shutdown_preparation(shutdown_generation, first_panic);
+    }
+
+    pub(super) fn prepare_shutdown_pointer_sessions(&mut self) {
+        let window_ids = self.windows.keys().collect::<Vec<_>>();
+        let mut first_panic = None;
+        for window_id in window_ids {
+            let cleanup = catch_unwind(AssertUnwindSafe(|| {
+                let _ = self.update_window_id(window_id, |_, window, cx| {
+                    window.cancel_pointer_session(crate::PointerCancelReason::WindowClosed, cx);
+                    window.flush_pending_pointer_cancellations(cx);
+                });
+            }));
+            retain_first_app_shutdown_panic(&mut first_panic, cleanup.err());
+        }
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
         }
     }
 
@@ -1091,7 +1152,23 @@ impl App {
     }
 
     pub(crate) fn start_update(&mut self) {
+        if self.pending_updates == 0 {
+            self.current_update_generation = self
+                .current_update_generation
+                .checked_add(1)
+                .expect("application update generation space exhausted");
+        }
         self.pending_updates += 1;
+    }
+
+    /// Returns the generation of the current outer application update.
+    ///
+    /// Framework integrations use this to distinguish work already queued in the current update
+    /// from observations produced by a later update. The value is diagnostic ordering authority,
+    /// not a wall-clock timestamp.
+    #[doc(hidden)]
+    pub fn current_update_generation(&self) -> u64 {
+        self.current_update_generation
     }
 
     pub(crate) fn finish_update(&mut self) {
@@ -1955,8 +2032,61 @@ impl App {
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
+        self.update_window_id_with_provenance(id, WindowUpdateProvenance::Ordinary, update)
+    }
+
+    pub(super) fn update_window_id_from_native<T, F>(
+        &mut self,
+        id: WindowId,
+        sequence: NativeIngressSequence,
+        update: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut Window, &mut App) -> T,
+    {
+        self.update_window_id_with_provenance(
+            id,
+            WindowUpdateProvenance::Native {
+                source_window: id,
+                sequence,
+                captured_drag_fact_claimed: false,
+            },
+            update,
+        )
+    }
+
+    pub(super) fn update_window_id_from_native_with_preclaimed_captured_drag<T, F>(
+        &mut self,
+        id: WindowId,
+        sequence: NativeIngressSequence,
+        update: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut Window, &mut App) -> T,
+    {
+        self.update_window_id_with_provenance(
+            id,
+            WindowUpdateProvenance::Native {
+                source_window: id,
+                sequence,
+                captured_drag_fact_claimed: true,
+            },
+            update,
+        )
+    }
+
+    fn update_window_id_with_provenance<T, F>(
+        &mut self,
+        id: WindowId,
+        provenance: WindowUpdateProvenance,
+        update: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut Window, &mut App) -> T,
+    {
         self.update(|cx| {
-            let mut transaction = window_registry::WindowUpdateTransaction::begin(cx, id)?;
+            let mut transaction =
+                window_registry::WindowUpdateTransaction::begin(cx, id, provenance)?;
             let result = transaction.update(update);
             transaction.finish()?;
 
@@ -2541,17 +2671,24 @@ impl App {
         self.active_drag.is_some()
     }
 
-    pub(crate) fn clear_active_drag_for_window(&mut self, window_id: WindowId) -> bool {
-        if self
+    pub(crate) fn clear_active_drag_for_window(
+        &mut self,
+        window_id: WindowId,
+    ) -> (bool, Option<NativeCapturedDragGeneration>) {
+        let Some(active_drag) = self
             .active_drag
             .as_ref()
-            .is_some_and(|drag| drag.window_id == window_id)
-        {
-            self.active_drag = None;
-            true
-        } else {
-            false
-        }
+            .filter(|drag| drag.window_id == window_id)
+        else {
+            return (false, None);
+        };
+        let captured_generation = self
+            .active_native_captured_drag
+            .as_ref()
+            .and_then(|authority| authority.generation_for(active_drag));
+        self.active_drag = None;
+        self.retire_native_captured_drag_authority();
+        (true, captured_generation)
     }
 
     /// Returns the typed value for the current drag operation, when it matches `T`.
@@ -2571,6 +2708,7 @@ impl App {
         let Some(active_drag) = self.active_drag.take() else {
             return false;
         };
+        self.retire_native_captured_drag_authority();
         if let Some(source) = active_drag.source {
             if source.window_id() == window.window_handle().window_id() {
                 let _ = window.finish_drag_source(&source, active_drag.button);
@@ -3100,11 +3238,13 @@ mod test {
         cell::{Cell, RefCell},
         panic::{AssertUnwindSafe, catch_unwind},
         rc::Rc,
+        sync::Arc,
     };
 
     use crate::{
-        AnyWindowHandle, AppContext, Context, Empty, Entity, IntoElement, QuitMode, Render,
-        TestAppContext, Window, WindowOpenFailureStage, WindowOptions,
+        AnyDrag, AnyWindowHandle, AppContext, Context, Empty, Entity, IntoElement, MouseButton,
+        PointerCancelReason, QuitMode, Render, TestAppContext, Window, WindowOpenFailureStage,
+        WindowOptions, point,
     };
     use crate::{px, size};
 
@@ -3303,6 +3443,20 @@ mod test {
         assert_app_transaction_idle(cx);
         cx.update(|app| assert_eq!(app.pending_updates, 1));
         assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn nested_updates_share_one_outer_update_generation(cx: &mut TestAppContext) {
+        let first_generation = cx.update(|app| {
+            let first_generation = app.current_update_generation();
+            app.update(|app| {
+                assert_eq!(app.current_update_generation(), first_generation);
+            });
+            first_generation
+        });
+        let second_generation = cx.update(|app| app.current_update_generation());
+
+        assert_eq!(second_generation, first_generation + 1);
     }
 
     #[crate::test]
@@ -4134,6 +4288,162 @@ mod test {
         assert!(cx.windows().is_empty());
         let replacement = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
         assert!(replacement.update(cx, |_, _, _| ()).is_ok());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn shutdown_observer_can_claim_the_active_captured_drag_before_the_generic_fallback(
+        cx: &mut TestAppContext,
+    ) {
+        let source: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let generation = cx
+            .update_window(source, |_, _, app| {
+                let reservation = app.reserve_native_captured_drag_start();
+                let generation = reservation.token().generation();
+                let drag_view = app.new(|_| Empty).into();
+                assert!(app.start_reserved_active_drag(
+                    reservation,
+                    AnyDrag {
+                        window_id: source.window_id(),
+                        source: None,
+                        value: Arc::new("shutdown-observer-g1"),
+                        view: drag_view,
+                        window_preview_offset: point(px(0.0), px(0.0)),
+                        cursor_style: None,
+                        button: MouseButton::Left,
+                    },
+                ));
+                generation
+            })
+            .expect("the source must start its captured drag");
+        let observer_saw_active = Rc::new(Cell::new(false));
+        let terminals = Rc::new(RefCell::new(Vec::new()));
+        cx.update({
+            let observer_saw_active = observer_saw_active.clone();
+            let terminals = terminals.clone();
+            move |app| {
+                app.on_app_quit(move |app| {
+                    let terminals = terminals.clone();
+                    observer_saw_active.set(app.active_drag.is_some());
+                    assert!(
+                        app.cancel_native_captured_drag_with_release_barrier(
+                            source.window_id(),
+                            generation,
+                            PointerCancelReason::WindowClosed,
+                            move |barrier, terminal, _| {
+                                terminals.borrow_mut().push((barrier, terminal));
+                            },
+                        )
+                        .is_some()
+                    );
+                    std::future::ready(())
+                })
+                .detach();
+            }
+        });
+
+        cx.quit();
+        cx.run_until_parked();
+
+        assert!(observer_saw_active.get());
+        assert_eq!(terminals.borrow().len(), 1);
+        assert!(cx.windows().is_empty());
+        let replacement = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
+        assert!(replacement.update(cx, |_, _, _| ()).is_ok());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn panicking_quit_observer_does_not_skip_sibling_or_deferred_cleanup(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let lifecycle = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|app| {
+            app.on_app_quit({
+                let lifecycle = lifecycle.clone();
+                move |_| -> std::future::Ready<()> {
+                    lifecycle.borrow_mut().push("panicking-observer");
+                    panic!("injected quit observer panic");
+                }
+            })
+            .detach();
+            app.on_app_quit({
+                let lifecycle = lifecycle.clone();
+                move |app| {
+                    lifecycle.borrow_mut().push("sibling-observer");
+                    app.defer({
+                        let lifecycle = lifecycle.clone();
+                        move |_| lifecycle.borrow_mut().push("deferred-cleanup")
+                    });
+                    std::future::ready(())
+                }
+            })
+            .detach();
+        });
+
+        let result = catch_unwind(AssertUnwindSafe(|| cx.quit()));
+
+        assert!(result.is_err());
+        assert_eq!(
+            lifecycle.borrow().as_slice(),
+            &["panicking-observer", "sibling-observer", "deferred-cleanup"]
+        );
+        assert!(cx.windows().is_empty());
+        let replacement = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
+        assert!(replacement.update(cx, |_, _, _| ()).is_ok());
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn panicking_quit_future_does_not_skip_siblings_and_preserves_observer_order(
+        cx: &mut TestAppContext,
+    ) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let lifecycle = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|app| {
+            app.on_app_quit({
+                let lifecycle = lifecycle.clone();
+                move |_| {
+                    lifecycle.borrow_mut().push("first-created");
+                    let lifecycle = lifecycle.clone();
+                    async move {
+                        lifecycle.borrow_mut().push("first-polled");
+                        panic!("injected quit future panic");
+                    }
+                }
+            })
+            .detach();
+            app.on_app_quit({
+                let lifecycle = lifecycle.clone();
+                move |_| {
+                    lifecycle.borrow_mut().push("second-created");
+                    let lifecycle = lifecycle.clone();
+                    async move {
+                        lifecycle.borrow_mut().push("second-polled");
+                    }
+                }
+            })
+            .detach();
+        });
+
+        let result = catch_unwind(AssertUnwindSafe(|| cx.quit()));
+
+        assert!(result.is_err());
+        assert_eq!(
+            lifecycle.borrow().as_slice(),
+            &[
+                "first-created",
+                "second-created",
+                "first-polled",
+                "second-polled",
+            ]
+        );
+        assert!(cx.windows().is_empty());
         assert_app_transaction_idle(cx);
     }
 

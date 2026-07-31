@@ -1091,7 +1091,7 @@ mod tests {
     #[test]
     fn rejected_route_preview_is_marked_rejected() {
         let preview = DockDropRoutePreview::from_route(
-            &DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
+            &DockViewportDropRoute::rejected_by_policy(DockPolicyError::PlatformViewportsDisabled),
             point(px(12.0), px(34.0)),
         )
         .expect("rejected route should produce a preview");

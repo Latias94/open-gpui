@@ -144,6 +144,41 @@ pub(crate) struct DockViewportRuntimeUpdate {
     change_categories: Vec<DockSurfaceChangeCategory>,
 }
 
+#[must_use = "a frozen surface shutdown reservation must commit before windows close"]
+#[derive(Debug)]
+pub(crate) struct DockViewportSurfaceShutdownReservation {
+    lease: DockSurfaceWindowSessionLease,
+    windows: Vec<(crate::DockViewportWindowRole, AnyWindowHandle)>,
+}
+
+impl DockViewportSurfaceShutdownReservation {
+    pub(crate) fn new(
+        lease: DockSurfaceWindowSessionLease,
+        windows: Vec<(crate::DockViewportWindowRole, AnyWindowHandle)>,
+    ) -> Self {
+        Self { lease, windows }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn lease(&self) -> DockSurfaceWindowSessionLease {
+        self.lease
+    }
+
+    #[cfg(test)]
+    pub(crate) fn windows(&self) -> &[(crate::DockViewportWindowRole, AnyWindowHandle)] {
+        &self.windows
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        DockSurfaceWindowSessionLease,
+        Vec<(crate::DockViewportWindowRole, AnyWindowHandle)>,
+    ) {
+        (self.lease, self.windows)
+    }
+}
+
 #[must_use = "surface shutdown effects must publish their cleanup commit before windows close"]
 #[derive(Debug)]
 pub(crate) struct DockViewportSurfaceShutdownEffects {
@@ -163,16 +198,6 @@ impl DockViewportSurfaceShutdownEffects {
             windows,
             cleanup_update,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn lease(&self) -> DockSurfaceWindowSessionLease {
-        self.lease
-    }
-
-    #[cfg(test)]
-    pub(crate) fn windows(&self) -> &[(crate::DockViewportWindowRole, AnyWindowHandle)] {
-        &self.windows
     }
 
     pub(crate) fn into_parts(

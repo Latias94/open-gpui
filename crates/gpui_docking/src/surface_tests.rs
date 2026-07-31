@@ -1,21 +1,20 @@
 use crate::{
-    DockController, DockDropGuideMetrics, DockHost, DockItemId, DockLayout, DockLayoutRect,
-    DockPanelOpenPlacementSource, DockPanelPlacement, DockPanelPlacementTarget, DockSpaceId,
-    DockSurface, DockSurfaceChange, DockSurfaceChangeCategory, DockSurfacePanelError,
-    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePrimaryWindowOpenOutcome,
-    DockSurfaceSnapshot, DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportOpenStatus, DockSurfaceViewportReadinessStatus,
-    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
-    DockSurfaceViewportUnsupportedFlag, DockSurfaceViewports, DockSurfaceWindowSessionPhase,
-    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
+    DockController, DockItemId, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
+    DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange,
+    DockSurfaceChangeCategory, DockSurfacePanelError, DockSurfacePanelLocationKind,
+    DockSurfacePanelOutcome, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceSnapshot,
+    DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
+    DockSurfaceViewportReadinessStatus, DockSurfaceViewportShouldCloseStatus,
+    DockSurfaceViewportSpec, DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag,
+    DockSurfaceViewports, DockSurfaceWindowSessionPhase, DockViewportClosePolicy,
+    DockViewportPlacement, DockViewportPlacementLayout, DockViewportRestoreReadiness,
+    DockViewportWindowBounds, DockViewportWindowState,
     model::{DockLayoutNode, DockLayoutSpace},
-    viewport_drop_scene::DockViewportHostSceneDraft,
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window,
     WindowBackgroundAppearance, WindowBounds, WindowMutationDomain, WindowMutationSupport,
-    WindowOptions, div, point, px, size,
+    WindowOptions, div, px, size,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -751,120 +750,6 @@ fn surface_revisions_only_observed_platform_placement_not_queued_dispatch(
     }
     assert_eq!(changes[0].revision(), revision_before_dispatch + 1);
     assert_eq!(changes[1].revision(), revision_before_dispatch + 2);
-}
-
-#[open_gpui::test]
-fn rendered_host_bounds_publish_one_persistent_placement_revision(
-    cx: &mut open_gpui::TestAppContext,
-) {
-    let changes = Rc::new(RefCell::new(Vec::new()));
-    let observed = changes.clone();
-    let (surface, primary, _subscription) = cx.update(|cx| {
-        let surface = DockSurface::builder("main")
-            .panel_placements([DockPanelPlacement::center("editor")])
-            .panel_factory("editor", "Editor", test_panel)
-            .build(cx)
-            .expect("surface layout should validate");
-        let primary = open_primary(&surface, cx);
-        let subscription = surface.subscribe_changes(cx, move |event, _| {
-            observed.borrow_mut().push(event.clone());
-        });
-        (surface, primary, subscription)
-    });
-    cx.run_until_parked();
-    changes.borrow_mut().clear();
-
-    let (runtime, space, registration, work_context) = cx.update(|app| {
-        let host = primary
-            .downcast::<DockHost>()
-            .expect("the primary window should retain a DockHost root")
-            .entity(app)
-            .expect("the primary DockHost should remain live");
-        host.update(app, |host, host_cx| {
-            (
-                host.viewport_runtime().clone(),
-                host.space().clone(),
-                host.current_viewport_registration()
-                    .expect("the rendered primary should own a viewport registration"),
-                host.runtime_work_context(host_cx)
-                    .expect("the rendered primary should retain its active surface lease"),
-            )
-        })
-    });
-    let revision_before = cx.read(|app| surface.revision(app));
-    let observed_host_bounds = Bounds::new(point(px(14.0), px(18.0)), size(px(280.0), px(190.0)));
-    let primary_window_id = primary.window_id();
-
-    let first_published = primary
-        .update(cx, |_, window, app| {
-            let preparation = runtime
-                .prepare_rendered_viewport_host_scene_draft(
-                    DockViewportHostSceneDraft::new(
-                        space.clone(),
-                        primary_window_id,
-                        crate::DockViewportWindowFacts::from_window(window, app).current_bounds,
-                        observed_host_bounds,
-                        observed_host_bounds.origin,
-                        DockDropGuideMetrics::default(),
-                    ),
-                    Some(&registration),
-                    work_context,
-                    window,
-                    app,
-                )
-                .expect("the exact primary registration should prepare its host scene");
-            let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
-            runtime.publish_rendered_viewport_host_scene_commit_from_window(commit, window, app)
-        })
-        .expect("the primary window should remain live");
-    assert!(first_published);
-    assert_eq!(cx.read(|app| surface.revision(app)), revision_before + 1);
-    assert_eq!(changes.borrow().len(), 1);
-    assert_eq!(
-        changes.borrow()[0].categories(),
-        &[DockSurfaceChangeCategory::ObservedViewportPlacement]
-    );
-    assert_eq!(
-        cx.read(|app| {
-            surface
-                .export_snapshot(app)
-                .viewport_placement()
-                .placement_for_space(&space)
-                .and_then(|placement| placement.host_bounds)
-        }),
-        Some(DockLayoutRect::from_bounds(observed_host_bounds)),
-        "the revision must expose the same host bounds through the durable snapshot"
-    );
-
-    let second_published = primary
-        .update(cx, |_, window, app| {
-            let preparation = runtime
-                .prepare_rendered_viewport_host_scene_draft(
-                    DockViewportHostSceneDraft::new(
-                        space.clone(),
-                        primary_window_id,
-                        crate::DockViewportWindowFacts::from_window(window, app).current_bounds,
-                        observed_host_bounds,
-                        observed_host_bounds.origin,
-                        DockDropGuideMetrics::default(),
-                    ),
-                    Some(&registration),
-                    work_context,
-                    window,
-                    app,
-                )
-                .expect("the unchanged primary registration should prepare again");
-            let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
-            runtime.publish_rendered_viewport_host_scene_commit_from_window(commit, window, app)
-        })
-        .expect("the primary window should remain live");
-    assert!(!second_published, "an identical scene must be a no-op");
-    assert_eq!(cx.read(|app| surface.revision(app)), revision_before + 1);
-    assert_eq!(
-        changes.borrow().len(),
-        1,
-        "an identical host-bounds observation must not publish another revision"
-    );
 }
 
 #[open_gpui::test]

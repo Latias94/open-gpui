@@ -92,17 +92,26 @@ Viewport productization:
 - Viewport close policy now covers retain, prevent, and merge-back behavior. Merge-back close moves
   closing viewport content into an explicit fallback dock space before unregistering the runtime
   mapping.
-- `crates/gpui_docking/src/host_outside_release.rs` gives rendered drags a host-local polling
-  fallback for release outside every GPUI window while preserving GPUI as the input authority.
-- `Platform::mouse_button_is_pressed` is optional: macOS implements it with
-  `NSEvent::pressedMouseButtons`, Windows implements it with `GetAsyncKeyState`, and unsupported
-  platforms return `None`.
-- `runtime_poll_released_left_button_tears_off_without_mouse_up_event` covers the product path
-  where no GPUI mouse-up event is delivered but the platform reports the left button was released.
-- Platform viewport routing assumes live window bounds are in a shared desktop coordinate space.
-  macOS now preserves CoreGraphics display origins for `PlatformDisplay::bounds()` and live
-  `PlatformWindow::bounds()`, while saved `WindowOptions` placement remains an application input
-  rather than a live hit-test source.
+- `crates/gpui_docking/src/native_captured_drag.rs` owns one source-window route for the exact GPUI
+  drag generation. The prepared Dock consumer is activated with drag start, and GPUI delivers
+  immutable move or terminal facts only after the source `Window` and outer `App` borrows end.
+- Captured facts retain their original native ingress sequence and one physical callback frame.
+  Cross-window selection uses the point-scoped `PlatformWindowHitStack` and the coherent physical
+  geometry embedded in its selected entry; it never reconstructs a screen point from a later DPI
+  sample or depends on raw target-window input.
+- `PlatformViewportCapabilities::window_hit_stack` is independent from application window-list and
+  global-bounds capabilities. Windows advertises it only after bounded stable classification agrees
+  with an independent point hit. Unsupported or incomplete backends return `Unavailable`, which
+  cannot look through an opaque top-level or authorize the previous preview.
+- `native_captured_desktop_release_matrix_tears_off_payloads_from_source_mouse_up`, the
+  `runtime_native_captured_*` interaction tests, and GPUI's captured-drag pointer-session tests cover
+  source-only release, generation/sequence barriers, target/source close, foreign-surface rejection,
+  panic cleanup, and exact terminal retirement without polling.
+- Event-receiver and model-level viewport routing that explicitly uses live window bounds requires
+  a shared desktop coordinate space. macOS preserves CoreGraphics display origins for
+  `PlatformDisplay::bounds()` and live `PlatformWindow::bounds()`, while saved `WindowOptions`
+  placement remains an application input rather than a hit-test source. Captured native routing
+  instead uses the immutable point and per-entry geometry from its single callback observation.
 - Linux X11 and Wayland update their stored hover state when platform enter/leave events fire, so
   `PlatformWindow::is_hovered()` matches the registered hover callbacks.
 
@@ -185,9 +194,11 @@ Test locality:
 - Legacy compatibility pressure around graph-based `DockHost` and `DockController` constructors,
   host-owned state accessors, the `DockHostSource` owned/controller split, and context-free
   viewport target helpers has been removed from the public docking API.
-- The rendered release-outside path now has a platform button-state polling seam for macOS,
-  Windows, and tests; Linux/Wayland and other unsupported backends intentionally return `None`
-  until a reliable platform primitive is available.
+- The rendered release-outside polling state machine and platform button-state probes have been
+  deleted. Windows and the test backend currently own the point-scoped native hit-stack contract;
+  macOS, Linux, Wayland, Web, and any incomplete backend remain `Unavailable` until they can publish
+  the same coherent, independently trustworthy observation. Backend work must implement that
+  capability rather than reintroduce polling or a last-hovered-window fallback.
 - Full Dear ImGui PlatformIO parity is intentionally not claimed. DPI-scale conversion, monitor
   work-area scale, live programmatic window move, input passthrough, no-focus-on-appearing, alpha,
   topmost/no-taskbar flags, and reliable Wayland global window position need a future GPUI platform
@@ -204,7 +215,8 @@ Test locality:
   docking-native rendered test step still needs a remote Windows result for this branch. Physical
   native-window dogfood remains manual proof beyond CI.
 - Add richer product behavior through the existing seams: route-preview polish, focus restoration,
-  accessibility behavior, and broader backend coverage for outside-window release polling.
+  accessibility behavior, provisional payload presentation, and broader backend coverage for
+  point-scoped native hit classification.
 - Continue splitting future viewport or graph code only when the extracted module passes the
   deletion test and gives callers a smaller, deeper interface.
 - Revisit whether `host_test_support` should share a smaller ID fixture with graph and viewport

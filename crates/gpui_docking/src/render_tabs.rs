@@ -231,6 +231,7 @@ impl DockHost {
                     let drag_session = host.begin_payload_drag_from_render_with_drag_visual_style(
                         payload,
                         source_drag_visual_style.clone(),
+                        geometry,
                         window,
                         cx,
                     );
@@ -393,6 +394,7 @@ impl DockHost {
                                 drag_item.clone(),
                                 payload,
                                 drag_visual_style.clone(),
+                                geometry,
                                 window,
                                 cx,
                             );

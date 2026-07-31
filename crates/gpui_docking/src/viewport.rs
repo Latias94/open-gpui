@@ -103,6 +103,7 @@ impl DockViewportAdapter {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub(crate) fn is_live_window_for_space(
         &self,
         space: &DockSpaceId,

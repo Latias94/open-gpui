@@ -148,6 +148,7 @@ impl DockViewportRuntimeHandle {
             changed: backend_focus_changed || viewport_frame_changed,
             draft,
             expected_registration: expected_registration.cloned(),
+            update_generation: cx.current_update_generation(),
             work_context,
             window: window.window_handle(),
             window_facts,
@@ -162,6 +163,7 @@ impl DockViewportRuntimeHandle {
             changed,
             draft,
             expected_registration,
+            update_generation,
             work_context,
             window,
             window_facts,
@@ -194,7 +196,11 @@ impl DockViewportRuntimeHandle {
             .registration_key_for_space_window(&space, window_id)
             .and_then(|registration_key| draft.bind(registration_key))
             .and_then(|snapshot| {
-                runtime.commit_viewport_host_scene_snapshot(snapshot, window_facts)
+                runtime.commit_viewport_host_scene_snapshot_at_update(
+                    snapshot,
+                    window_facts,
+                    Some(update_generation),
+                )
             });
         let mut route_preview_update = runtime.clear_preview_for_unready_window_route(window_id);
         route_preview_update.bind_work_context(work_context);
@@ -276,6 +282,28 @@ impl DockViewportRuntimeHandle {
         changed
     }
 
+    pub(crate) fn is_current_viewport_host_scene_frame(
+        &self,
+        frame: &DockViewportHostSceneFrame,
+    ) -> bool {
+        self.runtime
+            .borrow()
+            .is_current_viewport_host_scene_frame(frame)
+    }
+
+    pub(crate) fn discard_rendered_viewport_host_scene_frame_exact_from_window(
+        &self,
+        frame: &DockViewportHostSceneFrame,
+        window: &Window,
+        cx: &mut App,
+    ) -> bool {
+        let update = self
+            .runtime
+            .borrow_mut()
+            .discard_viewport_host_scene_frame_exact(frame);
+        refresh_runtime_update_excluding(update, Some(window.window_handle().window_id()), cx)
+    }
+
     pub(crate) fn sync_rendered_viewport_pointer_input(
         &self,
         registration: &DockViewportRegistrationKey,
@@ -355,6 +383,7 @@ impl DockViewportRuntimeHandle {
     }
 
     #[cfg(test)]
+    #[cfg(test)]
     pub(crate) fn discard_rendered_viewport_host_scene_frame(
         &self,
         space: &DockSpaceId,
@@ -365,22 +394,6 @@ impl DockViewportRuntimeHandle {
             .borrow_mut()
             .discard_viewport_host_scene_frame(space, window_id, expected_registration)
             .changed()
-    }
-
-    pub(crate) fn discard_rendered_viewport_host_scene_frame_from_window(
-        &self,
-        space: &DockSpaceId,
-        window_id: WindowId,
-        expected_registration: Option<&DockViewportRegistrationKey>,
-        window: &Window,
-        cx: &mut App,
-    ) -> bool {
-        let update = self.runtime.borrow_mut().discard_viewport_host_scene_frame(
-            space,
-            window_id,
-            expected_registration,
-        );
-        refresh_runtime_update_excluding(update, Some(window.window_handle().window_id()), cx)
     }
 
     pub(crate) fn reconcile_viewport_frame<C: open_gpui::AppContext>(&self, cx: &mut C) -> bool {
@@ -536,20 +549,21 @@ mod tests {
         session: &mut DockSurfaceWindowSession,
         lease: DockSurfaceWindowSessionLease,
         next_anchor: WindowId,
+        cx: &mut App,
     ) -> DockSurfaceWindowSessionLease {
         session.begin_shutdown(
             lease,
             DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
             std::iter::empty(),
         );
+        let reservation = runtime
+            .freeze_surface_shutdown(lease)
+            .expect("the active generation should begin runtime shutdown");
         assert!(
-            runtime
-                .begin_surface_shutdown(lease)
-                .expect("the active generation should begin runtime shutdown")
-                .windows()
-                .is_empty(),
+            reservation.windows().is_empty(),
             "the scene-only generation should not own platform windows"
         );
+        assert!(runtime.commit_surface_shutdown(reservation, cx).is_empty());
         session.mark_runtime_empty(lease);
         session.settle_terminal(
             lease,
@@ -653,7 +667,9 @@ mod tests {
             })
             .expect("the raw window should remain live");
 
-        let g2 = reopen_surface_runtime(&runtime, &mut session, g1, WindowId::from(1002));
+        let g2 = cx.update(|app| {
+            reopen_surface_runtime(&runtime, &mut session, g1, WindowId::from(1002), app)
+        });
         let commit = runtime.finalize_rendered_viewport_host_scene_draft(preparation);
 
         assert!(commit.frame.is_none(), "G1 work must not finalize under G2");

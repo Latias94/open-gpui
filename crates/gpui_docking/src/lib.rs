@@ -132,7 +132,6 @@ mod host_debug;
 mod host_drop_scene;
 mod host_interaction_outcome;
 mod host_interactions;
-mod host_outside_release;
 mod host_render_actions;
 mod host_render_session;
 mod host_viewport_drop;
@@ -140,6 +139,7 @@ mod ids;
 mod interaction;
 mod layout;
 pub mod model;
+mod native_captured_drag;
 mod op;
 mod panel;
 mod panel_catalog;
@@ -297,9 +297,9 @@ pub(crate) use graph::{
     DockFloatingContainer, DockGraph, DockGraphValidationError, DockNode, DropZone, SplitAxis,
     dock_bounds,
 };
-pub(crate) use host::DockHost;
 #[cfg(test)]
 pub(crate) use host::DockHostOptions;
+pub(crate) use host::{DockHost, DockHostWindowBinding};
 pub(crate) use ids::DockNodeId;
 pub use ids::{DockClassId, DockItemId, DockSpaceId};
 pub use layout::{DOCK_LAYOUT_VERSION, DockLayout, DockLayoutRect, DockLayoutValidationError};
@@ -381,7 +381,7 @@ pub(crate) use viewport_routed_preview::*;
 pub(crate) use viewport_runtime::*;
 pub(crate) use viewport_runtime_drop_resolution::*;
 pub(crate) use viewport_runtime_effects::*;
-pub(crate) use viewport_runtime_handle::DockViewportRuntimeHandle;
+pub(crate) use viewport_runtime_handle::{DockViewportRuntimeHandle, DockViewportRuntimeIdentity};
 pub(crate) use viewport_runtime_lineage::*;
 pub(crate) use viewport_runtime_status::*;
 pub(crate) use viewport_target_context::*;

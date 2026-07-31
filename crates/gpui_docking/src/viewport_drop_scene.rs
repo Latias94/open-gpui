@@ -83,6 +83,16 @@ pub(crate) struct DockViewportHostSceneDraft {
 }
 
 impl DockViewportHostSceneDraft {
+    pub(crate) fn has_same_native_routing_content(&self, other: &Self) -> bool {
+        self.space == other.space
+            && self.window_id == other.window_id
+            && self.current_bounds == other.current_bounds
+            && self
+                .host_geometry
+                .has_same_native_routing_geometry(&other.host_geometry)
+            && self.scene == other.scene
+    }
+
     pub(crate) fn new(
         space: DockSpaceId,
         window_id: WindowId,

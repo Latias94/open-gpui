@@ -126,7 +126,9 @@ mod tests {
         assert_eq!(
             DockDropDelivery::from_route_request(
                 &request,
-                DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled)
+                DockViewportDropRoute::rejected_by_policy(
+                    DockPolicyError::PlatformViewportsDisabled,
+                )
             ),
             None
         );

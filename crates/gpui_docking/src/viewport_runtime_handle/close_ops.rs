@@ -81,7 +81,7 @@ impl DockViewportRuntimeHandle {
         let prepared = self
             .runtime
             .borrow_mut()
-            .prepare_window_should_close(window_id);
+            .prepare_window_should_close_at_update(window_id, Some(cx.current_update_generation()));
         let applied = prepared.apply(cx);
         let finalized = self
             .runtime
@@ -132,6 +132,8 @@ impl DockViewportRuntimeHandle {
         }
 
         let runtime = Rc::downgrade(&self.runtime);
+        let identity = self.identity;
+        let liveness = Rc::downgrade(&self.liveness);
         let platform_mutation_observation_subscriptions =
             self.platform_mutation_observation_subscriptions.clone();
         let pending_platform_mutations = self.pending_platform_mutations.clone();
@@ -155,7 +157,12 @@ impl DockViewportRuntimeHandle {
                     .retain(|(terminal_window_id, _), _| *terminal_window_id != window_id);
                 return;
             };
+            let Some(liveness) = liveness.upgrade() else {
+                return;
+            };
             let handle = DockViewportRuntimeHandle {
+                identity,
+                liveness,
                 runtime,
                 window_closed_observer_installed: Rc::new(Cell::new(true)),
                 platform_mutation_observation_subscriptions:

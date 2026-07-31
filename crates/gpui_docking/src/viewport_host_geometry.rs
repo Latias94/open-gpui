@@ -1,4 +1,4 @@
-use open_gpui::{Bounds, ElementGeometry, HitTestSnapshot, Hitbox, Pixels, Point};
+use open_gpui::{Bounds, ElementGeometry, HitTestSnapshot, Hitbox, HitboxId, Pixels, Point};
 
 #[derive(Clone, Debug, PartialEq)]
 enum DockViewportHostHitRegion {
@@ -16,6 +16,7 @@ enum DockViewportHostHitRegion {
 pub(crate) struct DockViewportHostGeometry {
     geometry: ElementGeometry,
     hit_region: DockViewportHostHitRegion,
+    committed_hitbox: Option<HitboxId>,
 }
 
 impl DockViewportHostGeometry {
@@ -23,7 +24,16 @@ impl DockViewportHostGeometry {
         Self {
             geometry: hitbox.geometry(),
             hit_region: DockViewportHostHitRegion::Committed(hitbox.hit_test_snapshot()),
+            committed_hitbox: Some(hitbox.id),
         }
+    }
+
+    pub(crate) fn committed_hitbox(&self) -> Option<HitboxId> {
+        self.committed_hitbox
+    }
+
+    pub(crate) fn has_same_native_routing_geometry(&self, other: &Self) -> bool {
+        self.geometry == other.geometry && self.hit_region == other.hit_region
     }
 
     pub(crate) fn layout_bounds(&self) -> Bounds<Pixels> {
@@ -74,6 +84,7 @@ impl DockViewportHostGeometry {
         Self {
             geometry: ElementGeometry::identity_for_test(layout_bounds),
             hit_region: DockViewportHostHitRegion::Synthetic(hit_region),
+            committed_hitbox: None,
         }
     }
 }

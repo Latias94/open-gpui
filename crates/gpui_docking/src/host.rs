@@ -245,6 +245,7 @@ impl DockHost {
         role: DockHostRole,
         cx: &mut Context<Self>,
     ) -> Self {
+        crate::native_captured_drag::ensure_native_captured_drag_router(cx);
         cx.observe(&controller, |_, _, cx| cx.notify()).detach();
         if let Some(surface_owner) = surface_owner.as_ref() {
             cx.observe(&surface_owner, |_, _, cx| cx.notify()).detach();

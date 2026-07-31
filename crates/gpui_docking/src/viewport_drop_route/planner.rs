@@ -12,10 +12,13 @@ use super::{
         DockTrustedHoveredWindowLocalDropTarget,
     },
     model::{
-        DockViewportDropRoute, DockViewportDropRoutePlan, DockViewportDropRouteUnavailableReason,
-        unavailable_route_selection_reason,
+        DockViewportDropRoute, DockViewportDropRoutePlan, DockViewportDropRouteRejectionReason,
+        DockViewportDropRouteUnavailableReason, unavailable_route_selection_reason,
     },
-    request::{DockViewportDropRouteRequest, DockViewportPointerCoordinateSpace},
+    request::{
+        DockCapturedNativeDropRoute, DockCapturedNativeHostTarget, DockViewportDropRouteRequest,
+        DockViewportPointerCoordinateSpace,
+    },
 };
 
 impl DockViewportAdapter {
@@ -23,30 +26,17 @@ impl DockViewportAdapter {
         &self,
         target_context: DockViewportTargetContext,
     ) -> DockViewportTargetContext {
-        let target_context =
-            if target_context
-                .trusted_hovered_window()
-                .is_some_and(|hovered_window| {
-                    self.window_input_mask(hovered_window)
-                        == Some(DockViewportInputMask::NoInputPassThrough)
-                })
-            {
-                target_context.without_trusted_hovered_window()
-            } else {
-                target_context
-            };
-
         if target_context
-            .drag_last_hovered_window()
-            .is_some_and(|last_hovered_window| {
-                self.window_input_mask(last_hovered_window)
+            .trusted_hovered_window()
+            .is_some_and(|hovered_window| {
+                self.window_input_mask(hovered_window)
                     == Some(DockViewportInputMask::NoInputPassThrough)
             })
         {
-            return target_context.without_drag_last_hovered_window();
+            target_context.without_trusted_hovered_window()
+        } else {
+            target_context
         }
-
-        target_context
     }
 
     pub(super) fn resolve_payload_drop_route_plan(
@@ -54,6 +44,14 @@ impl DockViewportAdapter {
         request: &DockViewportDropRouteRequest,
         target_context: &DockViewportTargetContext,
     ) -> DockViewportDropRoutePlan {
+        if let Some(route) = request.captured_native_route() {
+            return self.resolve_captured_native_route_plan(request, route);
+        }
+        if request.release_origin() == DockPayloadDropReleaseOrigin::SourceOnly {
+            return DockViewportDropRoutePlan::unavailable(
+                DockViewportDropRouteUnavailableReason::NoViewportRouteSelection,
+            );
+        }
         if self.trusted_hovered_window_is_known_but_unusable(target_context) {
             return DockViewportDropRoutePlan::unavailable(
                 DockViewportDropRouteUnavailableReason::BlockedByViewportWindow,
@@ -95,6 +93,105 @@ impl DockViewportAdapter {
         }
 
         DockViewportDropRoutePlan::OutsideRegisteredViewport
+    }
+
+    fn resolve_captured_native_route_plan(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        route: &DockCapturedNativeDropRoute,
+    ) -> DockViewportDropRoutePlan {
+        if request.captured_native_generation().is_none()
+            || request.captured_native_sequence().is_none()
+        {
+            return DockViewportDropRoutePlan::unavailable(
+                DockViewportDropRouteUnavailableReason::NoViewportRouteSelection,
+            );
+        }
+        let (target, forbidden) = match route {
+            DockCapturedNativeDropRoute::Host(target) => (target, false),
+            DockCapturedNativeDropRoute::ForbiddenTarget(target) => (target, true),
+            DockCapturedNativeDropRoute::Desktop => {
+                return DockViewportDropRoutePlan::OutsideRegisteredViewport;
+            }
+            DockCapturedNativeDropRoute::Unavailable => {
+                return DockViewportDropRoutePlan::unavailable(
+                    DockViewportDropRouteUnavailableReason::NoViewportRouteSelection,
+                );
+            }
+        };
+        self.resolve_captured_native_host_route(request, target)
+            .map(|route| {
+                if forbidden {
+                    DockViewportDropRoute::Rejected(
+                        DockViewportDropRouteRejectionReason::ForeignSurface,
+                    )
+                } else {
+                    route
+                }
+            })
+            .map(DockViewportDropRoutePlan::route)
+            .unwrap_or_else(|| {
+                DockViewportDropRoutePlan::unavailable(
+                    DockViewportDropRouteUnavailableReason::NoViewportRouteSelection,
+                )
+            })
+    }
+
+    pub(crate) fn resolve_captured_native_forbidden_route_proof(
+        &self,
+        request: &DockViewportDropRouteRequest,
+    ) -> Option<crate::DockViewportRouteProof> {
+        if request.captured_native_generation().is_none()
+            || request.captured_native_sequence().is_none()
+        {
+            return None;
+        }
+        let DockCapturedNativeDropRoute::ForbiddenTarget(target) =
+            request.captured_native_route()?
+        else {
+            return None;
+        };
+        self.resolve_captured_native_host_route(request, target)
+            .and_then(|route| route.route_proof().cloned())
+    }
+
+    fn resolve_captured_native_host_route(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        target: &DockCapturedNativeHostTarget,
+    ) -> Option<DockViewportDropRoute> {
+        let target_window_id = target.target_window().window_id();
+        if !target
+            .scene_frame()
+            .matches_viewport(target.target_space(), target_window_id)
+            || target.scene_frame().registration_key().space() != target.target_space()
+            || target.scene_frame().registration_key().window_id() != target_window_id
+            || !self.is_current_registration(target.scene_frame().registration_key())
+            || self.window_for_space(target.target_space()) != Some(target.target_window())
+        {
+            return None;
+        }
+        let facts_generation =
+            self.snapshot_facts_generation(target.target_space(), target_window_id)?;
+        let route_proof = crate::DockViewportRouteProof::new(
+            target.scene_frame().registration_key().clone(),
+            facts_generation,
+        );
+        if target.target_space() == request.source_space() {
+            return Some(DockViewportDropRoute::Local {
+                host_position: target.host_position(),
+                route_proof,
+                source: DockViewportRouteSelectionSource::CapturedNativeHitStack,
+            });
+        }
+        Some(DockViewportDropRoute::KnownViewport {
+            target: DockViewportTargetHit::with_route_proof(
+                target.target_window(),
+                target.host_position(),
+                route_proof,
+            ),
+            source: DockViewportRouteSelectionSource::CapturedNativeHitStack,
+        })
     }
 
     fn trusted_hovered_window_is_known_but_unusable(

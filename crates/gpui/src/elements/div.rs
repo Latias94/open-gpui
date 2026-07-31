@@ -38,6 +38,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -73,14 +74,34 @@ pub struct GroupStyle {
 pub struct DragStartGeometry {
     window_position: Point<Pixels>,
     hitbox: Hitbox,
+    native_captured_drag_start: crate::app::NativeCapturedDragStartToken,
 }
 
 impl DragStartGeometry {
-    fn new(window_position: Point<Pixels>, hitbox: Hitbox) -> Self {
+    fn new(
+        window_position: Point<Pixels>,
+        hitbox: Hitbox,
+        native_captured_drag_start: crate::app::NativeCapturedDragStartToken,
+    ) -> Self {
         Self {
             window_position,
             hitbox,
+            native_captured_drag_start,
         }
+    }
+
+    /// Returns the exact native captured-drag generation reserved for this start transaction.
+    #[doc(hidden)]
+    pub fn native_captured_drag_generation(&self) -> crate::NativeCapturedDragGeneration {
+        self.native_captured_drag_start.generation()
+    }
+
+    /// Prepares the one native captured-drag consumer activated with this drag start.
+    #[doc(hidden)]
+    pub fn prepare_native_captured_drag_consumer(
+        &self,
+    ) -> crate::PreparedNativeCapturedDragConsumer {
+        self.native_captured_drag_start.prepare_consumer()
     }
 
     /// Returns the unchanged pointer position in displayed window coordinates.
@@ -3454,21 +3475,59 @@ impl Interactivity {
                                 return;
                             }
                             *clicked_state.borrow_mut() = ElementClickedState::default();
-                            let geometry = DragStartGeometry::new(event.position, hitbox.clone());
+                            let native_captured_drag_start =
+                                cx.reserve_native_captured_drag_start();
+                            let geometry = DragStartGeometry::new(
+                                event.position,
+                                hitbox.clone(),
+                                native_captured_drag_start.token(),
+                            );
                             let window_preview_offset = geometry.window_preview_offset();
-                            let drag = (drag_listener)(drag_value.as_ref(), &geometry, window, cx);
-                            cx.active_drag = Some(AnyDrag {
-                                window_id: window.window_handle().window_id(),
-                                source: Some(drag_pointer_capture_handle),
-                                view: drag,
-                                value: drag_value,
-                                window_preview_offset,
-                                cursor_style: drag_cursor_style,
-                                button: mouse_down.button,
-                            });
+                            let drag = match catch_unwind(AssertUnwindSafe(|| {
+                                (drag_listener)(drag_value.as_ref(), &geometry, window, cx)
+                            })) {
+                                Ok(drag) => drag,
+                                Err(payload) => {
+                                    drop(native_captured_drag_start);
+                                    pending_mouse_down.take();
+                                    window.queue_pointer_session_cancellation(
+                                        drag_pointer_capture_handle,
+                                        crate::PointerCancelReason::CaptureRevoked,
+                                        cx,
+                                    );
+                                    window.refresh();
+                                    resume_unwind(payload);
+                                }
+                            };
+                            let start_is_current = window.can_commit_pointer_session_start()
+                                && window.owns_pointer_capture(
+                                    drag_pointer_capture_handle,
+                                    mouse_down.button,
+                                );
+                            let started = start_is_current
+                                && cx.start_reserved_active_drag(
+                                    native_captured_drag_start,
+                                    AnyDrag {
+                                        window_id: window.window_handle().window_id(),
+                                        source: Some(drag_pointer_capture_handle),
+                                        view: drag,
+                                        value: drag_value,
+                                        window_preview_offset,
+                                        cursor_style: drag_cursor_style,
+                                        button: mouse_down.button,
+                                    },
+                                );
                             pending_mouse_down.take();
                             window.refresh();
-                            cx.stop_propagation();
+                            if started {
+                                cx.stop_propagation();
+                            } else {
+                                window.queue_pointer_session_cancellation(
+                                    drag_pointer_capture_handle,
+                                    crate::PointerCancelReason::CaptureRevoked,
+                                    cx,
+                                );
+                            }
                         }
                     }
                 });

@@ -135,6 +135,7 @@ impl DockHost {
         let chrome_target = session.floating_chrome_target(floating);
         let floating_style = &session.visual_style().floating;
 
+        let drop_space = space.clone();
         let handle = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -149,7 +150,31 @@ impl DockHost {
             .border_color(floating_style.title_border)
             .text_color(floating_style.title_text)
             .text_sm()
-            .cursor_pointer();
+            .cursor_pointer()
+            // Floating chrome occludes the host below it. It must therefore transport the
+            // genuine local drop event while the render-owned preview remains the target fact.
+            .on_drop(cx.listener(
+                move |this, event: &open_gpui::DropEvent<DockDragPayload>, window, cx| {
+                    if !this
+                        .accepts_window_callback(window_binding, window.window_handle().window_id())
+                    {
+                        return;
+                    }
+                    let Ok(layout_position) = event.pointer().target_layout_position() else {
+                        return;
+                    };
+                    this.drop_payload_event_from_render(
+                        event.value(),
+                        drop_space.clone(),
+                        DockRenderedPointerPosition::new(
+                            layout_position,
+                            event.pointer().window_event().position,
+                        ),
+                        window,
+                        cx,
+                    );
+                },
+            ));
 
         if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) = chrome_target {
             let mut payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
@@ -220,6 +245,7 @@ impl DockHost {
                             .begin_payload_drag_from_render_with_drag_visual_style(
                                 payload,
                                 drag_visual_style.clone(),
+                                geometry,
                                 window,
                                 cx,
                             );

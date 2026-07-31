@@ -27,6 +27,7 @@ pub enum DockViewportClosePolicy {
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportCloseCoordinator {
     window_close_plans: HashMap<WindowId, DockViewportClosePlanState>,
+    window_close_request_update_generations: HashMap<WindowId, u64>,
     next_finalize_generation: u64,
     space_finalize_generations: HashMap<DockSpaceId, u64>,
     next_should_close_generation: u64,
@@ -262,6 +263,8 @@ impl DockViewportCloseCoordinator {
 
     pub(crate) fn discard_window(&mut self, window_id: WindowId) -> DockViewportClosePlanEffect {
         self.window_should_close_generations.remove(&window_id);
+        self.window_close_request_update_generations
+            .remove(&window_id);
         match self.window_close_plans.get_mut(&window_id) {
             Some(state @ DockViewportClosePlanState::Pending(_)) => {
                 *state = DockViewportClosePlanState::Discarded;
@@ -273,6 +276,8 @@ impl DockViewportCloseCoordinator {
 
     pub(crate) fn cancel_window(&mut self, window_id: WindowId) -> DockViewportClosePlanEffect {
         self.window_should_close_generations.remove(&window_id);
+        self.window_close_request_update_generations
+            .remove(&window_id);
         if self.window_close_plans.remove(&window_id).is_some() {
             DockViewportClosePlanEffect::Cleared
         } else {
@@ -285,6 +290,8 @@ impl DockViewportCloseCoordinator {
         window_id: WindowId,
     ) -> Option<DockViewportClosePlanState> {
         self.window_should_close_generations.remove(&window_id);
+        self.window_close_request_update_generations
+            .remove(&window_id);
         self.window_close_plans.remove(&window_id)
     }
 
@@ -292,12 +299,36 @@ impl DockViewportCloseCoordinator {
         &mut self,
         window_id: WindowId,
         plan: Option<DockViewportMergeBackClosePlan>,
+        request_update_generation: Option<u64>,
     ) {
+        if let Some(generation) = request_update_generation {
+            self.window_close_request_update_generations
+                .insert(window_id, generation);
+        } else {
+            self.window_close_request_update_generations
+                .remove(&window_id);
+        }
         if let Some(plan) = plan {
             self.window_close_plans
                 .insert(window_id, DockViewportClosePlanState::Pending(plan));
         } else {
             self.window_close_plans.remove(&window_id);
+        }
+    }
+
+    pub(crate) fn scene_commit_can_cancel_window_close(
+        &self,
+        window_id: WindowId,
+        scene_update_generation: Option<u64>,
+    ) -> bool {
+        match (
+            self.window_close_request_update_generations.get(&window_id),
+            scene_update_generation,
+        ) {
+            (Some(request_generation), Some(scene_generation)) => {
+                scene_generation > *request_generation
+            }
+            _ => true,
         }
     }
 }
@@ -717,13 +748,26 @@ mod tests {
         coordinator
             .window_close_plans
             .insert(window_id, DockViewportClosePlanState::Discarded);
-        coordinator.replace_window_close_plan(window_id, Some(plan));
+        coordinator.replace_window_close_plan(window_id, Some(plan), None);
         assert!(matches!(
             coordinator.window_close_plans.get(&window_id),
             Some(DockViewportClosePlanState::Pending(_))
         ));
 
-        coordinator.replace_window_close_plan(window_id, None);
+        coordinator.replace_window_close_plan(window_id, None, None);
         assert_eq!(coordinator.window_close_plans.get(&window_id), None);
+    }
+
+    #[test]
+    fn scene_commit_only_cancels_close_from_a_later_update() {
+        let mut coordinator = DockViewportCloseCoordinator::default();
+        let window_id = WindowId::from(1);
+        let plan = DockViewportMergeBackClosePlan::new(space("source"), space("target"), None);
+        coordinator.replace_window_close_plan(window_id, Some(plan), Some(7));
+
+        assert!(!coordinator.scene_commit_can_cancel_window_close(window_id, Some(6)));
+        assert!(!coordinator.scene_commit_can_cancel_window_close(window_id, Some(7)));
+        assert!(coordinator.scene_commit_can_cancel_window_close(window_id, Some(8)));
+        assert!(coordinator.scene_commit_can_cancel_window_close(window_id, None));
     }
 }

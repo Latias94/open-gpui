@@ -96,11 +96,12 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
             window.mouse_position = position;
             window.mouse_in_window = true;
             if cx.active_drag.is_none() {
-                cx.active_drag = Some(AnyDrag {
+                let view = cx.new(|_| paths.clone()).into();
+                cx.start_active_drag(AnyDrag {
                     window_id: window.window_handle().window_id(),
                     source: None,
                     value: Arc::new(paths.clone()),
-                    view: cx.new(|_| paths).into(),
+                    view,
                     window_preview_offset: position,
                     cursor_style: None,
                     button: MouseButton::Left,
@@ -134,7 +135,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
         }
         FileDropEvent::Exited => {
             window.mouse_in_window = false;
-            cx.clear_active_drag_for_window(window.window_handle().window_id());
+            let _ = cx.clear_active_drag_for_window(window.window_handle().window_id());
             PlatformInput::FileDrop(FileDropEvent::Exited)
         }
     }

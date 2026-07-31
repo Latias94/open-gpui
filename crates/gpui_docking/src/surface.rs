@@ -46,7 +46,7 @@ pub use window_session::{
 use crate::{
     DockController, DockHost, DockSpaceId, DockViewportClosePolicy,
     DockViewportRuntimeCommitAuthority, DockViewportRuntimeHandle, DockViewportRuntimeLineage,
-    DockViewportWindowRole, DockVisualStyleResolver,
+    DockViewportSurfaceShutdownReservation, DockViewportWindowRole, DockVisualStyleResolver,
 };
 pub(crate) use activation::{
     DockSurfaceActivationBinding, DockSurfaceActivationHostRegistration,
@@ -56,18 +56,286 @@ pub(crate) use activation::{
 #[cfg(test)]
 pub(crate) use activation::{DockSurfaceActivationDispatch, DockSurfaceActivationHostLookup};
 use open_gpui::{
-    AnyView, App, AppContext, Bounds, Context, Entity, Pixels, Subscription, Window, WindowBounds,
-    WindowId, WindowInitialPresentationStatus, WindowOpenFailureStage, WindowOptions,
+    AnyView, App, AppContext, Bounds, Context, Entity, Global, Pixels, Subscription, WeakEntity,
+    Window, WindowBounds, WindowId, WindowInitialPresentationStatus, WindowOpenFailureStage,
+    WindowOptions,
 };
 pub(crate) use owner::{
     DockSurfaceOwner, DockSurfaceTransactionId, with_detached_root_transaction,
     with_root_transaction,
 };
 use std::{
-    cell::Cell,
+    any::Any,
+    cell::{Cell, RefCell},
+    collections::HashMap,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     rc::Rc,
 };
+
+type DockSurfaceShutdownPanic = Box<dyn Any + Send + 'static>;
+
+#[derive(Default)]
+struct DockSurfaceAppShutdownFanoutState {
+    participants: Vec<WeakEntity<DockSurfaceOwner>>,
+    observer_armed: bool,
+}
+
+/// Holds every live surface at the post-registry-clear barrier before the first panic resumes.
+#[derive(Clone, Default)]
+struct DockSurfaceAppShutdownFanout {
+    state: Rc<RefCell<DockSurfaceAppShutdownFanoutState>>,
+}
+
+impl Global for DockSurfaceAppShutdownFanout {}
+
+impl DockSurfaceAppShutdownFanout {
+    fn register(&self, owner: &Entity<DockSurfaceOwner>, cx: &mut App) {
+        let install_observer = {
+            let mut state = self.state.borrow_mut();
+            state
+                .participants
+                .retain(|participant| participant.upgrade().is_some());
+            if !state
+                .participants
+                .iter()
+                .any(|participant| participant == owner)
+            {
+                state.participants.push(owner.downgrade());
+            }
+            if state.observer_armed {
+                false
+            } else {
+                state.observer_armed = true;
+                true
+            }
+        };
+        if install_observer {
+            install_surface_app_shutdown_observer(self.clone(), cx);
+        }
+    }
+
+    fn snapshot_for_shutdown(&self) -> Vec<Entity<DockSurfaceOwner>> {
+        let mut state = self.state.borrow_mut();
+        state.observer_armed = false;
+        state
+            .participants
+            .retain(|participant| participant.upgrade().is_some());
+        state.participants.sort_unstable();
+        state.participants.dedup();
+        state
+            .participants
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .collect()
+    }
+
+    fn rearm_for_next_lifecycle(&self, cx: &mut App) {
+        let install_observer = {
+            let mut state = self.state.borrow_mut();
+            if state.observer_armed {
+                false
+            } else {
+                state.observer_armed = true;
+                true
+            }
+        };
+        if install_observer {
+            install_surface_app_shutdown_observer(self.clone(), cx);
+        }
+    }
+}
+
+struct DockSurfaceAppShutdownSettlement {
+    owner: Entity<DockSurfaceOwner>,
+    lease: Option<window_session::DockSurfaceWindowSessionLease>,
+    close_dispatch: std::thread::Result<()>,
+}
+
+#[derive(Default)]
+struct DockSurfaceAppShutdownRoundState {
+    participants: Vec<Entity<DockSurfaceOwner>>,
+    pending: usize,
+    sealed: bool,
+    completion_queued: bool,
+    settlements: Vec<DockSurfaceAppShutdownSettlement>,
+}
+
+#[derive(Clone, Default)]
+struct DockSurfaceAppShutdownRound {
+    state: Rc<RefCell<DockSurfaceAppShutdownRoundState>>,
+}
+
+impl DockSurfaceAppShutdownRound {
+    fn register(&self, owner: &Entity<DockSurfaceOwner>) {
+        let mut state = self.state.borrow_mut();
+        assert!(
+            !state.sealed,
+            "cannot register a surface after sealing App shutdown"
+        );
+        state.participants.push(owner.clone());
+        state.pending += 1;
+    }
+
+    fn settle(&self, settlement: DockSurfaceAppShutdownSettlement, cx: &mut App) {
+        {
+            let mut state = self.state.borrow_mut();
+            assert!(
+                state.pending > 0,
+                "surface App shutdown settled more than once"
+            );
+            state.pending -= 1;
+            state.settlements.push(settlement);
+        }
+        self.queue_completion_if_ready(cx);
+    }
+
+    fn seal(&self, cx: &mut App) {
+        {
+            let mut state = self.state.borrow_mut();
+            state.sealed = true;
+        }
+        self.queue_completion_if_ready(cx);
+    }
+
+    fn queue_completion_if_ready(&self, cx: &mut App) {
+        let settlements = {
+            let mut state = self.state.borrow_mut();
+            if !state.sealed || state.pending != 0 || state.completion_queued {
+                return;
+            }
+            state.completion_queued = true;
+            state.participants.clear();
+            std::mem::take(&mut state.settlements)
+        };
+        cx.defer(move |cx| complete_surface_app_shutdown_round(settlements, cx));
+    }
+}
+
+struct DockSurfacePendingShutdown {
+    effects: Option<DockSurfaceShutdownCloseEffects>,
+    app_shutdown_round: Option<DockSurfaceAppShutdownRound>,
+}
+
+#[derive(Default)]
+struct DockSurfaceShutdownCoordinatorState {
+    pending: HashMap<window_session::DockSurfaceWindowSessionLease, DockSurfacePendingShutdown>,
+}
+
+#[derive(Clone, Default)]
+struct DockSurfaceShutdownCoordinator {
+    state: Rc<RefCell<DockSurfaceShutdownCoordinatorState>>,
+}
+
+impl Global for DockSurfaceShutdownCoordinator {}
+
+impl DockSurfaceShutdownCoordinator {
+    fn begin(
+        &self,
+        effects: DockSurfaceShutdownCloseEffects,
+        app_shutdown_round: Option<DockSurfaceAppShutdownRound>,
+    ) {
+        let lease = effects.lease;
+        let pending = DockSurfacePendingShutdown {
+            effects: Some(effects),
+            app_shutdown_round,
+        };
+        let replaced = self.state.borrow_mut().pending.insert(lease, pending);
+        assert!(
+            replaced.is_none(),
+            "one surface lease cannot own multiple pending shutdown continuations"
+        );
+    }
+
+    fn attach_app_shutdown_round(
+        &self,
+        lease: window_session::DockSurfaceWindowSessionLease,
+        round: DockSurfaceAppShutdownRound,
+    ) -> bool {
+        let mut state = self.state.borrow_mut();
+        let Some(pending) = state.pending.get_mut(&lease) else {
+            return false;
+        };
+        if pending.app_shutdown_round.is_some() {
+            return false;
+        }
+        pending.app_shutdown_round = Some(round);
+        true
+    }
+
+    fn take(
+        &self,
+        lease: window_session::DockSurfaceWindowSessionLease,
+    ) -> Option<DockSurfacePendingShutdown> {
+        self.state.borrow_mut().pending.remove(&lease)
+    }
+}
+
+fn complete_surface_app_shutdown_round(
+    settlements: Vec<DockSurfaceAppShutdownSettlement>,
+    cx: &mut App,
+) {
+    let mut first_panic = None;
+    for settlement in settlements {
+        retain_first_surface_shutdown_panic(
+            &mut first_panic,
+            settlement.close_dispatch,
+            "App shutdown forced-close dispatch",
+        );
+        if let Some(lease) = settlement.lease {
+            retain_first_surface_shutdown_panic(
+                &mut first_panic,
+                catch_unwind(AssertUnwindSafe(|| {
+                    let runtime = cx.read_entity(&settlement.owner, |owner, _| owner.runtime());
+                    confirm_pending_surface_terminals_absent(
+                        &settlement.owner,
+                        &runtime,
+                        lease,
+                        cx,
+                    );
+                })),
+                "App shutdown terminal convergence",
+            );
+        }
+    }
+    if let Some(payload) = first_panic {
+        resume_unwind(payload);
+    }
+}
+
+fn app_shutdown_fanout(cx: &mut App) -> DockSurfaceAppShutdownFanout {
+    if let Some(fanout) = cx.try_global::<DockSurfaceAppShutdownFanout>() {
+        return fanout.clone();
+    }
+    let fanout = DockSurfaceAppShutdownFanout::default();
+    cx.set_global(fanout.clone());
+    fanout
+}
+
+fn surface_shutdown_coordinator(cx: &mut App) -> DockSurfaceShutdownCoordinator {
+    if let Some(coordinator) = cx.try_global::<DockSurfaceShutdownCoordinator>() {
+        return coordinator.clone();
+    }
+    let coordinator = DockSurfaceShutdownCoordinator::default();
+    cx.set_global(coordinator.clone());
+    coordinator
+}
+
+fn retain_first_surface_shutdown_panic(
+    first_panic: &mut Option<DockSurfaceShutdownPanic>,
+    result: std::thread::Result<()>,
+    stage: &'static str,
+) {
+    let Err(payload) = result else {
+        return;
+    };
+    if first_panic.is_none() {
+        *first_panic = Some(payload);
+    } else {
+        log::error!(
+            "suppressed secondary panic while settling DockSurface shutdown stage `{stage}`"
+        );
+    }
+}
 
 /// Application-level owner for one docked workspace and its viewport runtime.
 ///
@@ -135,14 +403,87 @@ fn claim_surface_window_close(
     )
 }
 
+fn mark_surface_window_close_dispatched(
+    owner: &Entity<DockSurfaceOwner>,
+    lease: window_session::DockSurfaceWindowSessionLease,
+    window_id: WindowId,
+    cx: &mut App,
+) {
+    cx.update_entity(owner, |owner, owner_cx| {
+        let outcome = owner
+            .window_session_mut()
+            .mark_close_dispatched(lease, window_id);
+        if matches!(
+            outcome,
+            window_session::DockSurfaceWindowSessionCloseDispatchCommitOutcome::Dispatched
+        ) {
+            owner_cx.notify();
+        }
+    });
+}
+
+fn retry_surface_window_close_dispatch(
+    owner: &Entity<DockSurfaceOwner>,
+    lease: window_session::DockSurfaceWindowSessionLease,
+    window_id: WindowId,
+    cx: &mut App,
+) -> bool {
+    matches!(
+        cx.update_entity(owner, |owner, owner_cx| {
+            let outcome = owner
+                .window_session_mut()
+                .retry_close_dispatch(lease, window_id);
+            if matches!(
+                outcome,
+                window_session::DockSurfaceWindowSessionCloseDispatchRetryOutcome::Pending
+            ) {
+                owner_cx.notify();
+            }
+            outcome
+        }),
+        window_session::DockSurfaceWindowSessionCloseDispatchRetryOutcome::Pending
+    )
+}
+
+fn defer_surface_window_close_retry(
+    owner: &Entity<DockSurfaceOwner>,
+    lease: window_session::DockSurfaceWindowSessionLease,
+    window: open_gpui::AnyWindowHandle,
+    cx: &mut App,
+) {
+    let owner = owner.clone();
+    cx.defer(move |cx| close_surface_window(&owner, lease, window, cx));
+}
+
 fn close_surface_window(
     owner: &Entity<DockSurfaceOwner>,
     lease: window_session::DockSurfaceWindowSessionLease,
     window: open_gpui::AnyWindowHandle,
     cx: &mut App,
 ) {
-    if claim_surface_window_close(owner, lease, window.window_id(), cx) {
-        let _ = window.update(cx, |_, window, cx| window.remove_window(cx));
+    let window_id = window.window_id();
+    if !claim_surface_window_close(owner, lease, window_id, cx) {
+        return;
+    }
+
+    let mut entered_window_update = false;
+    let dispatch = catch_unwind(AssertUnwindSafe(|| {
+        window.update(cx, |_, window, cx| {
+            entered_window_update = true;
+            window.remove_window(cx);
+        })
+    }));
+
+    if entered_window_update {
+        mark_surface_window_close_dispatched(owner, lease, window_id, cx);
+    } else if retry_surface_window_close_dispatch(owner, lease, window_id, cx)
+        && cx.windows().contains(&window)
+    {
+        defer_surface_window_close_retry(owner, lease, window, cx);
+    }
+
+    if let Err(payload) = dispatch {
+        resume_unwind(payload);
     }
 }
 
@@ -155,15 +496,25 @@ fn confirm_pending_surface_terminals_absent(
     let pending = cx.read_entity(owner, |owner, _| {
         owner.window_session().pending_terminal_window_ids(lease)
     });
+    let mut first_panic = None;
     for window_id in pending.unwrap_or_default() {
-        settle_surface_window_terminal(
-            owner,
-            runtime,
-            lease,
-            window_id,
-            window_session::DockSurfaceWindowSessionTerminalDisposition::ConfirmedAbsentAfterAppShutdown,
-            cx,
+        retain_first_surface_shutdown_panic(
+            &mut first_panic,
+            catch_unwind(AssertUnwindSafe(|| {
+                settle_surface_window_terminal(
+                    owner,
+                    runtime,
+                    lease,
+                    window_id,
+                    window_session::DockSurfaceWindowSessionTerminalDisposition::ConfirmedAbsentAfterAppShutdown,
+                    cx,
+                );
+            })),
+            "post-registry-clear terminal confirmation",
         );
+    }
+    if let Some(payload) = first_panic {
+        resume_unwind(payload);
     }
 }
 
@@ -199,7 +550,10 @@ fn close_surface_anchor_after_dependents(
 struct DockSurfaceShutdownCloseEffects {
     runtime: DockViewportRuntimeHandle,
     lease: window_session::DockSurfaceWindowSessionLease,
-    windows: Vec<(DockViewportWindowRole, open_gpui::AnyWindowHandle)>,
+    reservation: DockViewportSurfaceShutdownReservation,
+    fallback_windows: Vec<(DockViewportWindowRole, open_gpui::AnyWindowHandle)>,
+    activation_settlements: DockSurfaceActivationSettlements,
+    first_panic: Option<DockSurfaceShutdownPanic>,
 }
 
 fn prepare_surface_shutdown(
@@ -237,11 +591,56 @@ fn prepare_surface_shutdown(
         | window_session::DockSurfaceWindowSessionBeginShutdownOutcome::NotActive => return None,
     }
 
-    let shutdown_effects = runtime
-        .begin_surface_shutdown(lease)
+    let reservation = runtime
+        .freeze_surface_shutdown(lease)
         .expect("an active DockSurface lease must own the matching runtime generation");
-    let mut windows = runtime.commit_surface_shutdown(shutdown_effects, cx);
-    activation_settlements.deliver(cx);
+    Some(DockSurfaceShutdownCloseEffects {
+        runtime,
+        lease,
+        reservation,
+        fallback_windows: snapshot,
+        activation_settlements,
+        first_panic: None,
+    })
+}
+
+fn apply_surface_shutdown_close_effects(
+    owner: &Entity<DockSurfaceOwner>,
+    effects: DockSurfaceShutdownCloseEffects,
+    cx: &mut App,
+) {
+    let DockSurfaceShutdownCloseEffects {
+        runtime,
+        lease,
+        reservation,
+        fallback_windows,
+        activation_settlements,
+        mut first_panic,
+    } = effects;
+    if !cx.read_entity(owner, |owner, _| {
+        owner.window_session().is_shutting_down(lease)
+    }) {
+        return;
+    }
+
+    let mut windows = match catch_unwind(AssertUnwindSafe(|| {
+        runtime.commit_surface_shutdown(reservation, cx)
+    })) {
+        Ok(windows) => windows,
+        Err(payload) => {
+            retain_first_surface_shutdown_panic(
+                &mut first_panic,
+                Err(payload),
+                "viewport runtime shutdown commit",
+            );
+            fallback_windows
+        }
+    };
+    retain_first_surface_shutdown_panic(
+        &mut first_panic,
+        catch_unwind(AssertUnwindSafe(|| activation_settlements.deliver(cx))),
+        "activation settlement delivery",
+    );
 
     let mut seen = Vec::new();
     windows.retain(|(_, window)| {
@@ -253,26 +652,91 @@ fn prepare_surface_shutdown(
             true
         }
     });
-    Some(DockSurfaceShutdownCloseEffects {
-        runtime,
-        lease,
-        windows,
-    })
-}
-
-fn apply_surface_shutdown_close_effects(
-    owner: &Entity<DockSurfaceOwner>,
-    effects: DockSurfaceShutdownCloseEffects,
-    cx: &mut App,
-) {
-    for (_, window) in effects
-        .windows
+    for (_, window) in windows
         .iter()
         .filter(|(role, _)| *role == DockViewportWindowRole::ManagedViewport)
     {
-        close_surface_window(owner, effects.lease, *window, cx);
+        retain_first_surface_shutdown_panic(
+            &mut first_panic,
+            catch_unwind(AssertUnwindSafe(|| {
+                close_surface_window(owner, lease, *window, cx);
+            })),
+            "managed viewport close dispatch",
+        );
     }
-    close_surface_anchor_after_dependents(owner, &effects.runtime, effects.lease, cx);
+    retain_first_surface_shutdown_panic(
+        &mut first_panic,
+        catch_unwind(AssertUnwindSafe(|| {
+            close_surface_anchor_after_dependents(owner, &runtime, lease, cx);
+        })),
+        "primary anchor close dispatch",
+    );
+    if let Some(payload) = first_panic {
+        resume_unwind(payload);
+    }
+}
+
+fn finish_scheduled_surface_shutdown(
+    owner: &Entity<DockSurfaceOwner>,
+    lease: window_session::DockSurfaceWindowSessionLease,
+    coordinator: &DockSurfaceShutdownCoordinator,
+    first_panic: &mut Option<DockSurfaceShutdownPanic>,
+    cx: &mut App,
+) {
+    let Some(mut pending) = coordinator.take(lease) else {
+        return;
+    };
+    if let Some(effects) = pending.effects.take() {
+        retain_first_surface_shutdown_panic(
+            first_panic,
+            catch_unwind(AssertUnwindSafe(|| {
+                apply_surface_shutdown_close_effects(owner, effects, cx);
+            })),
+            "capture-terminal surface close effects",
+        );
+    }
+    if let Some(round) = pending.app_shutdown_round.take() {
+        let close_dispatch = match first_panic.take() {
+            Some(payload) => Err(payload),
+            None => Ok(()),
+        };
+        round.settle(
+            DockSurfaceAppShutdownSettlement {
+                owner: owner.clone(),
+                lease: Some(lease),
+                close_dispatch,
+            },
+            cx,
+        );
+    }
+}
+
+fn schedule_surface_shutdown_close_effects(
+    owner: &Entity<DockSurfaceOwner>,
+    effects: DockSurfaceShutdownCloseEffects,
+    app_shutdown_round: Option<DockSurfaceAppShutdownRound>,
+    cx: &mut App,
+) {
+    let lease = effects.lease;
+    let runtime_identity = effects.runtime.identity();
+    let coordinator = surface_shutdown_coordinator(cx);
+    coordinator.begin(effects, app_shutdown_round);
+    let owner = owner.clone();
+    let completion_coordinator = coordinator.clone();
+    crate::native_captured_drag::cancel_native_captured_drag_route_for_surface(
+        runtime_identity,
+        lease,
+        move |first_panic, cx| {
+            finish_scheduled_surface_shutdown(
+                &owner,
+                lease,
+                &completion_coordinator,
+                first_panic,
+                cx,
+            );
+        },
+        cx,
+    );
 }
 
 pub(crate) fn handle_surface_window_closed(
@@ -291,10 +755,7 @@ pub(crate) fn handle_surface_window_closed(
         DockSurfaceWindowSessionShutdownReason::AnchorDestroyed,
         cx,
     ) {
-        let owner = owner.clone();
-        cx.defer(move |cx| {
-            apply_surface_shutdown_close_effects(&owner, effects, cx);
-        });
+        schedule_surface_shutdown_close_effects(owner, effects, None, cx);
     }
 }
 
@@ -329,54 +790,85 @@ fn handle_surface_window_native_terminal(
     }
 }
 
-fn handle_surface_app_shutdown(owner: &Entity<DockSurfaceOwner>, cx: &mut App) {
-    let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
-    let (opening, active, shutting_down) = cx.read_entity(owner, |owner, _| {
-        (
-            owner.window_session().opening_token(),
-            owner.window_session().active_lease(),
-            owner.window_session().shutting_down_lease(),
-        )
-    });
-    if let Some(opening) = opening {
-        let windows = runtime.abort_surface_opening(opening);
-        cx.update_entity(owner, |owner, owner_cx| {
-            let _ = owner.window_session_mut().rollback_opening(
-                opening,
-                DockSurfaceWindowSessionOpeningRollbackReason::AppShutdown,
-            );
-            owner_cx.notify();
+fn handle_surface_app_shutdown(
+    owner: &Entity<DockSurfaceOwner>,
+    round: &DockSurfaceAppShutdownRound,
+    cx: &mut App,
+) {
+    round.register(owner);
+    let mut lease = None;
+    let mut settlement_deferred = false;
+    let close_dispatch = catch_unwind(AssertUnwindSafe(|| {
+        let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
+        let (opening, active, shutting_down) = cx.read_entity(owner, |owner, _| {
+            (
+                owner.window_session().opening_token(),
+                owner.window_session().active_lease(),
+                owner.window_session().shutting_down_lease(),
+            )
         });
-        for window in windows {
-            let _ = window.update(cx, |_, window, cx| window.remove_window(cx));
+        if let Some(opening) = opening {
+            let windows = runtime.abort_surface_opening(opening);
+            cx.update_entity(owner, |owner, owner_cx| {
+                let _ = owner.window_session_mut().rollback_opening(
+                    opening,
+                    DockSurfaceWindowSessionOpeningRollbackReason::AppShutdown,
+                );
+                owner_cx.notify();
+            });
+            for window in windows {
+                let _ = window.update(cx, |_, window, cx| window.remove_window(cx));
+            }
+            return;
         }
-        return;
-    }
-    let lease = active.or(shutting_down);
-    let Some(lease) = lease else {
-        return;
-    };
-    let effects = active
-        .and_then(|lease| {
-            prepare_surface_shutdown(
+        lease = active.or(shutting_down);
+        let Some(current_lease) = lease else {
+            return;
+        };
+        if let Some(active_lease) = active
+            && let Some(effects) = prepare_surface_shutdown(
                 owner,
-                lease,
+                active_lease,
                 DockSurfaceWindowSessionShutdownReason::AppShutdown,
                 cx,
             )
-        })
-        .unwrap_or_else(|| DockSurfaceShutdownCloseEffects {
-            runtime: runtime.clone(),
-            lease,
-            windows: runtime.windows_for_surface(lease),
-        });
-    apply_surface_shutdown_close_effects(owner, effects, cx);
+        {
+            schedule_surface_shutdown_close_effects(owner, effects, Some(round.clone()), cx);
+            settlement_deferred = true;
+            return;
+        }
 
-    let owner = owner.clone();
-    cx.defer(move |cx| {
-        let runtime = cx.read_entity(&owner, |owner, _| owner.runtime());
-        confirm_pending_surface_terminals_absent(&owner, &runtime, lease, cx);
-    });
+        let coordinator = surface_shutdown_coordinator(cx);
+        if coordinator.attach_app_shutdown_round(current_lease, round.clone()) {
+            settlement_deferred = true;
+        }
+    }));
+    if !settlement_deferred {
+        round.settle(
+            DockSurfaceAppShutdownSettlement {
+                owner: owner.clone(),
+                lease,
+                close_dispatch,
+            },
+            cx,
+        );
+    }
+}
+
+fn install_surface_app_shutdown_observer(fanout: DockSurfaceAppShutdownFanout, cx: &mut App) {
+    cx.on_app_quit(move |cx| {
+        let owners = fanout.snapshot_for_shutdown();
+        // App consumes quit observers before invoking them. The next lifecycle must be armed
+        // before current cleanup can reenter or register another surface.
+        fanout.rearm_for_next_lifecycle(cx);
+        let round = DockSurfaceAppShutdownRound::default();
+        for owner in owners {
+            handle_surface_app_shutdown(&owner, &round, cx);
+        }
+        round.seal(cx);
+        std::future::ready(())
+    })
+    .detach();
 }
 
 fn install_primary_window_lifecycle_hooks(
@@ -397,10 +889,7 @@ fn install_primary_window_lifecycle_hooks(
                 DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
                 cx,
             ) {
-                let owner = close_owner.clone();
-                cx.defer(move |cx| {
-                    apply_surface_shutdown_close_effects(&owner, effects, cx);
-                });
+                schedule_surface_shutdown_close_effects(&close_owner, effects, None, cx);
             }
             return false;
         }
@@ -430,10 +919,7 @@ fn install_primary_window_lifecycle_hooks(
                 DockSurfaceWindowSessionShutdownReason::PresentationFailed,
                 cx,
             ) {
-                let owner = presentation_owner.clone();
-                cx.defer(move |cx| {
-                    apply_surface_shutdown_close_effects(&owner, effects, cx);
-                });
+                schedule_surface_shutdown_close_effects(&presentation_owner, effects, None, cx);
             }
         })
         .detach();
@@ -536,14 +1022,8 @@ impl DockSurface {
             }
         })
         .detach();
-        let shutdown_owner = owner.downgrade();
-        cx.on_app_quit(move |cx| {
-            if let Some(owner) = shutdown_owner.upgrade() {
-                handle_surface_app_shutdown(&owner, cx);
-            }
-            std::future::ready(())
-        })
-        .detach();
+        let shutdown_fanout = app_shutdown_fanout(cx);
+        shutdown_fanout.register(&owner, cx);
         Self {
             owner,
             primary_space,

@@ -5,7 +5,7 @@ use std::{
 
 use crate::{AnyView, AnyWindowHandle, Window, WindowId};
 
-use super::{App, Effect, QuitMode};
+use super::{App, Effect, QuitMode, native_captured_drag::WindowUpdateProvenance};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum WindowReservationError {
@@ -135,15 +135,21 @@ fn rollback_reserved(app: &mut App, id: WindowId) {
 struct WindowUpdateStackScope<'a> {
     app: &'a mut App,
     previous_stack: Vec<WindowId>,
+    previous_provenance: WindowUpdateProvenance,
 }
 
 impl<'a> WindowUpdateStackScope<'a> {
     fn new(app: &'a mut App, id: WindowId) -> Self {
         let previous_stack = app.window_update_stack.clone();
         app.window_update_stack.push(id);
+        let previous_provenance = std::mem::replace(
+            &mut app.window_update_provenance,
+            WindowUpdateProvenance::Ordinary,
+        );
         Self {
             app,
             previous_stack,
+            previous_provenance,
         }
     }
 
@@ -155,6 +161,7 @@ impl<'a> WindowUpdateStackScope<'a> {
 impl Drop for WindowUpdateStackScope<'_> {
     fn drop(&mut self) {
         self.app.window_update_stack = std::mem::take(&mut self.previous_stack);
+        self.app.window_update_provenance = self.previous_provenance;
     }
 }
 
@@ -164,20 +171,27 @@ pub(super) struct WindowUpdateTransaction<'a> {
     root_view: AnyView,
     window: Option<Box<Window>>,
     previous_stack: Option<Vec<WindowId>>,
+    previous_provenance: Option<WindowUpdateProvenance>,
 }
 
 impl<'a> WindowUpdateTransaction<'a> {
-    pub(super) fn begin(app: &'a mut App, id: WindowId) -> Option<Self> {
+    pub(super) fn begin(
+        app: &'a mut App,
+        id: WindowId,
+        provenance: WindowUpdateProvenance,
+    ) -> Option<Self> {
         let root_view = app.windows.get(id)?.as_ref()?.root.clone()?;
         let window = app.windows.get_mut(id)?.take()?;
         let previous_stack = app.window_update_stack.clone();
         app.window_update_stack.push(window.handle.id);
+        let previous_provenance = std::mem::replace(&mut app.window_update_provenance, provenance);
         Some(Self {
             app,
             id,
             root_view,
             window: Some(window),
             previous_stack: Some(previous_stack),
+            previous_provenance: Some(previous_provenance),
         })
     }
 
@@ -222,6 +236,9 @@ impl<'a> WindowUpdateTransaction<'a> {
     fn restore_stack(&mut self) {
         if let Some(previous_stack) = self.previous_stack.take() {
             self.app.window_update_stack = previous_stack;
+        }
+        if let Some(previous_provenance) = self.previous_provenance.take() {
+            self.app.window_update_provenance = previous_provenance;
         }
     }
 
@@ -269,12 +286,23 @@ fn restore_taken_window(app: &mut App, id: WindowId, window: Box<Window>) {
 }
 
 pub(super) fn clear(app: &mut App) {
-    app.windows.clear();
+    let windows = std::mem::take(&mut app.windows);
     app.window_handles.clear();
     app.window_profiles.clear();
     if let Some(cell) = app.this.upgrade() {
         cell.clear_native_windows();
+        for (window_id, window) in windows {
+            if let Some(window) = window {
+                cell.enqueue_native_window_retirement(window_id, window);
+            }
+        }
+    } else {
+        drop(windows);
     }
+}
+
+pub(super) fn has_checked_out_window(app: &App) -> bool {
+    app.windows.values().any(Option::is_none)
 }
 
 pub(super) fn handles(app: &App) -> Vec<AnyWindowHandle> {
@@ -287,7 +315,11 @@ pub(super) fn handles(app: &App) -> Vec<AnyWindowHandle> {
 pub(super) fn finish_window_update(app: &mut App, id: WindowId, window: Box<Window>) -> Option<()> {
     if window.removed {
         let first_panic = unregister_removed_window(app, id);
-        drop(window);
+        if let Some(cell) = app.this.upgrade() {
+            cell.enqueue_native_window_retirement(id, window);
+        } else {
+            drop(window);
+        }
         if let Some(payload) = first_panic {
             resume_unwind(payload);
         }

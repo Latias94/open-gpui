@@ -27,8 +27,23 @@ pub(crate) enum DockViewportDropRoute {
     TearOff,
     /// The release landed in a registered viewport that has no current dock target.
     Unavailable,
-    /// The release landed outside all registered viewports, but policy forbids opening one.
-    Rejected(DockPolicyError),
+    /// The release target is known, but route authority forbids committing there.
+    Rejected(DockViewportDropRouteRejectionReason),
+}
+
+/// Typed reason a resolved viewport route is visible but ineligible for commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DockViewportDropRouteRejectionReason {
+    /// Workspace policy rejected the otherwise current route.
+    Policy(DockPolicyError),
+    /// The target host belongs to another independent Dock surface.
+    ForeignSurface,
+}
+
+impl From<DockPolicyError> for DockViewportDropRouteRejectionReason {
+    fn from(reason: DockPolicyError) -> Self {
+        Self::Policy(reason)
+    }
 }
 
 /// Why a route resolved to `DockViewportDropRoute::Unavailable`.
@@ -85,9 +100,9 @@ impl DockViewportDropRoutePlan {
                 Ok(()) => DockViewportDropRouteResolution::unavailable(
                     DockViewportDropRouteUnavailableReason::PlatformViewportWindowsUnsupported,
                 ),
-                Err(reason) => {
-                    DockViewportDropRouteResolution::route(DockViewportDropRoute::Rejected(reason))
-                }
+                Err(reason) => DockViewportDropRouteResolution::route(
+                    DockViewportDropRoute::Rejected(reason.into()),
+                ),
             },
         }
     }
@@ -123,6 +138,11 @@ impl DockViewportDropRouteResolution {
 }
 
 impl DockViewportDropRoute {
+    #[cfg(test)]
+    pub(crate) fn rejected_by_policy(reason: DockPolicyError) -> Self {
+        Self::Rejected(DockViewportDropRouteRejectionReason::Policy(reason))
+    }
+
     #[cfg(test)]
     pub(crate) fn local_for_registration_test(
         registration_key: crate::viewport_registry::DockViewportRegistrationKey,
@@ -167,7 +187,12 @@ impl DockViewportDropRoute {
 
     pub(crate) fn delivery_error(&self) -> DockActionApplyError {
         match self {
-            Self::Rejected(error) => DockActionApplyError::Policy(error.clone()),
+            Self::Rejected(DockViewportDropRouteRejectionReason::Policy(error)) => {
+                DockActionApplyError::Policy(error.clone())
+            }
+            Self::Rejected(DockViewportDropRouteRejectionReason::ForeignSurface) => {
+                DockActionApplyError::DropTargetUnavailable
+            }
             Self::Unavailable | Self::Local { .. } | Self::KnownViewport { .. } | Self::TearOff => {
                 DockActionApplyError::DropTargetUnavailable
             }

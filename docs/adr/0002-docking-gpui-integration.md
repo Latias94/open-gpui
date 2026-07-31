@@ -73,12 +73,35 @@ programmatic close actions.
 Viewport close policy is explicit: retain-on-close preserves layout while removing the runtime
 mapping, prevent installs a GPUI should-close veto for runtime-opened windows, and merge-back moves
 the closing viewport's content into a configured fallback dock space before cleanup.
-GPUI exposes an optional platform mouse-button state seam, and rendered docking drags use a
-host-local polling fallback while a drag is active. This lets release outside every GPUI window
-complete through the same viewport tear-off transaction on platforms that can report global button
-state. macOS reports `NSEvent::pressedMouseButtons`, Windows reports `GetAsyncKeyState`, and
-unsupported platforms keep returning `None` so docking falls back to normal GPUI window-event
-delivery instead of pretending global input is available.
+GPUI's captured native drag transport is source-owned and generation-bound. GPUI reserves the
+exact drag generation before invoking the drag listener, Dock prepares one consumer for that
+generation, and drag-start commit activates the GPUI drag and Dock route together. After the source
+input transaction and outer application borrow have ended, the native capture owner publishes an
+immutable physical callback frame through the GPUI outbox. Each fact retains its original ingress
+sequence, signed source client point, client-to-screen point, coherent source geometry, and a
+point-scoped native window hit stack. Dock can therefore route a preview and release without raw
+pointer delivery to the target HWND.
+
+For release, GPUI invokes the prepared route's generation-frozen locker before any source-window
+mouse interceptor or listener. Dock resolves the candidate and stores an immutable opaque
+reservation containing the exact route generation and host-scene frame. Post-borrow delivery may
+only confirm that reservation; it never performs a second hit test. A redraw may replace the
+renderer-owned frame token only when the registration, host binding, runtime context, bounds,
+interactive geometry, and complete routing scene remain semantically identical. The frozen
+candidate and position do not change. A listener, close, registration replacement, or semantic
+scene change fails closed instead of adopting a candidate that did not exist when `MouseUp` was
+observed. Resolver panic is captured by the reservation and rethrown only after post-borrow
+terminal claim has detached the exact route, so normal cleanup still retires its session and
+feedback.
+
+`MouseUp`, capture loss, pointer cancellation, source close, and session shutdown are terminal
+facts for that exact route. A terminal claim detaches the route before runtime effects execute, and
+cleanup retires its previews, session, and anchor even if resolution or commit panics. An
+unavailable, cross-point, incomplete, stale, or incoherent hit observation fails closed rather than
+falling through an opaque window or reusing the last preview. The former 16 ms host-local
+mouse-button poll is not a fallback authority. Backends advertise `window_hit_stack` only when they
+can provide the complete point-scoped observation; other backends return `Unavailable` and cannot
+claim cross-window native routing.
 Named `DockWorkspace` and `DockController` command methods are the preferred public programmatic
 interface for explicit non-move commands such as selection, panel close/reopen, floating, and split
 resize. `DockAction` remains available when applications need command objects. `DockOp` is

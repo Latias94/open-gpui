@@ -78,22 +78,33 @@ impl DockViewportRuntimeHandle {
         excluded_window: Option<WindowId>,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let controller = self.runtime.borrow().controller_entity();
-        let graph_spaces = cx.read_entity(&controller, |controller, _| controller.graph().spaces());
-        let probe = {
-            let mut runtime = self.runtime.borrow_mut();
-            runtime.prepare_tear_off_drop_delivery(request, &graph_spaces)?
-        };
-        let prepared = probe.sample(cx)?;
+        let result = (|| {
+            let controller = self.runtime.borrow().controller_entity();
+            let graph_spaces =
+                cx.read_entity(&controller, |controller, _| controller.graph().spaces());
+            let probe = {
+                let mut runtime = self.runtime.borrow_mut();
+                runtime.prepare_tear_off_drop_delivery(request, &graph_spaces)?
+            };
+            let prepared = probe.sample(cx)?;
 
-        let result = self
-            .open_prepared_tear_off_viewport(prepared, excluded_window, cx)
-            .map(DockViewportDropRouteOutcome::tear_off)
-            .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
-                message: error.to_string(),
-            });
+            self.open_prepared_tear_off_viewport(prepared, excluded_window, cx)
+                .map(DockViewportDropRouteOutcome::tear_off)
+                .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
+                    message: error.to_string(),
+                })
+        })();
         self.runtime.borrow_mut().record_drop_route_result(&result);
         result
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_tear_off_drop_route_for_test(
+        &self,
+        request: DockViewportTearOffRequest,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        self.commit_tear_off_drop_route(request, None, cx)
     }
 
     #[cfg(test)]
@@ -217,7 +228,6 @@ impl DockViewportRuntimeHandle {
         .1
     }
 
-    #[cfg(test)]
     pub(crate) fn resolve_and_update_routed_drop_preview(
         &self,
         request: &DockViewportDropRouteRequest,
@@ -225,6 +235,97 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> (DockViewportResolvedDropRoute, bool) {
         self.resolve_and_update_routed_drop_preview_inner(request, payload, None, cx)
+    }
+
+    pub(crate) fn resolve_and_project_captured_native_foreign_surface_preview(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        owner: &crate::DockViewportRoutedPreviewOwner,
+        cx: &mut App,
+    ) -> bool {
+        let Some((source_runtime, _, _, _)) = owner.captured_native_parts() else {
+            return false;
+        };
+        if source_runtime == self.identity() || !owner.is_current() {
+            self.clear_routed_drop_preview_for_owner(owner, cx);
+            return false;
+        }
+
+        self.reconcile_viewport_frame_skipping(request.frame_sampling_exclusion_window(), cx);
+        if !owner.is_current() {
+            self.clear_routed_drop_preview_for_owner(owner, cx);
+            return false;
+        }
+        let (current, update) = self
+            .runtime
+            .borrow_mut()
+            .update_captured_native_foreign_surface_preview(request, owner);
+        refresh_runtime_update(update, cx);
+        current
+    }
+
+    pub(crate) fn project_captured_native_source_foreign_surface_preview(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        owner: &crate::DockViewportRoutedPreviewOwner,
+        payload: &DockDragPayload,
+        source_window: WindowId,
+        source_frame: &DockViewportHostSceneFrame,
+        host_position: Point<Pixels>,
+        cx: &mut App,
+    ) -> bool {
+        let Some((source_runtime, _, _, _)) = owner.captured_native_parts() else {
+            return false;
+        };
+        if source_runtime != self.identity() || !owner.is_current() {
+            self.clear_routed_drop_preview_for_owner(owner, cx);
+            return false;
+        }
+        let (current, update) = self
+            .runtime
+            .borrow_mut()
+            .update_captured_native_source_foreign_surface_preview(
+                request,
+                owner,
+                payload,
+                source_window,
+                source_frame,
+                host_position,
+            );
+        refresh_runtime_update(update, cx);
+        current
+    }
+
+    pub(crate) fn record_captured_native_source_foreign_surface_feedback(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        owner: &crate::DockViewportRoutedPreviewOwner,
+        payload: &DockDragPayload,
+    ) -> bool {
+        let Some((source_runtime, _, _, _)) = owner.captured_native_parts() else {
+            return false;
+        };
+        source_runtime == self.identity()
+            && self
+                .runtime
+                .borrow_mut()
+                .record_captured_native_source_foreign_surface_feedback(request, owner, payload)
+    }
+
+    pub(crate) fn record_captured_native_foreign_surface_terminal(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        owner: &crate::DockViewportRoutedPreviewOwner,
+        payload: &DockDragPayload,
+    ) -> bool {
+        let Some((source_runtime, _, _, _)) = owner.captured_native_parts() else {
+            return false;
+        };
+        source_runtime == self.identity()
+            && self
+                .runtime
+                .borrow_mut()
+                .record_captured_native_foreign_surface_terminal(request, owner, payload)
     }
 
     fn resolve_and_update_routed_drop_preview_inner<C: open_gpui::AppContext>(
@@ -306,9 +407,32 @@ impl DockViewportRuntimeHandle {
         refresh_runtime_update_excluding(update, Some(host_window_id), cx)
     }
 
-    #[cfg(test)]
     pub(crate) fn clear_routed_drop_preview(&self, cx: &mut App) -> bool {
         self.clear_routed_drop_preview_excluding(None, cx)
+    }
+
+    pub(crate) fn clear_routed_drop_preview_for_owner(
+        &self,
+        owner: &crate::DockViewportRoutedPreviewOwner,
+        cx: &mut App,
+    ) -> bool {
+        let update = self
+            .runtime
+            .borrow_mut()
+            .clear_routed_drop_preview_for_owner(owner);
+        refresh_runtime_update(update, cx)
+    }
+
+    pub(crate) fn clear_routed_drop_preview_for_target_scene_frame(
+        &self,
+        frame: &DockViewportHostSceneFrame,
+        cx: &mut App,
+    ) -> bool {
+        let update = self
+            .runtime
+            .borrow_mut()
+            .clear_routed_drop_preview_for_target_scene_frame(frame);
+        refresh_runtime_update(update, cx)
     }
 
     pub(crate) fn clear_routed_drop_preview_from_window(
@@ -446,16 +570,6 @@ impl DockViewportRuntimeHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn last_hovered_viewport_identity_for_drag_session(
-        &self,
-        session: Option<&DockRuntimeDragSession>,
-    ) -> Option<crate::DockViewportIdentity> {
-        self.runtime
-            .borrow()
-            .last_hovered_viewport_identity_for_drag_session(session)
-    }
-
-    #[cfg(test)]
     pub(crate) fn resolve_payload_drop_route_for_test(
         &self,
         request: &DockViewportDropRouteRequest,
@@ -472,7 +586,6 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Resolves and commits a rendered payload release from a screen-space point.
-    #[cfg(test)]
     pub(crate) fn commit_payload_drop_from_screen(
         &self,
         request: &DockViewportDropRouteRequest,

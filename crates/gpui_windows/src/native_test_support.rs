@@ -3,9 +3,9 @@ use crate::{WindowsWindowInner, get_window_long};
 use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Empty, NativeBoundaryDiagnosticCursor,
     NativeBoundaryDisposition, NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind,
-    NativePlatformCommandKind, PointerCancelReason, QuitMode, WindowActivationPolicy, WindowBounds,
-    WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome, WindowOptions, px,
-    size,
+    NativePlatformCommandKind, PlatformInput, PointerCancelEvent, PointerCancelReason, QuitMode,
+    WindowActivationPolicy, WindowBounds, WindowKind, WindowMouseEvent, WindowMutationDispatch,
+    WindowMutationOutcome, WindowOptions, point, px, size,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -25,8 +25,8 @@ use windows::Win32::{
             GetForegroundWindow, GetWindow, GetWindowRect, IsWindow, IsWindowVisible, IsZoomed,
             MA_NOACTIVATE, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED,
             SIZE_RESTORED, SendMessageW, TranslateMessage, WM_CLOSE, WM_KEYDOWN, WM_KEYUP,
-            WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_PAINT, WM_QUIT, WM_SIZE,
-            WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
+            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_PAINT,
+            WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
         },
     },
 };
@@ -1618,15 +1618,26 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
         .expect("native test window should remain registered");
     let consume_exit = Rc::new(Cell::new(false));
     let exit_count = Rc::new(Cell::new(0usize));
+    let exit_positions = Rc::new(RefCell::new(Vec::new()));
+    let exit_had_physical_frame = Rc::new(RefCell::new(Vec::new()));
     let _mouse_interceptor = app
         .update_for_test(|cx| {
             window.update(cx, |_, window, _| {
                 window.intercept_window_mouse_events({
                     let consume_exit = consume_exit.clone();
                     let exit_count = exit_count.clone();
+                    let exit_positions = exit_positions.clone();
+                    let exit_had_physical_frame = exit_had_physical_frame.clone();
+                    let native_window = native_window.clone();
                     move |event, window, cx| {
-                        if matches!(event, WindowMouseEvent::Exit(_)) {
+                        if let WindowMouseEvent::Exit(event) = event {
                             exit_count.set(exit_count.get().saturating_add(1));
+                            exit_positions.borrow_mut().push(event.position);
+                            exit_had_physical_frame.borrow_mut().push(
+                                native_window
+                                    .native_pointer_physical_frame_for_test()
+                                    .is_some(),
+                            );
                             if consume_exit.get() {
                                 cx.stop_propagation();
                                 window.prevent_default();
@@ -1719,6 +1730,20 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
         input_and_hover,
         ["input", "hover", "input", "hover", "input", "hover"],
         "each native pointer transition must publish exact input before its hover fact"
+    );
+    let scale_factor = native_window.state.scale_factor.get();
+    assert_eq!(
+        exit_positions.borrow().as_slice(),
+        [
+            point(px(20.0 / scale_factor), px(24.0 / scale_factor)),
+            point(px(28.0 / scale_factor), px(32.0 / scale_factor)),
+        ],
+        "mouse leave must reuse the last callback-owned client position"
+    );
+    assert_eq!(
+        exit_had_physical_frame.borrow().as_slice(),
+        [false, false],
+        "mouse leave must remain hover-only and expose no captured routing frame"
     );
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
@@ -1865,13 +1890,12 @@ fn failed_native_destroy_keeps_window_registered_and_callbacks_live() {
 }
 
 #[test]
-fn failed_destroy_during_platform_window_drop_retains_native_owner_until_platform_teardown() {
+fn failed_destroy_during_platform_window_retirement_retries_without_losing_owner() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
         WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
     );
-    let platform_hwnd = platform.handle;
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
         .update_for_test(|cx| {
@@ -1897,23 +1921,260 @@ fn failed_destroy_during_platform_window_drop_retains_native_owner_until_platfor
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("GPUI window removal should finish despite the injected native teardown failure");
 
-    assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
-    assert!(is_registered(&platform, hwnd));
-    assert!(
-        platform.window_from_hwnd(hwnd).is_some(),
-        "the HWND must retain its Rust callback owner after PlatformWindow drop"
-    );
-
-    drop(app);
-    drop(platform);
+    pump_messages_until("failed native retirement retry", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
     assert!(
         unsafe { !IsWindow(Some(hwnd)).as_bool() },
-        "platform teardown must retry and destroy the retained child HWND"
+        "the App-owned retirement retry must destroy the retained child HWND"
     );
-    assert!(
-        unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
-        "platform teardown must destroy its message HWND after retained children"
+    assert!(!is_registered(&platform, hwnd));
+}
+
+#[test]
+fn framework_pointer_capture_release_is_native_terminal_without_duplicate_cancel() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
     );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("native test window should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("native test window should register an HWND")
+        .as_raw();
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("native test window should remain registered");
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let _mouse_interceptor = app
+        .update_for_test(|cx| {
+            window.update(cx, |_, window, _| {
+                window.intercept_window_mouse_events({
+                    let observed = observed.clone();
+                    move |event, _, _| match event {
+                        WindowMouseEvent::Down(_) => observed.borrow_mut().push(None),
+                        WindowMouseEvent::Cancel(event) => {
+                            observed.borrow_mut().push(Some(event.reason));
+                        }
+                        _ => {}
+                    }
+                })
+            })
+        })
+        .expect("framework capture-release test should install a mouse interceptor");
+    pump_messages_until_idle("initial framework capture-release test messages");
+
+    unsafe {
+        let _ = SetActiveWindow(hwnd);
+    }
+    pump_messages_until("framework capture-release native activation", || unsafe {
+        GetActiveWindow() == hwnd
+    });
+    post_message(
+        hwnd,
+        WM_LBUTTONDOWN,
+        WPARAM(MK_LBUTTON.0 as usize),
+        mouse_position_lparam(24, 28),
+    );
+    pump_messages_until("framework capture-release acquisition", || unsafe {
+        GetCapture() == hwnd
+    });
+
+    native_window.dispatch_input(PlatformInput::PointerCanceled(PointerCancelEvent {
+        reason: PointerCancelReason::CaptureRevoked,
+    }));
+    pump_messages_until("framework capture-release follow-up", || unsafe {
+        GetCapture() != hwnd
+    });
+
+    assert_ne!(unsafe { GetCapture() }, hwnd);
+    assert_eq!(
+        native_window.state.pointer_capture.get(),
+        Default::default()
+    );
+    assert_eq!(native_window.state.pressed_caption_button.get(), None);
+    assert_eq!(
+        observed.borrow().as_slice(),
+        &[None, Some(PointerCancelReason::CaptureRevoked)],
+        "the synchronous WM_CAPTURECHANGED notification must not emit a second cancellation"
+    );
+    assert_eq!(
+        native_window
+            .state
+            .pointer_capture_release_history
+            .borrow()
+            .len(),
+        1,
+        "the post-borrow release channel must invoke the native release callback exactly once"
+    );
+
+    app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("framework capture-release native test window should close");
+    pump_messages_until("framework capture-release native test teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
+}
+
+#[test]
+fn capture_acquisition_loss_reentrant_to_set_capture_cancels_after_mouse_down() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let source = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("source native test window should open");
+    let source_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("source native test window should register an HWND")
+        .as_raw();
+    let target = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("target native test window should open");
+    let target_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("target native test window should register an HWND")
+        .as_raw();
+    let source_native = platform
+        .window_from_hwnd(source_hwnd)
+        .expect("source native test window should remain registered");
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let _mouse_interceptor = app
+        .update_for_test(|cx| {
+            source.update(cx, |_, window, _| {
+                window.intercept_window_mouse_events({
+                    let observed = observed.clone();
+                    move |event, _, _| match event {
+                        WindowMouseEvent::Down(_) => observed.borrow_mut().push(None),
+                        WindowMouseEvent::Cancel(event) => {
+                            observed.borrow_mut().push(Some(event.reason));
+                        }
+                        _ => {}
+                    }
+                })
+            })
+        })
+        .expect("reentrant capture-acquisition test should install a mouse interceptor");
+    source_native
+        .state
+        .replace_next_pointer_capture_acquisition_with
+        .set(Some(target_hwnd));
+    pump_messages_until_idle("initial reentrant capture-acquisition test messages");
+    unsafe {
+        let _ = SetActiveWindow(source_hwnd);
+    }
+    pump_messages_until(
+        "reentrant capture-acquisition source activation",
+        || unsafe { GetActiveWindow() == source_hwnd },
+    );
+
+    let result = unsafe {
+        SendMessageW(
+            source_hwnd,
+            WM_LBUTTONDOWN,
+            Some(WPARAM(MK_LBUTTON.0 as usize)),
+            Some(mouse_position_lparam(24, 28)),
+        )
+    };
+    assert_eq!(result.0, 1);
+    pump_messages_until_idle("reentrant capture-acquisition follow-up");
+
+    assert_eq!(unsafe { GetCapture() }, target_hwnd);
+    assert_eq!(
+        source_native.state.pointer_capture.get(),
+        Default::default(),
+        "failed acquisition must not leave the source backend session active"
+    );
+    assert_eq!(source_native.state.input_dispatch.get(), Default::default());
+    assert_eq!(
+        observed.borrow().as_slice(),
+        &[None, Some(PointerCancelReason::PlatformCaptureLost)],
+        "capture loss must become terminal only after the matching MouseDown is delivered"
+    );
+
+    if unsafe { GetCapture() } == target_hwnd {
+        unsafe { ReleaseCapture() }.expect("test cleanup should release replacement capture");
+    }
+    post_message(
+        source_hwnd,
+        WM_LBUTTONDOWN,
+        WPARAM(MK_LBUTTON.0 as usize),
+        mouse_position_lparam(30, 34),
+    );
+    pump_messages_until("post-recovery pointer capture acquisition", || unsafe {
+        GetCapture() == source_hwnd
+    });
+    post_message(
+        source_hwnd,
+        WM_LBUTTONUP,
+        WPARAM::default(),
+        mouse_position_lparam(30, 34),
+    );
+    pump_messages_until("post-recovery pointer capture release", || unsafe {
+        GetCapture() != source_hwnd
+    });
+    assert_eq!(
+        source_native.state.pointer_capture.get(),
+        Default::default()
+    );
+    assert_eq!(
+        observed.borrow().as_slice(),
+        &[None, Some(PointerCancelReason::PlatformCaptureLost), None,],
+        "a later native pointer session must start and finish normally"
+    );
+
+    app.update_for_test(|cx| source.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("source native test window should close");
+    app.update_for_test(|cx| target.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("target native test window should close");
+    pump_messages_until("reentrant capture-acquisition native test teardown", || {
+        !unsafe { IsWindow(Some(source_hwnd)).as_bool() }
+            && !unsafe { IsWindow(Some(target_hwnd)).as_bool() }
+            && !is_registered(&platform, source_hwnd)
+            && !is_registered(&platform, target_hwnd)
+    });
 }
 
 #[test]
@@ -1965,6 +2226,29 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
     let source_native = platform
         .window_from_hwnd(source_hwnd)
         .expect("source native test window should remain registered");
+    let active_callback_calls = Rc::new(Cell::new(0usize));
+    let active_callback_panicked = Rc::new(Cell::new(false));
+    let mut active_callback = source_native
+        .state
+        .callbacks
+        .active_status_change
+        .take()
+        .expect("source native test window should install an active callback");
+    source_native
+        .state
+        .callbacks
+        .active_status_change
+        .set(Some(Box::new({
+            let active_callback_calls = active_callback_calls.clone();
+            let active_callback_panicked = active_callback_panicked.clone();
+            move |active| {
+                active_callback(active);
+                active_callback_calls.set(active_callback_calls.get().saturating_add(1));
+                if !active && !active_callback_panicked.replace(true) {
+                    panic!("injected WA_INACTIVE active callback panic");
+                }
+            }
+        })));
     let cancellations = Rc::new(RefCell::new(Vec::new()));
     let _mouse_interceptor = app
         .update_for_test(|cx| {
@@ -2020,6 +2304,7 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         source_native.state.pointer_capture.get(),
         Default::default()
     );
+    assert_eq!(active_callback_calls.get(), 2);
     let diagnostic_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(diagnostic_cursor));
     assert!(diagnostic_delta.terminal.iter().all(|diagnostic| {
@@ -2029,6 +2314,42 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
                 NativeBoundaryDisposition::InvariantFailure(_)
             )
     }));
+
+    unsafe {
+        let _ = SetActiveWindow(source_hwnd);
+    }
+    pump_messages_until(
+        "source reactivation after panicking deactivation callback",
+        || unsafe { GetActiveWindow() == source_hwnd },
+    );
+    post_message(
+        source_hwnd,
+        WM_LBUTTONDOWN,
+        WPARAM(MK_LBUTTON.0 as usize),
+        mouse_position_lparam(30, 34),
+    );
+    pump_messages_until(
+        "second native pointer session capture acquisition",
+        || unsafe { GetCapture() == source_hwnd },
+    );
+    post_message(
+        source_hwnd,
+        WM_LBUTTONUP,
+        WPARAM::default(),
+        mouse_position_lparam(30, 34),
+    );
+    pump_messages_until("second native pointer session capture release", || unsafe {
+        GetCapture() != source_hwnd
+    });
+    assert_eq!(
+        active_callback_calls.get(),
+        3,
+        "the active callback must be restored after its panic so G2 activation is delivered"
+    );
+    assert_eq!(
+        source_native.state.pointer_capture.get(),
+        Default::default()
+    );
 
     app.update_for_test(|cx| source.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("source native test window should close");
@@ -2043,6 +2364,131 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
     if unsafe { GetCapture() } == source_hwnd {
         unsafe { ReleaseCapture() }.expect("test cleanup should release source capture");
     }
+}
+
+#[test]
+fn panicking_pointer_cancel_reservation_releases_native_capture_before_abi_recovery() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("native test window should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("native test window should register an HWND")
+        .as_raw();
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("native test window should remain registered");
+    let callback_count = Rc::new(Cell::new(0usize));
+    let g2_phase = Rc::new(Cell::new(false));
+    let g2_callback_count = Rc::new(Cell::new(0usize));
+    native_window.state.callbacks.set_test_input(Box::new({
+        let callback_count = callback_count.clone();
+        let g2_phase = g2_phase.clone();
+        let g2_callback_count = g2_callback_count.clone();
+        move |_| {
+            let next = callback_count.get().saturating_add(1);
+            callback_count.set(next);
+            if next == 2 {
+                panic!("injected native input callback panic");
+            }
+            if g2_phase.get() {
+                g2_callback_count.set(g2_callback_count.get().saturating_add(1));
+            }
+            Default::default()
+        }
+    }));
+    pump_messages_until_idle("initial reservation-panic test messages");
+
+    unsafe {
+        let _ = SetActiveWindow(hwnd);
+    }
+    pump_messages_until("reservation-panic source activation", || unsafe {
+        GetActiveWindow() == hwnd
+    });
+    post_message(
+        hwnd,
+        WM_LBUTTONDOWN,
+        WPARAM(MK_LBUTTON.0 as usize),
+        mouse_position_lparam(24, 28),
+    );
+    pump_messages_until("reservation-panic native capture acquisition", || unsafe {
+        GetCapture() == hwnd
+    });
+
+    native_window
+        .state
+        .panic_next_pointer_cancel_reservation
+        .set(true);
+    let result = unsafe {
+        SendMessageW(
+            hwnd,
+            WM_MOUSEMOVE,
+            Some(WPARAM(MK_LBUTTON.0 as usize)),
+            Some(mouse_position_lparam(26, 30)),
+        )
+    };
+    assert_eq!(
+        result.0, 0,
+        "the ABI boundary must contain the recovery panic"
+    );
+    assert_ne!(
+        unsafe { GetCapture() },
+        hwnd,
+        "ReleaseCapture must precede a fallible pointer-cancel reservation"
+    );
+    assert_eq!(
+        native_window.state.pointer_capture.get(),
+        Default::default(),
+        "panic recovery must retire the local capture state before returning to Win32"
+    );
+
+    g2_phase.set(true);
+    post_message(
+        hwnd,
+        WM_LBUTTONDOWN,
+        WPARAM(MK_LBUTTON.0 as usize),
+        mouse_position_lparam(30, 34),
+    );
+    pump_messages_until("reservation-panic G2 capture acquisition", || unsafe {
+        GetCapture() == hwnd
+    });
+    post_message(
+        hwnd,
+        WM_LBUTTONUP,
+        WPARAM::default(),
+        mouse_position_lparam(30, 34),
+    );
+    pump_messages_until("reservation-panic G2 capture release", || unsafe {
+        GetCapture() != hwnd
+    });
+    assert!(
+        g2_callback_count.get() >= 2,
+        "G2 input must receive its down and up callbacks after recovery"
+    );
+
+    app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("reservation-panic native test window should close");
+    pump_messages_until("reservation-panic native test teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
 }
 
 #[test]

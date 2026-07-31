@@ -9,6 +9,7 @@ use crate::{
         open_controller_space_with_runtime, selector_for, space, tabs_graph, test_view,
         workspace_with_panels,
     },
+    host_viewport_runtime_test_support::configure_native_registered_window_hit,
 };
 use open_gpui::{
     AnyView, AppContext as _, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement,
@@ -435,6 +436,13 @@ fn cross_window_drag_freezes_source_style_and_uses_live_target_style(cx: &mut Te
     let target_empty = selector_for(&target_visual, &target_host, DockDebugRegion::EmptySpace)
         .expect("target empty-space selector should be emitted");
     let target_position = debug_bounds(&mut target_visual, &target_empty).center();
+    let target_from_source = point(px(400.0) + target_position.x, target_position.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_from_source,
+    );
     let payload = start_tab_drag(&mut source_visual, &source_host, source_tabs, "a");
     let payload_identity = payload.identity();
     let first_session = runtime
@@ -464,14 +472,13 @@ fn cross_window_drag_freezes_source_style_and_uses_live_target_style(cx: &mut Te
         "the deferred source visual must retain its opening-generation style"
     );
 
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(
-        target_position,
+    source_visual.simulate_mouse_move(
+        target_from_source,
         open_gpui::MouseButton::Left,
         open_gpui::Modifiers::none(),
     );
     cx.run_until_parked();
-    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
     assert_eq!(
         resolved_style(&target_host, &target_visual),
         target_live_style,
@@ -490,7 +497,6 @@ fn cross_window_drag_freezes_source_style_and_uses_live_target_style(cx: &mut Te
         "the target host should render a center guide for the routed drag"
     );
 
-    cx.set_platform_hovered_window(None);
     assert!(source_visual.update(|window, app| {
         source_host.update(app, |host, cx| {
             host.cancel_payload_drag_from_render(&payload, window, cx)
@@ -528,9 +534,8 @@ fn cross_window_drag_freezes_source_style_and_uses_live_target_style(cx: &mut Te
         "the retired generation must remain inaccessible after reopen"
     );
 
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(
-        target_position,
+    source_visual.simulate_mouse_move(
+        target_from_source,
         open_gpui::MouseButton::Left,
         open_gpui::Modifiers::none(),
     );
@@ -548,8 +553,6 @@ fn cross_window_drag_freezes_source_style_and_uses_live_target_style(cx: &mut Te
         .is_some(),
         "the same route must remain valid after reopening with a different source visual style"
     );
-    cx.set_platform_hovered_window(None);
-
     assert!(source_visual.update(|window, app| {
         source_host.update(app, |host, cx| {
             host.cancel_payload_drag_from_render(&reopened_payload, window, cx)

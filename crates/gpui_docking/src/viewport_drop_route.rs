@@ -11,10 +11,12 @@ mod planner;
 mod request;
 
 pub(crate) use model::{
-    DockViewportDropRoute, DockViewportDropRouteResolution, DockViewportDropRouteUnavailableReason,
+    DockViewportDropRoute, DockViewportDropRouteRejectionReason, DockViewportDropRouteResolution,
+    DockViewportDropRouteUnavailableReason,
 };
 pub(crate) use request::{
-    DockViewportDropReleasePoint, DockViewportDropRouteRequest, DockViewportPointerCoordinateSpace,
+    DockCapturedNativeDropRoute, DockCapturedNativeHostTarget, DockViewportDropReleasePoint,
+    DockViewportDropRouteRequest, DockViewportPointerCoordinateSpace,
 };
 
 impl DockViewportAdapter {
@@ -603,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_global_drop_accepts_trusted_hovered_cross_viewport_route() {
+    fn source_only_global_drop_ignores_trusted_hover_without_exact_native_route() {
         let source = space("source");
         let target_space = space("target");
         let target_window = handle(2);
@@ -628,20 +630,18 @@ mod tests {
             DockPayloadDropReleaseOrigin::SourceOnly,
         );
 
-        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+        let resolution =
+            adapter.resolve_payload_drop_route_resolution(&request, &DockPolicy::default());
 
         assert_eq!(
-            route,
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    target_space,
-                    target_window,
-                    point(px(20.0), px(30.0)),
-                    1,
-                ),
-                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
-            },
-            "source-only release should still accept current trusted hovered-window route facts"
+            resolution.route_ref(),
+            &DockViewportDropRoute::Unavailable,
+            "source-only release must not treat trusted hovered-window diagnostics as commit authority"
+        );
+        assert_eq!(
+            resolution.unavailable_reason(),
+            Some(DockViewportDropRouteUnavailableReason::NoViewportRouteSelection),
+            "source-only release requires an exact native captured route"
         );
     }
 
@@ -1010,7 +1010,7 @@ mod tests {
     }
 
     #[test]
-    fn event_receiver_local_scene_proof_is_ignored_for_source_only_releases() {
+    fn source_only_release_ignores_event_receiver_scene_proof_without_exact_native_route() {
         let source = space("source");
         let source_window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1043,10 +1043,14 @@ mod tests {
         )));
 
         assert!(request.event_receiver_local_scene_proof().is_none());
+        let resolution =
+            adapter.resolve_payload_drop_route_resolution(&request, &DockPolicy::default());
+
+        assert_eq!(resolution.route_ref(), &DockViewportDropRoute::Unavailable);
         assert_eq!(
-            adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
-            DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
-            "event-receiver scene proof belongs to hovered-host render paths; source-only captured release should continue through tear-off policy"
+            resolution.unavailable_reason(),
+            Some(DockViewportDropRouteUnavailableReason::NoViewportRouteSelection),
+            "event-receiver scene proof cannot replace an exact native captured route"
         );
     }
 
@@ -2140,7 +2144,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_release_without_global_bounds_applies_tear_off_policy_when_not_local() {
+    fn source_only_release_without_exact_native_route_does_not_fall_back_to_tear_off_policy() {
         let source = space("source");
         let source_window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -2166,22 +2170,31 @@ mod tests {
             DockPayloadDropReleaseOrigin::SourceOnly,
         );
 
-        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+        let resolution =
+            adapter.resolve_payload_drop_route_resolution(&request, &DockPolicy::default());
 
         assert_eq!(
-            route,
-            DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
-            "source-only release without a trusted local hit must still honor platform viewport policy"
+            resolution.route_ref(),
+            &DockViewportDropRoute::Unavailable,
+            "source-only release without an exact native captured route must fail closed before policy"
+        );
+        assert_eq!(
+            resolution.unavailable_reason(),
+            Some(DockViewportDropRouteUnavailableReason::NoViewportRouteSelection)
         );
 
         let mut policy = DockPolicy::default();
         policy.set_allow_platform_viewports(true);
-        let route = adapter.resolve_payload_drop_route(&request, &policy);
+        let resolution = adapter.resolve_payload_drop_route_resolution(&request, &policy);
 
         assert_eq!(
-            route,
-            DockViewportDropRoute::TearOff,
-            "source-only release without a trusted local hit should still tear off instead of dropping the release"
+            resolution.route_ref(),
+            &DockViewportDropRoute::Unavailable,
+            "enabling tear-off policy must not manufacture route authority for source-only release"
+        );
+        assert_eq!(
+            resolution.unavailable_reason(),
+            Some(DockViewportDropRouteUnavailableReason::NoViewportRouteSelection)
         );
     }
 
@@ -2691,7 +2704,7 @@ mod tests {
                 &DockPolicy::default(),
                 DockViewportTargetContext::new(),
             ),
-            DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled)
+            DockViewportDropRoute::rejected_by_policy(DockPolicyError::PlatformViewportsDisabled,)
         );
 
         let mut policy = DockPolicy::default();

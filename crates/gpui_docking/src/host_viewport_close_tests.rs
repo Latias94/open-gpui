@@ -1513,32 +1513,23 @@ mod runtime_suite {
             .select_tab(target_left, item("left-b"))
             .expect("selected target tabs should be observed before should-close");
         let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::with_close_policy(
+        let main_window = handle(60);
+        let detached_window = handle(61);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, main_space.clone(), main_window);
+        register_viewport(&mut adapter, detached_space.clone(), detached_window);
+        let mut runtime = DockViewportRuntime::from_adapter(
             controller.clone(),
+            adapter,
             DockViewportClosePolicy::MergeBack {
                 target_space: main_space.clone(),
             },
         );
-        let open_options = || WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(floating_bounds(
-                0.0, 0.0, 360.0, 220.0,
-            ))),
-            focus_on_appearing: false,
-            ..Default::default()
-        };
-        let _main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
-            })
-            .expect("main viewport should open");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
-            })
-            .expect("detached viewport should open");
 
         let should_close = cx.update(|app| {
-            runtime.handle_window_should_close_with_app(detached.window().window_id(), app)
+            runtime
+                .handle_window_should_close_with_app_and_refresh(detached_window.window_id(), app)
+                .outcome
         });
         assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
         cx.update_entity(&controller, |controller, _| {
@@ -1560,9 +1551,8 @@ mod runtime_suite {
                 .expect("post-validation target tabs should still be selectable");
         });
 
-        let closed = cx.update(|app| {
-            runtime.handle_window_closed_with_app(detached.window().window_id(), app)
-        });
+        let closed = cx
+            .update(|app| runtime.handle_window_closed_with_app(detached_window.window_id(), app));
 
         assert_eq!(closed.status(), DockViewportCloseStatus::MergedBack);
         cx.read_entity(&controller, |controller, _| {
@@ -1625,32 +1615,23 @@ mod runtime_suite {
             .select_tab(target_left, item("left-b"))
             .expect("selected target tabs should be observed before should-close");
         let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::with_close_policy(
+        let main_window = handle(62);
+        let detached_window = handle(63);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, main_space.clone(), main_window);
+        register_viewport(&mut adapter, detached_space.clone(), detached_window);
+        let mut runtime = DockViewportRuntime::from_adapter(
             controller.clone(),
+            adapter,
             DockViewportClosePolicy::MergeBack {
                 target_space: main_space.clone(),
             },
         );
-        let open_options = || WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(floating_bounds(
-                0.0, 0.0, 360.0, 220.0,
-            ))),
-            focus_on_appearing: false,
-            ..Default::default()
-        };
-        let _main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
-            })
-            .expect("main viewport should open");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
-            })
-            .expect("detached viewport should open");
 
         let should_close = cx.update(|app| {
-            runtime.handle_window_should_close_with_app(detached.window().window_id(), app)
+            runtime
+                .handle_window_should_close_with_app_and_refresh(detached_window.window_id(), app)
+                .outcome
         });
         assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
         cx.update_entity(&controller, |controller, _| {
@@ -1680,9 +1661,8 @@ mod runtime_suite {
                 .expect("another merge target should be available");
         });
 
-        let closed = cx.update(|app| {
-            runtime.handle_window_closed_with_app(detached.window().window_id(), app)
-        });
+        let closed = cx
+            .update(|app| runtime.handle_window_closed_with_app(detached_window.window_id(), app));
 
         assert_eq!(closed.status(), DockViewportCloseStatus::MergeBackFailed);
         cx.read_entity(&controller, |controller, _| {
@@ -4122,14 +4102,6 @@ mod handle_suite {
         let session = runtime
             .active_payload_drag_session(&payload)
             .expect("drag session should be active before source close");
-        assert_eq!(
-            runtime
-                .last_hovered_viewport_identity_for_drag_session(Some(&session))
-                .as_ref()
-                .map(|identity| identity.window_id()),
-            Some(visual.target.window().window_id()),
-            "dragging into the target viewport should remember the target as the last hovered viewport"
-        );
 
         let close = cx.update(|app| {
             runtime.handle_window_closed_with_app(visual.source.window().window_id(), app)

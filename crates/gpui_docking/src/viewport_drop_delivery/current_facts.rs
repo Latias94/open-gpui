@@ -128,13 +128,28 @@ pub(crate) fn resolve_workspace_target_for_route_with_facts(
                     host_position: *host_position,
                     missing_host_target: DockMissingHostTargetBehavior::PreserveRoute,
                     requires_current_route_facts: source.requires_current_route_facts(),
-                    requires_exact_scene_frame: *source
-                        == crate::DockViewportRouteSelectionSource::EventReceiverLocalScene,
-                    expected_scene_frame: request.event_receiver_local_scene_proof(),
+                    requires_exact_scene_frame: matches!(
+                        *source,
+                        crate::DockViewportRouteSelectionSource::EventReceiverLocalScene
+                            | crate::DockViewportRouteSelectionSource::CapturedNativeHitStack
+                    ),
+                    expected_scene_frame: match source {
+                        crate::DockViewportRouteSelectionSource::CapturedNativeHitStack => request
+                            .captured_native_route()
+                            .and_then(|route| match route {
+                                crate::DockCapturedNativeDropRoute::Host(target)
+                                | crate::DockCapturedNativeDropRoute::ForbiddenTarget(target) => {
+                                    Some(target.scene_frame())
+                                }
+                                crate::DockCapturedNativeDropRoute::Desktop
+                                | crate::DockCapturedNativeDropRoute::Unavailable => None,
+                            }),
+                        _ => request.event_receiver_local_scene_proof(),
+                    },
                 },
             )
         }
-        DockViewportDropRoute::KnownViewport { target, .. } => {
+        DockViewportDropRoute::KnownViewport { target, source } => {
             resolve_existing_viewport_workspace_target(
                 adapter,
                 host_scenes,
@@ -145,8 +160,18 @@ pub(crate) fn resolve_workspace_target_for_route_with_facts(
                     host_position: target.host_position(),
                     missing_host_target: DockMissingHostTargetBehavior::MarkRouteUnavailable,
                     requires_current_route_facts: true,
-                    requires_exact_scene_frame: false,
-                    expected_scene_frame: None,
+                    requires_exact_scene_frame: *source
+                        == crate::DockViewportRouteSelectionSource::CapturedNativeHitStack,
+                    expected_scene_frame: request.captured_native_route().and_then(|route| {
+                        match route {
+                            crate::DockCapturedNativeDropRoute::Host(target)
+                            | crate::DockCapturedNativeDropRoute::ForbiddenTarget(target) => {
+                                Some(target.scene_frame())
+                            }
+                            crate::DockCapturedNativeDropRoute::Desktop
+                            | crate::DockCapturedNativeDropRoute::Unavailable => None,
+                        }
+                    }),
                 },
             )
         }

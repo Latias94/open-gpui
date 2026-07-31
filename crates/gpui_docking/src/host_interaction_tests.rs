@@ -1,7 +1,8 @@
 use crate::{
     DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockItemId,
-    DockNode, DockNodeId, DockPanel, DockPanelDescriptor, DockSpaceId, DockViewportRuntimeHandle,
-    DockWorkspace, DropZone, SplitAxis,
+    DockNode, DockNodeId, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockSpaceId,
+    DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceWindowSessionShutdownReason,
+    DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     divider_hit_map::{DockDividerHitMap, DockDividerHitTarget},
     drag::DockDragPayload,
@@ -12,15 +13,63 @@ use crate::{
     transition_geometry::DockVisualAffordanceTransitionKind,
 };
 use open_gpui::{
-    AnyView, AppContext as _, Context, Entity, Focusable, InteractiveElement, IntoElement,
-    Modifiers, MouseButton, ParentElement, Render, Styled, SubtreeTransform, SubtreeTransformExt,
-    SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window, div, point, px, size,
+    AnyView, AnyWindowHandle, AppContext as _, Bounds, Context, DevicePixels, Entity, Focusable,
+    InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement, Pixels,
+    PlatformWindowHit, PlatformWindowHitStack, PlatformWindowPhysicalCoverage,
+    PlatformWindowPhysicalGeometry, Point, Render, Size, Styled, SubtreeTransform,
+    SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window,
+    WindowMouseEvent, canvas, div, point, px, size,
 };
 use slotmap::Key;
-use std::time::Duration;
+use std::{
+    cell::{Cell, RefCell},
+    panic::{AssertUnwindSafe, catch_unwind},
+    rc::Rc,
+    time::Duration,
+};
 
 struct OccludedDockHostFixture {
     host: Entity<DockHost>,
+}
+
+struct NativeSceneWorkContextSabotagePanel {
+    owner: Rc<RefCell<Option<Entity<crate::surface::DockSurfaceOwner>>>>,
+    armed: Rc<Cell<bool>>,
+}
+
+impl Render for NativeSceneWorkContextSabotagePanel {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let owner = self.owner.clone();
+        let armed = self.armed.clone();
+        canvas(
+            |_, _, _| {},
+            move |_, _, window, cx| {
+                if !armed.replace(false) {
+                    return;
+                }
+                let owner = owner
+                    .borrow()
+                    .clone()
+                    .expect("the sabotage panel should be attached to its surface owner");
+                let window_id = window.window_handle().window_id();
+                owner.update(cx, |owner, _| {
+                    let lease = owner
+                        .window_session()
+                        .active_lease()
+                        .expect("the source scene candidate should use an active surface lease");
+                    assert!(matches!(
+                        owner.window_session_mut().begin_shutdown(
+                            lease,
+                            DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                            [window_id],
+                        ),
+                        crate::surface::window_session::DockSurfaceWindowSessionBeginShutdownOutcome::Started { .. }
+                    ));
+                });
+            },
+        )
+        .size_full()
+    }
 }
 
 impl Render for OccludedDockHostFixture {
@@ -133,6 +182,323 @@ fn retained_host_for_workspace(
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
     cx.new(|cx| DockHost::from_controller(controller, space, runtime, cx))
+}
+
+fn configure_native_desktop_release(
+    cx: &TestAppContext,
+    source_window: AnyWindowHandle,
+    source_size: Size<DevicePixels>,
+) {
+    let source_bounds = Bounds::new(point(DevicePixels(0), DevicePixels(0)), source_size);
+    cx.set_platform_window_physical_client_geometry(source_window, Some(source_bounds), 2.0);
+    let sampled_point = point(DevicePixels(1800), DevicePixels(1800));
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(sampled_point, Vec::new())
+            .expect("desktop release observation should be valid"),
+    );
+}
+
+fn advertise_native_window_hit_stack(cx: &TestAppContext) {
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(-1), DevicePixels(-1)),
+            Vec::new(),
+        )
+        .expect("an empty point-scoped hit observation should be valid"),
+    );
+}
+
+fn configure_native_registered_window_hit(
+    cx: &TestAppContext,
+    source_window: AnyWindowHandle,
+    target_window: AnyWindowHandle,
+    target_point: Point<Pixels>,
+) {
+    configure_native_registered_window_hit_with_target_size(
+        cx,
+        source_window,
+        target_window,
+        target_point,
+        size(px(360.0), px(220.0)),
+    );
+}
+
+fn configure_native_registered_window_hit_with_target_size(
+    cx: &TestAppContext,
+    source_window: AnyWindowHandle,
+    target_window: AnyWindowHandle,
+    target_point: Point<Pixels>,
+    target_size: Size<Pixels>,
+) {
+    let source_bounds = Bounds::new(
+        point(DevicePixels(0), DevicePixels(0)),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    let target_bounds = Bounds::new(
+        point(DevicePixels(800), DevicePixels(0)),
+        size(
+            DevicePixels((target_size.width.as_f32() * 2.0).round() as i32),
+            DevicePixels((target_size.height.as_f32() * 2.0).round() as i32),
+        ),
+    );
+    cx.set_platform_window_physical_client_geometry(source_window, Some(source_bounds), 2.0);
+    cx.set_platform_window_physical_client_geometry(target_window, Some(target_bounds), 2.0);
+    let sampled_point = point(
+        DevicePixels((target_point.x.as_f32() * 2.0).round() as i32),
+        DevicePixels((target_point.y.as_f32() * 2.0).round() as i32),
+    );
+    let coverage = PlatformWindowPhysicalCoverage::try_new(target_bounds)
+        .expect("target coverage should be representable");
+    let geometry = PlatformWindowPhysicalGeometry::try_new(target_bounds, 2.0)
+        .expect("target physical geometry should be representable");
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            sampled_point,
+            vec![PlatformWindowHit::RegisteredApplication {
+                window: target_window,
+                coverage,
+                geometry,
+            }],
+        )
+        .expect("registered target hit observation should be valid"),
+    );
+}
+
+struct NativeCapturedSourceFixture {
+    surface: DockSurface,
+    controller: Entity<DockController>,
+    runtime: DockViewportRuntimeHandle,
+    source_window: AnyWindowHandle,
+    source_host: Entity<DockHost>,
+    source_visual: VisualTestContext,
+    start: Point<Pixels>,
+    threshold: Point<Pixels>,
+    target: Point<Pixels>,
+    payload: DockDragPayload,
+}
+
+impl NativeCapturedSourceFixture {
+    fn begin_drag(&mut self, cx: &mut TestAppContext) {
+        activate_window_for_pointer_input(&mut self.source_visual);
+        self.source_visual
+            .simulate_mouse_down(self.start, MouseButton::Left, Modifiers::none());
+        self.source_visual.simulate_mouse_move(
+            self.threshold,
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        assert!(
+            self.runtime
+                .active_payload_drag_session(&self.payload)
+                .is_some()
+        );
+    }
+}
+
+fn native_captured_source_fixture(cx: &mut TestAppContext) -> NativeCapturedSourceFixture {
+    let (surface, controller, runtime, source_window, source_tabs) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([
+                DockPanelPlacement::center("a").selected(),
+                DockPanelPlacement::stacked_with("b", "a"),
+            ])
+            .panel_factory("a", "Panel A", |cx| {
+                cx.new(|cx| TestPanel::new("A", cx)).into()
+            })
+            .panel_factory("b", "Panel B", |cx| {
+                cx.new(|cx| TestPanel::new("B", cx)).into()
+            })
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the captured-drag source surface should build");
+        let controller = surface.controller(cx);
+        let runtime = surface.viewport_runtime(cx);
+        let source_tabs = cx.read_entity(&controller, |controller, _| {
+            controller
+                .graph()
+                .root(&DockSpaceId::from("main"))
+                .expect("the source surface should retain its root tabs")
+        });
+        let source_window =
+            match surface.open_primary_window(viewport_window_options(360.0, 220.0), cx) {
+                DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+                outcome => panic!("the captured-drag source window should open, got {outcome:?}"),
+            };
+        (surface, controller, runtime, source_window, source_tabs)
+    });
+    cx.run_until_parked();
+
+    let source_host = source_window
+        .downcast::<DockHost>()
+        .expect("the source window should retain a DockHost root")
+        .entity(cx)
+        .expect("the source DockHost should remain live");
+    let mut source_visual = VisualTestContext::from_window(source_window, cx);
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("the source tab selector should be emitted");
+    let target_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("b"),
+        },
+    )
+    .expect("the target tab selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target = debug_bounds(&mut source_visual, &target_tab).center();
+    let payload = DockDragPayload::new_item(
+        DockSpaceId::from("main"),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    advertise_native_window_hit_stack(cx);
+
+    NativeCapturedSourceFixture {
+        surface,
+        controller,
+        runtime,
+        source_window,
+        source_host,
+        source_visual,
+        start,
+        threshold,
+        target,
+        payload,
+    }
+}
+
+struct NativeCapturedForeignFixture {
+    source_space: DockSpaceId,
+    source_tabs: DockNodeId,
+    source_controller: Entity<DockController>,
+    source_runtime: DockViewportRuntimeHandle,
+    source_window: AnyWindowHandle,
+    source_host: Entity<DockHost>,
+    source_visual: VisualTestContext,
+    target_space: DockSpaceId,
+    target_controller: Entity<DockController>,
+    target_runtime: DockViewportRuntimeHandle,
+    target_window: AnyWindowHandle,
+    target_host: Entity<DockHost>,
+    target_global_from_source: Point<Pixels>,
+    payload: DockDragPayload,
+}
+
+fn native_captured_foreign_preview_fixture(
+    cx: &mut TestAppContext,
+) -> NativeCapturedForeignFixture {
+    let source_space = DockSpaceId::from("source");
+    let mut source_graph = DockGraph::new();
+    let source_tabs = source_graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    source_graph.set_root(source_space.clone(), source_tabs);
+    let source_workspace = workspace_with_panels(
+        cx,
+        source_graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+    );
+    let source_controller = cx.new(|_| DockController::new(source_workspace));
+    let source_runtime = DockViewportRuntimeHandle::new(source_controller.clone());
+
+    let target_space = DockSpaceId::from("target");
+    let mut target_graph = DockGraph::new();
+    let target_tabs = target_graph.insert_node(DockNode::Tabs {
+        items: vec![item("x")],
+        selected: Some(item("x")),
+    });
+    target_graph.set_root(target_space.clone(), target_tabs);
+    let target_workspace = workspace_with_panels(cx, target_graph, &[("x", "Panel X", "X")]);
+    let target_controller = cx.new(|_| DockController::new(target_workspace));
+    let target_runtime = DockViewportRuntimeHandle::new(target_controller.clone());
+
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+        cx,
+        source_controller.clone(),
+        source_runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
+        cx,
+        target_controller.clone(),
+        target_runtime.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let source_window = source_window.into();
+    let target_window = target_window.into();
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    let target_global_from_source = point(px(400.0) + target_local.x, target_local.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window,
+        target_window,
+        target_global_from_source,
+    );
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+
+    NativeCapturedForeignFixture {
+        source_space,
+        source_tabs,
+        source_controller,
+        source_runtime,
+        source_window,
+        source_host,
+        source_visual,
+        target_space,
+        target_controller,
+        target_runtime,
+        target_window,
+        target_host,
+        target_global_from_source,
+        payload,
+    }
 }
 
 #[open_gpui::test]
@@ -519,21 +885,8 @@ fn window_deactivation_cancels_a_single_tabs_floating_payload_drag(cx: &mut Test
             .cloned()
             .expect("single-tabs floating drag should establish a payload")
     });
-    cx.update_entity(&host, |host, _| {
-        if !host.interaction().outside_release_poll_running() {
-            let session = host
-                .active_payload_drag_session(&payload)
-                .expect("payload runtime session should be active");
-            assert!(
-                host.interaction_mut()
-                    .begin_outside_release_poll_with_session(&payload, Some(session))
-                    .is_some()
-            );
-        }
-    });
     host.read_with(&visual, |host, _| {
         assert!(host.floating_drag().is_some());
-        assert!(host.interaction().outside_release_poll_running());
         assert!(host.active_payload_drag_session(&payload).is_some());
     });
 
@@ -551,7 +904,6 @@ fn window_deactivation_cancels_a_single_tabs_floating_payload_drag(cx: &mut Test
             "PointerCancel must clear the floating state paired with the GPUI drag"
         );
         assert!(host.interaction().drop_preview().is_none());
-        assert!(!host.interaction().outside_release_poll_running());
         assert!(host.active_payload_drag_session(&payload).is_none());
     });
 }
@@ -599,15 +951,8 @@ fn host_subtree_removal_cancels_a_captured_single_tabs_payload_drag(cx: &mut Tes
             .cloned()
             .expect("single-tabs drag should establish a payload")
     });
-    cx.update_entity(&host, |host, _| {
-        let session = host
-            .active_payload_drag_session(&payload)
-            .expect("payload runtime session should be active");
-        assert!(
-            host.interaction_mut()
-                .begin_outside_release_poll_with_session(&payload, Some(session))
-                .is_some()
-        );
+    host.read_with(&visual, |host, _| {
+        assert!(host.active_payload_drag_session(&payload).is_some());
     });
 
     cx.update_entity(&fixture, |fixture, cx| {
@@ -622,7 +967,6 @@ fn host_subtree_removal_cancels_a_captured_single_tabs_payload_drag(cx: &mut Tes
     host.read_with(&visual, |host, _| {
         assert!(host.active_payload_drag_session(&payload).is_none());
         assert!(host.floating_drag().is_none());
-        assert!(!host.interaction().outside_release_poll_running());
     });
 }
 
@@ -743,21 +1087,8 @@ fn pointer_cancel_reaches_the_payload_owner_with_multiple_dock_hosts(cx: &mut Te
             .cloned()
             .expect("owner should establish a Dock payload drag")
     });
-    cx.update_entity(&owner, |host, _| {
-        if !host.interaction().outside_release_poll_running() {
-            let session = host
-                .active_payload_drag_session(&payload)
-                .expect("owner payload runtime session should be active");
-            assert!(
-                host.interaction_mut()
-                    .begin_outside_release_poll_with_session(&payload, Some(session))
-                    .is_some()
-            );
-        }
-    });
     owner.read_with(&visual, |host, _| {
         assert!(host.active_payload_drag_session(&payload).is_some());
-        assert!(host.interaction().outside_release_poll_running());
     });
 
     visual.deactivate_window();
@@ -767,7 +1098,6 @@ fn pointer_cancel_reaches_the_payload_owner_with_multiple_dock_hosts(cx: &mut Te
     owner.read_with(&visual, |host, _| {
         assert!(host.active_payload_drag_session(&payload).is_none());
         assert!(host.floating_drag().is_none());
-        assert!(!host.interaction().outside_release_poll_running());
     });
 }
 
@@ -1267,7 +1597,6 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
-
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
         "panel A should be visible after center drop"
@@ -2393,12 +2722,22 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
     let threshold = point(start.x + px(24.0), start.y);
     let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
     let end = inner_edge_drop_position(target_bounds, DropZone::Bottom);
+    let target_global_from_source = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global_from_source,
+    );
 
     activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
@@ -2418,10 +2757,101 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
         preview_body_bounds.size.height < target_bounds.size.height,
         "bottom-edge preview should occupy only a horizontal band"
     );
+    let source_feedback_visual = VisualTestContext::from_window(source_window.into(), cx);
+    assert!(
+        selector_for(
+            &source_feedback_visual,
+            &source_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::KnownViewport,
+            },
+        )
+        .is_some(),
+        "the native route should pair the target overlay with an exact source-side marker"
+    );
+    assert!(
+        runtime
+            .routed_drop_preview_for(&target_space, target_window.window_id())
+            .is_some()
+    );
+    assert!(
+        runtime
+            .routed_drop_route_preview_for(&source_space, source_window.window_id())
+            .is_some()
+    );
 
-    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    let (stale_binding, stale_registration, stale_frame) =
+        cx.read_entity(&target_host, |host, _| {
+            (
+                host.current_window_binding()
+                    .expect("the G1 target host should retain its exact window binding"),
+                host.current_viewport_registration()
+                    .expect("the G1 target host should retain its exact registration"),
+                host.interaction()
+                    .viewport_host_scene_frame()
+                    .cloned()
+                    .expect("the G1 target host should retain its committed scene frame"),
+            )
+        });
+    let replacement_registration = runtime
+        .borrow_mut()
+        .replace_adapter_registration_for_test(target_space.clone(), target_window.into());
+    target_host.update(cx, |_, cx| cx.notify());
     cx.run_until_parked();
-    cx.set_platform_hovered_window(None);
+
+    let (current_binding, current_registration, current_frame) =
+        cx.read_entity(&target_host, |host, _| {
+            (
+                host.current_window_binding()
+                    .expect("the G2 target host should retain its exact window binding"),
+                host.current_viewport_registration()
+                    .expect("the G2 target host should retain its exact registration"),
+                host.interaction()
+                    .viewport_host_scene_frame()
+                    .cloned()
+                    .expect("the G2 target host should retain its committed scene frame"),
+            )
+        });
+    assert_ne!(current_binding, stale_binding);
+    assert_ne!(current_registration, stale_registration);
+    assert_eq!(current_registration, replacement_registration);
+    assert_ne!(current_frame, stale_frame);
+    assert!(
+        runtime
+            .routed_drop_preview_for(&target_space, target_window.window_id())
+            .is_some(),
+        "publishing G2 should reproject the latest captured event without pointer motion"
+    );
+
+    cx.update(|app| {
+        crate::native_captured_drag::clear_native_captured_host_scene(
+            target_window.window_id(),
+            &target_host.downgrade(),
+            stale_binding,
+            Some(&stale_frame),
+            app,
+        );
+    });
+    cx.run_until_parked();
+    assert!(
+        runtime
+            .routed_drop_preview_for(&target_space, target_window.window_id())
+            .is_some(),
+        "a delayed G1 cleanup must not erase the current G2 target overlay"
+    );
+    assert!(
+        runtime
+            .routed_drop_route_preview_for(&source_space, source_window.window_id())
+            .is_some(),
+        "a delayed G1 cleanup must not erase the G2 paired source marker"
+    );
+
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -2555,12 +2985,23 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
     let threshold = point(start.x + px(24.0), start.y);
     let right_child_bounds = debug_bounds(&mut target_visual, &right_child);
     let end = inner_edge_drop_position(right_child_bounds, DropZone::Bottom);
+    let target_global_from_source = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit_with_target_size(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global_from_source,
+        size(px(480.0), px(260.0)),
+    );
 
     activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
@@ -2581,9 +3022,12 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
         "nested bottom-edge preview should occupy only a horizontal band"
     );
 
-    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
-    cx.set_platform_hovered_window(None);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -2732,12 +3176,22 @@ fn cross_window_tab_drag_to_edge_creates_split(
     let threshold = point(start.x + px(24.0), start.y);
     let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
     let end = inner_edge_drop_position(target_bounds, zone);
+    let target_global_from_source = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global_from_source,
+    );
 
     activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
@@ -2766,9 +3220,12 @@ fn cross_window_tab_drag_to_edge_creates_split(
         DropZone::Center => unreachable!("center is not an edge drop"),
     }
 
-    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
-    cx.set_platform_hovered_window(None);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -3116,7 +3573,7 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
-    let (_source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
         cx,
         controller.clone(),
         runtime.clone(),
@@ -3145,21 +3602,34 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
     let start = debug_bounds(&mut source_visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let end = debug_bounds(&mut target_visual, &target_empty).center();
+    let target_global_from_source = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global_from_source,
+    );
 
     activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_hovered_window(Some(target_window.into()));
-    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
     target_visual = VisualTestContext::from_window(target_window.into(), cx);
     let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .expect("empty target should render a host-level drop preview");
     assert!(debug_bounds(&mut target_visual, &preview).size.width > px(0.0));
 
-    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
-    cx.set_platform_hovered_window(None);
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
 
     assert!(
@@ -3190,7 +3660,1133 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppContext) {
+fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_listener(
+    cx: &mut TestAppContext,
+) {
+    let source_space = space();
+    let empty_space = crate::DockSpaceId::from("empty");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime.clone(),
+        empty_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let source_window: AnyWindowHandle = source_window.into();
+    let target_window: AnyWindowHandle = target_window.into();
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("the source tab selector should be emitted");
+    let target_empty = selector_for(&target_visual, &target_host, DockDebugRegion::EmptySpace)
+        .expect("the empty target selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = debug_bounds(&mut target_visual, &target_empty).center();
+    let target_global_from_source = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window,
+        target_window,
+        target_global_from_source,
+    );
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    target_visual = VisualTestContext::from_window(target_window, cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "G1 should be the visible release candidate before MouseUp"
+    );
+    let locked_frame = cx.read_entity(&target_host, |host, _| {
+        host.interaction()
+            .viewport_host_scene_frame()
+            .cloned()
+            .expect("G1 should have a committed target scene frame")
+    });
+
+    let listener_replaced_target = Rc::new(Cell::new(false));
+    let _interceptor = cx
+        .update_window(source_window, {
+            let runtime = runtime.clone();
+            let empty_space = empty_space.clone();
+            let target_host = target_host.clone();
+            let listener_replaced_target = listener_replaced_target.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    if matches!(event, WindowMouseEvent::Up(_))
+                        && !listener_replaced_target.replace(true)
+                    {
+                        runtime.borrow_mut().replace_adapter_registration_for_test(
+                            empty_space.clone(),
+                            target_window,
+                        );
+                        target_host.update(cx, |_, host_cx| host_cx.notify());
+                    }
+                })
+            }
+        })
+        .expect("the source should install its MouseUp interceptor");
+
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    assert!(listener_replaced_target.get());
+    let replacement_frame = cx.read_entity(&target_host, |host, _| {
+        host.interaction()
+            .viewport_host_scene_frame()
+            .cloned()
+            .expect("the listener-created G2 scene should commit")
+    });
+    assert_ne!(replacement_frame, locked_frame);
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a")],
+            "a stale G1 release reservation must not remove the source item"
+        );
+        assert_eq!(
+            controller.graph().root(&empty_space),
+            None,
+            "the MouseUp listener's G2 target did not exist when release was locked"
+        );
+    });
+    assert_eq!(
+        runtime.active_payload_drag_session(&DockDragPayload::new_item(
+            source_space,
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        )),
+        None,
+        "the stale release must still retire its exact drag session"
+    );
+}
+
+#[open_gpui::test]
+fn native_captured_move_without_physical_frame_clears_preview_without_revision(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    fixture.begin_drag(cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source drag session should remain active");
+    let revision = cx.read(|app| fixture.surface.revision(app));
+
+    cx.set_platform_window_physical_client_geometry(fixture.source_window, None, 2.0);
+    fixture
+        .source_visual
+        .simulate_mouse_move(fixture.target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some()
+    );
+    assert!(
+        !fixture
+            .runtime
+            .has_routed_drop_preview_for_drag_session(Some(&session)),
+        "a move without a callback-scoped physical frame must not retain a routed preview"
+    );
+    assert_eq!(fixture.runtime.runtime_status().last_drop_outcome, None);
+    assert_eq!(cx.read(|app| fixture.surface.revision(app)), revision);
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")]
+        );
+    });
+
+    let source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    assert!(
+        selector_for(
+            &source_visual,
+            &fixture.source_host,
+            DockDebugRegion::DropPreview,
+        )
+        .is_none()
+    );
+    fixture.source_visual.deactivate_window();
+    cx.run_until_parked();
+}
+
+#[open_gpui::test]
+fn native_captured_release_with_unavailable_hit_stack_does_not_drop_or_publish_revision(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    fixture.begin_drag(cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source drag session should remain active");
+    let revision = cx.read(|app| fixture.surface.revision(app));
+    cx.set_platform_window_physical_client_geometry(
+        fixture.source_window,
+        Some(Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(720), DevicePixels(440)),
+        )),
+        2.0,
+    );
+    cx.set_platform_window_hit_stack(PlatformWindowHitStack::Unavailable);
+
+    fixture
+        .source_visual
+        .simulate_mouse_move(fixture.target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(cx.read(|app| fixture.surface.revision(app)), revision);
+    fixture
+        .source_visual
+        .simulate_mouse_up(fixture.target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload),
+        None
+    );
+    assert!(
+        !fixture
+            .runtime
+            .has_routed_drop_preview_for_drag_session(Some(&session)),
+        "an unavailable release must retire every routed preview"
+    );
+    assert_eq!(cx.read(|app| fixture.surface.revision(app)), revision);
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")],
+            "an unavailable native hit stack must not fall back to the source drop scene"
+        );
+    });
+    let status = fixture.runtime.runtime_status();
+    assert_eq!(status.last_activation, None);
+    assert_eq!(status.last_tear_off, None);
+}
+
+#[open_gpui::test]
+fn stale_native_scene_work_context_retires_source_route_without_another_pointer_event(
+    cx: &mut TestAppContext,
+) {
+    let owner = Rc::new(RefCell::new(None));
+    let armed = Rc::new(Cell::new(false));
+    let panel_owner = owner.clone();
+    let panel_armed = armed.clone();
+    let (surface, source_window, source_tabs) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([
+                DockPanelPlacement::center("a").selected(),
+                DockPanelPlacement::stacked_with("b", "a"),
+            ])
+            .panel_factory("a", "Panel A", move |cx| {
+                let owner = panel_owner.clone();
+                let armed = panel_armed.clone();
+                cx.new(move |_| NativeSceneWorkContextSabotagePanel { owner, armed })
+                    .into()
+            })
+            .panel_factory("b", "Panel B", |cx| {
+                cx.new(|cx| TestPanel::new("B", cx)).into()
+            })
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the managed source surface should build");
+        owner.borrow_mut().replace(surface.owner().clone());
+        let controller = surface.controller(cx);
+        let source_tabs = cx.read_entity(&controller, |controller, _| {
+            controller
+                .graph()
+                .root(&DockSpaceId::from("main"))
+                .expect("the managed source should retain its root tabs")
+        });
+        let source_window =
+            match surface.open_primary_window(viewport_window_options(360.0, 220.0), cx) {
+                DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+                outcome => panic!("the managed source window should open, got {outcome:?}"),
+            };
+        (surface, source_window, source_tabs)
+    });
+    cx.run_until_parked();
+
+    let source_host = source_window
+        .downcast::<DockHost>()
+        .expect("the managed source window should retain a DockHost root")
+        .entity(cx)
+        .expect("the managed source DockHost should remain live");
+    let mut source_visual = VisualTestContext::from_window(source_window, cx);
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("the managed source tab selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let payload = DockDragPayload::new_item(
+        DockSpaceId::from("main"),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let runtime = surface.viewport_runtime(cx);
+    advertise_native_window_hit_stack(cx);
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    assert!(runtime.active_payload_drag_session(&payload).is_some());
+    assert!(cx.update(|cx| {
+        crate::native_captured_drag::has_active_native_captured_drag_route_for_test(cx)
+    }));
+
+    armed.set(true);
+    source_host.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+
+    assert!(cx.read_entity(surface.owner(), |owner, _| {
+        owner.window_session().active_lease().is_none()
+    }));
+    assert_eq!(runtime.active_payload_drag_session(&payload), None);
+    assert!(!cx.update(|cx| {
+        crate::native_captured_drag::has_active_native_captured_drag_route_for_test(cx)
+    }));
+    assert!(cx.read_entity(&source_host, |host, _| {
+        host.payload_drag_anchor_position_from_render(&payload)
+            .is_none()
+    }));
+}
+
+#[open_gpui::test]
+fn stale_native_source_scene_frame_cleanup_preserves_route_with_replacement(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_foreign_preview_fixture(cx);
+    let (binding, stale_frame) = cx.read_entity(&fixture.source_host, |host, _| {
+        (
+            host.current_window_binding()
+                .expect("the source host should have a window binding"),
+            host.interaction()
+                .viewport_host_scene_frame()
+                .cloned()
+                .expect("the source host should have a committed G1 scene frame"),
+        )
+    });
+
+    cx.simulate_window_resize(fixture.source_window, size(px(420.0), px(240.0)));
+    cx.run_until_parked();
+
+    let current_frame = cx.read_entity(&fixture.source_host, |host, _| {
+        assert_eq!(host.current_window_binding(), Some(binding));
+        host.interaction()
+            .viewport_host_scene_frame()
+            .cloned()
+            .expect("the resized source host should commit a G2 scene frame")
+    });
+    assert_eq!(
+        current_frame.registration_key(),
+        stale_frame.registration_key()
+    );
+    assert_ne!(current_frame, stale_frame);
+
+    cx.update(|cx| {
+        crate::native_captured_drag::clear_native_captured_host_scene(
+            fixture.source_window.window_id(),
+            &fixture.source_host.downgrade(),
+            binding,
+            Some(&stale_frame),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some()
+    );
+    assert!(cx.update(|cx| {
+        crate::native_captured_drag::has_active_native_captured_drag_route_for_test(cx)
+    }));
+    let target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "a delayed source G1 cleanup must preserve the G2 route and its target feedback"
+    );
+
+    fixture.source_visual.deactivate_window();
+    cx.run_until_parked();
+}
+
+#[open_gpui::test]
+fn stale_native_scene_registration_cleanup_preserves_replacement_foreign_preview(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_foreign_preview_fixture(cx);
+    let (stale_binding, stale_registration, stale_frame) =
+        cx.read_entity(&fixture.target_host, |host, _| {
+            (
+                host.current_window_binding()
+                    .expect("the G1 target host should have a window binding"),
+                host.current_viewport_registration()
+                    .expect("the G1 target host should have a registration"),
+                host.interaction()
+                    .viewport_host_scene_frame()
+                    .cloned()
+                    .expect("the G1 target host should have a committed scene frame"),
+            )
+        });
+    let replacement_registration = fixture
+        .target_runtime
+        .borrow_mut()
+        .replace_adapter_registration_for_test(fixture.target_space.clone(), fixture.target_window);
+
+    fixture.target_host.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+
+    let (current_binding, current_registration) =
+        cx.read_entity(&fixture.target_host, |host, _| {
+            (
+                host.current_window_binding()
+                    .expect("the G2 target host should have a window binding"),
+                host.current_viewport_registration()
+                    .expect("the G2 target host should have a registration"),
+            )
+        });
+    assert_ne!(current_binding, stale_binding);
+    assert_ne!(current_registration, stale_registration);
+    assert_eq!(current_registration, replacement_registration);
+    let mut target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "publishing G2 should reproject the latest captured event without another pointer event"
+    );
+
+    cx.update(|cx| {
+        crate::native_captured_drag::clear_native_captured_host_scene(
+            fixture.target_window.window_id(),
+            &fixture.target_host.downgrade(),
+            stale_binding,
+            Some(&stale_frame),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "a delayed G1 cleanup must preserve the current G2 foreign preview"
+    );
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some()
+    );
+
+    fixture.source_visual.deactivate_window();
+    cx.run_until_parked();
+}
+
+#[open_gpui::test]
+fn stale_native_scene_frame_cleanup_preserves_newer_same_registration_foreign_preview(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_foreign_preview_fixture(cx);
+    let (binding, stale_frame) = cx.read_entity(&fixture.target_host, |host, _| {
+        (
+            host.current_window_binding()
+                .expect("the target host should have a window binding"),
+            host.interaction()
+                .viewport_host_scene_frame()
+                .cloned()
+                .expect("the target host should have a committed G1 scene frame"),
+        )
+    });
+
+    cx.simulate_window_resize(fixture.target_window, size(px(360.0), px(220.0)));
+    cx.run_until_parked();
+
+    let current_frame = cx.read_entity(&fixture.target_host, |host, _| {
+        assert_eq!(host.current_window_binding(), Some(binding));
+        host.interaction()
+            .viewport_host_scene_frame()
+            .cloned()
+            .expect("the same-layout target host should commit a complete G2 scene frame")
+    });
+    assert_eq!(
+        current_frame.registration_key(),
+        stale_frame.registration_key()
+    );
+    assert_ne!(current_frame, stale_frame);
+    let mut target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "a same-semantic G2 frame must reproject the latest event without another pointer event"
+    );
+
+    cx.update(|cx| {
+        crate::native_captured_drag::clear_native_captured_host_scene(
+            fixture.target_window.window_id(),
+            &fixture.target_host.downgrade(),
+            binding,
+            Some(&stale_frame),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "a delayed G1 frame cleanup must preserve the current G2 frame and preview"
+    );
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some()
+    );
+
+    fixture.source_visual.deactivate_window();
+    cx.run_until_parked();
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_foreign_surface_projects_rejection_without_delivery(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let mut source_graph = DockGraph::new();
+    let source_tabs = source_graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    source_graph.set_root(source_space.clone(), source_tabs);
+    let source_workspace = workspace_with_panels(
+        cx,
+        source_graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+    );
+    let source_controller = cx.new(|_| DockController::new(source_workspace));
+    let source_runtime = DockViewportRuntimeHandle::new(source_controller.clone());
+
+    let target_space = DockSpaceId::from("target");
+    let mut target_graph = DockGraph::new();
+    let target_tabs = target_graph.insert_node(DockNode::Tabs {
+        items: vec![item("x")],
+        selected: Some(item("x")),
+    });
+    target_graph.set_root(target_space.clone(), target_tabs);
+    let target_workspace = workspace_with_panels(cx, target_graph, &[("x", "Panel X", "X")]);
+    let target_controller = cx.new(|_| DockController::new(target_workspace));
+    let target_runtime = DockViewportRuntimeHandle::new(target_controller.clone());
+
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+        cx,
+        source_controller.clone(),
+        source_runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
+        cx,
+        target_controller.clone(),
+        target_runtime.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    let target_global_from_source = point(px(400.0) + target_local.x, target_local.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global_from_source,
+    );
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let source_feedback_visual = VisualTestContext::from_window(source_window.into(), cx);
+    assert!(
+        selector_for(
+            &source_feedback_visual,
+            &source_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "the source surface should render rejected feedback from its own current route proof"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "the foreign target runtime should render a rejected route marker without receiving raw pointer input"
+    );
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_none(),
+        "a foreign runtime must not construct a payload-bearing target preview"
+    );
+    let source_status = source_runtime.runtime_status();
+    assert!(matches!(
+        source_status.last_route.as_ref().map(|route| &route.target),
+        Some(crate::DockViewportRouteTarget::Rejected {
+            reason: crate::DockViewportRouteRejectionRecord::ForeignSurface,
+        })
+    ));
+    assert_eq!(
+        target_runtime.runtime_status().last_route,
+        None,
+        "the target runtime validates and renders foreign feedback but does not own route diagnostics"
+    );
+
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_none(),
+        "foreign release should clear the exact rejected marker"
+    );
+    let source_status = source_runtime.runtime_status();
+    assert!(matches!(
+        source_status.last_route.as_ref().map(|route| &route.target),
+        Some(crate::DockViewportRouteTarget::Rejected {
+            reason: crate::DockViewportRouteRejectionRecord::ForeignSurface,
+        })
+    ));
+    assert_eq!(
+        source_status
+            .last_drop_outcome
+            .as_ref()
+            .and_then(|outcome| outcome.error.as_ref()),
+        Some(&crate::DockActionApplyError::DropTargetUnavailable)
+    );
+    assert_eq!(source_status.last_activation, None);
+    cx.read_entity(&source_controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a"), item("b")],
+            "foreign release must not mutate the source graph or promote to a desktop tear-off"
+        );
+    });
+    cx.read_entity(&target_controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("x")],
+            "foreign release must not mutate the target graph"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_unavailable_release_replaces_foreign_route_diagnostics(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_foreign_preview_fixture(cx);
+    assert!(matches!(
+        fixture
+            .source_runtime
+            .runtime_status()
+            .last_route
+            .as_ref()
+            .map(|route| &route.target),
+        Some(crate::DockViewportRouteTarget::Rejected {
+            reason: crate::DockViewportRouteRejectionRecord::ForeignSurface,
+        })
+    ));
+
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(-1), DevicePixels(-1)),
+            Vec::new(),
+        )
+        .expect("an empty point-scoped hit observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        fixture.target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    let status = fixture.source_runtime.runtime_status();
+    let route = status
+        .last_route
+        .expect("unavailable release must replace the previous foreign route record");
+    assert_eq!(route.target, crate::DockViewportRouteTarget::Unavailable);
+    assert_eq!(
+        route.unavailable_reason,
+        Some(crate::DockViewportReleaseUnavailableRecord::NoViewportRouteSelection)
+    );
+    assert_eq!(
+        status
+            .last_drop_outcome
+            .as_ref()
+            .and_then(|outcome| outcome.error.as_ref()),
+        Some(&crate::DockActionApplyError::DropTargetUnavailable)
+    );
+    assert_eq!(status.last_activation, None);
+    assert_eq!(status.last_tear_off, None);
+    cx.read_entity(&fixture.source_controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&fixture.source_space),
+            vec![item("a"), item("b")]
+        );
+    });
+    let target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_none(),
+        "unavailable release must clear the prior exact foreign marker"
+    );
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_target_close_clears_preview_without_retiring_source_route(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_foreign_preview_fixture(cx);
+    let target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some()
+    );
+    let source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    assert!(
+        selector_for(
+            &source_visual,
+            &fixture.source_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "foreign feedback should be projected back into the source host"
+    );
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some()
+    );
+
+    fixture
+        .target_window
+        .update(cx, |_, window, cx| window.remove_window(cx))
+        .expect("the foreign target window should close");
+    cx.run_until_parked();
+
+    assert!(fixture.target_window.update(cx, |_, _, _| ()).is_err());
+    let source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    assert!(
+        selector_for(
+            &source_visual,
+            &fixture.source_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_none(),
+        "target close must clear the exact source-side foreign feedback projection"
+    );
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some(),
+        "closing only the current target must retain the source-owned drag route"
+    );
+    fixture.source_visual.deactivate_window();
+    cx.run_until_parked();
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none()
+    );
+    assert!(
+        fixture
+            .source_visual
+            .update(|_, cx| { cx.active_drag_value::<DockDragPayload>().is_none() })
+    );
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_source_close_retires_route_and_foreign_preview(cx: &mut TestAppContext) {
+    let fixture = native_captured_foreign_preview_fixture(cx);
+    fixture
+        .source_window
+        .update(cx, |_, window, cx| window.remove_window(cx))
+        .expect("the source window should close");
+    cx.run_until_parked();
+
+    assert!(fixture.source_window.update(cx, |_, _, _| ()).is_err());
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "source close must retire the exact runtime drag session"
+    );
+    let target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_none(),
+        "source close must clear the foreign route preview"
+    );
+    assert!(
+        fixture
+            .target_window
+            .update(cx, |_, _, cx| {
+                cx.active_drag_value::<DockDragPayload>().is_none()
+            })
+            .expect("the independent target window should remain live")
+    );
+    cx.read_entity(&fixture.source_controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&fixture.source_space),
+            vec![item("a"), item("b")]
+        );
+    });
+    cx.read_entity(&fixture.target_controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&fixture.target_space),
+            vec![item("x")]
+        );
+    });
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_drag_start_panic_rolls_back_before_g2(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let (window, host, mut visual) = open_controller_space_with_runtime(
+        cx,
+        controller,
+        runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let payload =
+        DockDragPayload::new_item(source_space, source_tabs, item("a"), "Panel A".to_string());
+    advertise_native_window_hit_stack(cx);
+
+    activate_window_for_pointer_input(&mut visual);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.update(|cx| {
+        crate::native_captured_drag::panic_next_native_captured_drag_for_test(
+            crate::native_captured_drag::DockNativeCapturedDragTestPanic::BeginRouteAfterInstall,
+            cx,
+        );
+    });
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    }));
+    assert!(panic.is_err());
+
+    assert_eq!(runtime.active_payload_drag_session(&payload), None);
+    assert!(cx.read_entity(&host, |host, _| {
+        host.payload_drag_anchor_position_from_render(&payload)
+            .is_none()
+    }));
+    assert!(!cx.update(|cx| {
+        crate::native_captured_drag::has_active_native_captured_drag_route_for_test(cx)
+    }));
+    assert!(visual.update(|_, cx| { cx.active_drag_value::<DockDragPayload>().is_none() }));
+
+    cx.run_until_parked();
+    visual = VisualTestContext::from_window(window.into(), cx);
+    activate_window_for_pointer_input(&mut visual);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    assert!(runtime.active_payload_drag_session(&payload).is_some());
+    assert!(cx.update(|cx| {
+        crate::native_captured_drag::has_active_native_captured_drag_route_for_test(cx)
+    }));
+    visual.deactivate_window();
+    cx.run_until_parked();
+    assert_eq!(runtime.active_payload_drag_session(&payload), None);
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_resolver_panic_retires_g1_and_accepts_g2(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_foreign_preview_fixture(cx);
+    let session = fixture
+        .source_runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("G1 should have an active runtime session");
+    let listener_finished_session = Rc::new(Cell::new(false));
+    let _interceptor = cx
+        .update_window(fixture.source_window, {
+            let runtime = fixture.source_runtime.clone();
+            let listener_finished_session = listener_finished_session.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    if matches!(event, WindowMouseEvent::Up(_))
+                        && !listener_finished_session.replace(true)
+                    {
+                        assert!(runtime.finish_payload_drag_with_app(&session, cx));
+                    }
+                })
+            }
+        })
+        .expect("the source window should remain open");
+    cx.update(|cx| {
+        crate::native_captured_drag::panic_next_native_captured_drag_for_test(
+            crate::native_captured_drag::DockNativeCapturedDragTestPanic::ResolveTarget,
+            cx,
+        );
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        fixture.source_visual.simulate_mouse_up(
+            fixture.target_global_from_source,
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+    }));
+    assert!(panic.is_err());
+    assert!(
+        listener_finished_session.get(),
+        "the MouseUp listener must invalidate G1 after its release reservation is locked"
+    );
+    cx.run_until_parked();
+
+    assert!(
+        fixture
+            .source_runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "a panicking G1 resolver must retire its exact runtime session"
+    );
+    let target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_none(),
+        "panic cleanup must retire the exact G1 foreign preview"
+    );
+
+    let mut source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let source_tab = selector_for(
+        &source_visual,
+        &fixture.source_host,
+        DockDebugRegion::Tab {
+            tabs: fixture.source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("the source tab should remain available for G2");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        fixture.target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    let target_visual = VisualTestContext::from_window(fixture.target_window, cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &fixture.target_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::Rejected,
+            },
+        )
+        .is_some(),
+        "the persistent native captured-drag consumer must accept G2 after G1 panics"
+    );
+    source_visual.deactivate_window();
+    cx.run_until_parked();
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext) {
     let source_space = crate::DockSpaceId::from("source");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
@@ -3239,6 +4835,11 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
+    configure_native_desktop_release(
+        cx,
+        opened.window().into(),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
     let source_registration = runtime
         .borrow()
         .adapter()
@@ -3248,7 +4849,29 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    visual.simulate_mouse_move(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let desktop_feedback_visual = VisualTestContext::from_window(opened.window(), cx);
+    assert!(
+        selector_for(
+            &desktop_feedback_visual,
+            &source_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: crate::drop_preview::DockDropRoutePreviewKind::TearOff,
+            },
+        )
+        .is_some(),
+        "desktop movement should project tear-off feedback into the exact source host"
+    );
+    assert!(
+        selector_for(
+            &desktop_feedback_visual,
+            &source_host,
+            DockDebugRegion::DropPreview,
+        )
+        .is_none(),
+        "desktop feedback must not forge a target-host payload overlay"
+    );
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     {
         let runtime = runtime.borrow();
@@ -3277,7 +4900,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
             .spaces()
             .into_iter()
             .find(|space| space.as_str().starts_with("source:tear-off:a:"))
-            .expect("outside release should create a detached viewport space");
+            .expect("captured desktop release should create a detached viewport space");
         assert_eq!(
             controller.graph().collect_items_in_space(&detached_space),
             vec![item("a")]
@@ -3307,7 +4930,6 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
             );
         })
         .expect("detached viewport should remain live");
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
 #[open_gpui::test]
@@ -3414,11 +5036,15 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
     let start = tab_bounds.center();
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
+    configure_native_desktop_release(
+        cx,
+        opened.window().into(),
+        size(DevicePixels(1280), DevicePixels(840)),
+    );
 
     activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
@@ -3432,7 +5058,7 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
                     .as_str()
                     .starts_with("source:nested-tear-off:tear-off:bottom:")
             })
-            .expect("outside release should create a detached viewport space");
+            .expect("captured desktop release should create a detached viewport space");
         assert_eq!(
             controller.graph().collect_items_in_space(&detached_space),
             vec![item("bottom")]
@@ -3465,7 +5091,6 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
         f32::from(detached_bounds.origin.y),
         f32::from(expected_origin.y),
     );
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
 #[open_gpui::test]
@@ -3516,14 +5141,17 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
     let start = debug_bounds(&mut source_visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
+    configure_native_desktop_release(
+        cx,
+        opened.window().into(),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
 
     activate_window_for_pointer_input(&mut source_visual);
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     source_visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 
     let (detached_space, detached_tabs) = cx.read_entity(&controller, |controller, _| {
         let detached_space = controller
@@ -3531,7 +5159,7 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
             .spaces()
             .into_iter()
             .find(|space| space.as_str().starts_with("source:tear-off:a:"))
-            .expect("outside release should create a detached viewport space");
+            .expect("captured desktop release should create a detached viewport space");
         let (detached_tabs, _) = controller
             .graph()
             .find_item_in_space(&detached_space, &item("a"))
@@ -3550,7 +5178,8 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
         .root(cx)
         .expect("detached viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut detached_visual = VisualTestContext::from_window(detached_window.into(), cx);
+    let detached_window: AnyWindowHandle = detached_window.into();
+    let mut detached_visual = VisualTestContext::from_window(detached_window, cx);
 
     let detached_tab = selector_for(
         &detached_visual,
@@ -3569,6 +5198,13 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
     .expect("source target tabs selector should remain emitted");
     let start = debug_bounds(&mut detached_visual, &detached_tab).center();
     let end = debug_bounds(&mut source_visual, &target_tabs).center();
+    let target_global_from_detached = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit(
+        cx,
+        detached_window,
+        opened.window(),
+        target_global_from_detached,
+    );
 
     activate_window_for_pointer_input(&mut detached_visual);
     detached_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
@@ -3577,11 +5213,17 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
         MouseButton::Left,
         Modifiers::none(),
     );
-    cx.set_platform_hovered_window(Some(opened.window()));
-    source_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
-    source_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    detached_visual.simulate_mouse_move(
+        target_global_from_detached,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    detached_visual.simulate_mouse_up(
+        target_global_from_detached,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     cx.run_until_parked();
-    cx.set_platform_hovered_window(None);
 
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -3599,7 +5241,7 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
 }
 
 #[open_gpui::test]
-fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &mut TestAppContext) {
+fn runtime_secondary_single_tab_native_release_creates_detached_viewport(cx: &mut TestAppContext) {
     let primary_space = crate::DockSpaceId::from("primary");
     let secondary_space = crate::DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
@@ -3661,11 +5303,15 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
+    configure_native_desktop_release(
+        cx,
+        secondary_any_window,
+        size(DevicePixels(720), DevicePixels(440)),
+    );
 
     activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     drop(visual);
@@ -3680,7 +5326,7 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
             .spaces()
             .into_iter()
             .find(|space| space.as_str().starts_with("secondary:tear-off:b:"))
-            .expect("outside release should create a detached viewport space");
+            .expect("captured desktop release should create a detached viewport space");
         assert_eq!(
             controller.graph().collect_items_in_space(&detached_space),
             vec![item("b")]
@@ -3688,7 +5334,7 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
         assert_eq!(
             runtime.registered_viewport_spaces(),
             vec![primary_space.clone(), detached_space.clone()],
-            "outside release should create a detached viewport and vacate the empty source viewport"
+            "captured desktop release should detach the tab and vacate the empty source viewport"
         );
         assert_eq!(
             runtime
@@ -3711,186 +5357,10 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
         secondary_any_window.update(cx, |_, _, _| ()).is_err(),
         "empty source viewport should close after its only tab tears off"
     );
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
 #[open_gpui::test]
-fn runtime_rendered_mouse_up_with_unknown_button_state_does_not_tear_off(cx: &mut TestAppContext) {
-    let source_space = crate::DockSpaceId::from("source");
-    let mut graph = DockGraph::new();
-    let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a"), item("b")],
-        selected: Some(item("a")),
-    });
-    graph.set_root(source_space.clone(), source_tabs);
-
-    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-    workspace.policy_mut().set_allow_platform_viewports(true);
-    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-    let controller = cx.new(|_| DockController::new(workspace));
-    let runtime = DockViewportRuntimeHandle::new(controller.clone());
-
-    let opened = cx
-        .update(|app| {
-            runtime.open_viewport_unchecked_policy(
-                source_space.clone(),
-                viewport_window_options(360.0, 220.0),
-                app,
-            )
-        })
-        .expect("source viewport should open through runtime");
-    let source_window = opened
-        .window()
-        .downcast::<crate::DockHost>()
-        .expect("runtime viewport should render DockHost");
-    let source_host = source_window
-        .root(cx)
-        .expect("runtime viewport should expose DockHost root");
-    cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(opened.window(), cx);
-
-    let source_tab = selector_for(
-        &visual,
-        &source_host,
-        DockDebugRegion::Tab {
-            tabs: source_tabs,
-            item: item("a"),
-        },
-    )
-    .expect("source tab selector should be emitted");
-    let start = debug_bounds(&mut visual, &source_tab).center();
-    let threshold = point(start.x + px(24.0), start.y);
-    let outside_window = point(px(900.0), px(900.0));
-
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
-    activate_window_for_pointer_input(&mut visual);
-    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
-    cx.run_until_parked();
-
-    assert!(
-        !cx.read(|app| app.has_active_drag()),
-        "ambiguous outside release should stop the active drag session"
-    );
-    assert_eq!(
-        runtime.registered_viewport_spaces(),
-        vec![source_space.clone()],
-        "unknown button state must not authorize a detached viewport"
-    );
-    cx.read_entity(&controller, |controller, _| {
-        assert_eq!(
-            controller.graph().collect_items_in_space(&source_space),
-            vec![item("a"), item("b")]
-        );
-    });
-}
-
-#[open_gpui::test]
-fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut TestAppContext) {
-    let source_space = crate::DockSpaceId::from("source");
-    let mut graph = DockGraph::new();
-    let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a"), item("b")],
-        selected: Some(item("a")),
-    });
-    graph.set_root(source_space.clone(), source_tabs);
-
-    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-    workspace.policy_mut().set_allow_platform_viewports(true);
-    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-    let controller = cx.new(|_| DockController::new(workspace));
-    let runtime = DockViewportRuntimeHandle::new(controller.clone());
-
-    let opened = cx
-        .update(|app| {
-            runtime.open_viewport_unchecked_policy(
-                source_space.clone(),
-                viewport_window_options(360.0, 220.0),
-                app,
-            )
-        })
-        .expect("source viewport should open through runtime");
-    let source_window = opened
-        .window()
-        .downcast::<crate::DockHost>()
-        .expect("runtime viewport should render DockHost");
-    let source_host = source_window
-        .root(cx)
-        .expect("runtime viewport should expose DockHost root");
-    cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(opened.window(), cx);
-
-    let source_tab = selector_for(
-        &visual,
-        &source_host,
-        DockDebugRegion::Tab {
-            tabs: source_tabs,
-            item: item("a"),
-        },
-    )
-    .expect("source tab selector should be emitted");
-    let start = debug_bounds(&mut visual, &source_tab).center();
-    let threshold = point(start.x + px(24.0), start.y);
-    let outside_window = point(px(900.0), px(900.0));
-
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
-    activate_window_for_pointer_input(&mut visual);
-    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_move(outside_window, MouseButton::Left, Modifiers::none());
-    cx.executor().advance_clock(Duration::from_millis(20));
-    cx.run_until_parked();
-    assert!(
-        cx.read(|app| app.has_active_drag()),
-        "active drag should remain while the platform reports the left button as pressed"
-    );
-    assert_eq!(
-        runtime.registered_viewport_spaces().len(),
-        1,
-        "pressed-button polling must not tear off early"
-    );
-
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
-    cx.executor().advance_clock(Duration::from_millis(20));
-    cx.run_until_parked();
-    assert!(
-        !cx.read(|app| app.has_active_drag()),
-        "fallback poll should stop the active drag after committing the release"
-    );
-
-    let detached_space = cx.read_entity(&controller, |controller, _| {
-        assert_eq!(
-            controller.graph().collect_items_in_space(&source_space),
-            vec![item("b")]
-        );
-        let detached_space = controller
-            .graph()
-            .spaces()
-            .into_iter()
-            .find(|space| space.as_str().starts_with("source:tear-off:a:"))
-            .expect("polled outside release should create a detached viewport space");
-        assert_eq!(
-            controller.graph().collect_items_in_space(&detached_space),
-            vec![item("a")]
-        );
-        detached_space
-    });
-    assert!(
-        runtime
-            .borrow()
-            .adapter()
-            .window_for_space(&detached_space)
-            .is_some(),
-        "detached space should be registered with a runtime window"
-    );
-    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
-}
-
-#[open_gpui::test]
-fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_disabled(
+fn runtime_native_captured_desktop_release_rejects_when_platform_viewports_disabled(
     cx: &mut TestAppContext,
 ) {
     let source_space = crate::DockSpaceId::from("source");
@@ -3938,6 +5408,11 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let outside_window = point(px(900.0), px(900.0));
+    configure_native_desktop_release(
+        cx,
+        opened.window().into(),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
 
     activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
@@ -3953,7 +5428,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
     );
     assert!(
         selector_for(&visual, &source_host, DockDebugRegion::DropPreview).is_none(),
-        "rejected outside release should clear the drop preview"
+        "rejected captured release should clear the drop preview"
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -4003,7 +5478,7 @@ fn non_runtime_mouse_up_outside_host_does_not_commit_stale_drop(cx: &mut TestApp
 
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
-        "non-runtime outside release should leave the source panel active"
+        "a non-runtime source release should leave the source panel active"
     );
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, selected } = controller

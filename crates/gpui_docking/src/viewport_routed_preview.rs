@@ -1,9 +1,138 @@
 use crate::{
     DockSpaceId, DockViewportIdentity, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropTargetSnapshot, DockViewportRouteProof, drag::DockDragPayload,
-    drop_preview::DockDropRoutePreview, interaction::DockRuntimeDragSession,
+    DockViewportResolvedDropTargetSnapshot, DockViewportRouteProof, DockViewportRuntimeIdentity,
+    drag::DockDragPayload, drop_preview::DockDropRoutePreview, interaction::DockRuntimeDragSession,
+    viewport_drop_scene::DockViewportHostSceneFrame,
+    viewport_registry::DockViewportRegistrationKey,
 };
-use open_gpui::{AnyWindowHandle, Point, WindowId};
+use open_gpui::{
+    AnyWindowHandle, NativeCapturedDragGeneration, NativeIngressSequence, Point, WindowId,
+};
+use std::{cell::Cell, fmt, rc::Rc};
+
+/// Exact authority that owns one routed preview projection.
+#[derive(Clone)]
+pub(crate) enum DockViewportRoutedPreviewOwner {
+    Local(DockRuntimeDragSession),
+    CapturedNative {
+        source_runtime: DockViewportRuntimeIdentity,
+        generation: NativeCapturedDragGeneration,
+        sequence: NativeIngressSequence,
+        session: DockRuntimeDragSession,
+        latest_sequence: Rc<Cell<Option<NativeIngressSequence>>>,
+    },
+}
+
+impl DockViewportRoutedPreviewOwner {
+    pub(crate) fn captured_native(
+        source_runtime: DockViewportRuntimeIdentity,
+        generation: NativeCapturedDragGeneration,
+        sequence: NativeIngressSequence,
+        session: DockRuntimeDragSession,
+        latest_sequence: Rc<Cell<Option<NativeIngressSequence>>>,
+    ) -> Self {
+        Self::CapturedNative {
+            source_runtime,
+            generation,
+            sequence,
+            session,
+            latest_sequence,
+        }
+    }
+
+    pub(crate) fn captured_native_parts(
+        &self,
+    ) -> Option<(
+        DockViewportRuntimeIdentity,
+        NativeCapturedDragGeneration,
+        NativeIngressSequence,
+        &DockRuntimeDragSession,
+    )> {
+        match self {
+            Self::CapturedNative {
+                source_runtime,
+                generation,
+                sequence,
+                session,
+                ..
+            } => Some((*source_runtime, *generation, *sequence, session)),
+            Self::Local(_) => None,
+        }
+    }
+
+    pub(crate) fn is_current(&self) -> bool {
+        match self {
+            Self::Local(_) => true,
+            Self::CapturedNative {
+                sequence,
+                latest_sequence,
+                ..
+            } => latest_sequence.get() == Some(*sequence),
+        }
+    }
+
+    fn matches_session(&self, session: &DockRuntimeDragSession) -> bool {
+        match self {
+            Self::Local(owner) => owner == session,
+            Self::CapturedNative { session: owner, .. } => owner == session,
+        }
+    }
+}
+
+impl PartialEq for DockViewportRoutedPreviewOwner {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Local(left), Self::Local(right)) => left == right,
+            (
+                Self::CapturedNative {
+                    source_runtime: left_runtime,
+                    generation: left_generation,
+                    sequence: left_sequence,
+                    session: left_session,
+                    latest_sequence: left_latest,
+                },
+                Self::CapturedNative {
+                    source_runtime: right_runtime,
+                    generation: right_generation,
+                    sequence: right_sequence,
+                    session: right_session,
+                    latest_sequence: right_latest,
+                },
+            ) => {
+                left_runtime == right_runtime
+                    && left_generation == right_generation
+                    && left_sequence == right_sequence
+                    && left_session == right_session
+                    && Rc::ptr_eq(left_latest, right_latest)
+            }
+            (Self::Local(_), Self::CapturedNative { .. })
+            | (Self::CapturedNative { .. }, Self::Local(_)) => false,
+        }
+    }
+}
+
+impl Eq for DockViewportRoutedPreviewOwner {}
+
+impl fmt::Debug for DockViewportRoutedPreviewOwner {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Local(session) => formatter.debug_tuple("Local").field(session).finish(),
+            Self::CapturedNative {
+                source_runtime,
+                generation,
+                sequence,
+                session,
+                ..
+            } => formatter
+                .debug_struct("CapturedNative")
+                .field("source_runtime", source_runtime)
+                .field("generation", generation)
+                .field("sequence", sequence)
+                .field("session", session)
+                .finish(),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportRoutedDropPreviewState {
@@ -43,23 +172,23 @@ impl DockViewportRoutedDropPreviewReplacement {
 }
 
 impl DockViewportRoutedDropPreviewState {
-    pub(crate) fn preview_for(
+    pub(crate) fn preview_for_registration(
         &self,
-        route_proof: &DockViewportRouteProof,
+        registration: &DockViewportRegistrationKey,
     ) -> Option<DockViewportRoutedDropPreview> {
         self.preview
             .as_ref()
-            .filter(|preview| preview.matches(route_proof))
+            .filter(|preview| preview.matches_registration(registration))
             .cloned()
     }
 
-    pub(crate) fn route_preview_for(
+    pub(crate) fn route_preview_for_registration(
         &self,
-        route_proof: &DockViewportRouteProof,
+        registration: &DockViewportRegistrationKey,
     ) -> Option<DockDropRoutePreview> {
         self.route_preview
             .as_ref()
-            .filter(|preview| preview.matches(route_proof))
+            .filter(|preview| preview.matches_registration(registration))
             .map(|preview| preview.preview.clone())
     }
 
@@ -78,19 +207,33 @@ impl DockViewportRoutedDropPreviewState {
 
         let mut affected_spaces = Vec::new();
         if self.preview != next_preview {
-            if let Some(current) = self.preview.as_ref() {
-                push_unique_space(&mut affected_spaces, current.space());
-            }
-            if let Some(next) = next_preview.as_ref() {
-                push_unique_space(&mut affected_spaces, next.space());
+            let render_changed = match (self.preview.as_ref(), next_preview.as_ref()) {
+                (Some(current), Some(next)) => !current.renders_same_as(next),
+                (None, None) => false,
+                (Some(_), None) | (None, Some(_)) => true,
+            };
+            if render_changed {
+                if let Some(current) = self.preview.as_ref() {
+                    push_unique_space(&mut affected_spaces, current.space());
+                }
+                if let Some(next) = next_preview.as_ref() {
+                    push_unique_space(&mut affected_spaces, next.space());
+                }
             }
         }
         if self.route_preview != next_route_preview {
-            if let Some(current) = self.route_preview.as_ref() {
-                push_unique_space(&mut affected_spaces, current.space());
-            }
-            if let Some(next) = next_route_preview.as_ref() {
-                push_unique_space(&mut affected_spaces, next.space());
+            let render_changed = match (self.route_preview.as_ref(), next_route_preview.as_ref()) {
+                (Some(current), Some(next)) => !current.renders_same_as(next),
+                (None, None) => false,
+                (Some(_), None) | (None, Some(_)) => true,
+            };
+            if render_changed {
+                if let Some(current) = self.route_preview.as_ref() {
+                    push_unique_space(&mut affected_spaces, current.space());
+                }
+                if let Some(next) = next_route_preview.as_ref() {
+                    push_unique_space(&mut affected_spaces, next.space());
+                }
             }
         }
 
@@ -124,12 +267,47 @@ impl DockViewportRoutedDropPreviewState {
         if self
             .preview
             .as_ref()
-            .is_some_and(|preview| preview.drag_session_id() == Some(session.id()))
+            .is_some_and(|preview| preview.is_owned_by_session(session))
             || self
                 .route_preview
                 .as_ref()
-                .is_some_and(|preview| preview.drag_session_id() == Some(session.id()))
+                .is_some_and(|preview| preview.is_owned_by_session(session))
         {
+            self.replace(None, None, None)
+        } else {
+            DockViewportRoutedDropPreviewReplacement::unchanged()
+        }
+    }
+
+    pub(crate) fn clear_for_owner(
+        &mut self,
+        owner: &DockViewportRoutedPreviewOwner,
+    ) -> DockViewportRoutedDropPreviewReplacement {
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.owner.as_ref() == Some(owner))
+            || self
+                .route_preview
+                .as_ref()
+                .is_some_and(|preview| preview.owner.as_ref() == Some(owner))
+        {
+            self.replace(None, None, None)
+        } else {
+            DockViewportRoutedDropPreviewReplacement::unchanged()
+        }
+    }
+
+    pub(crate) fn clear_for_target_scene_frame(
+        &mut self,
+        frame: &DockViewportHostSceneFrame,
+    ) -> DockViewportRoutedDropPreviewReplacement {
+        let targets_frame = self
+            .resolution
+            .as_ref()
+            .and_then(DockViewportResolvedDropRoute::routed_preview_target_snapshot)
+            .is_some_and(|target| target.frame() == frame);
+        if targets_frame {
             self.replace(None, None, None)
         } else {
             DockViewportRoutedDropPreviewReplacement::unchanged()
@@ -146,8 +324,11 @@ impl DockViewportRoutedDropPreviewState {
         };
         self.preview
             .as_ref()
-            .and_then(DockViewportRoutedDropPreview::drag_session_id)
-            == Some(session.id())
+            .is_some_and(|preview| preview.is_owned_by_session(session))
+            || self
+                .route_preview
+                .as_ref()
+                .is_some_and(|preview| preview.is_owned_by_session(session))
     }
 }
 
@@ -155,24 +336,30 @@ impl DockViewportRoutedDropPreviewState {
 pub(crate) struct DockViewportRoutePreview {
     route_proof: DockViewportRouteProof,
     preview: DockDropRoutePreview,
-    drag_session_id: Option<u64>,
+    owner: Option<DockViewportRoutedPreviewOwner>,
 }
 
 impl DockViewportRoutePreview {
     pub(crate) fn new(
         route_proof: DockViewportRouteProof,
         preview: DockDropRoutePreview,
-        drag_session_id: Option<u64>,
+        owner: Option<DockViewportRoutedPreviewOwner>,
     ) -> Self {
         Self {
             route_proof,
             preview,
-            drag_session_id,
+            owner,
         }
     }
 
-    fn matches(&self, route_proof: &DockViewportRouteProof) -> bool {
-        &self.route_proof == route_proof
+    fn matches_registration(&self, registration: &DockViewportRegistrationKey) -> bool {
+        self.route_proof.registration_key() == registration
+    }
+
+    fn renders_same_as(&self, other: &Self) -> bool {
+        self.space() == other.space()
+            && self.window_id() == other.window_id()
+            && self.preview == other.preview
     }
 
     fn space(&self) -> &DockSpaceId {
@@ -183,8 +370,10 @@ impl DockViewportRoutePreview {
         self.route_proof.window_id()
     }
 
-    fn drag_session_id(&self) -> Option<u64> {
-        self.drag_session_id
+    fn is_owned_by_session(&self, session: &DockRuntimeDragSession) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| owner.matches_session(session))
     }
 }
 
@@ -192,24 +381,30 @@ impl DockViewportRoutePreview {
 pub(crate) struct DockViewportRoutedDropPreview {
     route_proof: DockViewportRouteProof,
     pub(crate) preview: crate::drop_preview::DockDropPreview,
-    drag_session_id: Option<u64>,
+    owner: Option<DockViewportRoutedPreviewOwner>,
 }
 
 impl DockViewportRoutedDropPreview {
     fn new(
         route_proof: DockViewportRouteProof,
         preview: crate::drop_preview::DockDropPreview,
-        drag_session_id: Option<u64>,
+        owner: Option<DockViewportRoutedPreviewOwner>,
     ) -> Self {
         Self {
             route_proof,
             preview,
-            drag_session_id,
+            owner,
         }
     }
 
-    pub(crate) fn matches(&self, route_proof: &DockViewportRouteProof) -> bool {
-        &self.route_proof == route_proof
+    fn matches_registration(&self, registration: &DockViewportRegistrationKey) -> bool {
+        self.route_proof.registration_key() == registration
+    }
+
+    fn renders_same_as(&self, other: &Self) -> bool {
+        self.space() == other.space()
+            && self.window_id() == other.window_id()
+            && self.preview == other.preview
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {
@@ -220,14 +415,16 @@ impl DockViewportRoutedDropPreview {
         self.route_proof.window_id()
     }
 
-    pub(crate) fn drag_session_id(&self) -> Option<u64> {
-        self.drag_session_id
+    fn is_owned_by_session(&self, session: &DockRuntimeDragSession) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| owner.matches_session(session))
     }
 }
 
 pub(crate) fn routed_drop_preview_from_target(
     target: &DockViewportResolvedDropTargetSnapshot,
-    drag_session_id: Option<u64>,
+    owner: Option<DockViewportRoutedPreviewOwner>,
     payload: &DockDragPayload,
 ) -> Option<DockViewportRoutedDropPreview> {
     let window_id = target.target_window_id()?;
@@ -250,13 +447,13 @@ pub(crate) fn routed_drop_preview_from_target(
     Some(DockViewportRoutedDropPreview::new(
         route_proof.clone(),
         preview,
-        drag_session_id,
+        owner,
     ))
 }
 
 pub(crate) fn routed_rejected_drop_preview_from_target(
     target: &DockViewportResolvedDropTargetSnapshot,
-    drag_session_id: Option<u64>,
+    owner: Option<DockViewportRoutedPreviewOwner>,
     payload: &DockDragPayload,
 ) -> Option<DockViewportRoutedDropPreview> {
     let window_id = target.target_window_id()?;
@@ -272,7 +469,7 @@ pub(crate) fn routed_rejected_drop_preview_from_target(
     Some(DockViewportRoutedDropPreview::new(
         route_proof.clone(),
         preview,
-        drag_session_id,
+        owner,
     ))
 }
 
@@ -280,10 +477,10 @@ pub(crate) fn routed_drop_route_preview_for_host(
     resolution: &DockViewportResolvedDropRoute,
     route_proof: DockViewportRouteProof,
     host_position: Point<open_gpui::Pixels>,
-    drag_session_id: Option<u64>,
+    owner: Option<DockViewportRoutedPreviewOwner>,
 ) -> Option<DockViewportRoutePreview> {
     DockDropRoutePreview::from_route(resolution.route(), host_position)
-        .map(|preview| DockViewportRoutePreview::new(route_proof, preview, drag_session_id))
+        .map(|preview| DockViewportRoutePreview::new(route_proof, preview, owner))
 }
 
 pub(crate) fn push_unique_window(
