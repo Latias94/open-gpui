@@ -156,7 +156,8 @@ impl WindowOpenError {
                 WindowOpenFailureStage::AppShutdown
             }
             window_registry::WindowReservationError::WindowClosed
-            | window_registry::WindowReservationError::NotCurrent => {
+            | window_registry::WindowReservationError::NotCurrent
+            | window_registry::WindowReservationError::ProvisionalSession(_) => {
                 WindowOpenFailureStage::CommitRejected
             }
         };
@@ -1453,11 +1454,16 @@ impl App {
             let id = reservation.id();
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, reservation.app_mut()) {
-                Ok(mut window) => {
+                Ok(window) => {
+                    let mut rollback = window_registry::WindowCreationRollback::new(
+                        id,
+                        window,
+                        reservation.app_mut().this.clone(),
+                    );
                     reservation
                         .validate()
                         .map_err(WindowOpenError::from_reservation)?;
-                    if !window.creation_can_commit() {
+                    if !rollback.window_mut().creation_can_commit() {
                         return Err(WindowOpenError::new(
                             WindowOpenFailureStage::ClosedDuringNativeCreateOrMap,
                             anyhow!(
@@ -1465,44 +1471,46 @@ impl App {
                             ),
                         ));
                     }
-                    let root_view =
-                        reservation.with_update_scope(|cx| build_root_view(&mut window, cx));
+                    let root_view = reservation
+                        .with_update_scope(|cx| build_root_view(rollback.window_mut(), cx));
                     reservation
                         .validate()
                         .map_err(WindowOpenError::from_reservation)?;
-                    if !window.creation_can_commit() {
+                    if !rollback.window_mut().creation_can_commit() {
                         return Err(WindowOpenError::new(
                             WindowOpenFailureStage::ClosedDuringBuild,
                             anyhow!("window closed while building its initial root view"),
                         ));
                     }
-                    window.root.replace(root_view.into());
-                    window.defer(reservation.app_mut(), |window: &mut Window, cx| {
-                        window.appearance_changed(cx)
-                    });
+                    rollback.window_mut().root.replace(root_view.into());
+                    rollback
+                        .window_mut()
+                        .defer(reservation.app_mut(), |window: &mut Window, cx| {
+                            window.appearance_changed(cx)
+                        });
 
                     // allow a window to draw at least once before returning
                     // this didn't cause any issues on non windows platforms as it seems we always won the race to on_request_frame
                     // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
                     // where DispatchTree::root_node_id asserts on empty nodes
-                    let clear = window.draw(reservation.app_mut());
+                    let clear = rollback.window_mut().draw(reservation.app_mut());
                     if let Err(error) = reservation.validate() {
                         clear.clear();
                         return Err(WindowOpenError::from_reservation(error));
                     }
-                    if !window.creation_can_commit() {
+                    if !rollback.window_mut().creation_can_commit() {
                         clear.clear();
                         return Err(WindowOpenError::new(
                             WindowOpenFailureStage::ClosedDuringInitialDraw,
                             anyhow!("window closed during its initial draw"),
                         ));
                     }
-                    let initial_presentation = window.prepare_initial_presentation();
+                    let initial_presentation = rollback.window_mut().prepare_initial_presentation();
                     clear.clear();
                     reservation
                         .validate()
                         .map_err(WindowOpenError::from_reservation)?;
-                    if !window.creation_can_commit() {
+                    if !rollback.window_mut().creation_can_commit() {
                         return Err(WindowOpenError::new(
                             WindowOpenFailureStage::ClosedDuringInitialPresentation,
                             anyhow!("window closed during its initial presentation"),
@@ -1516,7 +1524,7 @@ impl App {
                     })?;
 
                     reservation
-                        .commit(window)
+                        .commit(rollback)
                         .map_err(WindowOpenError::from_reservation)?;
                     Ok(handle)
                 }
@@ -3631,6 +3639,15 @@ mod test {
             .expect_err("the injected native map failure must reject window creation");
 
         assert_eq!(error.stage(), WindowOpenFailureStage::NativeCreateOrMap);
+        let platform_window = cx
+            .last_created_test_window()
+            .expect("the failed map must retain a test platform window for retirement");
+        cx.run_until_parked();
+        assert_eq!(
+            platform_window.presentation_shutdown_counts(),
+            (1, 1, 1),
+            "a post-native map failure must use the exact retirement authority rather than direct backend Drop"
+        );
         assert_app_transaction_idle(cx);
     }
 
@@ -3740,6 +3757,7 @@ mod test {
         cx.set_platform_window_creation_capabilities(crate::PlatformWindowCreationCapabilities {
             focus_on_appearing: crate::WindowCreationSupport::Supported,
             transient_for: crate::WindowCreationSupport::Supported,
+            provisional_presentation: crate::WindowCreationSupport::Supported,
             initial_presentation_order: crate::WindowInitialPresentationOrder::BeforeVisibility,
         });
         cx.close_next_window_during_initial_presentation();

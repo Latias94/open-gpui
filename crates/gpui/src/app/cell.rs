@@ -40,8 +40,9 @@ use super::{
 };
 use crate::{
     Action, BackgroundExecutor, DispatchEventResult, NativeInputInvariantViolation, PlatformInput,
-    PlatformPointerCaptureReleaseOutcome, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PointerCancelReason, WindowControlArea, WindowId,
+    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PointerCancelReason, PreparedPlatformPresentationShutdown, WindowControlArea, WindowId,
 };
 
 type OpenUrlsHandler = dyn FnMut(Vec<String>, &mut App);
@@ -52,6 +53,13 @@ const POINTER_CAPTURE_RELEASE_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_millis(32),
     Duration::from_millis(128),
 ];
+const SHUTDOWN_COMPLETION_RETRY_DELAYS: [Duration; 5] = [
+    Duration::ZERO,
+    Duration::from_millis(8),
+    Duration::from_millis(32),
+    Duration::from_millis(128),
+    Duration::from_millis(512),
+];
 
 fn retain_shutdown_panic(
     first: &mut Option<Box<dyn std::any::Any + Send>>,
@@ -60,6 +68,27 @@ fn retain_shutdown_panic(
     if first.is_none() {
         *first = candidate;
     }
+}
+
+fn merge_presentation_shutdowns(
+    shutdowns: &mut HashMap<WindowId, PreparedPlatformPresentationShutdown>,
+    prepared: impl IntoIterator<Item = PreparedPlatformPresentationShutdown>,
+) -> bool {
+    let mut added = false;
+    for prepared in prepared {
+        let snapshot = prepared.snapshot();
+        let window_id = snapshot.window_id();
+        if let Some(existing) = shutdowns.get(&window_id) {
+            assert!(
+                existing.same_authority(&prepared),
+                "one full window id cannot own multiple presentation-shutdown authorities"
+            );
+            continue;
+        }
+        shutdowns.insert(window_id, prepared);
+        added = true;
+    }
+    added
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,10 +122,17 @@ enum NativeWindowRetirementState {
     AwaitingNativeTerminal,
 }
 
+struct NativeWindowRetirementBarrier {
+    state: NativeWindowRetirementState,
+    presentation_shutdown: PreparedPlatformPresentationShutdown,
+}
+
 struct NativeShutdownFence {
     generation: u64,
     terminate_ingress: bool,
     preparation_complete: bool,
+    presentation_shutdowns: Option<HashMap<WindowId, PreparedPlatformPresentationShutdown>>,
+    retry_epoch: u8,
     registry_cleared: bool,
     was_quitting: bool,
     first_panic: Option<Box<dyn std::any::Any + Send>>,
@@ -225,7 +261,7 @@ pub struct AppCell {
     next_pointer_capture_release_generation: Cell<u64>,
     pointer_capture_releases: RefCell<HashMap<u64, NativePointerCaptureReleaseBarrier>>,
     pointer_capture_release_retries: RefCell<VecDeque<NativePointerCaptureRelease>>,
-    native_window_retirements: RefCell<HashMap<WindowId, NativeWindowRetirementState>>,
+    native_window_retirements: RefCell<HashMap<WindowId, NativeWindowRetirementBarrier>>,
     observed_native_window_terminals: RefCell<HashSet<WindowId>>,
     next_shutdown_generation: Cell<u64>,
     shutdown_fence: RefCell<Option<NativeShutdownFence>>,
@@ -704,6 +740,26 @@ impl AppCell {
         window_id: WindowId,
         window: Box<crate::Window>,
     ) {
+        self.enqueue_window_retirement(window_id, NativeWindowRetirement::new(window_id, window));
+    }
+
+    pub(crate) fn enqueue_platform_window_retirement(
+        &self,
+        window_id: WindowId,
+        platform_window: Box<dyn PlatformWindow>,
+        presentation_shutdown: PreparedPlatformPresentationShutdown,
+    ) {
+        self.enqueue_window_retirement(
+            window_id,
+            NativeWindowRetirement::from_platform_window(
+                window_id,
+                platform_window,
+                presentation_shutdown,
+            ),
+        );
+    }
+
+    fn enqueue_window_retirement(&self, window_id: WindowId, retirement: NativeWindowRetirement) {
         if self.native_window_terminal_was_observed(window_id) {
             self.complete_native_pointer_capture_releases_for_native_window_terminal(window_id);
         } else {
@@ -715,13 +771,15 @@ impl AppCell {
                 }
             }
         }
-        let previous = self
-            .native_window_retirements
-            .borrow_mut()
-            .insert(window_id, NativeWindowRetirementState::Queued);
+        let previous = self.native_window_retirements.borrow_mut().insert(
+            window_id,
+            NativeWindowRetirementBarrier {
+                state: NativeWindowRetirementState::Queued,
+                presentation_shutdown: retirement.presentation_shutdown(),
+            },
+        );
         debug_assert!(previous.is_none(), "native window retirement queued twice");
-        self.native_events
-            .enqueue_window_retirement(NativeWindowRetirement::new(window_id, window));
+        self.native_events.enqueue_window_retirement(retirement);
     }
 
     fn defer_native_window_retirement_retry(&self, mut retirement: NativeWindowRetirement) {
@@ -730,11 +788,11 @@ impl AppCell {
             .native_window_retirements
             .borrow_mut()
             .get_mut(&window_id)
-            .is_some_and(|state| {
-                if *state != NativeWindowRetirementState::AwaitingNativeTerminal {
+            .is_some_and(|barrier| {
+                if barrier.state != NativeWindowRetirementState::AwaitingNativeTerminal {
                     return false;
                 }
-                *state = NativeWindowRetirementState::RetryPending;
+                barrier.state = NativeWindowRetirementState::RetryPending;
                 true
             });
         if !retry_pending {
@@ -748,19 +806,15 @@ impl AppCell {
 
     pub(super) fn retry_native_window_retirement(&self, retirement: NativeWindowRetirement) {
         let window_id = retirement.window_id();
-        if self.native_window_terminal_was_observed(window_id) {
-            self.settle_native_window_terminal(window_id);
-            return;
-        }
         let dispatchable = self
             .native_window_retirements
             .borrow_mut()
             .get_mut(&window_id)
-            .is_some_and(|state| {
-                if *state != NativeWindowRetirementState::RetryPending {
+            .is_some_and(|barrier| {
+                if barrier.state != NativeWindowRetirementState::RetryPending {
                     return false;
                 }
-                *state = NativeWindowRetirementState::Queued;
+                barrier.state = NativeWindowRetirementState::Queued;
                 true
             });
         if dispatchable {
@@ -772,10 +826,57 @@ impl AppCell {
         self.observed_native_window_terminals
             .borrow_mut()
             .insert(window_id);
-        self.native_window_retirements
-            .borrow_mut()
-            .remove(&window_id);
         self.complete_native_pointer_capture_releases_for_native_window_terminal(window_id);
+        let terminal = self
+            .native_window_retirements
+            .borrow()
+            .get(&window_id)
+            .map(|barrier| {
+                let ticket = barrier.presentation_shutdown.ticket();
+                let acknowledged = ticket.acknowledge_native_terminal();
+                (acknowledged, ticket.snapshot())
+            });
+        match terminal {
+            Some((true, _)) => {
+                self.native_window_retirements
+                    .borrow_mut()
+                    .remove(&window_id);
+            }
+            Some((false, snapshot)) if snapshot.protocol_violation() => {
+                log::error!(
+                    "native window terminal preceded presentation quiescence for window {:?}, generation {}",
+                    snapshot.window_id(),
+                    snapshot.generation(),
+                );
+                self.native_window_retirements
+                    .borrow_mut()
+                    .remove(&window_id);
+            }
+            Some((false, snapshot)) => {
+                log::error!(
+                    "native window terminal could not settle presentation shutdown for window {:?}, generation {}",
+                    snapshot.window_id(),
+                    snapshot.generation(),
+                );
+            }
+            None => {
+                log::error!(
+                    "native window terminal was observed without a registered presentation-shutdown authority for window {:?}",
+                    window_id,
+                );
+            }
+        }
+        self.request_active_shutdown_completion();
+    }
+
+    fn pending_native_window_presentation_shutdowns(
+        &self,
+    ) -> Vec<PreparedPlatformPresentationShutdown> {
+        self.native_window_retirements
+            .borrow()
+            .values()
+            .map(|barrier| barrier.presentation_shutdown.clone())
+            .collect()
     }
 
     fn pointer_capture_release_barriers_are_clear(&self) -> bool {
@@ -808,6 +909,8 @@ impl AppCell {
             generation,
             terminate_ingress,
             preparation_complete: false,
+            presentation_shutdowns: None,
+            retry_epoch: 0,
             registry_cleared: false,
             was_quitting,
             first_panic: None,
@@ -861,6 +964,44 @@ impl AppCell {
             .enqueue_shutdown_completion(NativeShutdownCompletion::new(generation));
     }
 
+    fn defer_shutdown_completion_retry(&self, generation: u64) {
+        let retry_epoch = {
+            let mut fence = self.shutdown_fence.borrow_mut();
+            let Some(active) = fence.as_mut() else {
+                return;
+            };
+            if active.generation != generation || !active.preparation_complete {
+                return;
+            }
+            active.retry_epoch = active.retry_epoch.saturating_add(1);
+            active.retry_epoch
+        };
+        let retry_delay = SHUTDOWN_COMPLETION_RETRY_DELAYS
+            .get(usize::from(retry_epoch.saturating_sub(1)))
+            .copied()
+            .unwrap_or_else(|| {
+                *SHUTDOWN_COMPLETION_RETRY_DELAYS
+                    .last()
+                    .expect("shutdown retry schedule must not be empty")
+            });
+        let timer = self.background_executor.timer(retry_delay);
+        self.native_events
+            .schedule_shutdown_completion_retry(timer, generation, retry_epoch);
+    }
+
+    pub(super) fn retry_shutdown_completion_from_wake(&self, generation: u64, retry_epoch: u8) {
+        let active = self.shutdown_fence.borrow().as_ref().is_some_and(|fence| {
+            fence.generation == generation
+                && fence.preparation_complete
+                && fence.retry_epoch == retry_epoch
+        });
+        if !active {
+            return;
+        }
+        self.request_shutdown_completion(generation);
+        self.drain_native_work(None);
+    }
+
     fn mark_shutdown_completion_dequeued(&self, generation: u64) {
         if self.shutdown_completion_queued.get() == Some(generation) {
             self.shutdown_completion_queued.set(None);
@@ -886,7 +1027,7 @@ impl AppCell {
             };
         }
 
-        if !fence.registry_cleared {
+        if fence.presentation_shutdowns.is_none() {
             let Ok(mut app) = self.app.try_borrow_mut() else {
                 *self.shutdown_fence.borrow_mut() = Some(fence);
                 return NativeShutdownCompletionAction::Retry;
@@ -909,12 +1050,102 @@ impl AppCell {
                 }
             }
 
-            let clear = catch_unwind(AssertUnwindSafe(|| {
-                super::window_registry::clear(&mut app);
+            let prepared = catch_unwind(AssertUnwindSafe(|| {
+                super::window_registry::prepare_presentation_shutdowns(&mut app)
             }));
-            retain_shutdown_panic(&mut fence.first_panic, clear.err());
+            drop(app);
+            let prepared = match prepared {
+                Ok(prepared) => prepared,
+                Err(payload) => {
+                    retain_shutdown_panic(&mut fence.first_panic, Some(payload));
+                    *self.shutdown_fence.borrow_mut() = Some(fence);
+                    return NativeShutdownCompletionAction::Retry;
+                }
+            };
+            let mut shutdowns = HashMap::with_capacity(prepared.len());
+            merge_presentation_shutdowns(&mut shutdowns, prepared);
+            fence.presentation_shutdowns = Some(shutdowns);
+        }
+
+        let pending_retirements = self.pending_native_window_presentation_shutdowns();
+        merge_presentation_shutdowns(
+            fence
+                .presentation_shutdowns
+                .as_mut()
+                .expect("shutdown preparation must own presentation authorities"),
+            pending_retirements,
+        );
+
+        let mut all_presentations_quiesced = true;
+        for shutdown in fence
+            .presentation_shutdowns
+            .as_ref()
+            .expect("shutdown preparation must own presentation authorities")
+            .values()
+        {
+            if shutdown.snapshot().quiesced() {
+                continue;
+            }
+            match catch_unwind(AssertUnwindSafe(|| shutdown.quiesce())) {
+                Ok(PlatformPresentationShutdownOutcome::Quiesced)
+                    if shutdown.snapshot().quiesced() => {}
+                Ok(_) => all_presentations_quiesced = false,
+                Err(payload) => {
+                    retain_shutdown_panic(&mut fence.first_panic, Some(payload));
+                    all_presentations_quiesced = false;
+                }
+            }
+        }
+        if !all_presentations_quiesced {
+            *self.shutdown_fence.borrow_mut() = Some(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
+
+        if !fence.registry_cleared {
+            let Ok(mut app) = self.app.try_borrow_mut() else {
+                *self.shutdown_fence.borrow_mut() = Some(fence);
+                return NativeShutdownCompletionAction::Retry;
+            };
+            if super::window_registry::has_checked_out_window(&app) {
+                drop(app);
+                *self.shutdown_fence.borrow_mut() = Some(fence);
+                return NativeShutdownCompletionAction::Retry;
+            }
+
+            let current = catch_unwind(AssertUnwindSafe(|| {
+                super::window_registry::prepare_presentation_shutdowns(&mut app)
+            }));
+            let current = match current {
+                Ok(current) => current,
+                Err(payload) => {
+                    retain_shutdown_panic(&mut fence.first_panic, Some(payload));
+                    drop(app);
+                    *self.shutdown_fence.borrow_mut() = Some(fence);
+                    return NativeShutdownCompletionAction::Retry;
+                }
+            };
+            let added = merge_presentation_shutdowns(
+                fence
+                    .presentation_shutdowns
+                    .as_mut()
+                    .expect("shutdown preparation must own presentation authorities"),
+                current,
+            );
+            if added {
+                drop(app);
+                *self.shutdown_fence.borrow_mut() = Some(fence);
+                return NativeShutdownCompletionAction::Retry;
+            }
+
+            let detached_windows = super::window_registry::take_all_for_shutdown(&mut app);
             fence.registry_cleared = true;
             drop(app);
+            for (window_id, window) in detached_windows {
+                let enqueue = catch_unwind(AssertUnwindSafe(|| {
+                    self.enqueue_native_window_retirement(window_id, window);
+                }));
+                retain_shutdown_panic(&mut fence.first_panic, enqueue.err());
+            }
         }
 
         if !self.pointer_capture_release_barriers_are_clear() {
@@ -1151,6 +1382,17 @@ impl AppCell {
     ) {
         self.native_events
             .enqueue_command(window_id, dispatcher, command);
+    }
+
+    pub(crate) fn enqueue_provisional_window_reveal(
+        &self,
+        window_id: WindowId,
+        dispatcher: PlatformWindowCommandDispatcher,
+        command: PlatformWindowCommand,
+        ticket: crate::WindowProvisionalRevealTicket,
+    ) {
+        self.native_events
+            .enqueue_provisional_reveal(window_id, dispatcher, command, ticket);
     }
 
     pub(super) fn dispatch_native_window_input(
@@ -1550,20 +1792,24 @@ impl AppCell {
                 &self.native_events,
                 envelope.pending_diagnostic(),
             );
-            let (should_close, disposition) = if app.quitting {
-                (true, NativeBoundaryDisposition::Closed)
+            let disposition = if app.quitting {
+                NativeBoundaryDisposition::Closed
             } else {
-                let should_close = terminal.run_callback(|| {
+                terminal.run_callback(|| {
                     app.update(|app| {
                         app.update_window_id_from_native(
                             window_id,
                             ingress_sequence,
-                            |_, window, cx| window.should_close(cx),
+                            |_, window, cx| {
+                                if window.should_close(cx) {
+                                    window.remove_window(cx);
+                                }
+                            },
                         )
-                        .unwrap_or(false)
+                        .ok();
                     })
                 });
-                (should_close, NativeBoundaryDisposition::DELIVERED)
+                NativeBoundaryDisposition::DELIVERED
             };
             drop(app);
             terminal.run_callback(|| self.drain_native_captured_drags());
@@ -1572,7 +1818,7 @@ impl AppCell {
                 "native event sequence={sequence} window={window_id:?} disposition=DeliveredInline"
             );
             self.drain_native_work(None);
-            return should_close;
+            return false;
         }
 
         self.native_events.enqueue_envelope(envelope);
@@ -1690,6 +1936,9 @@ impl AppCell {
                                 drop(command_guard);
                                 match outcome {
                                     PlatformWindowCommandOutcome::Accepted => {
+                                        command.settle_provisional_reveal(
+                                            crate::WindowProvisionalRevealOutcome::Revealed,
+                                        );
                                         terminal.settle(NativeBoundaryDisposition::DELIVERED);
                                         if completes_initial_presentation {
                                             self.enqueue_native_window_event(
@@ -1699,6 +1948,9 @@ impl AppCell {
                                         }
                                     }
                                     PlatformWindowCommandOutcome::Rejected => {
+                                        command.settle_provisional_reveal(
+                                            crate::WindowProvisionalRevealOutcome::Rejected,
+                                        );
                                         terminal.settle(NativeBoundaryDisposition::Rejected);
                                         match command.settle_rejection() {
                                             NativePlatformCommandRejection::Retry(retry) => {
@@ -1715,6 +1967,11 @@ impl AppCell {
                                     }
                                 }
                             } else {
+                                command.settle_provisional_reveal(if quitting {
+                                    crate::WindowProvisionalRevealOutcome::WindowTerminal
+                                } else {
+                                    crate::WindowProvisionalRevealOutcome::Stale
+                                });
                                 terminal.settle(if quitting {
                                     NativeBoundaryDisposition::Closed
                                 } else {
@@ -1824,22 +2081,23 @@ impl AppCell {
                                 .native_window_retirements
                                 .borrow()
                                 .get(&window_id)
-                                .is_some_and(|state| *state == NativeWindowRetirementState::Queued);
+                                .is_some_and(|barrier| {
+                                    barrier.state == NativeWindowRetirementState::Queued
+                                });
                             if !dispatchable {
                                 terminal.settle(NativeBoundaryDisposition::Stale);
                                 continue;
                             }
-                            self.native_window_retirements.borrow_mut().insert(
-                                window_id,
-                                NativeWindowRetirementState::AwaitingNativeTerminal,
-                            );
+                            self.native_window_retirements
+                                .borrow_mut()
+                                .get_mut(&window_id)
+                                .expect("dispatchable retirement must retain its exact barrier")
+                                .state = NativeWindowRetirementState::AwaitingNativeTerminal;
                             let attempt = catch_unwind(AssertUnwindSafe(|| retirement.retire()));
                             match attempt {
                                 Ok(NativeWindowRetirementAttempt::Accepted) => {
                                     if self.native_window_terminal_was_observed(window_id) {
-                                        self.native_window_retirements
-                                            .borrow_mut()
-                                            .remove(&window_id);
+                                        self.settle_native_window_terminal(window_id);
                                     }
                                     self.request_active_shutdown_completion();
                                     terminal.settle(NativeBoundaryDisposition::DELIVERED);
@@ -1873,6 +2131,7 @@ impl AppCell {
                             self.mark_shutdown_completion_dequeued(completion.generation());
                             match self.advance_shutdown_completion(completion) {
                                 NativeShutdownCompletionAction::Retry => {
+                                    self.defer_shutdown_completion_retry(completion.generation());
                                     terminal.settle(NativeBoundaryDisposition::Rejected);
                                 }
                                 NativeShutdownCompletionAction::Complete {

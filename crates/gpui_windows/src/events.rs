@@ -796,6 +796,14 @@ impl WindowsNonClientPointerBoundary<'_> {
 
 impl WindowsWindowInner {
     pub(crate) fn dispatch_input(&self, input: PlatformInput) -> DispatchEventResult {
+        if !matches!(&input, PlatformInput::PointerCanceled(_))
+            && !self.provisional_accepts_interaction()
+        {
+            return DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            };
+        }
         dispatch_windows_input(&self.state.callbacks, &self.state.input_dispatch, input)
     }
 
@@ -1017,6 +1025,38 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        if self.provisional_requires_hit_transparency() {
+            let blocked = match msg {
+                WM_NCHITTEST => Some(HTTRANSPARENT as isize),
+                WM_MOUSEACTIVATE => Some(MA_NOACTIVATEANDEAT as isize),
+                WM_MOUSEMOVE
+                | WM_NCMOUSEMOVE
+                | WM_NCLBUTTONDBLCLK
+                | WM_NCLBUTTONDOWN
+                | WM_NCRBUTTONDOWN
+                | WM_NCMBUTTONDOWN
+                | WM_NCLBUTTONUP
+                | WM_NCRBUTTONUP
+                | WM_NCMBUTTONUP
+                | WM_MOUSEWHEEL
+                | WM_MOUSEHWHEEL
+                | WM_SYSKEYUP
+                | WM_KEYUP
+                | WM_GPUI_KEYDOWN
+                | WM_CHAR
+                | WM_IME_STARTCOMPOSITION
+                | WM_IME_COMPOSITION
+                | WM_IME_ENDCOMPOSITION
+                | DM_POINTERHITTEST
+                | WM_GETOBJECT => Some(0),
+                WM_SETCURSOR => Some(1),
+                _ if decode_client_mouse_button_message(msg, wparam).is_some() => Some(0),
+                _ => None,
+            };
+            if let Some(result) = blocked {
+                return LRESULT(result);
+            }
+        }
         let handled = match msg {
             WM_MOUSEACTIVATE => {
                 let policy = self.state.activation_policy();
@@ -1252,7 +1292,15 @@ impl WindowsWindowInner {
 
     fn handle_close_msg(&self) -> Option<isize> {
         let should_close = self.state.callbacks.should_close.invoke();
-        if should_close { None } else { Some(0) }
+        if !should_close {
+            return Some(0);
+        }
+        let shutdown = self.presentation_shutdown_ticket();
+        if self.quiesce_presentation(&shutdown) == PlatformPresentationShutdownOutcome::Quiesced {
+            None
+        } else {
+            Some(0)
+        }
     }
 
     fn handle_destroy_msg(&self) -> Option<isize> {
@@ -1699,6 +1747,10 @@ impl WindowsWindowInner {
     fn handle_activate_msg(self: &Rc<Self>, handle: HWND, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
 
+        if activated && !self.provisional_accepts_interaction() {
+            return Some(0);
+        }
+
         if !activated {
             self.invalidate_native_pointer_physical_frame_scopes();
             self.state.cursor_visible.store(true, Ordering::Relaxed);
@@ -1859,7 +1911,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        if !self.state.accepts_pointer_input() {
+        if self.provisional_requires_hit_transparency() || !self.state.accepts_pointer_input() {
             return Some(HTTRANSPARENT as _);
         }
 
@@ -2111,6 +2163,9 @@ impl WindowsWindowInner {
     }
 
     fn handle_device_lost(&self) -> Option<isize> {
+        if self.presentation_shutdown_claimed() {
+            return Some(0);
+        }
         let devices = self.recovered_directx_devices.read().clone()?;
         if let Err(err) = self
             .state
@@ -2232,6 +2287,9 @@ impl WindowsWindowInner {
     where
         F: FnOnce(&mut PlatformInputHandler) -> R,
     {
+        if !self.provisional_accepts_interaction() {
+            return None;
+        }
         self.state.input_handler.with_handler(f)
     }
 
@@ -2239,6 +2297,9 @@ impl WindowsWindowInner {
     where
         F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
     {
+        if !self.provisional_accepts_interaction() {
+            return None;
+        }
         let scale_factor = self.state.scale_factor.get();
         self.state
             .input_handler

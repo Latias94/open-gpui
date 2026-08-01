@@ -13,14 +13,15 @@ use std::{
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback, PlatformInputCallbackSlot,
-    PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PointerCancelReason, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
-    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
+    PlatformWindow, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowPresentOutcome, Point, PointerCancelReason,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
+    Size, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowCoordinateSpace, WindowCreationFacts,
-    WindowDecorations, WindowParams, WindowPlatformFacts, px,
+    WindowDecorations, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
 };
-use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress};
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
@@ -722,6 +723,21 @@ fn cursor_style_to_css(style: CursorStyle) -> &'static str {
 
 impl Drop for WebWindow {
     fn drop(&mut self) {
+        let can_release_surface = self
+            .inner
+            .state
+            .borrow()
+            .renderer
+            .surface_owner_release_is_safe();
+        if !can_release_surface {
+            log::error!(
+                "Web window dropped before exact presentation shutdown drained submitted GPU work; retaining backend owner"
+            );
+            self.inner.stop_raf();
+            std::mem::forget(self.inner.clone());
+            return;
+        }
+
         self.inner
             .pointer_capture
             .set(WebPointerCaptureState::default());
@@ -775,6 +791,9 @@ impl PlatformWindow for WebWindow {
                     inner.complete_initial_presentation(activate);
                     PlatformWindowCommandOutcome::Accepted
                 }
+                PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
+                    PlatformWindowCommandOutcome::Rejected
+                }
                 PlatformWindowCommand::Activate => {
                     if inner.activate() {
                         PlatformWindowCommandOutcome::Accepted
@@ -786,6 +805,59 @@ impl PlatformWindow for WebWindow {
                 | PlatformWindowCommand::StartWindowMove
                 | PlatformWindowCommand::StartWindowResize(_) => {
                     PlatformWindowCommandOutcome::Rejected
+                }
+            }
+        })
+    }
+
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown {
+        let inner = Rc::clone(&self.inner);
+        PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
+            let Ok(mut state) = inner.state.try_borrow_mut() else {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            };
+            if shutdown.snapshot().window_id() != inner.handle.window_id() {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            }
+
+            match state.renderer.begin_surface_shutdown(shutdown) {
+                WgpuSurfaceShutdownProgress::Quiesced => {
+                    if state.renderer.is_quiesced_for(shutdown) {
+                        PlatformPresentationShutdownOutcome::Quiesced
+                    } else {
+                        PlatformPresentationShutdownOutcome::Rejected
+                    }
+                }
+                WgpuSurfaceShutdownProgress::Rejected => {
+                    PlatformPresentationShutdownOutcome::Rejected
+                }
+                WgpuSurfaceShutdownProgress::EnteredDraining => {
+                    inner.stop_raf();
+                    match state.renderer.advance_web_surface_shutdown(shutdown) {
+                        WgpuSurfaceShutdownProgress::Quiesced => {
+                            PlatformPresentationShutdownOutcome::Quiesced
+                        }
+                        WgpuSurfaceShutdownProgress::EnteredDraining
+                        | WgpuSurfaceShutdownProgress::Draining
+                        | WgpuSurfaceShutdownProgress::Rejected => {
+                            PlatformPresentationShutdownOutcome::Rejected
+                        }
+                    }
+                }
+                WgpuSurfaceShutdownProgress::Draining => {
+                    match state.renderer.advance_web_surface_shutdown(shutdown) {
+                        WgpuSurfaceShutdownProgress::Quiesced => {
+                            PlatformPresentationShutdownOutcome::Quiesced
+                        }
+                        WgpuSurfaceShutdownProgress::EnteredDraining
+                        | WgpuSurfaceShutdownProgress::Draining
+                        | WgpuSurfaceShutdownProgress::Rejected => {
+                            PlatformPresentationShutdownOutcome::Rejected
+                        }
+                    }
                 }
             }
         })
@@ -994,21 +1066,38 @@ impl PlatformWindow for WebWindow {
             return PlatformWindowPresentOutcome::Deferred;
         }
 
+        if self
+            .inner
+            .state
+            .borrow()
+            .renderer
+            .presentation_shutdown_active()
+        {
+            return PlatformWindowPresentOutcome::Deferred;
+        }
+
         if let Some((width, height)) = self.inner.pending_physical_size.take() {
+            let mut state = self.inner.state.borrow_mut();
+            if state.renderer.presentation_shutdown_active() {
+                self.inner.pending_physical_size.set(Some((width, height)));
+                return PlatformWindowPresentOutcome::Deferred;
+            }
+
             if self.inner.canvas.width() != width || self.inner.canvas.height() != height {
                 self.inner.canvas.set_width(width);
                 self.inner.canvas.set_height(height);
             }
 
-            let mut state = self.inner.state.borrow_mut();
             state.renderer.update_drawable_size(Size {
                 width: DevicePixels(width as i32),
                 height: DevicePixels(height as i32),
             });
-            drop(state);
         }
 
         let mut state = self.inner.state.borrow_mut();
+        if state.renderer.presentation_shutdown_active() {
+            return PlatformWindowPresentOutcome::Deferred;
+        }
         if state.renderer.device_lost() {
             return PlatformWindowPresentOutcome::Rejected;
         }

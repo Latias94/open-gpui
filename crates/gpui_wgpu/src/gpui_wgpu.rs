@@ -7,4 +7,6 @@ pub use cosmic_text_system::*;
 pub use wgpu;
 pub use wgpu_atlas::*;
 pub use wgpu_context::*;
+#[doc(hidden)]
+pub use wgpu_renderer::WgpuSurfaceShutdownProgress;
 pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};

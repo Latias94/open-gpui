@@ -1,15 +1,18 @@
-use super::{WindowsPlatform, translate_accelerator};
-use crate::{WindowsWindowInner, get_window_long};
+use super::{RegisteredWindow, WindowsPlatform, translate_accelerator};
+use crate::{NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long};
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Application, Empty, NativeBoundaryDiagnosticCursor,
-    NativeBoundaryDisposition, NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind,
-    NativePlatformCommandKind, PlatformInput, PointerCancelEvent, PointerCancelReason, QuitMode,
-    WindowActivationPolicy, WindowBounds, WindowKind, WindowMouseEvent, WindowMutationDispatch,
-    WindowMutationOutcome, WindowOptions, point, px, size,
+    AnyWindowHandle, AppContext as _, Application, Context, Empty, IntoElement,
+    NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryGeneration,
+    NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind, NativePlatformCommandKind,
+    PlatformInput, PointerCancelEvent, PointerCancelReason, QuitMode, Render, Styled, Window,
+    WindowActivationPolicy, WindowBounds, WindowId, WindowKind, WindowMouseEvent,
+    WindowMutationDispatch, WindowMutationOutcome, WindowOptions, WindowProvisionalRevealOutcome,
+    WindowProvisionalRevealZOrder, WindowProvisionalSession, div, point, px, size, white,
 };
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    time::Duration,
 };
 use windows::Win32::{
     Foundation::{HWND, LPARAM, RECT, WPARAM},
@@ -21,15 +24,17 @@ use windows::Win32::{
             GetActiveWindow, GetCapture, IsWindowEnabled, ReleaseCapture, SetActiveWindow,
         },
         WindowsAndMessaging::{
-            DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT, GW_OWNER, GWL_EXSTYLE,
-            GetForegroundWindow, GetWindow, GetWindowRect, IsWindow, IsWindowVisible, IsZoomed,
-            MA_NOACTIVATE, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED,
-            SIZE_RESTORED, SendMessageW, TranslateMessage, WM_CLOSE, WM_KEYDOWN, WM_KEYUP,
-            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_PAINT,
-            WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
+            CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT, GW_OWNER,
+            GWL_EXSTYLE, GetForegroundWindow, GetWindow, GetWindowRect, HTTRANSPARENT,
+            HWND_MESSAGE, IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT,
+            MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED,
+            SendMessageW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_KEYDOWN,
+            WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE,
+            WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
         },
     },
 };
+use windows::core::w;
 
 const MAX_MESSAGE_PUMP_ATTEMPTS: usize = 512;
 const MAX_STALE_QUIT_MESSAGES: usize = 16;
@@ -139,6 +144,30 @@ fn pump_messages_until(description: &str, mut converged: impl FnMut() -> bool) -
     );
 }
 
+fn pump_messages_until_with_delay(
+    description: &str,
+    delay: Duration,
+    mut converged: impl FnMut() -> bool,
+) -> MessageTrace {
+    let mut trace = MessageTrace::default();
+    for _ in 0..MAX_MESSAGE_PUMP_ATTEMPTS {
+        if converged() {
+            return trace;
+        }
+        dispatch_one_message(&mut trace);
+        std::thread::sleep(delay);
+    }
+
+    if converged() {
+        return trace;
+    }
+
+    panic!(
+        "{description} did not converge within {MAX_MESSAGE_PUMP_ATTEMPTS} delayed message-pump attempts; dispatched={:x?}",
+        trace.message_ids()
+    );
+}
+
 fn pump_messages_until_idle(description: &str) -> MessageTrace {
     let mut trace = MessageTrace::default();
     for _ in 0..MAX_MESSAGE_PUMP_ATTEMPTS {
@@ -158,8 +187,40 @@ fn post_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) {
         .unwrap_or_else(|error| panic!("failed to post native test message {message:#x}: {error}"));
 }
 
+fn create_unknown_message_window() -> HWND {
+    unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            None,
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            None,
+            None,
+        )
+    }
+    .expect("native retirement sentinel HWND should be created")
+}
+
 fn mouse_position_lparam(x: u16, y: u16) -> LPARAM {
     LPARAM(((u32::from(y) << 16) | u32::from(x)) as isize)
+}
+
+fn screen_point_lparam(x: i32, y: i32) -> LPARAM {
+    LPARAM(((((y as u32) & 0xffff) << 16) | ((x as u32) & 0xffff)) as isize)
+}
+
+struct PaintedRoot;
+
+impl Render for PaintedRoot {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().bg(white())
+    }
 }
 
 fn observe_frame_requests(window: &Rc<WindowsWindowInner>) -> Rc<Cell<usize>> {
@@ -1167,6 +1228,163 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
 }
 
 #[test]
+fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in_place() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let session = WindowProvisionalSession::new(73)
+        .expect("the native provisional generation should be valid");
+    let foreground_before = unsafe { GetForegroundWindow() };
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    provisional_session: Some(session.clone()),
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| PaintedRoot),
+            )
+        })
+        .expect("native provisional window should open");
+    let any_window = AnyWindowHandle::from(window);
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("native provisional window should register an HWND")
+        .as_raw();
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("native provisional window should remain registered");
+
+    assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
+    assert!(
+        unsafe { !IsWindowVisible(hwnd).as_bool() },
+        "the ordinary initial-presentation command must leave a provisional HWND hidden"
+    );
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
+    assert_eq!(session.snapshot().window_id(), Some(any_window.window_id()));
+
+    let reveal_ticket = app
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, cx| {
+                window
+                    .arm_provisional_presentation(&session, cx)
+                    .expect("the exact provisional session should arm its next frame")
+            })
+        })
+        .expect("native provisional window should remain live");
+    pump_messages_until("real provisional reveal", || {
+        app.update_for_test(|_| {
+            reveal_ticket.snapshot().outcome() != WindowProvisionalRevealOutcome::Pending
+        })
+    });
+
+    let reveal = reveal_ticket.snapshot();
+    assert_eq!(reveal.outcome(), WindowProvisionalRevealOutcome::Revealed);
+    let presentation_generation = reveal
+        .presentation_generation()
+        .expect("the native reveal must bind one non-empty renderer generation");
+    assert!(presentation_generation >= reveal.minimum_presentation_generation());
+    let native_facts = reveal
+        .native_facts()
+        .expect("the Windows backend must publish typed native reveal facts");
+    assert!(native_facts.accepts_reveal());
+    assert_eq!(
+        native_facts.z_order(),
+        WindowProvisionalRevealZOrder::Unavailable
+    );
+    assert!(unsafe { IsWindowVisible(hwnd).as_bool() });
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
+    assert!(
+        !session.snapshot().accepts_interaction(),
+        "native visibility must not open the provisional interaction gate"
+    );
+
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect) }
+        .expect("visible provisional bounds should be readable");
+    let hit_point = screen_point_lparam(
+        rect.left + (rect.right - rect.left) / 2,
+        rect.top + (rect.bottom - rect.top) / 2,
+    );
+    let gated_hit =
+        unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
+    assert_eq!(gated_hit.0, HTTRANSPARENT as isize);
+    let gated_mouse_activate = unsafe {
+        SendMessageW(
+            hwnd,
+            WM_MOUSEACTIVATE,
+            Some(WPARAM::default()),
+            Some(LPARAM::default()),
+        )
+    };
+    assert_eq!(gated_mouse_activate.0, MA_NOACTIVATEANDEAT as isize);
+
+    app.update_for_test(|cx| {
+        any_window
+            .update(cx, |_, window, cx| {
+                window
+                    .promote_provisional_presentation(&session, cx)
+                    .expect("the exact revealed HWND should promote in place");
+            })
+            .expect("native provisional window should remain live during promotion")
+    });
+    assert!(session.snapshot().accepts_interaction());
+    assert_eq!(
+        platform
+            .window_from_hwnd(hwnd)
+            .expect("promotion must retain the registered native window")
+            .hwnd,
+        native_window.hwnd
+    );
+    let promoted_hit =
+        unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
+    assert_ne!(promoted_hit.0, HTTRANSPARENT as isize);
+
+    let diagnostics = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .terminal
+    });
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.target == NativeBoundaryTarget::Window(any_window.window_id())
+                    && diagnostic.kind
+                        == NativeBoundaryKind::Command(
+                            NativePlatformCommandKind::RevealDeferredInitialPresentation,
+                        )
+                    && diagnostic.domain_generation
+                        == Some(NativeBoundaryGeneration::ProvisionalPresentation {
+                            session_generation: session.snapshot().generation(),
+                            presentation_generation,
+                        })
+                    && diagnostic.disposition
+                        == NativeBoundaryDisposition::Delivered { input_result: None }
+            })
+            .count(),
+        1,
+        "one exact native reveal command must settle for the bound generations"
+    );
+
+    app.update_for_test(|cx| {
+        any_window
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("promoted native provisional window should close")
+    });
+    pump_messages_until("native provisional test teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
+}
+
+#[test]
 fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred_placement() {
     discard_stale_quit_messages();
 
@@ -1917,6 +2135,7 @@ fn failed_destroy_during_platform_window_retirement_retries_without_losing_owner
         .expect("native test window should register an HWND")
         .as_raw();
 
+    platform.lifecycle_test_probe.clear_events();
     platform.lifecycle_test_probe.fail_next_destroy();
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("GPUI window removal should finish despite the injected native teardown failure");
@@ -1929,6 +2148,105 @@ fn failed_destroy_during_platform_window_retirement_retries_without_losing_owner
         "the App-owned retirement retry must destroy the retained child HWND"
     );
     assert!(!is_registered(&platform, hwnd));
+    let events = platform.lifecycle_test_probe.events();
+    let [
+        NativeWindowLifecycleTestEvent::PresentationQuiesced {
+            window_id: quiesced_window,
+            generation: quiesced_generation,
+        },
+        NativeWindowLifecycleTestEvent::DestroyEntered {
+            window_id: first_destroy_window,
+            generation: first_destroy_generation,
+        },
+        NativeWindowLifecycleTestEvent::DestroyEntered {
+            window_id: retry_destroy_window,
+            generation: retry_destroy_generation,
+        },
+        NativeWindowLifecycleTestEvent::NativeTerminal {
+            window_id: terminal_window,
+            generation: terminal_generation,
+        },
+    ] = events.as_slice()
+    else {
+        panic!("unexpected native retirement event sequence: {events:?}");
+    };
+    let expected = (window.window_id(), *quiesced_generation);
+    assert_eq!((*quiesced_window, *quiesced_generation), expected);
+    assert_eq!((*first_destroy_window, *first_destroy_generation), expected);
+    assert_eq!((*retry_destroy_window, *retry_destroy_generation), expected);
+    assert_eq!((*terminal_window, *terminal_generation), expected);
+}
+
+#[test]
+fn borrowed_renderer_rejects_quiescence_without_destroying_the_real_hwnd() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| PaintedRoot),
+            )
+        })
+        .expect("native test window should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("native test window should register an HWND")
+        .as_raw();
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("native test window should remain registered");
+    platform.lifecycle_test_probe.clear_events();
+    let shutdown = native_window.presentation_shutdown_ticket();
+
+    let renderer_borrow = native_window.state.renderer.borrow_mut();
+    assert_eq!(
+        native_window.quiesce_presentation(&shutdown),
+        open_gpui::PlatformPresentationShutdownOutcome::Rejected
+    );
+    assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
+    assert!(is_registered(&platform, hwnd));
+    assert!(platform.lifecycle_test_probe.events().is_empty());
+    drop(renderer_borrow);
+
+    assert!(native_window.destroy_native_window());
+    assert!(unsafe { !IsWindow(Some(hwnd)).as_bool() });
+    let events = platform.lifecycle_test_probe.events();
+    let [
+        NativeWindowLifecycleTestEvent::PresentationQuiesced {
+            window_id: quiesced_window,
+            generation: quiesced_generation,
+        },
+        NativeWindowLifecycleTestEvent::DestroyEntered {
+            window_id: destroy_window,
+            generation: destroy_generation,
+        },
+        NativeWindowLifecycleTestEvent::NativeTerminal {
+            window_id: terminal_window,
+            generation: terminal_generation,
+        },
+    ] = events.as_slice()
+    else {
+        panic!("unexpected borrowed-renderer teardown event sequence: {events:?}");
+    };
+    let expected = (window.window_id(), *quiesced_generation);
+    assert_eq!((*quiesced_window, *quiesced_generation), expected);
+    assert_eq!((*destroy_window, *destroy_generation), expected);
+    assert_eq!((*terminal_window, *terminal_generation), expected);
+    pump_messages_until("borrowed-renderer test logical teardown", || {
+        !is_registered(&platform, hwnd)
+    });
 }
 
 #[test]
@@ -2708,9 +3026,11 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
     assert_eq!(unsafe { GetActiveWindow() }, parent_hwnd);
     assert!(unsafe { IsWindowEnabled(parent_hwnd).as_bool() });
 
+    platform.lifecycle_test_probe.clear_events();
     platform
         .lifecycle_test_probe
         .fail_next_after_drag_drop_registration();
+    platform.lifecycle_test_probe.fail_next_destroy();
     let failure = app.update_for_test(|cx| {
         cx.open_window(
             WindowOptions {
@@ -2734,9 +3054,12 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
         .last_created_hwnd()
         .expect("the construction probe should record the failed HWND");
     assert_ne!(failed_hwnd, parent_hwnd);
+    pump_messages_until("failed dialog construction rollback retry", || unsafe {
+        !IsWindow(Some(failed_hwnd)).as_bool()
+    });
     assert!(
         unsafe { !IsWindow(Some(failed_hwnd)).as_bool() },
-        "construction rollback must synchronously destroy the failed HWND"
+        "construction rollback must eventually destroy the failed HWND after a managed retry"
     );
     assert!(
         unsafe { IsWindowEnabled(parent_hwnd).as_bool() },
@@ -2747,6 +3070,32 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
         1,
         "a failed child must never enter the committed HWND registry"
     );
+    let events = platform.lifecycle_test_probe.events();
+    let [
+        NativeWindowLifecycleTestEvent::PresentationQuiesced {
+            window_id: quiesced_window,
+            generation: quiesced_generation,
+        },
+        NativeWindowLifecycleTestEvent::DestroyEntered {
+            window_id: first_destroy_window,
+            generation: first_destroy_generation,
+        },
+        NativeWindowLifecycleTestEvent::DestroyEntered {
+            window_id: retry_destroy_window,
+            generation: retry_destroy_generation,
+        },
+        NativeWindowLifecycleTestEvent::NativeTerminal {
+            window_id: terminal_window,
+            generation: terminal_generation,
+        },
+    ] = events.as_slice()
+    else {
+        panic!("unexpected failed-construction retirement event sequence: {events:?}");
+    };
+    let expected = (*quiesced_window, *quiesced_generation);
+    assert_eq!((*first_destroy_window, *first_destroy_generation), expected);
+    assert_eq!((*retry_destroy_window, *retry_destroy_generation), expected);
+    assert_eq!((*terminal_window, *terminal_generation), expected);
 
     let parent = AnyWindowHandle::from(parent);
     app.update_for_test(|cx| {
@@ -2810,4 +3159,429 @@ fn app_and_platform_drop_destroy_child_and_message_windows_synchronously() {
         unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
         "dropping the platform must synchronously destroy its message HWND"
     );
+}
+
+#[test]
+fn construction_retirement_pending_survives_immediate_platform_drop() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let platform_inner = platform.inner.clone();
+    let raw_window_handles = platform.raw_window_handles.clone();
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+
+    lifecycle_probe.clear_events();
+    lifecycle_probe.fail_next_after_drag_drop_registration();
+    lifecycle_probe.fail_destroy_attempts(3);
+    let failure = app.update_for_test(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
+                focus_on_appearing: false,
+                show: false,
+                ..WindowOptions::default()
+            },
+            |_, cx| cx.new(|_| Empty),
+        )
+    });
+    assert!(failure.is_err());
+    let failed_hwnd = lifecycle_probe
+        .last_created_hwnd()
+        .expect("construction rollback should expose its native HWND");
+    assert!(unsafe { IsWindow(Some(failed_hwnd)).as_bool() });
+
+    drop(app);
+    drop(platform);
+    pump_messages_until_with_delay(
+        "construction retirement plus immediate platform finalization",
+        Duration::from_millis(2),
+        || unsafe {
+            !IsWindow(Some(failed_hwnd)).as_bool() && !IsWindow(Some(platform_hwnd)).as_bool()
+        },
+    );
+
+    assert!(raw_window_handles.read().is_empty());
+    assert_eq!(
+        lifecycle_probe
+            .events()
+            .iter()
+            .filter(|event| matches!(event, NativeWindowLifecycleTestEvent::DestroyEntered { .. }))
+            .count(),
+        4,
+        "three consecutive injected rejections must still schedule a fourth terminal attempt"
+    );
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    drop(platform_inner);
+}
+
+#[test]
+fn registered_child_platform_finalization_retries_multiple_destroy_rejections() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let platform_inner = platform.inner.clone();
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    app.update_for_test(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
+                focus_on_appearing: false,
+                show: false,
+                ..WindowOptions::default()
+            },
+            |_, cx| cx.new(|_| Empty),
+        )
+    })
+    .expect("platform-finalization child should open");
+    let child_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("platform-finalization child should register")
+        .as_raw();
+
+    lifecycle_probe.clear_events();
+    lifecycle_probe.fail_destroy_attempts(3);
+    drop(app);
+    assert!(
+        unsafe { IsWindow(Some(child_hwnd)).as_bool() },
+        "the first injected rejection must leave the registered child live for platform finalization"
+    );
+    drop(platform);
+
+    pump_messages_until_with_delay(
+        "registered child platform finalization retries",
+        Duration::from_millis(2),
+        || unsafe {
+            !IsWindow(Some(child_hwnd)).as_bool() && !IsWindow(Some(platform_hwnd)).as_bool()
+        },
+    );
+    assert_eq!(
+        lifecycle_probe
+            .events()
+            .iter()
+            .filter(|event| matches!(event, NativeWindowLifecycleTestEvent::DestroyEntered { .. }))
+            .count(),
+        4
+    );
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    drop(platform_inner);
+}
+
+#[test]
+fn platform_finalization_waits_for_transient_child_terminal_before_parent_destroy() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let parent = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: false,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("transient parent should open");
+    let parent_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("transient parent should register")
+        .as_raw();
+    let transient_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(parent.into())
+            .expect("live parent should provide a transient owner")
+    });
+    let child = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
+                    focus_on_appearing: false,
+                    show: false,
+                    kind: WindowKind::Dialog,
+                    transient_for: Some(transient_owner),
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("transient child should open");
+    let child_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("transient child should register")
+        .as_raw();
+    let parent_native = platform
+        .window_from_hwnd(parent_hwnd)
+        .expect("transient parent should expose native state");
+    let child_native = platform
+        .window_from_hwnd(child_hwnd)
+        .expect("transient child should expose native state");
+
+    lifecycle_probe.clear_events();
+    let parent_renderer_borrow = parent_native.state.renderer.borrow_mut();
+    let child_renderer_borrow = child_native.state.renderer.borrow_mut();
+    drop(app);
+    assert!(
+        lifecycle_probe.events().is_empty(),
+        "borrowed renderers must defer both app-owned native teardowns without entering DestroyWindow"
+    );
+    assert!(
+        unsafe { IsWindow(Some(parent_hwnd)).as_bool() }
+            && unsafe { IsWindow(Some(child_hwnd)).as_bool() },
+        "app-owned retirement rejections must preserve both native owners for platform finalization"
+    );
+    drop(child_renderer_borrow);
+    drop(parent_renderer_borrow);
+    // Keep no Rust-side native-window state alive past platform resource teardown.
+    // The HWND owner and retirement coordinator retain the state until WM_NCDESTROY.
+    drop(child_native);
+    drop(parent_native);
+    drop(platform);
+
+    pump_messages_until_with_delay(
+        "transient child-first platform finalization",
+        Duration::from_millis(2),
+        || unsafe {
+            !IsWindow(Some(child_hwnd)).as_bool()
+                && !IsWindow(Some(parent_hwnd)).as_bool()
+                && !IsWindow(Some(platform_hwnd)).as_bool()
+        },
+    );
+    let events = lifecycle_probe.events();
+    let child_terminal_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                NativeWindowLifecycleTestEvent::NativeTerminal { window_id, .. }
+                    if *window_id == child.window_id()
+            )
+        })
+        .expect("child must reach native terminal");
+    let parent_destroy_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                NativeWindowLifecycleTestEvent::DestroyEntered { window_id, .. }
+                    if *window_id == parent.window_id()
+            )
+        })
+        .expect("parent must eventually enter native destruction");
+    assert!(
+        child_terminal_index < parent_destroy_index,
+        "the immutable transient-owner graph must terminal the child before parent destruction"
+    );
+}
+
+#[test]
+fn mismatched_registered_generation_blocks_teardown_without_raw_destroy() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let platform_inner = platform.inner.clone();
+    let raw_window_handles = platform.raw_window_handles.clone();
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
+                    focus_on_appearing: false,
+                    show: false,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("mismatch test window should open");
+    let window_id = window.window_id();
+    let native_registration = raw_window_handles
+        .read()
+        .last()
+        .copied()
+        .expect("mismatch test window should register");
+    let native_hwnd = native_registration.as_raw();
+    let native_window = platform
+        .window_from_hwnd(native_hwnd)
+        .expect("mismatch test window should expose native state");
+
+    lifecycle_probe.clear_events();
+    let renderer_borrow = native_window.state.renderer.borrow_mut();
+    drop(app);
+    assert!(
+        lifecycle_probe.events().is_empty(),
+        "a borrowed renderer must defer app-owned teardown before platform finalization"
+    );
+    assert!(
+        unsafe { IsWindow(Some(native_hwnd)).as_bool() },
+        "app-owned retirement rejection must preserve the managed HWND"
+    );
+
+    let mismatched_registration = RegisteredWindow::new(
+        native_hwnd,
+        native_registration.generation().saturating_add(1),
+        window_id,
+    );
+    {
+        let mut registrations = raw_window_handles.write();
+        let index = registrations
+            .iter()
+            .position(|registration| registration.matches(native_registration))
+            .expect("exact registration should remain available after deferred app retirement");
+        registrations[index] = mismatched_registration;
+    }
+
+    drop(renderer_borrow);
+    drop(native_window);
+    drop(platform);
+
+    assert!(
+        unsafe { IsWindow(Some(native_hwnd)).as_bool() },
+        "a generation mismatch must not raw-destroy the managed HWND"
+    );
+    assert!(
+        unsafe { IsWindow(Some(platform_hwnd)).as_bool() },
+        "a generation mismatch must retain the platform message HWND"
+    );
+    assert!(
+        raw_window_handles
+            .read()
+            .iter()
+            .any(|registration| registration.matches(mismatched_registration)),
+        "a generation mismatch must retain its registration authority"
+    );
+    assert!(
+        lifecycle_probe.events().is_empty(),
+        "fail-closed finalization must not enter native destruction for an ambiguous identity"
+    );
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 0);
+
+    let native_window = crate::window_from_hwnd(native_hwnd)
+        .expect("ambiguous retirement must retain the managed native owner until it terminals");
+    assert!(
+        native_window.destroy_native_window(),
+        "an externally terminal native window should still accept its exact teardown"
+    );
+    drop(native_window);
+    pump_messages_until_with_delay(
+        "ambiguous native owner terminal",
+        Duration::from_millis(2),
+        || unsafe { !IsWindow(Some(native_hwnd)).as_bool() },
+    );
+    raw_window_handles
+        .write()
+        .retain(|registration| !registration.matches(mismatched_registration));
+    platform_inner.notify_native_window_terminal(mismatched_registration);
+    pump_messages_until_with_delay(
+        "ambiguous registration cleanup and platform finalization",
+        Duration::from_millis(2),
+        || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+    );
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    drop(platform_inner);
+}
+
+#[test]
+fn unknown_registered_hwnd_blocks_raw_teardown_until_external_terminal() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let platform_inner = platform.inner.clone();
+    let raw_window_handles = platform.raw_window_handles.clone();
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    let sentinel_hwnd = create_unknown_message_window();
+    let sentinel_registration =
+        RegisteredWindow::new(sentinel_hwnd, usize::MAX, WindowId::from(0xdead_beef_u64));
+    raw_window_handles.write().push(sentinel_registration);
+
+    drop(platform);
+    assert!(
+        unsafe { IsWindow(Some(sentinel_hwnd)).as_bool() },
+        "unknown registered HWND must not be raw-destroyed"
+    );
+    assert!(
+        unsafe { IsWindow(Some(platform_hwnd)).as_bool() },
+        "unknown identity must retain the platform message HWND"
+    );
+    assert!(
+        raw_window_handles
+            .read()
+            .iter()
+            .any(|registration| registration.matches(sentinel_registration)),
+        "unknown identity must retain its registration authority"
+    );
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 0);
+
+    raw_window_handles
+        .write()
+        .retain(|registration| !registration.matches(sentinel_registration));
+    unsafe { DestroyWindow(sentinel_hwnd) }
+        .expect("test-owned sentinel HWND should accept explicit cleanup");
+    platform_inner.run_foreground_task();
+    pump_messages_until_with_delay(
+        "unknown registration cleanup and platform finalization",
+        Duration::from_millis(2),
+        || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+    );
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    drop(platform_inner);
+}
+
+#[test]
+fn platform_message_destroy_failure_retains_ole_until_terminal_retry() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let platform_inner = platform.inner.clone();
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    lifecycle_probe.fail_next_platform_destroy();
+
+    drop(platform);
+    assert!(unsafe { IsWindow(Some(platform_hwnd)).as_bool() });
+    assert_eq!(lifecycle_probe.platform_destroy_attempts(), 1);
+    assert_eq!(
+        lifecycle_probe.ole_uninitialize_count(),
+        0,
+        "OLE authority must remain held while the message HWND is still live"
+    );
+
+    pump_messages_until_with_delay(
+        "platform message HWND destroy retry",
+        Duration::from_millis(2),
+        || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+    );
+    assert!(lifecycle_probe.platform_destroy_attempts() >= 2);
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    drop(platform_inner);
 }

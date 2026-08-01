@@ -16,11 +16,12 @@ use open_gpui::{
     AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
     AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels,
     DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
-    PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowParams,
-    WindowPlatformFacts, px,
+    PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
+    PlatformWindow, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
+    Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowCreationFacts, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
 };
 
 #[derive(Debug)]
@@ -129,10 +130,24 @@ impl PlatformWindow for HeadlessWindow {
             PlatformWindowCommand::CompleteInitialPresentation { .. } => {
                 PlatformWindowCommandOutcome::Accepted
             }
-            PlatformWindowCommand::Activate
+            PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
+            | PlatformWindowCommand::Activate
             | PlatformWindowCommand::ShowWindowMenu(_)
             | PlatformWindowCommand::StartWindowMove
             | PlatformWindowCommand::StartWindowResize(_) => PlatformWindowCommandOutcome::Rejected,
+        })
+    }
+
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown {
+        PreparedPlatformPresentationShutdown::new(shutdown, |shutdown| {
+            if shutdown.acknowledge_quiesced() {
+                PlatformPresentationShutdownOutcome::Quiesced
+            } else {
+                PlatformPresentationShutdownOutcome::Rejected
+            }
         })
     }
 

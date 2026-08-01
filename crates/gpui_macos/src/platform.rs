@@ -484,6 +484,7 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
                 WindowCreationSupport::Unsupported
             },
             transient_for: WindowCreationSupport::Unsupported,
+            provisional_presentation: WindowCreationSupport::Unsupported,
             initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
         },
         mutations: PlatformWindowMutationCapabilities {
@@ -1606,6 +1607,7 @@ mod window_capability_tests {
                     WindowCreationSupport::Unsupported
                 },
                 transient_for: WindowCreationSupport::Unsupported,
+                provisional_presentation: WindowCreationSupport::Unsupported,
                 initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
             },
             mutations: PlatformWindowMutationCapabilities {

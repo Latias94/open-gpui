@@ -193,6 +193,7 @@ impl Platform for WebPlatform {
             creation: PlatformWindowCreationCapabilities {
                 focus_on_appearing: WindowCreationSupport::Supported,
                 transient_for: WindowCreationSupport::Unsupported,
+                provisional_presentation: WindowCreationSupport::Unsupported,
                 initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
             },
             mutations: PlatformWindowMutationCapabilities {

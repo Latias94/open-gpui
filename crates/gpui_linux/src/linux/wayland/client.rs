@@ -865,6 +865,7 @@ fn wayland_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities 
             } else {
                 WindowCreationSupport::Supported
             },
+            provisional_presentation: WindowCreationSupport::Unsupported,
             initial_presentation_order:
                 WindowInitialPresentationOrder::PresentationEstablishesVisibility,
         },

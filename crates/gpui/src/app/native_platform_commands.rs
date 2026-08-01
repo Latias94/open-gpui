@@ -1,9 +1,11 @@
 use std::{rc::Weak, time::Duration};
 
 use crate::{
-    NativeCapturedDragGeneration, PlatformNativeWindowRetirementOutcome,
-    PlatformPointerCaptureReleaseOutcome, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PreparedPlatformPointerCaptureRelease, Window, WindowId,
+    NativeBoundaryGeneration, NativeCapturedDragGeneration, PlatformNativeWindowRetirementOutcome,
+    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, Window, WindowId,
+    WindowProvisionalRevealOutcome, WindowProvisionalRevealTicket,
     app::{
         AppCell,
         native_callback_diagnostics::{
@@ -82,6 +84,23 @@ impl PlatformWindowCommandSink {
         app.enqueue_platform_window_command(self.window_id, self.dispatcher.clone(), command);
     }
 
+    pub(crate) fn enqueue_provisional_reveal(
+        &self,
+        command: PlatformWindowCommand,
+        ticket: WindowProvisionalRevealTicket,
+    ) {
+        let Some(app) = self.app.upgrade() else {
+            ticket.settle(WindowProvisionalRevealOutcome::WindowTerminal);
+            return;
+        };
+        app.enqueue_provisional_window_reveal(
+            self.window_id,
+            self.dispatcher.clone(),
+            command,
+            ticket,
+        );
+    }
+
     pub(crate) fn settle_pointer_capture_release(
         &self,
         token: NativePointerCaptureReleaseToken,
@@ -130,9 +149,15 @@ impl NativePointerCaptureRelease {
     }
 }
 
+enum NativeWindowRetirementOwner {
+    Window(Option<Box<Window>>),
+    Platform(Option<Box<dyn crate::PlatformWindow>>),
+}
+
 pub(super) struct NativeWindowRetirement {
     window_id: WindowId,
-    window: Option<Box<Window>>,
+    owner: NativeWindowRetirementOwner,
+    presentation_shutdown: PreparedPlatformPresentationShutdown,
     retry_attempts: u8,
 }
 
@@ -172,10 +197,36 @@ impl NativeShutdownCompletion {
 }
 
 impl NativeWindowRetirement {
-    pub(super) fn new(window_id: WindowId, window: Box<Window>) -> Self {
+    pub(super) fn new(window_id: WindowId, mut window: Box<Window>) -> Self {
+        let presentation_shutdown = window.claim_presentation_shutdown();
+        Self::with_owner(
+            window_id,
+            NativeWindowRetirementOwner::Window(Some(window)),
+            presentation_shutdown,
+        )
+    }
+
+    pub(super) fn from_platform_window(
+        window_id: WindowId,
+        platform_window: Box<dyn crate::PlatformWindow>,
+        presentation_shutdown: PreparedPlatformPresentationShutdown,
+    ) -> Self {
+        Self::with_owner(
+            window_id,
+            NativeWindowRetirementOwner::Platform(Some(platform_window)),
+            presentation_shutdown,
+        )
+    }
+
+    fn with_owner(
+        window_id: WindowId,
+        owner: NativeWindowRetirementOwner,
+        presentation_shutdown: PreparedPlatformPresentationShutdown,
+    ) -> Self {
         Self {
             window_id,
-            window: Some(window),
+            owner,
+            presentation_shutdown,
             retry_attempts: 0,
         }
     }
@@ -184,33 +235,73 @@ impl NativeWindowRetirement {
         self.window_id
     }
 
+    pub(super) fn presentation_shutdown(&self) -> PreparedPlatformPresentationShutdown {
+        self.presentation_shutdown.clone()
+    }
+
     pub(super) fn pending_diagnostic(&self, sequence: u64) -> NativeBoundaryDiagnostic {
         NativeBoundaryDiagnostic::pending(
             sequence,
             NativeBoundaryTarget::Window(self.window_id),
             NativeBoundaryKind::Command(NativePlatformCommandKind::RetireNativeWindow),
-            None,
+            Some(NativeBoundaryGeneration::PresentationShutdown(
+                self.presentation_shutdown.snapshot().generation(),
+            )),
         )
     }
 
     pub(super) fn retains_window_owner(&self) -> bool {
-        self.window.is_some()
+        match &self.owner {
+            NativeWindowRetirementOwner::Window(window) => window.is_some(),
+            NativeWindowRetirementOwner::Platform(platform_window) => platform_window.is_some(),
+        }
+    }
+
+    fn retire_native_window(&self) -> PlatformNativeWindowRetirementOutcome {
+        match &self.owner {
+            NativeWindowRetirementOwner::Window(Some(window)) => window
+                .platform_window
+                .retire_native_window(self.presentation_shutdown.ticket()),
+            NativeWindowRetirementOwner::Platform(Some(platform_window)) => {
+                platform_window.retire_native_window(self.presentation_shutdown.ticket())
+            }
+            NativeWindowRetirementOwner::Window(None)
+            | NativeWindowRetirementOwner::Platform(None) => {
+                panic!("pending native retirement must retain its platform-window owner")
+            }
+        }
+    }
+
+    fn drop_owner(&mut self) {
+        match &mut self.owner {
+            NativeWindowRetirementOwner::Window(window) => drop(window.take()),
+            NativeWindowRetirementOwner::Platform(platform_window) => drop(platform_window.take()),
+        }
     }
 
     pub(super) fn retire(&mut self) -> NativeWindowRetirementAttempt {
-        let outcome = self
-            .window
-            .as_ref()
-            .expect("pending native retirement must retain its platform-window owner")
-            .platform_window
-            .retire_native_window();
-        match outcome {
+        if !self.presentation_shutdown.snapshot().quiesced()
+            && self.presentation_shutdown.quiesce() != PlatformPresentationShutdownOutcome::Quiesced
+        {
+            return NativeWindowRetirementAttempt::Rejected;
+        }
+        if !self.presentation_shutdown.snapshot().quiesced() {
+            return NativeWindowRetirementAttempt::Rejected;
+        }
+        match self.retire_native_window() {
             PlatformNativeWindowRetirementOutcome::Accepted => {
-                drop(self.window.take());
+                self.drop_owner();
                 NativeWindowRetirementAttempt::Accepted
             }
             PlatformNativeWindowRetirementOutcome::NativeWindowTerminal => {
-                drop(self.window.take());
+                if !self
+                    .presentation_shutdown
+                    .ticket()
+                    .acknowledge_native_terminal()
+                {
+                    return NativeWindowRetirementAttempt::Rejected;
+                }
+                self.drop_owner();
                 NativeWindowRetirementAttempt::NativeWindowTerminal
             }
             PlatformNativeWindowRetirementOutcome::Rejected => {
@@ -231,6 +322,7 @@ pub(super) struct NativePlatformCommand {
     window_id: WindowId,
     dispatcher: PlatformWindowCommandDispatcher,
     command: PlatformWindowCommand,
+    provisional_reveal_ticket: Option<WindowProvisionalRevealTicket>,
     attempt: u8,
 }
 
@@ -250,6 +342,22 @@ impl NativePlatformCommand {
             window_id,
             dispatcher,
             command,
+            provisional_reveal_ticket: None,
+            attempt: 1,
+        }
+    }
+
+    pub(super) fn new_provisional_reveal(
+        window_id: WindowId,
+        dispatcher: PlatformWindowCommandDispatcher,
+        command: PlatformWindowCommand,
+        ticket: WindowProvisionalRevealTicket,
+    ) -> Self {
+        Self {
+            window_id,
+            dispatcher,
+            command,
+            provisional_reveal_ticket: Some(ticket),
             attempt: 1,
         }
     }
@@ -266,23 +374,43 @@ impl NativePlatformCommand {
     }
 
     pub(super) fn pending_diagnostic(&self, sequence: u64) -> NativeBoundaryDiagnostic {
-        let kind = match self.command {
+        let (kind, generation) = match self.command {
             PlatformWindowCommand::CompleteInitialPresentation { .. } => {
-                NativePlatformCommandKind::CompleteInitialPresentation
+                (NativePlatformCommandKind::CompleteInitialPresentation, None)
             }
-            PlatformWindowCommand::Activate => NativePlatformCommandKind::Activate,
-            PlatformWindowCommand::ShowWindowMenu(_) => NativePlatformCommandKind::ShowWindowMenu,
-            PlatformWindowCommand::StartWindowMove => NativePlatformCommandKind::StartWindowMove,
+            PlatformWindowCommand::RevealDeferredInitialPresentation {
+                session_generation,
+                presentation_generation,
+            } => (
+                NativePlatformCommandKind::RevealDeferredInitialPresentation,
+                Some(NativeBoundaryGeneration::ProvisionalPresentation {
+                    session_generation,
+                    presentation_generation,
+                }),
+            ),
+            PlatformWindowCommand::Activate => (NativePlatformCommandKind::Activate, None),
+            PlatformWindowCommand::ShowWindowMenu(_) => {
+                (NativePlatformCommandKind::ShowWindowMenu, None)
+            }
+            PlatformWindowCommand::StartWindowMove => {
+                (NativePlatformCommandKind::StartWindowMove, None)
+            }
             PlatformWindowCommand::StartWindowResize(_) => {
-                NativePlatformCommandKind::StartWindowResize
+                (NativePlatformCommandKind::StartWindowResize, None)
             }
         };
         NativeBoundaryDiagnostic::pending(
             sequence,
             NativeBoundaryTarget::Window(self.window_id),
             NativeBoundaryKind::Command(kind),
-            None,
+            generation,
         )
+    }
+
+    pub(super) fn settle_provisional_reveal(&self, outcome: WindowProvisionalRevealOutcome) {
+        if let Some(ticket) = self.provisional_reveal_ticket.as_ref() {
+            ticket.settle(outcome);
+        }
     }
 
     pub(super) fn dispatch(&self) -> PlatformWindowCommandOutcome {
@@ -298,5 +426,11 @@ impl NativePlatformCommand {
         }
         self.attempt += 1;
         NativePlatformCommandRejection::Retry(self)
+    }
+}
+
+impl Drop for NativePlatformCommand {
+    fn drop(&mut self) {
+        self.settle_provisional_reveal(WindowProvisionalRevealOutcome::Rejected);
     }
 }

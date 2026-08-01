@@ -4,7 +4,7 @@ use crate::Inspector;
 use crate::MouseButton;
 #[cfg(target_os = "macos")]
 use crate::PlatformPixelBuffer;
-use crate::app::PlatformWindowCommandSink;
+use crate::app::{AppCell, PlatformWindowCommandSink};
 use crate::{
     Action, AnyElement, AnyEntity, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena,
     Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic, AvailableSpace,
@@ -17,20 +17,22 @@ use crate::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
     PlatformWindowMutationObservation, PlatformWindowPresentOutcome, PlatformWindowProfile, Point,
-    PointerCancelEvent, PointerCancelReason, PolychromeSprite, Primitive, PrimitiveTransform,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, RequestFrameOptions, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
-    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
-    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowCreationFacts, WindowDecorations, WindowInitialPresentationOrder,
-    WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
-    WindowMutationOutcome, WindowOptions, WindowParams, WindowPlacementRequest,
-    WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
-    WindowTextSystem,
+    PointerCancelEvent, PointerCancelReason, PolychromeSprite,
+    PreparedPlatformPresentationShutdown, Primitive, PrimitiveTransform, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, RequestFrameOptions, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SubtreeClip, SubtreeClipError,
+    SubtreePresentation, SubtreeTransform, SubtreeTransformError, SystemWindowTab,
+    SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowCreationFacts,
+    WindowDecorations, WindowInitialPresentationOrder, WindowInitialPresentationStatus, WindowKind,
+    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
+    WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
+    WindowPresentAttemptFacts, WindowPresentationFacts, WindowProvisionalOpeningClaim,
+    WindowProvisionalRevealOutcome, WindowProvisionalRevealTicket, WindowProvisionalSession,
+    WindowProvisionalSessionPhase, WindowTextSystem,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
         SubtreeGeometryValidity,
@@ -64,8 +66,8 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::{DerefMut, Range},
-    rc::Rc,
+    ops::{Deref as StdDeref, DerefMut as StdDerefMut, Range},
+    rc::{Rc, Weak as RcWeak},
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
@@ -631,6 +633,18 @@ pub enum WindowControlArea {
 pub struct HitboxId(u64);
 
 static NEXT_PREPAINT_PUBLICATION_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_presentation_shutdown_ticket(
+    window_id: WindowId,
+) -> crate::WindowPresentationShutdownTicket {
+    let generation = NEXT_PRESENTATION_SHUTDOWN_GENERATION.fetch_add(1, SeqCst);
+    assert_ne!(
+        generation, 0,
+        "presentation-shutdown generation space exhausted"
+    );
+    crate::WindowPresentationShutdownTicket::new(window_id, generation)
+}
 
 /// A stable identity for one cross-frame publication produced during prepaint.
 ///
@@ -1331,6 +1345,73 @@ impl Drop for PrepaintCommitPhaseScopeGuard {
     }
 }
 
+struct PlatformWindowCreationRollback {
+    app_cell: RcWeak<AppCell>,
+    window_id: WindowId,
+    platform_window: Option<Box<dyn PlatformWindow>>,
+}
+
+impl PlatformWindowCreationRollback {
+    fn new(
+        window_id: WindowId,
+        platform_window: Box<dyn PlatformWindow>,
+        app_cell: RcWeak<AppCell>,
+    ) -> Self {
+        Self {
+            app_cell,
+            window_id,
+            platform_window: Some(platform_window),
+        }
+    }
+
+    fn into_platform_window(mut self) -> Box<dyn PlatformWindow> {
+        self.platform_window
+            .take()
+            .expect("platform-window creation rollback must retain its backend owner before commit")
+    }
+}
+
+impl StdDeref for PlatformWindowCreationRollback {
+    type Target = dyn PlatformWindow;
+
+    fn deref(&self) -> &Self::Target {
+        self.platform_window
+            .as_deref()
+            .expect("platform-window creation rollback must retain its backend owner before commit")
+    }
+}
+
+impl StdDerefMut for PlatformWindowCreationRollback {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.platform_window
+            .as_deref_mut()
+            .expect("platform-window creation rollback must retain its backend owner before commit")
+    }
+}
+
+impl Drop for PlatformWindowCreationRollback {
+    fn drop(&mut self) {
+        let Some(platform_window) = self.platform_window.take() else {
+            return;
+        };
+        let presentation_shutdown = platform_window
+            .prepare_presentation_shutdown(next_presentation_shutdown_ticket(self.window_id));
+
+        if let Some(app_cell) = self.app_cell.upgrade() {
+            app_cell.enqueue_platform_window_retirement(
+                self.window_id,
+                platform_window,
+                presentation_shutdown,
+            );
+        } else {
+            log::error!(
+                "native platform-window creation rollback lost its AppCell; retaining the backend owner until process teardown"
+            );
+            mem::forget((platform_window, presentation_shutdown));
+        }
+    }
+}
+
 #[derive(Default)]
 struct WindowPresentationState {
     frame_accepted_generation: Option<u64>,
@@ -1338,6 +1419,7 @@ struct WindowPresentationState {
     non_empty_presented_generation: Option<u64>,
     latest_present_attempt: Option<WindowPresentAttemptFacts>,
     initial_presentation: WindowInitialPresentationStatus,
+    provisional_reveal_ticket: Option<WindowProvisionalRevealTicket>,
 }
 
 /// Holds the state for a specific window.
@@ -1351,6 +1433,9 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     platform_command_sink: PlatformWindowCommandSink,
     initial_presentation_command: Option<PlatformWindowCommand>,
+    presentation_shutdown: Option<PreparedPlatformPresentationShutdown>,
+    provisional_session: Option<WindowProvisionalSession>,
+    _provisional_opening_claim: Option<WindowProvisionalOpeningClaim>,
     creation_facts: WindowCreationFacts,
     presentation_state: WindowPresentationState,
     platform_facts: WindowPlatformFacts,
@@ -1925,6 +2010,7 @@ impl Window {
             focus_on_appearing,
             activation_policy,
             show,
+            provisional_session,
             transient_for,
             kind,
             is_movable,
@@ -1964,6 +2050,17 @@ impl Window {
             })
             .transpose()?;
 
+        if provisional_session.is_some() {
+            anyhow::ensure!(
+                show,
+                "a provisional window session requires eventual native presentation"
+            );
+            anyhow::ensure!(
+                !focus_on_appearing,
+                "a provisional window session cannot request initial activation"
+            );
+        }
+
         let requested_display_id = display_id;
         let display_id = cx.resolve_display_id(display_id);
         if let Some(requested_display_id) = requested_display_id
@@ -1990,6 +2087,14 @@ impl Window {
             "platform does not support transient top-level owners"
         );
         anyhow::ensure!(
+            provisional_session.is_none()
+                || window_capabilities
+                    .creation
+                    .provisional_presentation
+                    .is_supported(),
+            "platform does not support provisional top-level presentation"
+        );
+        anyhow::ensure!(
             activation_policy == WindowActivationPolicy::default()
                 || window_capabilities
                     .mutations
@@ -1997,7 +2102,11 @@ impl Window {
                     .is_available_at_creation(),
             "platform does not support selecting a lifetime activation policy"
         );
-        let mut platform_window = cx.platform.open_window(
+        let provisional_opening_claim = provisional_session
+            .as_ref()
+            .map(WindowProvisionalSession::claim_opening)
+            .transpose()?;
+        let platform_window = cx.platform.open_window(
             handle,
             WindowParams {
                 window_bounds,
@@ -2012,6 +2121,7 @@ impl Window {
                 activation_policy,
                 transient_for,
                 show,
+                provisional_session: provisional_session.clone(),
                 display_id,
                 window_min_size,
                 icon,
@@ -2019,6 +2129,11 @@ impl Window {
                 tabbing_identifier,
             },
         )?;
+        let mut platform_window = PlatformWindowCreationRollback::new(
+            handle.window_id(),
+            platform_window,
+            cx.this.clone(),
+        );
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -2256,6 +2371,8 @@ impl Window {
         let active = Rc::new(Cell::new(platform_facts.is_active));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
 
+        let platform_window = platform_window.into_platform_window();
+
         Ok(Window {
             handle,
             invalidator,
@@ -2267,9 +2384,15 @@ impl Window {
             platform_command_sink,
             initial_presentation_command: Some(
                 PlatformWindowCommand::CompleteInitialPresentation {
-                    activate: show && focus_on_appearing && activation_policy.accepts_activation,
+                    activate: provisional_session.is_none()
+                        && show
+                        && focus_on_appearing
+                        && activation_policy.accepts_activation,
                 },
             ),
+            presentation_shutdown: None,
+            provisional_session,
+            _provisional_opening_claim: provisional_opening_claim,
             creation_facts,
             presentation_state: WindowPresentationState::default(),
             platform_facts,
@@ -2384,6 +2507,130 @@ impl Window {
 
     pub(crate) fn creation_can_commit(&self) -> bool {
         !self.removed && !self.native_closed.get() && self.removal_state == WindowRemovalState::Open
+    }
+
+    pub(crate) fn bind_provisional_session(
+        &self,
+    ) -> std::result::Result<(), crate::WindowProvisionalSessionError> {
+        if let Some(session) = self.provisional_session.as_ref() {
+            session.bind(self.handle.window_id())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn claim_presentation_shutdown(&mut self) -> PreparedPlatformPresentationShutdown {
+        self.presentation_shutdown
+            .get_or_insert_with(|| {
+                self.platform_window.prepare_presentation_shutdown(
+                    next_presentation_shutdown_ticket(self.handle.window_id()),
+                )
+            })
+            .clone()
+    }
+
+    /// Arms the exact bound provisional session for reveal after its next non-empty submission.
+    #[doc(hidden)]
+    pub fn arm_provisional_presentation(
+        &mut self,
+        session: &WindowProvisionalSession,
+        _cx: &mut App,
+    ) -> Result<WindowProvisionalRevealTicket> {
+        let owned = self
+            .provisional_session
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no provisional presentation session"))?;
+        anyhow::ensure!(
+            owned.same_authority(session),
+            "provisional presentation session authority does not match the window"
+        );
+        let snapshot = session.snapshot();
+        anyhow::ensure!(
+            snapshot.window_id() == Some(self.handle.window_id()),
+            "provisional presentation session is not bound to this full window id"
+        );
+        anyhow::ensure!(
+            snapshot.phase() == WindowProvisionalSessionPhase::Gated,
+            "only a gated provisional session can arm presentation"
+        );
+        anyhow::ensure!(
+            self.presentation_state.initial_presentation
+                == WindowInitialPresentationStatus::Completed,
+            "ordinary initial presentation must settle before provisional reveal is armed"
+        );
+        anyhow::ensure!(
+            self.presentation_state.provisional_reveal_ticket.is_none(),
+            "provisional presentation is already armed"
+        );
+        let ticket = WindowProvisionalRevealTicket::new(
+            self.handle.window_id(),
+            snapshot.generation(),
+            self.rendered_frame.generation.saturating_add(1),
+        );
+        session.register_reveal_ticket(ticket.clone())?;
+        self.presentation_state.provisional_reveal_ticket = Some(ticket.clone());
+        self.refresh();
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        });
+        Ok(ticket)
+    }
+
+    /// Promotes the exact provisional session in place and schedules its first interactive frame.
+    #[doc(hidden)]
+    pub fn promote_provisional_presentation(
+        &mut self,
+        session: &WindowProvisionalSession,
+        _cx: &mut App,
+    ) -> Result<()> {
+        let owned = self
+            .provisional_session
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no provisional presentation session"))?;
+        anyhow::ensure!(
+            owned.same_authority(session),
+            "provisional presentation session authority does not match the window"
+        );
+        let snapshot = session.snapshot();
+        anyhow::ensure!(
+            snapshot.window_id() == Some(self.handle.window_id()),
+            "provisional presentation session is not bound to this full window id"
+        );
+        let reveal = self
+            .presentation_state
+            .provisional_reveal_ticket
+            .as_ref()
+            .ok_or_else(|| anyhow!("provisional presentation has not been armed"))?
+            .snapshot();
+        anyhow::ensure!(
+            reveal.outcome() == WindowProvisionalRevealOutcome::Revealed
+                && reveal
+                    .native_facts()
+                    .is_some_and(|facts| facts.accepts_reveal()),
+            "provisional presentation has not completed its exact native reveal"
+        );
+        session.promote(self.handle.window_id())?;
+        self.refresh();
+        Ok(())
+    }
+
+    fn provisional_session_accepts_interaction(&self) -> bool {
+        self.provisional_session.as_ref().is_none_or(|session| {
+            let snapshot = session.snapshot();
+            snapshot.window_id() == Some(self.handle.window_id()) && snapshot.accepts_interaction()
+        })
+    }
+
+    fn presentation_is_allowed(&self) -> bool {
+        if self.presentation_shutdown.is_some() {
+            return false;
+        }
+        self.provisional_session.as_ref().is_none_or(|session| {
+            !matches!(
+                session.snapshot().phase(),
+                WindowProvisionalSessionPhase::Terminal
+            )
+        })
     }
 
     pub(crate) fn prepare_initial_presentation(&mut self) -> Result<()> {
@@ -2717,11 +2964,13 @@ impl Window {
         if self.removed || self.removal_state != WindowRemovalState::Open {
             return;
         }
-        self.removal_state = if self.input_transaction_depth.get() > 0 {
+        let removal_state = if self.input_transaction_depth.get() > 0 {
             WindowRemovalState::PendingAfterInput
         } else {
             WindowRemovalState::Removing
         };
+        self.claim_presentation_shutdown();
+        self.removal_state = removal_state;
         let preparation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.invalidate_platform_window_mutations();
             let deliveries = self.window_mutations.settle_all(
@@ -2779,6 +3028,18 @@ impl Window {
         self.removal_state = WindowRemovalState::Removing;
         self.should_close_handler.terminate();
         let mut first_panic = None;
+
+        if let Some(session) = self.provisional_session.as_ref() {
+            let snapshot = session.snapshot();
+            if snapshot.window_id() == Some(self.handle.window_id())
+                && snapshot.phase() != WindowProvisionalSessionPhase::Terminal
+            {
+                let _ = session.terminate(self.handle.window_id());
+            }
+        }
+        if let Some(ticket) = self.presentation_state.provisional_reveal_ticket.as_ref() {
+            ticket.settle(WindowProvisionalRevealOutcome::WindowTerminal);
+        }
 
         retain_first_window_cleanup_panic(
             &mut first_panic,
@@ -3161,6 +3422,7 @@ impl Window {
 
     fn focus_mutations_enabled(&self) -> bool {
         self.focus_enabled
+            && self.provisional_session_accepts_interaction()
             && self.subtree_presentation().is_interactive()
             && self.prepaint_commit_phase.get() != Some(PrepaintCommitPhase::FocusStable)
     }
@@ -4455,6 +4717,10 @@ impl Window {
     }
 
     pub(crate) fn native_active_status_changed(&mut self, active: bool, cx: &mut App) {
+        if active && !self.provisional_session_accepts_interaction() {
+            self.active.set(false);
+            return;
+        }
         self.active.set(active);
         if !active {
             self.cancel_pointer_session(PointerCancelReason::WindowDeactivated, cx);
@@ -4873,6 +5139,11 @@ impl Window {
             callback(self, cx);
         }
 
+        if !self.presentation_is_allowed() {
+            self.complete_frame();
+            return;
+        }
+
         let needs_present = PresentFacts {
             require_presentation: request_frame_options.require_presentation,
             needs_present: self.needs_present.get(),
@@ -4940,8 +5211,14 @@ impl Window {
                     .push(FrameOutput::new(Some(input_handler), validity));
             }
         }
-        if !cx.mode.skip_drawing() {
-            self.draw_roots(cx);
+        if !cx.mode.skip_drawing() && self.presentation_is_allowed() {
+            if self.provisional_session_accepts_interaction() {
+                self.draw_roots(cx);
+            } else {
+                self.with_subtree_presentation(SubtreePresentation::Inert, |window| {
+                    window.draw_roots(cx);
+                });
+            }
         }
         self.frame_focus_authority_sealed = true;
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
@@ -5197,7 +5474,11 @@ impl Window {
     fn present(&mut self) -> PlatformWindowPresentOutcome {
         let generation = self.rendered_frame.generation;
         let non_empty = self.rendered_frame.scene.has_primitives();
-        let outcome = self.platform_window.draw(&self.rendered_frame.scene);
+        let outcome = if self.presentation_is_allowed() {
+            self.platform_window.draw(&self.rendered_frame.scene)
+        } else {
+            PlatformWindowPresentOutcome::Rejected
+        };
         self.presentation_state.latest_present_attempt = Some(WindowPresentAttemptFacts {
             generation,
             outcome,
@@ -5207,6 +5488,33 @@ impl Window {
             self.presentation_state.present_submitted_generation = Some(generation);
             if non_empty {
                 self.presentation_state.non_empty_presented_generation = Some(generation);
+                if let Some(ticket) = self
+                    .presentation_state
+                    .provisional_reveal_ticket
+                    .as_ref()
+                    .filter(|ticket| ticket.bind_presentation(generation))
+                {
+                    if let Some(session) = self.provisional_session.as_ref() {
+                        let snapshot = session.snapshot();
+                        if snapshot.window_id() == Some(self.handle.window_id())
+                            && snapshot.phase() == WindowProvisionalSessionPhase::Gated
+                        {
+                            self.platform_command_sink.enqueue_provisional_reveal(
+                                PlatformWindowCommand::RevealDeferredInitialPresentation {
+                                    session_generation: snapshot.generation(),
+                                    presentation_generation: generation,
+                                },
+                                ticket.clone(),
+                            );
+                        } else if snapshot.phase() == WindowProvisionalSessionPhase::Terminal {
+                            ticket.settle(WindowProvisionalRevealOutcome::WindowTerminal);
+                        } else {
+                            ticket.settle(WindowProvisionalRevealOutcome::Stale);
+                        }
+                    } else {
+                        ticket.settle(WindowProvisionalRevealOutcome::Stale);
+                    }
+                }
             }
             self.needs_present.set(false);
         } else {
@@ -8837,6 +9145,12 @@ impl Window {
                     default_prevented: false,
                 });
         }
+        if !incoming_pointer_cancel && !self.provisional_session_accepts_interaction() {
+            return DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            };
+        }
         self.dispatch_event_without_pending_pointer_cancellations(event, cx)
     }
 
@@ -9529,8 +9843,10 @@ impl Window {
 
     /// Focus the current window and bring it to the foreground at the platform level.
     pub fn activate_window(&self) {
-        self.platform_command_sink
-            .enqueue(PlatformWindowCommand::Activate);
+        if self.provisional_session_accepts_interaction() {
+            self.platform_command_sink
+                .enqueue(PlatformWindowCommand::Activate);
+        }
     }
 
     /// Requests minimized placement through the placement authority.
@@ -9907,6 +10223,9 @@ impl Window {
         request: accesskit::ActionRequest,
         cx: &mut App,
     ) -> bool {
+        if !self.provisional_session_accepts_interaction() {
+            return false;
+        }
         if !self.a11y.accepts_action(
             request_activation_generation,
             request.target_tree,

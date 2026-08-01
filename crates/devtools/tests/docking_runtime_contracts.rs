@@ -236,7 +236,9 @@ fn docking_surface_inspection_projects_active_and_shutting_down_owned_windows(
         .detach();
     });
 
-    assert!(!cx.simulate_window_close(anchor));
+    let close = cx.simulate_window_close_request(anchor);
+    assert!(!close.native_close_allowed());
+    assert!(close.logical_window_removed());
     cx.run_until_parked();
 
     let shutting_down = shutting_down
@@ -623,6 +625,7 @@ fn runtime_status(platform_viewport_windows: bool) -> DockViewportRuntimeStatus 
                 creation: PlatformWindowCreationCapabilities {
                     focus_on_appearing: WindowCreationSupport::Supported,
                     transient_for: WindowCreationSupport::Supported,
+                    provisional_presentation: WindowCreationSupport::Unsupported,
                     initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
                 },
                 mutations: PlatformWindowMutationCapabilities {

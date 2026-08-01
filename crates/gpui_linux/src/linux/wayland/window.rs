@@ -35,14 +35,17 @@ use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
     NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
-    PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
-    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowCreationFacts, WindowDecorations, WindowKind,
-    WindowParams, layer_shell::LayerShellNotSupportedError, px, size,
+    PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformWindow,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
+    WindowPresentationShutdownTicket, layer_shell::LayerShellNotSupportedError, px, size,
 };
-use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
+use open_gpui_wgpu::{
+    CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress, wgpu,
+};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -241,6 +244,7 @@ pub struct WaylandWindowState {
     display: Option<(ObjectId, Output)>,
     globals: Globals,
     renderer: WgpuRenderer,
+    presentation_shutdown: Option<WindowPresentationShutdownTicket>,
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: PlatformInputHandlerSlot,
@@ -507,6 +511,9 @@ impl WaylandWindowCommandTarget {
                 }
                 PlatformWindowCommandOutcome::Accepted
             }
+            PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
+                PlatformWindowCommandOutcome::Rejected
+            }
             PlatformWindowCommand::Activate
                 if state.creation.activation_policy.accepts_activation =>
             {
@@ -651,6 +658,7 @@ impl WaylandWindowState {
             outputs: HashMap::default(),
             display: None,
             renderer,
+            presentation_shutdown: None,
             bounds: creation.bounds,
             scale: 1.0,
             input_handler: PlatformInputHandlerSlot::default(),
@@ -681,6 +689,27 @@ impl WaylandWindowState {
             initial_presentation_completed: false,
             transient_for,
         })
+    }
+
+    fn bind_presentation_shutdown(&mut self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        if let Some(current) = self.presentation_shutdown.as_ref() {
+            return current.same_authority(shutdown);
+        }
+
+        self.presentation_shutdown = Some(shutdown.clone());
+        true
+    }
+
+    fn presentation_shutdown_blocks_surface(&self) -> bool {
+        self.presentation_shutdown.as_ref().is_some_and(|shutdown| {
+            self.renderer.is_draining_for(shutdown) || self.renderer.is_quiesced_for(shutdown)
+        }) || self.renderer.presentation_shutdown_active()
+    }
+
+    fn clear_presentation_bookkeeping(&mut self) {
+        self.force_render_after_recovery = false;
+        self.renderer_presented = false;
+        self.resize_throttle = false;
     }
 
     pub fn is_transparent(&self) -> bool {
@@ -738,6 +767,24 @@ pub enum ImeInput {
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
         self.0.terminate_callback_slots();
+
+        let can_release_surface = self
+            .0
+            .state
+            .borrow()
+            .renderer
+            .surface_owner_release_is_safe();
+        if !can_release_surface {
+            log::error!(
+                "Wayland window dropped before exact presentation shutdown drained submitted GPU work; retaining backend owner"
+            );
+            // Keep the state alive rather than releasing a surface with in-flight GPU work. The
+            // normal creation/retirement path retains the same owner in NativeWindowRetirement,
+            // so this is only an emergency fail-closed fallback.
+            std::mem::forget(self.0.clone());
+            return;
+        }
+
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
         let client = state.client.clone();
@@ -890,6 +937,11 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
+        if state.presentation_shutdown_blocks_surface() {
+            state.clear_presentation_bookkeeping();
+            return;
+        }
+
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
         let force_render = state.force_render_after_recovery;
@@ -1433,6 +1485,41 @@ impl PlatformWindow for WaylandWindow {
         PlatformWindowCommandDispatcher::new(move |command| target.dispatch(command))
     }
 
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown {
+        let state = Rc::clone(&self.0.state);
+        PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
+            let Ok(mut state) = state.try_borrow_mut() else {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            };
+            if shutdown.snapshot().window_id() != state.handle.window_id() {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            }
+
+            match state.renderer.quiesce_surface(shutdown) {
+                WgpuSurfaceShutdownProgress::Quiesced
+                    if state.bind_presentation_shutdown(shutdown) =>
+                {
+                    PlatformPresentationShutdownOutcome::Quiesced
+                }
+                WgpuSurfaceShutdownProgress::EnteredDraining
+                | WgpuSurfaceShutdownProgress::Draining
+                    if state.bind_presentation_shutdown(shutdown) =>
+                {
+                    PlatformPresentationShutdownOutcome::Rejected
+                }
+                WgpuSurfaceShutdownProgress::EnteredDraining
+                | WgpuSurfaceShutdownProgress::Draining
+                | WgpuSurfaceShutdownProgress::Quiesced
+                | WgpuSurfaceShutdownProgress::Rejected => {
+                    PlatformPresentationShutdownOutcome::Rejected
+                }
+            }
+        })
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.borrow().bounds
     }
@@ -1440,6 +1527,10 @@ impl PlatformWindow for WaylandWindow {
     fn map_window(&mut self) -> anyhow::Result<()> {
         let mut state = self.borrow_mut();
         if !state.initially_shown || state.initial_map_committed {
+            return Ok(());
+        }
+        if state.presentation_shutdown_blocks_surface() {
+            state.clear_presentation_bookkeeping();
             return Ok(());
         }
 
@@ -1701,6 +1792,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
         let mut state = self.borrow_mut();
+        if state.presentation_shutdown_blocks_surface() {
+            state.clear_presentation_bookkeeping();
+            return PlatformWindowPresentOutcome::Deferred;
+        }
         if !state.initial_map_committed {
             return PlatformWindowPresentOutcome::Deferred;
         }
@@ -1742,6 +1837,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
+        if state.presentation_shutdown_blocks_surface() {
+            state.clear_presentation_bookkeeping();
+            return;
+        }
         if !state.initial_map_committed {
             return;
         }
@@ -1879,6 +1978,11 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {
+    if state.presentation_shutdown_blocks_surface() {
+        state.clear_presentation_bookkeeping();
+        return;
+    }
+
     let projection = WaylandWindowBackgroundProjection::new(
         state.background_appearance,
         state.decorations,

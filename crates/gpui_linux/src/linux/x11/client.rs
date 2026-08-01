@@ -1581,6 +1581,7 @@ fn x11_window_capabilities(
             } else {
                 WindowCreationSupport::Unsupported
             },
+            provisional_presentation: WindowCreationSupport::Unsupported,
             initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
         },
         mutations: PlatformWindowMutationCapabilities {

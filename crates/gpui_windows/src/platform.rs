@@ -8,6 +8,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 use ::open_gpui_util::{ResultExt, paths::SanitizedPath};
@@ -101,18 +102,176 @@ pub struct WindowsPlatform {
     invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
+    native_finalization_started: Cell<bool>,
     disable_direct_composition: bool,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
 
-struct WindowsPlatformInner {
+pub(crate) struct WindowsPlatformInner {
     state: WindowsPlatformState,
     recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: PriorityQueueReceiver<RunnableVariant>,
     dispatcher: Arc<WindowsDispatcher>,
+    pub(crate) background_executor: BackgroundExecutor,
+    pub(crate) foreground_executor: ForegroundExecutor,
+    native_retirement: RefCell<WindowsNativeRetirementCoordinator>,
+    #[cfg(test)]
+    lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
+}
+
+struct WindowsNativeRetirementCoordinator {
+    pending_windows: SmallVec<[PendingNativeWindowFinalization; 8]>,
+    finalization: Option<DeferredNativeWindowFinalization>,
+    retry: NativeRetirementRetryAuthority,
+}
+
+impl Default for WindowsNativeRetirementCoordinator {
+    fn default() -> Self {
+        Self {
+            pending_windows: SmallVec::new(),
+            finalization: None,
+            retry: NativeRetirementRetryAuthority::default(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct NativeRetirementRetryAuthority {
+    scheduled: bool,
+    generation: u64,
+    attempt: usize,
+}
+
+enum PendingNativeWindowIdentity {
+    Exact(Rc<WindowsWindowInner>),
+    Ambiguous { _window: Rc<WindowsWindowInner> },
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingNativeWindowSource {
+    Construction,
+    AppOwned,
+    PlatformFinalization,
+}
+
+struct PendingNativeWindowFinalization {
+    registration: RegisteredWindow,
+    owner_window_id: Option<WindowId>,
+    identity: PendingNativeWindowIdentity,
+    source: PendingNativeWindowSource,
+}
+
+/// Owns platform resources which must remain alive until every managed native owner and the
+/// platform message HWND have independently reached their terminal boundaries.
+struct DeferredNativeWindowFinalization {
+    raw_window_handles: Arc<RegisteredWindows>,
+    resources: PlatformNativeRetirementResources,
+    keepalive: Option<Rc<WindowsPlatformInner>>,
+    diagnostic_reported: bool,
+}
+
+struct PlatformNativeRetirementResources {
+    platform_handle: HWND,
+    suspend_resume_notification: Option<HPOWERNOTIFY>,
+    ole_initialized: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeRetirementDrainResult {
+    Complete,
+    Retryable,
+    Blocked,
+}
+
+impl PendingNativeWindowFinalization {
+    fn exact(window: Rc<WindowsWindowInner>, source: PendingNativeWindowSource) -> Self {
+        Self {
+            registration: window.registration,
+            owner_window_id: window.native_owner_window_id(),
+            identity: PendingNativeWindowIdentity::Exact(window),
+            source,
+        }
+    }
+
+    fn from_registered_window(registration: RegisteredWindow) -> Self {
+        let (identity, owner_window_id) = match window_from_hwnd(registration.as_raw()) {
+            Some(window) if window.registration.matches(registration) => {
+                let owner_window_id = window.native_owner_window_id();
+                (PendingNativeWindowIdentity::Exact(window), owner_window_id)
+            }
+            Some(window) => (
+                PendingNativeWindowIdentity::Ambiguous { _window: window },
+                None,
+            ),
+            None => (PendingNativeWindowIdentity::Unknown, None),
+        };
+        Self {
+            registration,
+            owner_window_id,
+            identity,
+            source: PendingNativeWindowSource::PlatformFinalization,
+        }
+    }
+
+    fn refresh_registered_identity(&mut self, registered_windows: &RegisteredWindows) {
+        if self.source != PendingNativeWindowSource::PlatformFinalization {
+            return;
+        }
+        if !registered_window_is_current(registered_windows, self.registration) {
+            return;
+        }
+
+        let Some(window) = window_from_hwnd(self.registration.as_raw()) else {
+            self.identity = PendingNativeWindowIdentity::Unknown;
+            self.owner_window_id = None;
+            return;
+        };
+        if window.registration.matches(self.registration) {
+            self.owner_window_id = window.native_owner_window_id();
+            self.identity = PendingNativeWindowIdentity::Exact(window);
+        } else {
+            self.owner_window_id = None;
+            self.identity = PendingNativeWindowIdentity::Ambiguous { _window: window };
+        }
+    }
+
+    fn window_id(&self) -> WindowId {
+        self.registration.window_id()
+    }
+}
+
+impl WindowsNativeRetirementCoordinator {
+    fn upsert(&mut self, pending: PendingNativeWindowFinalization) {
+        let Some(index) = self
+            .pending_windows
+            .iter()
+            .position(|current| current.registration.matches(pending.registration))
+        else {
+            self.pending_windows.push(pending);
+            return;
+        };
+
+        let current = &mut self.pending_windows[index];
+        let replace_identity = matches!(&current.identity, PendingNativeWindowIdentity::Unknown)
+            || matches!(
+                (&current.identity, &pending.identity),
+                (
+                    PendingNativeWindowIdentity::Ambiguous { .. },
+                    PendingNativeWindowIdentity::Exact(_)
+                )
+            );
+        if replace_identity {
+            current.identity = pending.identity;
+            current.owner_window_id = pending.owner_window_id;
+        }
+        if pending.source != PendingNativeWindowSource::PlatformFinalization {
+            current.source = pending.source;
+        }
+    }
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -127,6 +286,8 @@ pub(crate) struct WindowsPlatformState {
 struct WindowsPlatformConstructionGuard {
     hwnd: Option<HWND>,
     ole_initialized: bool,
+    retirement_owner: Option<Rc<WindowsPlatformInner>>,
+    raw_window_handles: Option<Arc<RegisteredWindows>>,
 }
 
 impl WindowsPlatformConstructionGuard {
@@ -137,6 +298,8 @@ impl WindowsPlatformConstructionGuard {
         Ok(Self {
             hwnd: None,
             ole_initialized: true,
+            retirement_owner: None,
+            raw_window_handles: None,
         })
     }
 
@@ -144,14 +307,48 @@ impl WindowsPlatformConstructionGuard {
         self.hwnd = Some(hwnd);
     }
 
+    fn handoff_retirement(
+        &mut self,
+        owner: Rc<WindowsPlatformInner>,
+        raw_window_handles: Arc<RegisteredWindows>,
+    ) {
+        self.retirement_owner = Some(owner);
+        self.raw_window_handles = Some(raw_window_handles);
+    }
+
     fn commit(mut self) {
         self.hwnd = None;
         self.ole_initialized = false;
+        self.retirement_owner = None;
+        self.raw_window_handles = None;
     }
 }
 
 impl Drop for WindowsPlatformConstructionGuard {
     fn drop(&mut self) {
+        if let Some(owner) = self.retirement_owner.take() {
+            let Some(raw_window_handles) = self.raw_window_handles.take() else {
+                log::error!(
+                    "Windows platform construction guard lost its registration authority; retaining managed platform resources"
+                );
+                return;
+            };
+            let Some(hwnd) = self.hwnd.take() else {
+                log::error!(
+                    "Windows platform construction guard lost its message HWND; retaining managed platform resources"
+                );
+                return;
+            };
+            let ole_initialized = std::mem::replace(&mut self.ole_initialized, false);
+            owner.begin_platform_native_finalization(
+                raw_window_handles,
+                hwnd,
+                None,
+                ole_initialized,
+            );
+            return;
+        }
+
         unsafe {
             if let Some(hwnd) = self.hwnd.take()
                 && IsWindow(Some(hwnd)).as_bool()
@@ -168,14 +365,35 @@ impl Drop for WindowsPlatformConstructionGuard {
 }
 
 #[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeWindowLifecycleTestEvent {
+    PresentationQuiesced {
+        window_id: WindowId,
+        generation: u64,
+    },
+    DestroyEntered {
+        window_id: WindowId,
+        generation: u64,
+    },
+    NativeTerminal {
+        window_id: WindowId,
+        generation: u64,
+    },
+}
+
+#[cfg(test)]
 #[derive(Default)]
 pub(crate) struct NativeWindowLifecycleTestProbe {
     fail_after_drag_drop_registration: Cell<bool>,
-    fail_next_destroy: Cell<bool>,
+    fail_next_destroy: Cell<usize>,
+    fail_next_platform_destroy: Cell<usize>,
     fail_next_initial_presentation: Cell<bool>,
+    platform_destroy_attempts: Cell<usize>,
+    ole_uninitialize_count: Cell<usize>,
     last_created_hwnd: Cell<Option<HWND>>,
     hidden_before_map: Cell<Option<bool>>,
     initial_presentation_hook: RefCell<Option<Box<dyn FnOnce(HWND)>>>,
+    events: RefCell<Vec<NativeWindowLifecycleTestEvent>>,
 }
 
 #[cfg(test)]
@@ -189,11 +407,62 @@ impl NativeWindowLifecycleTestProbe {
     }
 
     pub(crate) fn fail_next_destroy(&self) {
-        self.fail_next_destroy.set(true);
+        self.fail_destroy_attempts(1);
+    }
+
+    pub(crate) fn fail_destroy_attempts(&self, attempts: usize) {
+        self.fail_next_destroy
+            .set(self.fail_next_destroy.get().saturating_add(attempts));
     }
 
     pub(crate) fn take_fail_next_destroy(&self) -> bool {
-        self.fail_next_destroy.replace(false)
+        let attempts = self.fail_next_destroy.get();
+        if attempts == 0 {
+            false
+        } else {
+            self.fail_next_destroy.set(attempts - 1);
+            true
+        }
+    }
+
+    pub(crate) fn fail_next_platform_destroy(&self) {
+        self.fail_platform_destroy_attempts(1);
+    }
+
+    pub(crate) fn fail_platform_destroy_attempts(&self, attempts: usize) {
+        self.fail_next_platform_destroy.set(
+            self.fail_next_platform_destroy
+                .get()
+                .saturating_add(attempts),
+        );
+    }
+
+    pub(crate) fn take_fail_next_platform_destroy(&self) -> bool {
+        let attempts = self.fail_next_platform_destroy.get();
+        if attempts == 0 {
+            false
+        } else {
+            self.fail_next_platform_destroy.set(attempts - 1);
+            true
+        }
+    }
+
+    pub(crate) fn record_platform_destroy_attempt(&self) {
+        self.platform_destroy_attempts
+            .set(self.platform_destroy_attempts.get().saturating_add(1));
+    }
+
+    pub(crate) fn platform_destroy_attempts(&self) -> usize {
+        self.platform_destroy_attempts.get()
+    }
+
+    pub(crate) fn record_ole_uninitialize(&self) {
+        self.ole_uninitialize_count
+            .set(self.ole_uninitialize_count.get().saturating_add(1));
+    }
+
+    pub(crate) fn ole_uninitialize_count(&self) -> usize {
+        self.ole_uninitialize_count.get()
     }
 
     pub(crate) fn fail_next_initial_presentation(&self) {
@@ -234,6 +503,18 @@ impl NativeWindowLifecycleTestProbe {
 
     pub(crate) fn hidden_before_map(&self) -> Option<bool> {
         self.hidden_before_map.get()
+    }
+
+    pub(crate) fn record_event(&self, event: NativeWindowLifecycleTestEvent) {
+        self.events.borrow_mut().push(event);
+    }
+
+    pub(crate) fn events(&self) -> Vec<NativeWindowLifecycleTestEvent> {
+        self.events.borrow().clone()
+    }
+
+    pub(crate) fn clear_events(&self) {
+        self.events.borrow_mut().clear();
     }
 }
 
@@ -294,6 +575,8 @@ impl WindowsPlatform {
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let recovered_directx_devices = Arc::new(RwLock::new(None));
         let vsync_owner_live = Arc::new(RwLock::new(true));
+        #[cfg(test)]
+        let lifecycle_test_probe = Rc::new(NativeWindowLifecycleTestProbe::default());
 
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {
@@ -304,6 +587,8 @@ impl WindowsPlatform {
             directx_devices,
             recovered_directx_devices: recovered_directx_devices.clone(),
             dispatcher: None,
+            #[cfg(test)]
+            lifecycle_test_probe: lifecycle_test_probe.clone(),
         };
         let result = unsafe {
             CreateWindowExW(
@@ -335,15 +620,16 @@ impl WindowsPlatform {
             .inner
             .take()
             .context("CreateWindowExW did not initialize the platform window")??;
-        let dispatcher = context
+        construction_guard.handoff_retirement(inner.clone(), raw_window_handles.clone());
+        context
             .dispatcher
             .take()
             .context("CreateWindowExW did not run correctly")?;
 
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
-        let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let background_executor = inner.background_executor.clone();
+        let foreground_executor = inner.foreground_executor.clone();
 
         let drop_target_helper: Option<IDropTargetHelper> = if !headless {
             Some(unsafe {
@@ -372,14 +658,28 @@ impl WindowsPlatform {
             text_system,
             direct_write_text_system,
             suspend_resume_notification: RefCell::new(None),
+            native_finalization_started: Cell::new(false),
             disable_direct_composition,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
-            lifecycle_test_probe: Rc::default(),
+            lifecycle_test_probe,
         };
         construction_guard.commit();
         Ok(platform)
+    }
+
+    fn begin_native_finalization(&self) {
+        if self.native_finalization_started.replace(true) {
+            return;
+        }
+        *self.vsync_owner_live.write() = false;
+        self.inner.begin_platform_native_finalization(
+            self.raw_window_handles.clone(),
+            self.handle,
+            self.suspend_resume_notification.borrow_mut().take(),
+            true,
+        );
     }
 
     pub(crate) fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
@@ -429,6 +729,7 @@ impl WindowsPlatform {
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             raw_window_handles: Arc::downgrade(&self.raw_window_handles),
+            native_retirement_coordinator: Rc::downgrade(&self.inner),
             recovered_directx_devices: self.recovered_directx_devices.clone(),
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
@@ -587,6 +888,7 @@ fn windows_window_capabilities() -> PlatformWindowCapabilities {
         creation: PlatformWindowCreationCapabilities {
             focus_on_appearing: WindowCreationSupport::Supported,
             transient_for: WindowCreationSupport::Supported,
+            provisional_presentation: WindowCreationSupport::Supported,
             initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
         },
         mutations: PlatformWindowMutationCapabilities {
@@ -735,6 +1037,7 @@ impl PartialEq for NativeCoveringWindowObservation {
 }
 
 fn point_covering_windows_in_z_order(
+    platform: &WindowsPlatform,
     point: Point<DevicePixels>,
 ) -> Option<Vec<NativeCoveringWindowObservation>> {
     let top_level_windows = top_level_windows_in_z_order()?;
@@ -768,6 +1071,12 @@ fn point_covering_windows_in_z_order(
         }
         let cloak = native_window_cloak(hwnd);
         if cloak == NativeWindowCloak::Cloaked {
+            continue;
+        }
+        if platform
+            .window_from_hwnd(hwnd)
+            .is_some_and(|window| window.provisional_requires_hit_transparency())
+        {
             continue;
         }
         observations.push(NativeCoveringWindowObservation {
@@ -860,7 +1169,10 @@ fn frontmost_point_hit_agrees(
     first_observation.is_some_and(|observation| observation.hwnd == hit)
 }
 
-fn frontmost_window_at_point(point: Point<DevicePixels>) -> Option<HWND> {
+fn frontmost_window_at_point(
+    platform: &WindowsPlatform,
+    point: Point<DevicePixels>,
+) -> Option<HWND> {
     let hit = unsafe {
         WindowFromPoint(POINT {
             x: point.x.0,
@@ -871,7 +1183,34 @@ fn frontmost_window_at_point(point: Point<DevicePixels>) -> Option<HWND> {
         return None;
     }
     let root = unsafe { GetAncestor(hit, GA_ROOT) };
-    Some(if root.is_invalid() { hit } else { root })
+    let mut candidate = if root.is_invalid() { hit } else { root };
+    loop {
+        if !platform
+            .window_from_hwnd(candidate)
+            .is_some_and(|window| window.provisional_requires_hit_transparency())
+        {
+            return Some(candidate);
+        }
+        candidate = unsafe { GetWindow(candidate, GW_HWNDNEXT) }.ok()?;
+        loop {
+            if unsafe {
+                !IsWindow(Some(candidate)).as_bool()
+                    || !IsWindowVisible(candidate).as_bool()
+                    || IsIconic(candidate).as_bool()
+            } {
+                candidate = unsafe { GetWindow(candidate, GW_HWNDNEXT) }.ok()?;
+                continue;
+            }
+            let mut rect = RECT::default();
+            unsafe { GetWindowRect(candidate, &mut rect) }.ok()?;
+            if point_is_inside_window_rect(point, rect)
+                && native_window_cloak(candidate) != NativeWindowCloak::Cloaked
+            {
+                break;
+            }
+            candidate = unsafe { GetWindow(candidate, GW_HWNDNEXT) }.ok()?;
+        }
+    }
 }
 
 const MAX_ENUMERATED_TOP_LEVEL_WINDOWS: usize = 4096;
@@ -1099,7 +1438,14 @@ impl Platform for WindowsPlatform {
         if unsafe { GetCursorPos(&mut cursor_position) }.is_err() {
             return PlatformHoveredWindow::Unavailable;
         }
-        let hovered_window_hwnd = unsafe { WindowFromPoint(cursor_position) };
+        let hovered_window_hwnd = frontmost_window_at_point(
+            self,
+            point(
+                DevicePixels(cursor_position.x),
+                DevicePixels(cursor_position.y),
+            ),
+        )
+        .unwrap_or_default();
         PlatformHoveredWindow::from_window(
             self.window_from_hwnd(hovered_window_hwnd)
                 .map(|inner| inner.handle),
@@ -1108,7 +1454,7 @@ impl Platform for WindowsPlatform {
 
     fn window_hit_stack_at(&self, point: Point<DevicePixels>) -> PlatformWindowHitStack {
         let registered_windows = self.raw_window_handles.read().clone();
-        let Some(first_observation) = point_covering_windows_in_z_order(point) else {
+        let Some(first_observation) = point_covering_windows_in_z_order(self, point) else {
             return PlatformWindowHitStack::Unavailable;
         };
         let Some(first_hits) =
@@ -1116,7 +1462,7 @@ impl Platform for WindowsPlatform {
         else {
             return PlatformWindowHitStack::Unavailable;
         };
-        let Some(second_observation) = point_covering_windows_in_z_order(point) else {
+        let Some(second_observation) = point_covering_windows_in_z_order(self, point) else {
             return PlatformWindowHitStack::Unavailable;
         };
         let Some(second_hits) =
@@ -1124,7 +1470,7 @@ impl Platform for WindowsPlatform {
         else {
             return PlatformWindowHitStack::Unavailable;
         };
-        let Some(final_observation) = point_covering_windows_in_z_order(point) else {
+        let Some(final_observation) = point_covering_windows_in_z_order(self, point) else {
             return PlatformWindowHitStack::Unavailable;
         };
         let Some(final_hits) =
@@ -1132,7 +1478,7 @@ impl Platform for WindowsPlatform {
         else {
             return PlatformWindowHitStack::Unavailable;
         };
-        let verified_frontmost = frontmost_window_at_point(point);
+        let verified_frontmost = frontmost_window_at_point(self, point);
         stabilized_window_hit_stack(
             point,
             &first_observation,
@@ -1512,20 +1858,350 @@ impl Platform for WindowsPlatform {
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
         let state = WindowsPlatformState::new(context.directx_devices.take());
+        let dispatcher = context
+            .dispatcher
+            .as_ref()
+            .context("missing dispatcher")?
+            .clone();
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
         Ok(Rc::new(Self {
             state,
             recovered_directx_devices: context.recovered_directx_devices.clone(),
-            dispatcher: context
-                .dispatcher
-                .as_ref()
-                .context("missing dispatcher")?
-                .clone(),
+            dispatcher,
             validation_number: context.validation_number,
             main_receiver: context
                 .main_receiver
                 .take()
                 .context("missing main receiver")?,
+            background_executor,
+            foreground_executor,
+            native_retirement: RefCell::new(WindowsNativeRetirementCoordinator::default()),
+            #[cfg(test)]
+            lifecycle_test_probe: context.lifecycle_test_probe.clone(),
         }))
+    }
+
+    pub(crate) fn enqueue_construction_native_window(
+        self: &Rc<Self>,
+        window: Rc<WindowsWindowInner>,
+    ) {
+        self.enqueue_native_window(PendingNativeWindowFinalization::exact(
+            window,
+            PendingNativeWindowSource::Construction,
+        ));
+    }
+
+    pub(crate) fn enqueue_app_owned_native_window(self: &Rc<Self>, window: Rc<WindowsWindowInner>) {
+        self.enqueue_native_window(PendingNativeWindowFinalization::exact(
+            window,
+            PendingNativeWindowSource::AppOwned,
+        ));
+    }
+
+    fn enqueue_native_window(self: &Rc<Self>, pending: PendingNativeWindowFinalization) {
+        if matches!(
+            &pending.identity,
+            PendingNativeWindowIdentity::Exact(window) if window.is_native_window_terminal()
+        ) {
+            return;
+        }
+        self.native_retirement.borrow_mut().upsert(pending);
+        self.schedule_native_retirement_retry();
+    }
+
+    fn begin_platform_native_finalization(
+        self: &Rc<Self>,
+        raw_window_handles: Arc<RegisteredWindows>,
+        platform_handle: HWND,
+        suspend_resume_notification: Option<HPOWERNOTIFY>,
+        ole_initialized: bool,
+    ) {
+        let registered_windows = raw_window_handles.read().clone();
+        let mut coordinator = self.native_retirement.borrow_mut();
+        if coordinator.finalization.is_some() {
+            log::error!(
+                "attempted to begin Windows platform finalization while another finalization is pending"
+            );
+            return;
+        }
+        for registration in registered_windows {
+            coordinator.upsert(PendingNativeWindowFinalization::from_registered_window(
+                registration,
+            ));
+        }
+        coordinator.finalization = Some(DeferredNativeWindowFinalization {
+            raw_window_handles,
+            resources: PlatformNativeRetirementResources {
+                platform_handle,
+                suspend_resume_notification,
+                ole_initialized,
+            },
+            keepalive: Some(self.clone()),
+            diagnostic_reported: false,
+        });
+        drop(coordinator);
+        self.drive_native_retirement();
+    }
+
+    pub(crate) fn notify_native_window_terminal(self: &Rc<Self>, registration: RegisteredWindow) {
+        let should_wake = self
+            .native_retirement
+            .borrow()
+            .pending_windows
+            .iter()
+            .any(|pending| pending.registration.matches(registration));
+        if should_wake {
+            self.schedule_native_retirement_retry();
+        }
+    }
+
+    fn schedule_native_retirement_retry(self: &Rc<Self>) {
+        let (delay, generation) = {
+            let mut coordinator = self.native_retirement.borrow_mut();
+            if coordinator.retry.scheduled
+                || (coordinator.pending_windows.is_empty() && coordinator.finalization.is_none())
+            {
+                return;
+            }
+            coordinator.retry.scheduled = true;
+            coordinator.retry.generation = coordinator.retry.generation.wrapping_add(1);
+            let generation = coordinator.retry.generation;
+            let delay = native_retirement_retry_delay(coordinator.retry.attempt);
+            (delay, generation)
+        };
+
+        let inner = self.clone();
+        let background_executor = self.background_executor.clone();
+        let timer = background_executor.timer(delay);
+        self.foreground_executor
+            .spawn(async move {
+                timer.await;
+                inner.native_retirement_retry_fired(generation);
+            })
+            .detach();
+    }
+
+    fn native_retirement_retry_fired(self: &Rc<Self>, generation: u64) {
+        {
+            let mut coordinator = self.native_retirement.borrow_mut();
+            if !coordinator.retry.scheduled || coordinator.retry.generation != generation {
+                return;
+            }
+            coordinator.retry.scheduled = false;
+            coordinator.retry.attempt = coordinator.retry.attempt.saturating_add(1);
+        }
+        self.drive_native_retirement();
+    }
+
+    fn drive_native_retirement(self: &Rc<Self>) {
+        match self.drain_native_retirement() {
+            NativeRetirementDrainResult::Retryable => self.schedule_native_retirement_retry(),
+            NativeRetirementDrainResult::Complete | NativeRetirementDrainResult::Blocked => {
+                let mut coordinator = self.native_retirement.borrow_mut();
+                coordinator.retry.scheduled = false;
+                coordinator.retry.generation = coordinator.retry.generation.wrapping_add(1);
+                coordinator.retry.attempt = 0;
+            }
+        }
+    }
+
+    fn drain_native_retirement(self: &Rc<Self>) -> NativeRetirementDrainResult {
+        let (mut pending_windows, mut finalization) = {
+            let mut coordinator = self.native_retirement.borrow_mut();
+            (
+                std::mem::take(&mut coordinator.pending_windows),
+                coordinator.finalization.take(),
+            )
+        };
+
+        if let Some(finalization) = finalization.as_ref() {
+            for pending in &mut pending_windows {
+                pending.refresh_registered_identity(&finalization.raw_window_handles);
+            }
+        }
+
+        pending_windows.retain(|pending| match &pending.identity {
+            PendingNativeWindowIdentity::Exact(window) => !window.is_native_window_terminal(),
+            PendingNativeWindowIdentity::Ambiguous { .. }
+            | PendingNativeWindowIdentity::Unknown => {
+                if let Some(finalization) = finalization.as_ref()
+                    && pending.source == PendingNativeWindowSource::PlatformFinalization
+                    && !registered_window_is_current(
+                        &finalization.raw_window_handles,
+                        pending.registration,
+                    )
+                    && unsafe { !IsWindow(Some(pending.registration.as_raw())).as_bool() }
+                {
+                    return false;
+                }
+                true
+            }
+        });
+
+        if pending_windows.iter().any(|pending| {
+            matches!(
+                &pending.identity,
+                PendingNativeWindowIdentity::Ambiguous { .. }
+                    | PendingNativeWindowIdentity::Unknown
+            )
+        }) {
+            if let Some(finalization) = finalization.as_mut()
+                && !finalization.diagnostic_reported
+            {
+                log::error!(
+                    "Windows platform finalization is fail-closed: a registered HWND has no exact WindowsWindowInner identity; retaining the registration, owner authority, and platform message HWND without RevokeDragDrop or raw DestroyWindow"
+                );
+                finalization.diagnostic_reported = true;
+            }
+            self.restore_native_retirement_state(pending_windows, finalization);
+            return NativeRetirementDrainResult::Blocked;
+        }
+
+        let ordered = match child_first_pending_windows(pending_windows) {
+            Ok(ordered) => ordered,
+            Err(cyclic) => {
+                if let Some(finalization) = finalization.as_mut()
+                    && !finalization.diagnostic_reported
+                {
+                    log::error!(
+                        "Windows platform finalization is fail-closed: immutable transient-owner graph contains a cycle; retaining {} native owner(s) without destroying any member",
+                        cyclic.len(),
+                    );
+                    finalization.diagnostic_reported = true;
+                }
+                self.restore_native_retirement_state(cyclic, finalization);
+                return NativeRetirementDrainResult::Blocked;
+            }
+        };
+
+        let mut survivors: SmallVec<[PendingNativeWindowFinalization; 8]> = SmallVec::new();
+        let mut retryable = false;
+        for pending in ordered {
+            let window_id = pending.window_id();
+            if survivors
+                .iter()
+                .any(|child: &PendingNativeWindowFinalization| {
+                    child.owner_window_id == Some(window_id)
+                })
+            {
+                retryable = true;
+                survivors.push(pending);
+                continue;
+            }
+
+            let PendingNativeWindowIdentity::Exact(window) = &pending.identity else {
+                unreachable!("identity ambiguity must be handled before owner ordering");
+            };
+            if !window.destroy_native_window() && !window.is_native_window_terminal() {
+                retryable = true;
+                survivors.push(pending);
+            } else if !window.is_native_window_terminal() {
+                retryable = true;
+                survivors.push(pending);
+            }
+        }
+
+        {
+            let mut coordinator = self.native_retirement.borrow_mut();
+            let reentrant = std::mem::take(&mut coordinator.pending_windows);
+            for pending in survivors {
+                coordinator.upsert(pending);
+            }
+            for pending in reentrant {
+                coordinator.upsert(pending);
+            }
+        }
+
+        let has_pending = !self.native_retirement.borrow().pending_windows.is_empty();
+        if has_pending {
+            if let Some(finalization) = finalization.as_mut()
+                && !finalization.diagnostic_reported
+            {
+                log::error!(
+                    "Windows platform finalization retained managed native owners after a retryable rejection; exact shutdown tickets and child-first owner authority remain queued"
+                );
+                finalization.diagnostic_reported = true;
+            }
+            self.restore_native_retirement_finalization(finalization);
+            return if retryable {
+                NativeRetirementDrainResult::Retryable
+            } else {
+                NativeRetirementDrainResult::Blocked
+            };
+        }
+
+        let Some(mut finalization_state) = finalization else {
+            return NativeRetirementDrainResult::Complete;
+        };
+        if !self.try_finalize_platform_resources(&mut finalization_state.resources) {
+            self.restore_native_retirement_finalization(Some(finalization_state));
+            return NativeRetirementDrainResult::Retryable;
+        }
+
+        let keepalive = finalization_state.keepalive.take();
+        self.restore_native_retirement_finalization(None);
+        drop(keepalive);
+        NativeRetirementDrainResult::Complete
+    }
+
+    fn restore_native_retirement_state(
+        &self,
+        pending_windows: SmallVec<[PendingNativeWindowFinalization; 8]>,
+        finalization: Option<DeferredNativeWindowFinalization>,
+    ) {
+        let mut coordinator = self.native_retirement.borrow_mut();
+        for pending in pending_windows {
+            coordinator.upsert(pending);
+        }
+        coordinator.finalization = finalization;
+    }
+
+    fn restore_native_retirement_finalization(
+        &self,
+        finalization: Option<DeferredNativeWindowFinalization>,
+    ) {
+        self.native_retirement.borrow_mut().finalization = finalization;
+    }
+
+    fn try_finalize_platform_resources(
+        &self,
+        resources: &mut PlatformNativeRetirementResources,
+    ) -> bool {
+        if unsafe { IsWindow(Some(resources.platform_handle)).as_bool() } {
+            #[cfg(test)]
+            {
+                self.lifecycle_test_probe.record_platform_destroy_attempt();
+                if self.lifecycle_test_probe.take_fail_next_platform_destroy() {
+                    log::error!(
+                        "injected platform message HWND destruction failure; retaining platform retirement authority"
+                    );
+                    return false;
+                }
+            }
+            if let Err(error) = unsafe { DestroyWindow(resources.platform_handle) } {
+                log::error!("failed to destroy platform message HWND: {error}");
+            }
+            if unsafe { IsWindow(Some(resources.platform_handle)).as_bool() } {
+                return false;
+            }
+        }
+
+        if let Some(notification) = resources.suspend_resume_notification {
+            // SAFETY: notification was returned by RegisterSuspendResumeNotification.
+            if let Err(error) = unsafe { UnregisterSuspendResumeNotification(notification) } {
+                log::error!("failed to unregister suspend/resume notification: {error}");
+                return false;
+            }
+            resources.suspend_resume_notification = None;
+        }
+        if resources.ole_initialized {
+            unsafe { OleUninitialize() };
+            #[cfg(test)]
+            self.lifecycle_test_probe.record_ole_uninitialize();
+            resources.ole_initialized = false;
+        }
+        true
     }
 
     /// Calls `project` to project to the corresponding callback field, removes it from callbacks, calls `f` with the callback and then puts the callback back.
@@ -1559,7 +2235,12 @@ impl WindowsPlatformInner {
         }
     }
 
-    fn handle_gpui_events(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_gpui_events(
+        self: &Rc<Self>,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
         if wparam.0 != self.validation_number {
             log::error!("Wrong validation number while processing message: {message}");
             return None;
@@ -1574,7 +2255,7 @@ impl WindowsPlatformInner {
     }
 
     #[inline]
-    fn run_foreground_task(&self) -> Option<isize> {
+    fn run_foreground_task(self: &Rc<Self>) -> Option<isize> {
         const MAIN_TASK_TIMEOUT: u128 = 10;
 
         let start = std::time::Instant::now();
@@ -1637,6 +2318,7 @@ impl WindowsPlatformInner {
             }
         }
 
+        self.drive_native_retirement();
         Some(0)
     }
 
@@ -1685,38 +2367,53 @@ impl WindowsPlatformInner {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        *self.vsync_owner_live.write() = false;
-        let registered_windows = {
-            let mut registered_windows = self.raw_window_handles.write();
-            std::mem::take(&mut *registered_windows)
-        };
-        for registered_window in registered_windows {
-            let hwnd = registered_window.as_raw();
-            if let Some(window) = window_from_hwnd(hwnd)
-                && window.registration.matches(registered_window)
-            {
-                window.destroy_native_window();
-            } else if unsafe { IsWindow(Some(hwnd)).as_bool() } {
-                unsafe {
-                    RevokeDragDrop(hwnd).log_err();
-                    DestroyWindow(hwnd)
-                        .context("destroying orphaned native window during platform teardown")
-                        .log_err();
-                }
-            }
-        }
-
-        unsafe {
-            if let Some(notification) = self.suspend_resume_notification.borrow_mut().take() {
-                // SAFETY: notification was returned by RegisterSuspendResumeNotification.
-                UnregisterSuspendResumeNotification(notification).log_err();
-            }
-            DestroyWindow(self.handle)
-                .context("Destroying platform window")
-                .log_err();
-            OleUninitialize();
-        }
+        self.begin_native_finalization();
     }
+}
+
+fn native_retirement_retry_delay(attempt: usize) -> Duration {
+    match attempt {
+        0 => Duration::ZERO,
+        1 => Duration::from_millis(2),
+        2 => Duration::from_millis(8),
+        3 => Duration::from_millis(32),
+        4 => Duration::from_millis(128),
+        _ => Duration::from_millis(500),
+    }
+}
+
+fn child_first_pending_windows(
+    pending_windows: SmallVec<[PendingNativeWindowFinalization; 8]>,
+) -> Result<
+    SmallVec<[PendingNativeWindowFinalization; 8]>,
+    SmallVec<[PendingNativeWindowFinalization; 8]>,
+> {
+    let mut remaining_indices: SmallVec<[usize; 8]> = (0..pending_windows.len()).collect();
+    let mut order: SmallVec<[usize; 8]> = SmallVec::with_capacity(pending_windows.len());
+    while !remaining_indices.is_empty() {
+        let Some(position) = remaining_indices.iter().position(|candidate_index| {
+            let candidate = &pending_windows[*candidate_index];
+            !remaining_indices.iter().any(|other_index| {
+                pending_windows[*other_index].owner_window_id == Some(candidate.window_id())
+            })
+        }) else {
+            return Err(pending_windows);
+        };
+        order.push(remaining_indices.remove(position));
+    }
+
+    let mut pending_by_index: SmallVec<[Option<PendingNativeWindowFinalization>; 8]> =
+        pending_windows.into_iter().map(Some).collect();
+    let mut ordered: SmallVec<[PendingNativeWindowFinalization; 8]> =
+        SmallVec::with_capacity(pending_by_index.len());
+    for index in order {
+        ordered.push(
+            pending_by_index[index]
+                .take()
+                .expect("child-first owner graph indices must be unique"),
+        );
+    }
+    Ok(ordered)
 }
 
 pub(crate) struct WindowCreationInfo {
@@ -1730,6 +2427,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) raw_window_handles: std::sync::Weak<RegisteredWindows>,
+    pub(crate) native_retirement_coordinator: std::rc::Weak<WindowsPlatformInner>,
     pub(crate) recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
@@ -1748,6 +2446,8 @@ struct PlatformWindowCreateContext {
     directx_devices: Option<DirectXDevices>,
     recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
+    #[cfg(test)]
+    lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -2768,6 +3468,7 @@ mod tests {
                 creation: PlatformWindowCreationCapabilities {
                     focus_on_appearing: WindowCreationSupport::Supported,
                     transient_for: WindowCreationSupport::Supported,
+                    provisional_presentation: WindowCreationSupport::Supported,
                     initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
                 },
                 mutations: PlatformWindowMutationCapabilities {

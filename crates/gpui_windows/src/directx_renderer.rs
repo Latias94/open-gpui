@@ -1,15 +1,17 @@
 use std::{
     slice,
     sync::{Arc, OnceLock},
+    thread,
+    time::{Duration, Instant},
 };
 
 use ::open_gpui_util::ResultExt;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 #[cfg(feature = "test-support")]
 use image::RgbaImage;
 use windows::{
     Win32::{
-        Foundation::HWND,
+        Foundation::{HWND, S_FALSE, S_OK},
         Graphics::{
             Direct3D::*,
             Direct3D11::*,
@@ -18,7 +20,7 @@ use windows::{
             Dxgi::{Common::*, *},
         },
     },
-    core::Interface,
+    core::{IUnknown, Interface},
 };
 
 use crate::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget};
@@ -56,6 +58,7 @@ pub(crate) struct DirectXRenderer {
     /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
     /// meaning we lost all the allocated gpu textures and scene resources.
     skip_draws: bool,
+    surface_quiesced_for: Option<WindowPresentationShutdownTicket>,
 }
 
 /// Direct3D objects
@@ -180,6 +183,7 @@ impl DirectXRenderer {
             width: 1,
             height: 1,
             skip_draws: false,
+            surface_quiesced_for: None,
         })
     }
 
@@ -237,6 +241,9 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn handle_device_lost(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
+        if self.surface_quiesced_for.is_some() {
+            return Ok(());
+        }
         try_to_recover_from_device_lost(|| {
             self.handle_device_lost_impl(directx_devices)
                 .context("DirectXRenderer handling device lost")
@@ -244,6 +251,9 @@ impl DirectXRenderer {
     }
 
     fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
+        if self.surface_quiesced_for.is_some() {
+            return Ok(());
+        }
         let disable_direct_composition = self.direct_composition.is_none();
 
         unsafe {
@@ -316,6 +326,9 @@ impl DirectXRenderer {
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<PlatformWindowPresentOutcome> {
+        if self.surface_quiesced_for.is_some() {
+            return Ok(PlatformWindowPresentOutcome::Rejected);
+        }
         if self.skip_draws {
             return Ok(PlatformWindowPresentOutcome::Deferred);
         }
@@ -465,6 +478,9 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
+        if self.surface_quiesced_for.is_some() {
+            bail!("cannot resize a quiesced DirectX window surface");
+        }
         let width = new_size.width.0.max(1) as u32;
         let height = new_size.height.0.max(1) as u32;
         if self.width == width && self.height == height {
@@ -887,7 +903,96 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn mark_drawable(&mut self) {
-        self.skip_draws = false;
+        if self.surface_quiesced_for.is_none() {
+            self.skip_draws = false;
+        }
+    }
+
+    pub(crate) fn quiesce_surface(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> Result<()> {
+        if let Some(current) = self.surface_quiesced_for.as_ref() {
+            if !current.same_authority(shutdown) {
+                bail!("a stale presentation-shutdown generation cannot quiesce this surface");
+            }
+            shutdown.acknowledge_quiesced();
+            return Ok(());
+        }
+
+        self.skip_draws = true;
+        if let Some(devices) = self.devices.as_ref() {
+            unsafe {
+                devices.device_context.OMSetRenderTargets(None, None);
+                devices.device_context.ClearState();
+            }
+            wait_for_gpu_idle(devices)?;
+        }
+        if let Some(composition) = self.direct_composition.as_ref() {
+            composition.detach_surface()?;
+        }
+        self.resources.take();
+        self.direct_composition.take();
+        self.surface_quiesced_for = Some(shutdown.clone());
+        anyhow::ensure!(
+            shutdown.acknowledge_quiesced(),
+            "native terminal preceded renderer quiescence"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn is_quiesced_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        self.surface_quiesced_for
+            .as_ref()
+            .is_some_and(|current| current.same_authority(shutdown))
+            && self.resources.is_none()
+            && self.direct_composition.is_none()
+            && self.skip_draws
+    }
+}
+
+fn wait_for_gpu_idle(devices: &DirectXRendererDevices) -> Result<()> {
+    const GPU_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+    let descriptor = D3D11_QUERY_DESC {
+        Query: D3D11_QUERY_EVENT,
+        MiscFlags: 0,
+    };
+    let mut query = None;
+    unsafe {
+        devices
+            .device
+            .CreateQuery(&descriptor, Some(&mut query))
+            .context("creating DirectX presentation-shutdown query")?;
+    }
+    let query = query.context("DirectX presentation-shutdown query was not created")?;
+    unsafe {
+        devices.device_context.End(&query);
+        devices.device_context.Flush();
+    }
+
+    let deadline = Instant::now() + GPU_IDLE_TIMEOUT;
+    loop {
+        let result = unsafe {
+            (Interface::vtable(&devices.device_context).GetData)(
+                Interface::as_raw(&devices.device_context),
+                Interface::as_raw(&query),
+                std::ptr::null_mut(),
+                0,
+                D3D11_ASYNC_GETDATA_DONOTFLUSH.0 as u32,
+            )
+        };
+        if result == S_OK {
+            return Ok(());
+        }
+        if result != S_FALSE {
+            result
+                .ok()
+                .context("waiting for DirectX presentation work to quiesce")?;
+        }
+        if Instant::now() >= deadline {
+            bail!("timed out waiting for DirectX presentation work to quiesce");
+        }
+        thread::yield_now();
     }
 }
 
@@ -1050,6 +1155,16 @@ impl DirectComposition {
             self.comp_visual.SetContent(swap_chain)?;
             self.comp_target.SetRoot(&self.comp_visual)?;
             self.comp_device.Commit()?;
+        }
+        Ok(())
+    }
+
+    fn detach_surface(&self) -> Result<()> {
+        unsafe {
+            self.comp_visual.SetContent(None::<&IUnknown>)?;
+            self.comp_target.SetRoot(None::<&IDCompositionVisual>)?;
+            self.comp_device.Commit()?;
+            self.comp_device.WaitForCommitCompletion()?;
         }
         Ok(())
     }

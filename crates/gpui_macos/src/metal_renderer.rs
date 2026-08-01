@@ -11,7 +11,8 @@ use objc2_foundation::NSUInteger;
 use open_gpui::{
     AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, MonochromeSprite,
     PaintSurface, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite, PrimitiveBatch,
-    PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, Underline, point, size,
+    PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    WindowPresentationShutdownTicket, point, size,
 };
 
 use objc2_core_video::{
@@ -127,6 +128,8 @@ pub(crate) struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+    last_submitted_command_buffer: Option<metal::CommandBuffer>,
+    presentation_shutdown: Option<WindowPresentationShutdownTicket>,
 }
 
 #[repr(C)]
@@ -345,18 +348,21 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
+            last_submitted_command_buffer: None,
+            presentation_shutdown: None,
         }
     }
 
     pub fn layer(&self) -> Option<&metal::MetalLayerRef> {
-        self.layer.as_ref()
+        if self.presentation_shutdown.is_some() {
+            None
+        } else {
+            self.layer.as_ref()
+        }
     }
 
     pub fn layer_ptr(&self) -> *mut CAMetalLayer {
-        self.layer
-            .as_ref()
-            .map(|l| l.as_ptr())
-            .unwrap_or(ptr::null_mut())
+        self.layer().map(|l| l.as_ptr()).unwrap_or(ptr::null_mut())
     }
 
     pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
@@ -364,6 +370,9 @@ impl MetalRenderer {
     }
 
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
+        if self.presentation_shutdown.is_some() {
+            return;
+        }
         self.presents_with_transaction = presents_with_transaction;
         if let Some(layer) = &self.layer {
             layer.set_presents_with_transaction(presents_with_transaction);
@@ -371,6 +380,9 @@ impl MetalRenderer {
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
+        if self.presentation_shutdown.is_some() {
+            return;
+        }
         if let Some(layer) = &self.layer {
             layer.set_drawable_size(size.width.0 as f64, size.height.0 as f64);
         }
@@ -416,17 +428,80 @@ impl MetalRenderer {
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
+        if self.presentation_shutdown.is_some() {
+            return;
+        }
         self.opaque = !transparent;
         if let Some(layer) = &self.layer {
             layer.set_opaque(!transparent);
         }
     }
 
-    pub fn destroy(&self) {
-        // nothing to do
+    fn retire_surface(&mut self) {
+        if let Some(command_buffer) = self.last_submitted_command_buffer.take() {
+            command_buffer.wait_until_completed();
+        }
+        self.path_intermediate_texture = None;
+        self.path_intermediate_msaa_texture = None;
+        self.layer = None;
+    }
+
+    /// Stops all new presentation work for an exact shutdown ticket without issuing AppKit calls.
+    /// The caller can then safely detach the native view layer outside its window-state mutex.
+    pub fn reserve_surface_quiescence(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> bool {
+        if let Some(current) = &self.presentation_shutdown {
+            return current.same_authority(shutdown);
+        }
+
+        if shutdown.snapshot().native_terminal() {
+            return false;
+        }
+        self.presentation_shutdown = Some(shutdown.clone());
+        true
+    }
+
+    /// Releases all Metal work and surface-bound resources after native-layer detachment.
+    pub fn finish_surface_quiescence(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> bool {
+        if !self
+            .presentation_shutdown
+            .as_ref()
+            .is_some_and(|current| current.same_authority(shutdown))
+        {
+            return false;
+        }
+        if self.is_quiesced_for(shutdown) {
+            return true;
+        }
+
+        self.retire_surface();
+        shutdown.acknowledge_quiesced()
+    }
+
+    pub fn is_quiesced_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        self.presentation_shutdown
+            .as_ref()
+            .is_some_and(|current| current.same_authority(shutdown))
+            && shutdown.snapshot().quiesced()
+            && self.last_submitted_command_buffer.is_none()
+            && self.path_intermediate_texture.is_none()
+            && self.path_intermediate_msaa_texture.is_none()
+            && self.layer.is_none()
+    }
+
+    pub fn destroy(&mut self) {
+        self.retire_surface();
     }
 
     pub fn draw(&mut self, scene: &Scene) -> PlatformWindowPresentOutcome {
+        if self.presentation_shutdown.is_some() {
+            return PlatformWindowPresentOutcome::Deferred;
+        }
         if let Err(error) = validate_scene_clip_envelopes(scene) {
             log::error!("refusing to draw a scene with invalid clip geometry: {error}");
             return PlatformWindowPresentOutcome::Rejected;
@@ -483,6 +558,7 @@ impl MetalRenderer {
                         command_buffer.present_drawable(&drawable);
                         command_buffer.commit();
                     }
+                    self.last_submitted_command_buffer = Some(command_buffer);
                     return PlatformWindowPresentOutcome::Submitted;
                 }
                 Err(err) => {

@@ -4,14 +4,17 @@ use crate::{
     CursorStyle, DevicePixels, DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas,
     PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback,
     PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
-    PlatformNativePointerPhysicalFrame, PlatformPointerCaptureReleaseOutcome, PlatformWindow,
+    PlatformNativePointerPhysicalFrame, PlatformNativeWindowRetirementOutcome,
+    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
     PlatformWindowDispatch, PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
     PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPointerCaptureRelease, PromptButton, RequestFrameOptions, Scene, Size,
-    TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowCreationFacts, WindowMutationDomain, WindowMutationRequest,
-    WindowParams, WindowPlacementState, WindowPlatformFacts,
+    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
+    RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
+    WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPlacementState,
+    WindowPlatformFacts, WindowPresentationShutdownTicket, WindowProvisionalRevealNativeFacts,
+    WindowProvisionalRevealZOrder, WindowProvisionalSession,
 };
 #[cfg(test)]
 use crate::{DisplayId, NativePointerCancelReservation, PointerCancelReason};
@@ -21,8 +24,13 @@ use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
     rc::{Rc, Weak},
-    sync::{self, Arc},
+    sync::{
+        self, Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
+
+static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
@@ -81,6 +89,8 @@ pub(crate) struct TestWindowState {
     platform_command_history: Vec<PlatformWindowCommand>,
     initial_presentation_command_outcomes: VecDeque<PlatformWindowCommandOutcome>,
     show_on_initial_presentation: bool,
+    provisional_session: Option<WindowProvisionalSession>,
+    provisional_reveal_generation: Option<u64>,
     creation_show_fact: bool,
     mapped: bool,
     initial_presentation_completed: bool,
@@ -95,6 +105,12 @@ pub(crate) struct TestWindowState {
     closed: bool,
     defer_close_callback: bool,
     deferred_close_callback: Option<Box<dyn FnOnce()>>,
+    presentation_shutdown_ticket: Option<WindowPresentationShutdownTicket>,
+    presentation_shutdown_prepare_count: usize,
+    presentation_shutdown_quiesce_attempt_count: usize,
+    presentation_shutdown_retire_count: usize,
+    presentation_shutdown_blocked: bool,
+    draw_count: usize,
 }
 
 struct TestNativePointerPhysicalFrameScope {
@@ -229,6 +245,8 @@ impl TestWindow {
         initial_presentation_command_outcomes: Option<VecDeque<PlatformWindowCommandOutcome>>,
         close_on_next_present: bool,
     ) -> Self {
+        let provisional_session = params.provisional_session.clone();
+        let show_on_initial_presentation = params.show && provisional_session.is_none();
         let sprite_atlas: Arc<dyn PlatformAtlas> = match &renderer {
             Some(r) => r.sprite_atlas(),
             None => Arc::new(TestAtlas::new()),
@@ -288,7 +306,9 @@ impl TestWindow {
                 platform_command_history: Vec::new(),
                 initial_presentation_command_outcomes: initial_presentation_command_outcomes
                     .unwrap_or_default(),
-                show_on_initial_presentation: params.show,
+                show_on_initial_presentation,
+                provisional_session,
+                provisional_reveal_generation: None,
                 creation_show_fact: creation_show_fact.unwrap_or(params.show),
                 mapped: false,
                 initial_presentation_completed: false,
@@ -303,6 +323,12 @@ impl TestWindow {
                 closed: false,
                 defer_close_callback: false,
                 deferred_close_callback: None,
+                presentation_shutdown_ticket: None,
+                presentation_shutdown_prepare_count: 0,
+                presentation_shutdown_quiesce_attempt_count: 0,
+                presentation_shutdown_retire_count: 0,
+                presentation_shutdown_blocked: false,
+                draw_count: 0,
             })),
             true,
         )
@@ -347,6 +373,16 @@ impl TestWindow {
     #[cfg(test)]
     pub(crate) fn platform_command_history(&self) -> Vec<PlatformWindowCommand> {
         self.0.lock().platform_command_history.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn activation_count(&self) -> usize {
+        self.0.lock().activation_count
+    }
+
+    #[cfg(test)]
+    pub(crate) fn handle(&self) -> AnyWindowHandle {
+        self.0.lock().handle
     }
 
     #[cfg(test)]
@@ -440,8 +476,59 @@ impl TestWindow {
                     self.activate_for_test();
                 }
             }
+            PlatformWindowCommand::RevealDeferredInitialPresentation {
+                session_generation,
+                presentation_generation,
+            } => {
+                let mut state = self.0.lock();
+                let session = state.provisional_session.clone();
+                let window_id = state.handle.window_id();
+                let accepts_reveal = session.as_ref().is_some_and(|session| {
+                    let snapshot = session.snapshot();
+                    snapshot.generation() == session_generation
+                        && snapshot.window_id() == Some(window_id)
+                        && snapshot.phase() == crate::WindowProvisionalSessionPhase::Gated
+                }) && state.initial_presentation_completed
+                    && !state.mapped
+                    && state.provisional_reveal_generation.is_none();
+                if !accepts_reveal {
+                    return PlatformWindowCommandOutcome::Rejected;
+                }
+                state.mapped = true;
+                state.provisional_reveal_generation = Some(presentation_generation);
+                drop(state);
+                let recorded = session
+                    .expect("accepted provisional reveal must retain its session")
+                    .record_native_reveal(
+                        window_id,
+                        presentation_generation,
+                        WindowProvisionalRevealNativeFacts::new(
+                            true,
+                            true,
+                            true,
+                            true,
+                            WindowProvisionalRevealZOrder::Exact,
+                        ),
+                    )
+                    .is_ok();
+                if !recorded {
+                    let mut state = self.0.lock();
+                    state.mapped = false;
+                    state.provisional_reveal_generation = None;
+                    return PlatformWindowCommandOutcome::Rejected;
+                }
+            }
             PlatformWindowCommand::Activate => {
-                if !self.0.lock().accepts_activation {
+                let accepts_activation = {
+                    let state = self.0.lock();
+                    state.accepts_activation
+                        && state.provisional_session.as_ref().is_none_or(|session| {
+                            let snapshot = session.snapshot();
+                            snapshot.window_id() == Some(state.handle.window_id())
+                                && snapshot.accepts_interaction()
+                        })
+                };
+                if !accepts_activation {
                     return PlatformWindowCommandOutcome::Rejected;
                 }
                 self.0.lock().activation_count += 1;
@@ -837,6 +924,25 @@ impl TestWindow {
             state.reveal_on_next_present = false;
             state.close_on_next_present = false;
             state.accessibility.active = false;
+            let shutdown = if let Some(shutdown) = state.presentation_shutdown_ticket.as_ref() {
+                shutdown.clone()
+            } else {
+                let generation =
+                    NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION.fetch_add(1, Ordering::Relaxed);
+                assert_ne!(
+                    generation, 0,
+                    "emergency presentation-shutdown generation space exhausted"
+                );
+                let shutdown =
+                    WindowPresentationShutdownTicket::new(state.handle.window_id(), generation);
+                state.presentation_shutdown_ticket = Some(shutdown.clone());
+                shutdown
+            };
+            if !shutdown.acknowledge_native_terminal() {
+                log::error!(
+                    "test native window reached terminal before presentation quiescence was acknowledged"
+                );
+            }
             let callback = state.close_callback.take();
             let callback = if state.defer_close_callback {
                 state.deferred_close_callback = callback;
@@ -885,6 +991,26 @@ impl TestWindow {
         true
     }
 
+    #[cfg(test)]
+    pub(crate) fn block_presentation_shutdown(&self, blocked: bool) {
+        self.0.lock().presentation_shutdown_blocked = blocked;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn presentation_shutdown_counts(&self) -> (usize, usize, usize) {
+        let state = self.0.lock();
+        (
+            state.presentation_shutdown_prepare_count,
+            state.presentation_shutdown_quiesce_attempt_count,
+            state.presentation_shutdown_retire_count,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn draw_count(&self) -> usize {
+        self.0.lock().draw_count
+    }
+
     pub(crate) fn release_deferred_native_terminal(&self) -> bool {
         let callback = {
             let mut state = self.0.lock();
@@ -900,6 +1026,10 @@ impl TestWindow {
 
     pub(crate) fn simulate_close(&self) -> bool {
         self.close()
+    }
+
+    pub(crate) fn is_native_terminal(&self) -> bool {
+        self.0.lock().closed
     }
 
     pub(crate) fn should_close(&self) -> bool {
@@ -1017,6 +1147,54 @@ impl PlatformWindow for TestWindow {
                 })
             },
         )
+    }
+
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown {
+        let shutdown = {
+            let mut state = self.0.lock();
+            if let Some(current) = state.presentation_shutdown_ticket.as_ref() {
+                let current = current.clone();
+                state.presentation_shutdown_prepare_count += 1;
+                current
+            } else {
+                state.presentation_shutdown_ticket = Some(shutdown.clone());
+                state.presentation_shutdown_prepare_count += 1;
+                shutdown
+            }
+        };
+        let window = self.0.clone();
+        PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
+            let mut state = window.lock();
+            state.presentation_shutdown_quiesce_attempt_count += 1;
+            if state.presentation_shutdown_blocked {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            }
+            drop(state);
+            if shutdown.acknowledge_quiesced() {
+                PlatformPresentationShutdownOutcome::Quiesced
+            } else {
+                PlatformPresentationShutdownOutcome::Rejected
+            }
+        })
+    }
+
+    fn retire_native_window(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> PlatformNativeWindowRetirementOutcome {
+        let mut state = self.0.lock();
+        let exact = state
+            .presentation_shutdown_ticket
+            .as_ref()
+            .is_some_and(|current| current.same_authority(shutdown));
+        if !exact || !shutdown.snapshot().quiesced() {
+            return PlatformNativeWindowRetirementOutcome::Rejected;
+        }
+        state.presentation_shutdown_retire_count += 1;
+        PlatformNativeWindowRetirementOutcome::Accepted
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
@@ -1225,6 +1403,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().is_fullscreen
     }
 
+    fn request_frame(&self, options: RequestFrameOptions) {
+        let _ = self.simulate_frame(options);
+    }
+
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         let mut state = self.0.lock();
         if !state.closed {
@@ -1307,6 +1489,7 @@ impl PlatformWindow for TestWindow {
 
     fn draw(&self, _scene: &Scene) -> PlatformWindowPresentOutcome {
         let mut state = self.0.lock();
+        state.draw_count += 1;
         if std::mem::take(&mut state.reveal_on_next_present) {
             state.mapped = true;
         }
@@ -1495,8 +1678,8 @@ mod window_mutation_tests {
         PlatformWindowMutationCapabilities, QuitMode, Render, Styled, Subscription, TestAppContext,
         Window, WindowActivationPolicy, WindowCreationSupport, WindowInitialPresentationOrder,
         WindowInitialPresentationStatus, WindowKind, WindowMouseEvent, WindowMutationDispatch,
-        WindowMutationOutcome, WindowMutationSupport, WindowMutationTicket, WindowOptions,
-        WindowPlacementRequest, div, point, px, size,
+        WindowMutationOutcome, WindowMutationSupport, WindowMutationTicket, WindowOpenFailureStage,
+        WindowOptions, WindowPlacementRequest, WindowProvisionalSession, div, point, px, size,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -1706,6 +1889,7 @@ mod window_mutation_tests {
         cx.set_platform_window_creation_capabilities(PlatformWindowCreationCapabilities {
             focus_on_appearing: WindowCreationSupport::Supported,
             transient_for: WindowCreationSupport::Unsupported,
+            provisional_presentation: WindowCreationSupport::Supported,
             initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
         });
         let owner: AnyWindowHandle = cx
@@ -2655,15 +2839,141 @@ mod window_mutation_tests {
         })
         .expect("test window should remain live");
 
-        assert_eq!(platform_window.simulate_should_close(), Some(true));
+        assert_eq!(
+            platform_window.simulate_should_close(),
+            Some(false),
+            "an approved live close must suppress native default teardown while GPUI retires the window"
+        );
         app_cell.enqueue_keyboard_layout_changed_for_test();
         cx.run_until_parked();
 
+        assert!(!cx.windows().contains(&handle));
         assert_eq!(
             deliveries.get(),
             2,
             "a nested wake blocked on the close query must resume when its App borrow is released"
         );
+    }
+
+    #[crate::test]
+    fn shutdown_keeps_the_registry_until_every_presentation_is_quiesced(cx: &mut TestAppContext) {
+        let (first, first_platform_window) = open_test_window(cx);
+        let (second, second_platform_window) = open_test_window(cx);
+        first_platform_window.block_presentation_shutdown(true);
+
+        cx.update(|app| app.shutdown());
+
+        assert!(cx.windows().contains(&first));
+        assert!(cx.windows().contains(&second));
+        assert_eq!(first_platform_window.presentation_shutdown_counts().0, 1);
+        assert!(first_platform_window.presentation_shutdown_counts().1 >= 1);
+        assert_eq!(first_platform_window.presentation_shutdown_counts().2, 0);
+        assert_eq!(
+            second_platform_window.presentation_shutdown_counts(),
+            (1, 1, 0)
+        );
+
+        first_platform_window.block_presentation_shutdown(false);
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(512));
+        cx.run_until_parked();
+
+        assert!(!cx.windows().contains(&first));
+        assert!(!cx.windows().contains(&second));
+        let first_counts = first_platform_window.presentation_shutdown_counts();
+        assert_eq!(first_counts.0, 1);
+        assert!(first_counts.1 >= 2);
+        assert_eq!(first_counts.2, 1);
+        assert_eq!(
+            second_platform_window.presentation_shutdown_counts(),
+            (1, 1, 1)
+        );
+    }
+
+    #[crate::test]
+    fn next_frame_close_prevents_any_later_draw_or_present(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        let accepted_draws = platform_window.draw_count();
+        cx.update_window(handle, |_, window, _| {
+            window.on_next_frame(|window, app| window.remove_window(app));
+        })
+        .expect("the test window should remain live before the next frame");
+
+        assert!(platform_window.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            force_render: true,
+        }));
+        cx.run_until_parked();
+
+        assert!(!cx.windows().contains(&handle));
+        assert_eq!(platform_window.draw_count(), accepted_draws);
+        assert_eq!(platform_window.presentation_shutdown_counts(), (1, 1, 1));
+    }
+
+    #[crate::test]
+    fn native_terminal_before_quiescence_is_not_washed_by_later_close_processing(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+
+        assert!(platform_window.simulate_close());
+        cx.run_until_parked();
+
+        let shutdown = platform_window
+            .0
+            .lock()
+            .presentation_shutdown_ticket
+            .clone()
+            .expect("the native terminal must bind an emergency shutdown authority");
+        let snapshot = shutdown.snapshot();
+        assert_eq!(snapshot.window_id(), handle.window_id());
+        assert!(snapshot.native_terminal());
+        assert!(!snapshot.quiesced());
+        assert!(snapshot.protocol_violation());
+        assert!(!cx.windows().contains(&handle));
+    }
+
+    #[crate::test]
+    fn shutdown_includes_a_logically_removed_window_with_pending_native_retirement(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.block_presentation_shutdown(true);
+        cx.update_window(handle, |_, window, app| window.remove_window(app))
+            .expect("the test window should remain live until logical removal commits");
+
+        assert!(!cx.windows().contains(&handle));
+        let pending_counts = platform_window.presentation_shutdown_counts();
+        assert_eq!(pending_counts.0, 1);
+        assert!(pending_counts.1 >= 1);
+        assert_eq!(pending_counts.2, 0);
+
+        cx.update(|app| app.shutdown());
+        let blocked_open = cx.update(|app| {
+            app.open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+        });
+        assert_eq!(
+            blocked_open
+                .expect_err("pending presentation shutdown must retain the app shutdown barrier")
+                .stage(),
+            WindowOpenFailureStage::AppShutdown
+        );
+
+        platform_window.block_presentation_shutdown(false);
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(512));
+        cx.run_until_parked();
+
+        let settled_counts = platform_window.presentation_shutdown_counts();
+        assert_eq!(settled_counts.0, 1);
+        assert!(settled_counts.1 >= 2);
+        assert_eq!(settled_counts.2, 1);
+        let replacement: AnyWindowHandle = cx
+            .update(|app| app.open_window(WindowOptions::default(), |_, app| app.new(|_| Empty)))
+            .expect("the app shutdown barrier must reopen after exact quiescence")
+            .into();
+        assert!(replacement.update(cx, |_, _, _| ()).is_ok());
     }
 
     #[crate::test]
@@ -2996,6 +3306,231 @@ mod window_mutation_tests {
         assert_eq!(
             platform_window.platform_command_history(),
             [PlatformWindowCommand::CompleteInitialPresentation { activate: false }]
+        );
+    }
+
+    #[crate::test]
+    fn provisional_session_reveals_one_non_empty_generation_without_activation_then_promotes(
+        cx: &mut TestAppContext,
+    ) {
+        let session =
+            WindowProvisionalSession::new(41).expect("the provisional generation should be valid");
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+
+        assert!(
+            !platform_window.is_visible(),
+            "a provisional must stay hidden after the ordinary initial-presentation command"
+        );
+        assert!(
+            !session.snapshot().accepts_interaction(),
+            "construction and initial root work must observe the provisional gate"
+        );
+
+        let reveal_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(&session, app)
+                    .expect("the matching bound session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+
+        let facts = cx
+            .update_window(handle, |_, window, _| window.presentation_facts())
+            .expect("the revealed provisional should remain live");
+        let generation = facts
+            .non_empty_presented_generation
+            .expect("the reveal must be backed by a non-empty submitted frame");
+        assert!(facts.native_visible);
+        assert_eq!(platform_window.activation_count(), 0);
+        let reveal = reveal_ticket.snapshot();
+        assert_eq!(reveal.window_id(), handle.window_id());
+        assert_eq!(reveal.session_generation(), session.snapshot().generation());
+        assert_eq!(reveal.presentation_generation(), Some(generation));
+        assert_eq!(
+            reveal.outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+        assert_eq!(
+            platform_window.platform_command_history(),
+            [
+                PlatformWindowCommand::CompleteInitialPresentation { activate: false },
+                PlatformWindowCommand::RevealDeferredInitialPresentation {
+                    session_generation: session.snapshot().generation(),
+                    presentation_generation: generation,
+                },
+            ]
+        );
+        assert!(
+            !session.snapshot().accepts_interaction(),
+            "visibility alone must not admit provisional interaction"
+        );
+
+        cx.update_window(handle, |_, window, app| {
+            window
+                .promote_provisional_presentation(&session, app)
+                .expect("same-window promotion should open the exact gate");
+        })
+        .expect("the provisional window should remain live");
+        assert!(session.snapshot().accepts_interaction());
+        assert_eq!(
+            platform_window.handle(),
+            handle,
+            "promotion must retain the original native window identity"
+        );
+
+        assert!(platform_window.simulate_frame(RequestFrameOptions {
+            force_render: true,
+            require_presentation: true,
+        }));
+        cx.run_until_parked();
+        assert_eq!(
+            platform_window
+                .platform_command_history()
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
+                ))
+                .count(),
+            1,
+            "later submitted frames must not reveal the same provisional generation twice"
+        );
+    }
+
+    #[crate::test]
+    fn provisional_session_rejects_stale_identity_and_input_without_replay(
+        cx: &mut TestAppContext,
+    ) {
+        assert_eq!(
+            WindowProvisionalSession::new(0).expect_err("zero is not a valid authority generation"),
+            crate::WindowProvisionalSessionError::ZeroGeneration
+        );
+
+        let session = WindowProvisionalSession::new(7).expect("the generation should be valid");
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let other: AnyWindowHandle = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .into();
+        let duplicate: anyhow::Result<crate::WindowHandle<PaintedRoot>> = cx.update(|app| {
+            app.open_window(
+                WindowOptions {
+                    focus_on_appearing: false,
+                    provisional_session: Some(session.clone()),
+                    ..Default::default()
+                },
+                |_, app| app.new(|_| PaintedRoot),
+            )
+        });
+        duplicate.expect_err("one provisional session must own at most one window generation");
+        assert_eq!(
+            session
+                .promote(other.window_id())
+                .expect_err("a stale full window id must not open the gate"),
+            crate::WindowProvisionalSessionError::WindowMismatch
+        );
+        cx.update_window(handle, |_, window, app| {
+            window
+                .promote_provisional_presentation(&session, app)
+                .expect_err("an unrevealed provisional must not open its interaction gate");
+        })
+        .expect("the provisional window should remain live");
+        let reveal_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(&session, app)
+                    .expect("the matching bound session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            reveal_ticket.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+
+        let pointer_calls = Rc::new(Cell::new(0usize));
+        let _interceptor = cx
+            .update_window(handle, |_, window, _| {
+                let pointer_calls = pointer_calls.clone();
+                window.intercept_window_mouse_events(move |event, _, _| {
+                    if matches!(event, WindowMouseEvent::Down(_)) {
+                        pointer_calls.set(pointer_calls.get().saturating_add(1));
+                    }
+                })
+            })
+            .expect("the provisional window should remain live");
+        let mut platform_window = cx.test_window(handle);
+        platform_window.clear_platform_command_history();
+
+        let gated =
+            platform_window.simulate_input_result(PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(12.0), px(18.0)),
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }));
+        assert!(!gated.propagate);
+        assert!(gated.default_prevented);
+        assert_eq!(pointer_calls.get(), 0);
+        cx.update_window(handle, |_, window, _| window.activate_window())
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert!(
+            platform_window.platform_command_history().is_empty(),
+            "a gated window must not enqueue native activation"
+        );
+
+        cx.update_window(handle, |_, window, app| {
+            window
+                .promote_provisional_presentation(&session, app)
+                .expect("the exact same window should promote in place");
+        })
+        .expect("the provisional window should remain live");
+        let promoted =
+            platform_window.simulate_input_result(PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(12.0), px(18.0)),
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }));
+        assert_eq!(pointer_calls.get(), 1);
+        assert!(
+            promoted.propagate || !promoted.default_prevented,
+            "promotion admits only new input; it does not replay the gated event"
+        );
+        cx.update_window(handle, |_, window, _| window.activate_window())
+            .expect("the promoted window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            platform_window.platform_command_history(),
+            [PlatformWindowCommand::Activate]
         );
     }
 

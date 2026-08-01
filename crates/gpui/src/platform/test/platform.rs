@@ -37,6 +37,7 @@ pub(crate) struct TestPlatform {
     window_creation_capabilities_override: RefCell<Option<PlatformWindowCreationCapabilities>>,
     window_mutation_capabilities_override: RefCell<Option<PlatformWindowMutationCapabilities>>,
     next_window_map_error: RefCell<Option<String>>,
+    last_created_window: RefCell<Option<TestWindow>>,
     next_window_close_during_map: RefCell<bool>,
     next_window_creation_show_fact: RefCell<Option<bool>>,
     next_window_initial_presentation_command_outcomes:
@@ -164,6 +165,7 @@ impl TestPlatform {
             window_creation_capabilities_override: RefCell::new(None),
             window_mutation_capabilities_override: RefCell::new(None),
             next_window_map_error: RefCell::new(None),
+            last_created_window: RefCell::new(None),
             next_window_close_during_map: RefCell::new(false),
             next_window_creation_show_fact: RefCell::new(None),
             next_window_initial_presentation_command_outcomes: RefCell::new(None),
@@ -214,6 +216,11 @@ impl TestPlatform {
         self.next_window_map_error
             .borrow_mut()
             .replace(message.into());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_created_window(&self) -> Option<TestWindow> {
+        self.last_created_window.borrow().clone()
     }
 
     pub(crate) fn close_next_window_during_map(&self) {
@@ -694,6 +701,7 @@ impl Platform for TestPlatform {
                 .unwrap_or(PlatformWindowCreationCapabilities {
                     focus_on_appearing: WindowCreationSupport::Supported,
                     transient_for: WindowCreationSupport::Supported,
+                    provisional_presentation: WindowCreationSupport::Supported,
                     initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
                 }),
             mutations,
@@ -728,6 +736,9 @@ impl Platform for TestPlatform {
             self.next_window_close_during_initial_presentation
                 .replace(false),
         );
+        self.last_created_window
+            .borrow_mut()
+            .replace(window.clone());
         Ok(Box::new(window))
     }
 

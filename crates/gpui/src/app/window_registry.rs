@@ -1,11 +1,12 @@
 use std::{
     any::Any,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
+    rc::Weak,
 };
 
-use crate::{AnyView, AnyWindowHandle, Window, WindowId};
+use crate::{AnyView, AnyWindowHandle, PreparedPlatformPresentationShutdown, Window, WindowId};
 
-use super::{App, Effect, QuitMode, native_captured_drag::WindowUpdateProvenance};
+use super::{App, AppCell, Effect, QuitMode, native_captured_drag::WindowUpdateProvenance};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum WindowReservationError {
@@ -15,6 +16,8 @@ pub(super) enum WindowReservationError {
     WindowClosed,
     #[error("window reservation is no longer current")]
     NotCurrent,
+    #[error("provisional window session could not bind at registry commit: {0}")]
+    ProvisionalSession(#[from] crate::WindowProvisionalSessionError),
 }
 
 pub(super) struct ReservedWindow<'a> {
@@ -22,6 +25,60 @@ pub(super) struct ReservedWindow<'a> {
     id: WindowId,
     epoch: u64,
     pending: bool,
+}
+
+/// Retains a native window created during an in-flight open transaction until the normal
+/// app-owned retirement queue can drain its exact presentation-shutdown authority.
+///
+/// A reservation is intentionally not a committed window, so merely dropping the local `Window`
+/// would bypass `NativeWindowRetirement`. This guard makes every post-native-create failure use
+/// the same renderer-before-native-terminal protocol as an ordinary logical close.
+pub(super) struct WindowCreationRollback {
+    app_cell: Weak<AppCell>,
+    window_id: WindowId,
+    window: Option<Window>,
+}
+
+impl WindowCreationRollback {
+    pub(super) fn new(window_id: WindowId, window: Window, app_cell: Weak<AppCell>) -> Self {
+        Self {
+            app_cell,
+            window_id,
+            window: Some(window),
+        }
+    }
+
+    pub(super) fn window_mut(&mut self) -> &mut Window {
+        self.window
+            .as_mut()
+            .expect("window-creation rollback must retain its window before commit")
+    }
+
+    fn into_window(mut self) -> Window {
+        self.window
+            .take()
+            .expect("window-creation rollback must retain its window before commit")
+    }
+}
+
+impl Drop for WindowCreationRollback {
+    fn drop(&mut self) {
+        let Some(window) = self.window.take() else {
+            return;
+        };
+
+        if let Some(cell) = self.app_cell.upgrade() {
+            cell.enqueue_native_window_retirement(self.window_id, Box::new(window));
+        } else {
+            // The app cell should outlive every synchronous open transaction. If that invariant
+            // is broken, leak the native owner rather than dropping a live backend window without
+            // an exact retirement authority.
+            log::error!(
+                "native window creation rollback lost its AppCell; retaining the backend owner until process teardown"
+            );
+            std::mem::forget(window);
+        }
+    }
 }
 
 impl ReservedWindow<'_> {
@@ -41,13 +98,18 @@ impl ReservedWindow<'_> {
         validate_reservation(self.app, self.id, self.epoch)
     }
 
-    pub(super) fn commit(mut self, mut window: Window) -> Result<(), WindowReservationError> {
+    pub(super) fn commit(
+        mut self,
+        mut rollback: WindowCreationRollback,
+    ) -> Result<(), WindowReservationError> {
         self.validate()?;
-        if !window.creation_can_commit() {
+        if !rollback.window_mut().creation_can_commit() {
             return Err(WindowReservationError::WindowClosed);
         }
+        rollback.window_mut().bind_provisional_session()?;
+        let mut window = rollback.into_window();
         let initial_presentation = window.take_initial_presentation_command();
-        commit_reserved(&mut *self.app, self.id, self.epoch, window)?;
+        commit_reserved(&mut *self.app, self.id, window);
         self.pending = false;
         if let Some((sink, command)) = initial_presentation {
             sink.enqueue(command);
@@ -93,23 +155,24 @@ fn validate_reservation(app: &App, id: WindowId, epoch: u64) -> Result<(), Windo
     Ok(())
 }
 
-fn commit_reserved(
-    app: &mut App,
-    id: WindowId,
-    epoch: u64,
-    window: Window,
-) -> Result<(), WindowReservationError> {
-    validate_reservation(app, id, epoch)?;
+fn commit_reserved(app: &mut App, id: WindowId, window: Window) {
+    let slot = app
+        .windows
+        .get_mut(id)
+        .expect("validated window reservation must retain its slot");
+    assert!(
+        slot.is_none(),
+        "validated window reservation must remain pending until commit"
+    );
+    slot.replace(Box::new(window));
+    let window = slot
+        .as_ref()
+        .expect("committed window reservation must retain its window");
     app.window_handles.insert(id, window.handle);
     app.window_profiles.insert(id, window.window_profile());
-    app.windows
-        .get_mut(id)
-        .ok_or(WindowReservationError::NotCurrent)?
-        .replace(Box::new(window));
     if let Some(cell) = app.this.upgrade() {
         cell.commit_native_window(id);
     }
-    Ok(())
 }
 
 fn rollback_reserved(app: &mut App, id: WindowId) {
@@ -285,20 +348,27 @@ fn restore_taken_window(app: &mut App, id: WindowId, window: Box<Window>) {
     }
 }
 
-pub(super) fn clear(app: &mut App) {
+pub(super) fn take_all_for_shutdown(app: &mut App) -> Vec<(WindowId, Box<Window>)> {
     let windows = std::mem::take(&mut app.windows);
     app.window_handles.clear();
     app.window_profiles.clear();
     if let Some(cell) = app.this.upgrade() {
         cell.clear_native_windows();
-        for (window_id, window) in windows {
-            if let Some(window) = window {
-                cell.enqueue_native_window_retirement(window_id, window);
-            }
-        }
-    } else {
-        drop(windows);
     }
+    windows
+        .into_iter()
+        .filter_map(|(window_id, window)| window.map(|window| (window_id, window)))
+        .collect()
+}
+
+pub(super) fn prepare_presentation_shutdowns(
+    app: &mut App,
+) -> Vec<PreparedPlatformPresentationShutdown> {
+    app.windows
+        .values_mut()
+        .filter_map(Option::as_mut)
+        .map(|window| window.claim_presentation_shutdown())
+        .collect()
 }
 
 pub(super) fn has_checked_out_window(app: &App) -> bool {
@@ -318,7 +388,12 @@ pub(super) fn finish_window_update(app: &mut App, id: WindowId, window: Box<Wind
         if let Some(cell) = app.this.upgrade() {
             cell.enqueue_native_window_retirement(id, window);
         } else {
-            drop(window);
+            // There is no retirement queue left to prove renderer quiescence. Retain the
+            // platform owner rather than dropping a surface that may still have submitted work.
+            log::error!(
+                "removed window lost its AppCell before native retirement; retaining the backend owner until process teardown"
+            );
+            std::mem::forget(window);
         }
         if let Some(payload) = first_panic {
             resume_unwind(payload);

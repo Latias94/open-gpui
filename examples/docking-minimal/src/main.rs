@@ -183,7 +183,9 @@ mod tests {
             (surface, anchor)
         });
 
-        assert!(!cx.simulate_window_close(anchor));
+        let close = cx.simulate_window_close_request(anchor);
+        assert!(!close.native_close_allowed());
+        assert!(close.logical_window_removed());
         cx.run_until_parked();
 
         assert!(!cx.windows().contains(&anchor));

@@ -135,6 +135,7 @@ pub enum NativeInputHandlerOperation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativePlatformCommandKind {
     CompleteInitialPresentation,
+    RevealDeferredInitialPresentation,
     Activate,
     ShowWindowMenu,
     StartWindowMove,
@@ -160,6 +161,11 @@ pub enum NativeBoundaryGeneration {
         domain: WindowMutationDomain,
         generation: u64,
     },
+    ProvisionalPresentation {
+        session_generation: u64,
+        presentation_generation: u64,
+    },
+    PresentationShutdown(u64),
     InputSlot {
         boundary: NativeInputBoundary,
         generation: u64,

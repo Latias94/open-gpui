@@ -31,11 +31,13 @@ use open_gpui::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
-    PlatformInputHandler, PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
+    PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
     PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
-    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowCreationFacts, WindowKind, WindowParams, point, px, size,
+    Point, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
+    WindowKind, WindowParams, WindowPresentationShutdownTicket, point, px, size,
 };
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -65,7 +67,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Weak,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -76,6 +78,7 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -647,6 +650,50 @@ pub(crate) fn macos_supports_focus_on_appearing(kind: &WindowKind) -> bool {
     matches!(kind, WindowKind::Normal | WindowKind::Floating)
 }
 
+struct MacPresentationShutdownAuthority {
+    window_id: WindowId,
+    ticket: Option<WindowPresentationShutdownTicket>,
+}
+
+impl MacPresentationShutdownAuthority {
+    fn new(window_id: WindowId) -> Self {
+        Self {
+            window_id,
+            ticket: None,
+        }
+    }
+
+    fn claim(
+        &mut self,
+        candidate: WindowPresentationShutdownTicket,
+    ) -> Option<WindowPresentationShutdownTicket> {
+        if candidate.snapshot().window_id() != self.window_id {
+            return None;
+        }
+        if let Some(current) = self.ticket.as_ref() {
+            return Some(current.clone());
+        }
+        self.ticket = Some(candidate.clone());
+        Some(candidate)
+    }
+
+    fn ticket(&mut self) -> WindowPresentationShutdownTicket {
+        if let Some(ticket) = self.ticket.as_ref() {
+            return ticket.clone();
+        }
+
+        let generation =
+            NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION.fetch_add(1, Ordering::Relaxed);
+        assert_ne!(
+            generation, 0,
+            "emergency presentation-shutdown generation space exhausted"
+        );
+        let ticket = WindowPresentationShutdownTicket::new(self.window_id, generation);
+        self.ticket = Some(ticket.clone());
+        ticket
+    }
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     foreground_executor: ForegroundExecutor,
@@ -659,6 +706,7 @@ struct MacWindowState {
     cursor_visible: Arc<AtomicBool>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
+    presentation_shutdown_authority: Arc<Mutex<MacPresentationShutdownAuthority>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: PlatformInputCallbackSlot,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -945,7 +993,10 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
+pub(crate) struct MacWindow(
+    Arc<Mutex<MacWindowState>>,
+    Arc<Mutex<MacPresentationShutdownAuthority>>,
+);
 
 impl MacWindow {
     pub fn open(
@@ -1114,70 +1165,77 @@ impl MacWindow {
             let native_view = NSView::initWithFrame_(native_view, NSView::bounds(content_view));
             assert!(!native_view.is_null());
 
-            let mut window = Self(Arc::new(Mutex::new(MacWindowState {
-                handle,
-                foreground_executor,
-                background_executor,
-                native_window,
-                native_view: NonNull::new_unchecked(native_view),
-                blurred_view: None,
-                background_appearance: WindowBackgroundAppearance::Opaque,
-                cursor_style: CursorStyle::Arrow,
-                cursor_visible,
-                display_link: None,
-                renderer: renderer::new_renderer(
-                    renderer_context,
-                    native_window as *mut _,
-                    native_view as *mut _,
-                    bounds.size.map(|pixels| pixels.as_f32()),
-                    false,
-                ),
-                request_frame_callback: None,
-                event_callback: PlatformInputCallbackSlot::default(),
-                activate_callback: None,
-                resize_callback: None,
-                moved_callback: None,
-                window_state_change_callback: None,
-                should_close_callback: None,
-                close_callback: None,
-                appearance_changed_callback: None,
-                input_handler: PlatformInputHandlerSlot::default(),
-                last_key_equivalent: None,
-                synthetic_drag_counter: 0,
-                traffic_light_position: titlebar
-                    .as_ref()
-                    .and_then(|titlebar| titlebar.traffic_light_position),
-                transparent_titlebar: titlebar
-                    .as_ref()
-                    .is_none_or(|titlebar| titlebar.appears_transparent),
-                previous_modifiers_changed_event: None,
-                keystroke_for_do_command: None,
-                do_command_handled: None,
-                external_files_dragged: false,
-                first_mouse: false,
-                windowed_restore_bounds: creation.restore_bounds,
-                fullscreen_restore_bounds: creation.restore_bounds,
-                pending_fullscreen_restore_bounds: matches!(
-                    creation.state,
-                    MacWindowCreationState::Fullscreen
-                )
-                .then_some(creation.restore_bounds),
-                move_tab_to_new_window_callback: None,
-                merge_all_windows_callback: None,
-                select_next_tab_callback: None,
-                select_previous_tab_callback: None,
-                toggle_tab_bar_callback: None,
-                activated_least_once: false,
-                closed: Arc::new(AtomicBool::new(false)),
-                accesskit_adapter: None,
-                creation_facts,
-                accepts_pointer_input: creation.accepts_pointer_input,
-                activation_policy: creation.activation_policy,
-                topmost: creation.topmost,
-                taskbar_visible: creation.taskbar_visible,
-                initial_presentation,
-                attempted_window_draw: false,
-            })));
+            let presentation_shutdown_authority = Arc::new(Mutex::new(
+                MacPresentationShutdownAuthority::new(handle.window_id()),
+            ));
+            let mut window = Self(
+                Arc::new(Mutex::new(MacWindowState {
+                    handle,
+                    foreground_executor,
+                    background_executor,
+                    native_window,
+                    native_view: NonNull::new_unchecked(native_view),
+                    blurred_view: None,
+                    background_appearance: WindowBackgroundAppearance::Opaque,
+                    cursor_style: CursorStyle::Arrow,
+                    cursor_visible,
+                    display_link: None,
+                    renderer: renderer::new_renderer(
+                        renderer_context,
+                        native_window as *mut _,
+                        native_view as *mut _,
+                        bounds.size.map(|pixels| pixels.as_f32()),
+                        false,
+                    ),
+                    presentation_shutdown_authority: presentation_shutdown_authority.clone(),
+                    request_frame_callback: None,
+                    event_callback: PlatformInputCallbackSlot::default(),
+                    activate_callback: None,
+                    resize_callback: None,
+                    moved_callback: None,
+                    window_state_change_callback: None,
+                    should_close_callback: None,
+                    close_callback: None,
+                    appearance_changed_callback: None,
+                    input_handler: PlatformInputHandlerSlot::default(),
+                    last_key_equivalent: None,
+                    synthetic_drag_counter: 0,
+                    traffic_light_position: titlebar
+                        .as_ref()
+                        .and_then(|titlebar| titlebar.traffic_light_position),
+                    transparent_titlebar: titlebar
+                        .as_ref()
+                        .is_none_or(|titlebar| titlebar.appears_transparent),
+                    previous_modifiers_changed_event: None,
+                    keystroke_for_do_command: None,
+                    do_command_handled: None,
+                    external_files_dragged: false,
+                    first_mouse: false,
+                    windowed_restore_bounds: creation.restore_bounds,
+                    fullscreen_restore_bounds: creation.restore_bounds,
+                    pending_fullscreen_restore_bounds: matches!(
+                        creation.state,
+                        MacWindowCreationState::Fullscreen
+                    )
+                    .then_some(creation.restore_bounds),
+                    move_tab_to_new_window_callback: None,
+                    merge_all_windows_callback: None,
+                    select_next_tab_callback: None,
+                    select_previous_tab_callback: None,
+                    toggle_tab_bar_callback: None,
+                    activated_least_once: false,
+                    closed: Arc::new(AtomicBool::new(false)),
+                    accesskit_adapter: None,
+                    creation_facts,
+                    accepts_pointer_input: creation.accepts_pointer_input,
+                    activation_policy: creation.activation_policy,
+                    topmost: creation.topmost,
+                    taskbar_visible: creation.taskbar_visible,
+                    initial_presentation,
+                    attempted_window_draw: false,
+                })),
+                presentation_shutdown_authority,
+            );
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -1539,6 +1597,9 @@ fn dispatch_mac_window_command(
             complete_mac_initial_presentation(&window_state, activate);
             PlatformWindowCommandOutcome::Accepted
         }
+        PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
+            PlatformWindowCommandOutcome::Rejected
+        }
         PlatformWindowCommand::Activate => {
             if activate_mac_window(&window_state) {
                 PlatformWindowCommandOutcome::Accepted
@@ -1562,6 +1623,81 @@ impl PlatformWindow for MacWindow {
         PlatformWindowCommandDispatcher::new(move |command| {
             dispatch_mac_window_command(&window_state, command)
         })
+    }
+
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown {
+        // The prepared shutdown owns the native state until it has detached the
+        // AppKit layer and drained the last Metal command buffer. A weak
+        // reference would allow a shutdown fallback to acknowledge quiescence
+        // without proving either condition.
+        let window_state = self.0.clone();
+        let shutdown = self
+            .1
+            .lock()
+            .claim(shutdown)
+            .expect("a platform-window shutdown ticket must match its native window");
+        PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
+            let native_view = {
+                let Some(mut state) = window_state.try_lock() else {
+                    return PlatformPresentationShutdownOutcome::Rejected;
+                };
+
+                if shutdown.snapshot().window_id() != state.handle.window_id() {
+                    return PlatformPresentationShutdownOutcome::Rejected;
+                }
+
+                if state.renderer.is_quiesced_for(shutdown) {
+                    return PlatformPresentationShutdownOutcome::Quiesced;
+                }
+                if !state.renderer.reserve_surface_quiescence(shutdown) {
+                    return PlatformPresentationShutdownOutcome::Rejected;
+                }
+
+                state.stop_display_link();
+                state.request_frame_callback = None;
+                state.native_view
+            };
+
+            // AppKit may synchronously ask the view to make its backing layer. That callback
+            // needs the same window-state mutex, so no Objective-C message is sent while it is
+            // held.
+            unsafe {
+                let _: () = msg_send![native_view.as_ptr(), setLayer: nil];
+            }
+
+            let Some(mut state) = window_state.try_lock() else {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            };
+            if shutdown.snapshot().window_id() != state.handle.window_id() {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            }
+            if state.renderer.finish_surface_quiescence(shutdown) {
+                PlatformPresentationShutdownOutcome::Quiesced
+            } else {
+                PlatformPresentationShutdownOutcome::Rejected
+            }
+        })
+    }
+
+    fn retire_native_window(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> PlatformNativeWindowRetirementOutcome {
+        let Some(state) = self.0.try_lock() else {
+            return PlatformNativeWindowRetirementOutcome::Rejected;
+        };
+        if shutdown.snapshot().window_id() != state.handle.window_id() {
+            PlatformNativeWindowRetirementOutcome::Rejected
+        } else if !state.renderer.is_quiesced_for(shutdown) {
+            PlatformNativeWindowRetirementOutcome::Rejected
+        } else if state.is_closed() {
+            PlatformNativeWindowRetirementOutcome::NativeWindowTerminal
+        } else {
+            PlatformNativeWindowRetirementOutcome::Accepted
+        }
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
@@ -3087,6 +3223,15 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         let (event_callback, input_handler, close_callback) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
+            let shutdown = lock.presentation_shutdown_authority.lock().ticket();
+            if !shutdown.acknowledge_native_terminal() {
+                let snapshot = shutdown.snapshot();
+                log::error!(
+                    "native macOS window reached close before presentation quiescence was acknowledged for window {:?}, generation {}",
+                    snapshot.window_id(),
+                    snapshot.generation(),
+                );
+            }
             let (event_callback, input_handler) = lock.mark_closed();
             (event_callback, input_handler, lock.close_callback.take())
         };

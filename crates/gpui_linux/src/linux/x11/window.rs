@@ -6,13 +6,17 @@ use open_gpui::{
     AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, DisplayId, ForegroundExecutor,
     GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
-    PlatformInputHandlerSlot, PlatformWindow, PlatformWindowCommand,
+    PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
     PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams, px,
+    Point, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
+    WindowDecorations, WindowKind, WindowParams, WindowPresentationShutdownTicket, px,
 };
-use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
+use open_gpui_wgpu::{
+    CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
+};
 
 use open_gpui_util::{ResultExt, maybe};
 use raw_window_handle as rwh;
@@ -499,6 +503,9 @@ impl X11WindowCommandTarget {
                 }
                 state.initial_presentation_completed = true;
                 PlatformWindowCommandOutcome::Accepted
+            }
+            PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
+                PlatformWindowCommandOutcome::Rejected
             }
             PlatformWindowCommand::Activate if state.activation_policy.accepts_activation => {
                 x11_command_outcome(activate_x11_window(&state, &self.xcb, self.x_window))
@@ -1230,36 +1237,50 @@ pub(crate) struct X11Window(pub X11WindowStatePtr, Rc<()>);
 impl Drop for X11Window {
     fn drop(&mut self) {
         self.0.terminate_callback_slots();
-        let mut state = self.0.state.borrow_mut();
 
-        state.renderer.destroy();
-
-        let destroy_x_window = maybe!({
-            check_reply(
-                || "X11 DestroyWindow failure.",
-                self.0.xcb.destroy_window(self.0.x_window),
-            )?;
-            xcb_flush(&self.0.xcb);
-
-            anyhow::Ok(())
-        })
-        .log_err();
-
-        if destroy_x_window.is_some() {
-            state.destroyed = true;
-
-            let this_ptr = self.0.clone();
-            let client_ptr = state.client.clone();
-            state
-                .executor
-                .spawn(async move {
-                    this_ptr.close();
-                    client_ptr.drop_window(this_ptr.x_window);
-                })
-                .detach();
+        let can_release_surface = self
+            .0
+            .state
+            .borrow()
+            .renderer
+            .surface_owner_release_is_safe();
+        if !can_release_surface {
+            log::error!(
+                "X11 window dropped before exact presentation shutdown drained submitted GPU work; retaining backend owner"
+            );
+            std::mem::forget(self.0.clone());
+            return;
         }
 
-        drop(state);
+        let mut state = self.0.state.borrow_mut();
+        let native_destroy_needed = !state.destroyed;
+        state.renderer.destroy();
+
+        if native_destroy_needed {
+            if let Err(error) = check_reply(
+                || "X11 DestroyWindow failed during a safe presentation rollback.",
+                self.0.xcb.destroy_window(self.0.x_window),
+            ) {
+                log::error!(
+                    "X11 window rollback could not retire its native window; retaining backend owner: {error}"
+                );
+                drop(state);
+                std::mem::forget(self.0.clone());
+                return;
+            }
+            xcb_flush(&self.0.xcb);
+            state.destroyed = true;
+        }
+
+        let this_ptr = self.0.clone();
+        let client_ptr = state.client.clone();
+        state
+            .executor
+            .spawn(async move {
+                this_ptr.close();
+                client_ptr.drop_window(this_ptr.x_window);
+            })
+            .detach();
     }
 }
 
@@ -1673,6 +1694,63 @@ impl PlatformWindow for X11Window {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
         let target = X11WindowCommandTarget::new(self);
         PlatformWindowCommandDispatcher::new(move |command| target.dispatch(command))
+    }
+
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown {
+        let state = Rc::clone(&self.0.state);
+        PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
+            let Ok(mut state) = state.try_borrow_mut() else {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            };
+            if shutdown.snapshot().window_id() != state.handle.window_id() {
+                return PlatformPresentationShutdownOutcome::Rejected;
+            }
+
+            match state.renderer.quiesce_surface(shutdown) {
+                WgpuSurfaceShutdownProgress::Quiesced => {
+                    PlatformPresentationShutdownOutcome::Quiesced
+                }
+                WgpuSurfaceShutdownProgress::EnteredDraining
+                | WgpuSurfaceShutdownProgress::Draining
+                | WgpuSurfaceShutdownProgress::Rejected => {
+                    PlatformPresentationShutdownOutcome::Rejected
+                }
+            }
+        })
+    }
+
+    fn retire_native_window(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> PlatformNativeWindowRetirementOutcome {
+        if !shutdown.snapshot().quiesced() {
+            return PlatformNativeWindowRetirementOutcome::Rejected;
+        }
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return PlatformNativeWindowRetirementOutcome::Rejected;
+        };
+        if shutdown.snapshot().window_id() != state.handle.window_id()
+            || !state.renderer.is_quiesced_for(shutdown)
+        {
+            return PlatformNativeWindowRetirementOutcome::Rejected;
+        }
+        if state.destroyed {
+            return PlatformNativeWindowRetirementOutcome::NativeWindowTerminal;
+        }
+
+        if let Err(error) = check_reply(
+            || "X11 DestroyWindow failed while retiring a quiesced native window.",
+            self.0.xcb.destroy_window(self.0.x_window),
+        ) {
+            log::warn!("X11 native-window retirement will retry: {error:#}");
+            return PlatformNativeWindowRetirementOutcome::Rejected;
+        }
+        xcb_flush(&self.0.xcb);
+        state.destroyed = true;
+        PlatformNativeWindowRetirementOutcome::Accepted
     }
 
     fn bounds(&self) -> Bounds<Pixels> {

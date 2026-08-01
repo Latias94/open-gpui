@@ -296,7 +296,6 @@ impl CommandBuffer {
         self.0.waitUntilScheduled();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn wait_until_completed(&self) {
         self.0.waitUntilCompleted();
     }

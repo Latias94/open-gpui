@@ -71,6 +71,41 @@ impl From<DispatchEventResult> for TestInputDispatchSnapshot {
     }
 }
 
+/// Stable test-facing outcome for a simulated platform close request.
+///
+/// A native platform can be vetoed while a higher-level owner continues a
+/// coordinated shutdown. The outcome deliberately exposes only facts owned by the
+/// generic platform boundary; component-specific session acceptance remains the
+/// responsibility of that component's state machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TestWindowCloseRequestOutcome {
+    native_close_allowed: bool,
+    logical_window_removed: bool,
+    native_terminal_started: bool,
+}
+
+impl TestWindowCloseRequestOutcome {
+    /// Returns whether the synchronous native close callback allowed immediate native terminal.
+    pub const fn native_close_allowed(&self) -> bool {
+        self.native_close_allowed
+    }
+
+    /// Returns whether the logical window was removed from the App registry.
+    pub const fn logical_window_removed(&self) -> bool {
+        self.logical_window_removed
+    }
+
+    /// Returns whether the test platform observed the native window as terminal.
+    pub const fn native_terminal_started(&self) -> bool {
+        self.native_terminal_started
+    }
+
+    /// Returns whether the request began any terminal transition observable by the test platform.
+    pub const fn terminal_transition_started(&self) -> bool {
+        self.logical_window_removed || self.native_terminal_started
+    }
+}
+
 /// Holds a TestPlatform native close callback after GPUI has removed the logical window.
 ///
 /// Call [`Self::release`] to deliver the terminal native `Closed` event at a controlled point.
@@ -684,18 +719,47 @@ impl TestAppContext {
 
     /// Simulates the user closing a platform window.
     ///
-    /// Returns true when the window accepted the close request and was removed
-    /// from the app. This exercises the same App-side removal path that
-    /// `QuitMode::LastWindowClosed` observes.
+    /// Returns true when the request began a logical or native terminal transition.
+    ///
+    /// This exercises the same App-side removal path that
+    /// `QuitMode::LastWindowClosed` observes when the logical window is removed.
     pub fn simulate_window_close(&mut self, window: AnyWindowHandle) -> bool {
+        self.simulate_window_close_request(window)
+            .terminal_transition_started()
+    }
+
+    /// Simulates a user close request and exposes both App and native outcomes.
+    ///
+    /// Use this when a test must distinguish a native terminal veto from a rejected
+    /// user close request. A native veto does not by itself indicate whether a
+    /// component-specific close coordinator accepted the request; consult that
+    /// coordinator's state separately.
+    pub fn simulate_window_close_request(
+        &mut self,
+        window: AnyWindowHandle,
+    ) -> TestWindowCloseRequestOutcome {
         let platform_window = self.test_window(window);
-        if !platform_window.should_close() {
-            return false;
+        let native_close_allowed = platform_window.should_close();
+        let mut logical_window_removed = !self.windows().contains(&window);
+        if !native_close_allowed && !logical_window_removed {
+            return TestWindowCloseRequestOutcome {
+                native_close_allowed,
+                logical_window_removed,
+                native_terminal_started: false,
+            };
         }
 
-        let closed = !self.windows().contains(&window) || platform_window.simulate_close();
+        if !logical_window_removed && native_close_allowed {
+            let _ = platform_window.simulate_close();
+        }
         self.background_executor.run_until_parked();
-        closed
+        logical_window_removed = !self.windows().contains(&window);
+        let native_terminal_started = platform_window.is_native_terminal();
+        TestWindowCloseRequestOutcome {
+            native_close_allowed,
+            logical_window_removed,
+            native_terminal_started,
+        }
     }
 
     /// Run the given task on the main thread.
@@ -1058,6 +1122,13 @@ impl TestAppContext {
                 .min()
         })
         .unwrap()
+    }
+
+    /// Returns the most recently created test platform window, including one whose
+    /// synchronous creation transaction later failed before registry commit.
+    #[cfg(test)]
+    pub(crate) fn last_created_test_window(&self) -> Option<TestWindow> {
+        self.test_platform.last_created_window()
     }
 
     /// Returns the `TestWindow` backing the given handle.
@@ -1601,11 +1672,13 @@ impl VisualTestContext {
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
         let platform_window = self.cx.test_window(self.window);
-        if !platform_window.should_close() {
+        let native_close_allowed = platform_window.should_close();
+        let app_close_committed = !self.cx.windows().contains(&self.window);
+        if !native_close_allowed && !app_close_committed {
             return false;
         }
 
-        let closed = !self.cx.windows().contains(&self.window) || platform_window.simulate_close();
+        let closed = app_close_committed || platform_window.simulate_close();
         self.background_executor.run_until_parked();
         closed
     }

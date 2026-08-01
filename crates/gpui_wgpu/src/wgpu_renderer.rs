@@ -5,14 +5,18 @@ use open_gpui::{
     AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, GpuSpecs,
     MonochromeSprite, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite, PrimitiveBatch,
     PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite, Underline,
-    get_gamma_correction_ratios,
+    WindowPresentationShutdownTicket, get_gamma_correction_ratios,
 };
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::cell::RefCell;
 use std::num::NonZeroU64;
 use std::rc::Rc;
+#[cfg(target_family = "wasm")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_family = "wasm"))]
+use std::time::Duration;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -282,6 +286,138 @@ impl WgpuResources {
     }
 }
 
+/// Progress of an exact surface-presentation shutdown attempt.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WgpuSurfaceShutdownProgress {
+    /// The exact ticket has claimed the renderer and GPU work is being drained.
+    EnteredDraining,
+    /// The exact ticket remains in flight and must be retried after more GPU progress.
+    Draining,
+    /// Surface-bound resources were released after the exact ticket finished draining.
+    Quiesced,
+    /// Another ticket owns shutdown, or the requested transition was unsafe.
+    Rejected,
+}
+
+enum SurfacePresentationShutdown {
+    Open,
+    Draining {
+        ticket: WindowPresentationShutdownTicket,
+        #[cfg(target_family = "wasm")]
+        web_completion: Option<Arc<AtomicBool>>,
+    },
+    Quiesced {
+        ticket: WindowPresentationShutdownTicket,
+        drain_completed: bool,
+    },
+}
+
+impl Default for SurfacePresentationShutdown {
+    fn default() -> Self {
+        Self::Open
+    }
+}
+
+impl SurfacePresentationShutdown {
+    fn begin(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> WgpuSurfaceShutdownProgress {
+        if shutdown.snapshot().quiesced() {
+            return if self.is_quiesced_for(shutdown) {
+                WgpuSurfaceShutdownProgress::Quiesced
+            } else {
+                WgpuSurfaceShutdownProgress::Rejected
+            };
+        }
+
+        match self {
+            Self::Open => {
+                *self = Self::Draining {
+                    ticket: shutdown.clone(),
+                    #[cfg(target_family = "wasm")]
+                    web_completion: None,
+                };
+                WgpuSurfaceShutdownProgress::EnteredDraining
+            }
+            Self::Draining { ticket, .. } if ticket.same_authority(shutdown) => {
+                WgpuSurfaceShutdownProgress::Draining
+            }
+            Self::Quiesced { ticket, .. } if ticket.same_authority(shutdown) => {
+                WgpuSurfaceShutdownProgress::Quiesced
+            }
+            Self::Draining { .. } | Self::Quiesced { .. } => WgpuSurfaceShutdownProgress::Rejected,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        !matches!(self, Self::Open)
+    }
+
+    fn is_draining_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        matches!(
+            self,
+            Self::Draining { ticket, .. } if ticket.same_authority(shutdown)
+        )
+    }
+
+    fn is_quiesced_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        matches!(
+            self,
+            Self::Quiesced {
+                ticket,
+                drain_completed: true,
+            } if ticket.same_authority(shutdown)
+        ) && shutdown.snapshot().quiesced()
+    }
+
+    fn mark_quiesced(&mut self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        let snapshot = shutdown.snapshot();
+        if !self.is_draining_for(shutdown) || !snapshot.quiesced() || snapshot.native_terminal() {
+            return false;
+        }
+
+        *self = Self::Quiesced {
+            ticket: shutdown.clone(),
+            drain_completed: true,
+        };
+        true
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn web_completion(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> Option<Arc<AtomicBool>> {
+        match self {
+            Self::Draining {
+                ticket,
+                web_completion,
+            } if ticket.same_authority(shutdown) => web_completion.clone(),
+            Self::Open | Self::Draining { .. } | Self::Quiesced { .. } => None,
+        }
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn install_web_completion(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+        completion: Arc<AtomicBool>,
+    ) -> bool {
+        match self {
+            Self::Draining {
+                ticket,
+                web_completion,
+            } if ticket.same_authority(shutdown) && web_completion.is_none() => {
+                *web_completion = Some(completion);
+                true
+            }
+            Self::Open | Self::Draining { .. } | Self::Quiesced { .. } => false,
+        }
+    }
+}
+
 pub struct WgpuRenderer {
     /// Shared GPU context for device recovery coordination (unused on WASM).
     #[allow(dead_code)]
@@ -312,6 +448,8 @@ pub struct WgpuRenderer {
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
     surface_configured: bool,
     needs_redraw: bool,
+    presentation_shutdown: SurfacePresentationShutdown,
+    last_submission: Option<wgpu::SubmissionIndex>,
 }
 
 impl WgpuRenderer {
@@ -631,6 +769,8 @@ impl WgpuRenderer {
             device_lost: context.device_lost_flag(),
             surface_configured: true,
             needs_redraw: false,
+            presentation_shutdown: SurfacePresentationShutdown::default(),
+            last_submission: None,
         })
     }
 
@@ -1140,6 +1280,10 @@ impl WgpuRenderer {
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
+        if self.presentation_shutdown.is_active() {
+            return;
+        }
+
         let width = size.width.0 as u32;
         let height = size.height.0 as u32;
 
@@ -1221,6 +1365,10 @@ impl WgpuRenderer {
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
+        if self.presentation_shutdown.is_active() {
+            return;
+        }
+
         let new_alpha_mode = if transparent {
             self.transparent_alpha_mode
         } else {
@@ -1277,6 +1425,10 @@ impl WgpuRenderer {
     }
 
     fn reconfigure_surface(&mut self) {
+        if self.presentation_shutdown.is_active() {
+            return;
+        }
+
         let surface_config = self.surface_config.clone();
         let resources = self.resources_mut();
         if let Some(surface) = &resources.surface {
@@ -1285,6 +1437,10 @@ impl WgpuRenderer {
     }
 
     fn recreate_surface(&mut self) -> anyhow::Result<()> {
+        if self.presentation_shutdown.is_active() {
+            return Ok(());
+        }
+
         let configured = self.surface_configured;
         if configured {
             // Keep requesting frames even when creation fails so the retained factory can retry.
@@ -1338,6 +1494,10 @@ impl WgpuRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) -> PlatformWindowPresentOutcome {
+        if self.presentation_shutdown.is_active() {
+            return PlatformWindowPresentOutcome::Deferred;
+        }
+
         // Bail out early if the surface has been unconfigured (e.g. during
         // Android background/rotation transitions).  Attempting to acquire
         // a texture from an unconfigured surface can block indefinitely on
@@ -1588,9 +1748,11 @@ impl WgpuRenderer {
                 continue;
             }
 
-            self.resources()
+            let submission = self
+                .resources()
                 .queue
                 .submit(std::iter::once(encoder.finish()));
+            self.last_submission = Some(submission);
             self.resources().queue.present(frame);
             return PlatformWindowPresentOutcome::Submitted;
         }
@@ -2058,10 +2220,15 @@ impl WgpuRenderer {
     /// (e.g. Android `TerminateWindow`) but you intend to re-create the
     /// surface later without losing cached atlas textures.
     pub fn unconfigure_surface(&mut self) {
+        if self.presentation_shutdown.is_active() {
+            return;
+        }
+
         self.surface_configured = false;
+        self.last_submission = None;
         // Drop surface-bound resources before the native window becomes invalid.
         if let Some(res) = self.resources.as_mut() {
-            res.surface.take();
+            drop(res.surface.take());
             res.invalidate_intermediate_textures();
         }
     }
@@ -2081,6 +2248,11 @@ impl WgpuRenderer {
         config: WgpuSurfaceConfig,
         instance: &wgpu::Instance,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.presentation_shutdown.is_active(),
+            "cannot replace a quiesced presentation surface"
+        );
+
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
@@ -2123,6 +2295,7 @@ impl WgpuRenderer {
 
         self.surface_factory = surface_factory;
         self.surface_configured = true;
+        self.last_submission = None;
 
         Ok(())
     }
@@ -2131,16 +2304,198 @@ impl WgpuRenderer {
         // Release surface-bound GPU resources eagerly so the underlying native
         // window can be destroyed before the renderer itself is dropped.
         self.resources.take();
+        self.last_submission = None;
+    }
+
+    /// Claims renderer presentation shutdown for one exact ticket without releasing resources.
+    ///
+    /// The caller must drive a draining ticket to [`WgpuSurfaceShutdownProgress::Quiesced`]
+    /// before retiring the native surface owner.
+    #[doc(hidden)]
+    pub fn begin_surface_shutdown(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> WgpuSurfaceShutdownProgress {
+        self.presentation_shutdown.begin(shutdown)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    /// Drains submitted native GPU work, then releases surface-bound WGPU resources.
+    ///
+    /// A timeout or poll error leaves the exact ticket in `Draining` so the platform retirement
+    /// operation can retry without releasing its native owner.
+    #[doc(hidden)]
+    pub fn quiesce_surface(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> WgpuSurfaceShutdownProgress {
+        match self.begin_surface_shutdown(shutdown) {
+            WgpuSurfaceShutdownProgress::Rejected | WgpuSurfaceShutdownProgress::Quiesced => {
+                return self.shutdown_progress_for(shutdown);
+            }
+            WgpuSurfaceShutdownProgress::EnteredDraining
+            | WgpuSurfaceShutdownProgress::Draining => {}
+        }
+
+        let Some(submission) = self.last_submission.clone() else {
+            return self.finish_surface_shutdown(shutdown);
+        };
+        let poll_result = self.resources.as_ref().map(|resources| {
+            resources.device.poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(Duration::from_millis(50)),
+            })
+        });
+        match poll_result {
+            None | Some(Ok(_)) => self.finish_surface_shutdown(shutdown),
+            Some(Err(error)) => {
+                warn!(
+                    "presentation shutdown is waiting for submitted GPU work before surface release: {error:?}"
+                );
+                WgpuSurfaceShutdownProgress::Draining
+            }
+        }
+    }
+
+    #[cfg(target_family = "wasm")]
+    /// Advances an already-claimed WebGPU surface shutdown after the browser reports queue work.
+    ///
+    /// The first call for a submitted frame only registers a completion callback and returns
+    /// `Draining`. A later retry completes release after the callback publishes readiness.
+    #[doc(hidden)]
+    pub fn advance_web_surface_shutdown(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> WgpuSurfaceShutdownProgress {
+        if self.presentation_shutdown.is_quiesced_for(shutdown) {
+            return self.shutdown_progress_for(shutdown);
+        }
+        if !self.presentation_shutdown.is_draining_for(shutdown) {
+            return WgpuSurfaceShutdownProgress::Rejected;
+        }
+        if self.last_submission.is_none() {
+            return self.finish_surface_shutdown(shutdown);
+        }
+
+        if let Some(completion) = self.presentation_shutdown.web_completion(shutdown) {
+            return if completion.load(Ordering::Acquire) {
+                self.finish_surface_shutdown(shutdown)
+            } else {
+                WgpuSurfaceShutdownProgress::Draining
+            };
+        }
+
+        let Some(queue) = self
+            .resources
+            .as_ref()
+            .map(|resources| resources.queue.clone())
+        else {
+            return self.finish_surface_shutdown(shutdown);
+        };
+        let completion = Arc::new(AtomicBool::new(false));
+        if !self
+            .presentation_shutdown
+            .install_web_completion(shutdown, completion.clone())
+        {
+            return WgpuSurfaceShutdownProgress::Rejected;
+        }
+        queue.on_submitted_work_done(move || {
+            completion.store(true, Ordering::Release);
+        });
+        WgpuSurfaceShutdownProgress::Draining
+    }
+
+    fn finish_surface_shutdown(
+        &mut self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> WgpuSurfaceShutdownProgress {
+        if !self.presentation_shutdown.is_draining_for(shutdown)
+            || shutdown.snapshot().native_terminal()
+        {
+            return WgpuSurfaceShutdownProgress::Rejected;
+        }
+
+        self.surface_configured = false;
+        self.needs_redraw = false;
+        if let Some(resources) = self.resources.as_mut() {
+            drop(resources.surface.take());
+            resources.invalidate_intermediate_textures();
+        }
+
+        if !shutdown.acknowledge_quiesced() || !self.presentation_shutdown.mark_quiesced(shutdown) {
+            return WgpuSurfaceShutdownProgress::Rejected;
+        }
+        self.last_submission = None;
+        self.shutdown_progress_for(shutdown)
+    }
+
+    fn shutdown_progress_for(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> WgpuSurfaceShutdownProgress {
+        if self.is_quiesced_for(shutdown) {
+            WgpuSurfaceShutdownProgress::Quiesced
+        } else if self.is_draining_for(shutdown) {
+            WgpuSurfaceShutdownProgress::Draining
+        } else {
+            WgpuSurfaceShutdownProgress::Rejected
+        }
+    }
+
+    /// Returns whether the renderer has accepted any presentation shutdown ticket.
+    #[doc(hidden)]
+    pub fn presentation_shutdown_active(&self) -> bool {
+        self.presentation_shutdown.is_active()
+    }
+
+    /// Returns whether this exact ticket is still draining submitted GPU work.
+    #[doc(hidden)]
+    pub fn is_draining_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        self.presentation_shutdown.is_draining_for(shutdown)
+    }
+
+    /// Returns whether this exact ticket completed GPU draining and released the WGPU surface.
+    #[doc(hidden)]
+    pub fn is_quiesced_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
+        self.presentation_shutdown.is_quiesced_for(shutdown)
+            && self.last_submission.is_none()
+            && !self.surface_configured
+            && self
+                .resources
+                .as_ref()
+                .is_none_or(|resources| resources.surface.is_none())
+    }
+
+    /// Returns whether dropping the backend owner can release the surface safely.
+    ///
+    /// A renderer with no submitted work may be dropped before an exact shutdown ticket is
+    /// prepared. Once a submission exists, only a completed exact shutdown may release the
+    /// surface; an in-flight or rejected ticket fails closed.
+    #[doc(hidden)]
+    pub fn surface_owner_release_is_safe(&self) -> bool {
+        match &self.presentation_shutdown {
+            SurfacePresentationShutdown::Open => self.last_submission.is_none(),
+            SurfacePresentationShutdown::Draining { .. } => false,
+            SurfacePresentationShutdown::Quiesced { ticket, .. } => {
+                let ticket = ticket.clone();
+                self.is_quiesced_for(&ticket)
+            }
+        }
     }
 
     /// Returns true if the GPU device was lost and recovery is needed.
     pub fn device_lost(&self) -> bool {
-        self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
+        !self.presentation_shutdown.is_active()
+            && self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Returns true if a redraw is needed because GPU state was cleared.
     /// Calling this method clears the flag.
     pub fn needs_redraw(&mut self) -> bool {
+        if self.presentation_shutdown.is_active() {
+            self.needs_redraw = false;
+            return false;
+        }
         std::mem::take(&mut self.needs_redraw)
     }
 
@@ -2156,6 +2511,11 @@ impl WgpuRenderer {
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
     {
+        anyhow::ensure!(
+            !self.presentation_shutdown.is_active(),
+            "cannot recover a quiesced presentation surface"
+        );
+
         let gpu_context = self.context.as_ref().expect("recover requires gpu_context");
 
         // Check if another window already recovered the context
@@ -2288,6 +2648,49 @@ mod abi_layout_tests {
         fn drop(&mut self) {
             self.drop_count.set(self.drop_count.get() + 1);
         }
+    }
+
+    #[test]
+    fn surface_shutdown_requires_the_same_exact_ticket() {
+        let ticket = WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(7), 1);
+        let same_ticket = ticket.clone();
+        let same_generation_but_distinct_ticket =
+            WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(7), 1);
+        let different_generation =
+            WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(7), 2);
+
+        let mut shutdown = SurfacePresentationShutdown::default();
+        assert_eq!(
+            shutdown.begin(&ticket),
+            WgpuSurfaceShutdownProgress::EnteredDraining
+        );
+        assert_eq!(
+            shutdown.begin(&same_ticket),
+            WgpuSurfaceShutdownProgress::Draining
+        );
+        assert_eq!(
+            shutdown.begin(&same_generation_but_distinct_ticket),
+            WgpuSurfaceShutdownProgress::Rejected
+        );
+        assert_eq!(
+            shutdown.begin(&different_generation),
+            WgpuSurfaceShutdownProgress::Rejected
+        );
+        assert!(shutdown.is_draining_for(&same_ticket));
+        assert!(!shutdown.is_quiesced_for(&same_ticket));
+        assert!(!shutdown.mark_quiesced(&same_ticket));
+
+        assert!(same_generation_but_distinct_ticket.acknowledge_quiesced());
+        assert!(!shutdown.mark_quiesced(&same_generation_but_distinct_ticket));
+        assert!(shutdown.is_draining_for(&same_ticket));
+
+        assert!(ticket.acknowledge_quiesced());
+        assert!(shutdown.mark_quiesced(&same_ticket));
+        assert!(shutdown.is_quiesced_for(&same_ticket));
+        assert_eq!(
+            shutdown.begin(&same_ticket),
+            WgpuSurfaceShutdownProgress::Quiesced
+        );
     }
 
     #[test]

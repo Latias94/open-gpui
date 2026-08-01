@@ -397,6 +397,7 @@ fn native_close_during_hidden_initial_presentation_rolls_back_the_surface_openin
     cx.set_platform_window_creation_capabilities(PlatformWindowCreationCapabilities {
         focus_on_appearing: WindowCreationSupport::Supported,
         transient_for: WindowCreationSupport::Supported,
+        provisional_presentation: WindowCreationSupport::Supported,
         initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
     });
     cx.close_next_window_during_initial_presentation();
@@ -461,9 +462,18 @@ fn anchor_close_veto_force_closes_dependents_before_anchor(cx: &mut open_gpui::T
 
     assert!(cx.windows().contains(&anchor));
     assert!(cx.windows().contains(&dependent));
+    let close = cx.simulate_window_close_request(anchor);
     assert!(
-        !cx.simulate_window_close(anchor),
+        !close.native_close_allowed(),
         "the native close must be vetoed until the surface coordinator runs"
+    );
+    assert!(
+        close.logical_window_removed(),
+        "the surface coordinator must remove the anchor after the dependents converge"
+    );
+    assert!(
+        close.native_terminal_started(),
+        "the committed coordinated close must reach native terminal before it returns"
     );
     cx.update(|_| {});
     cx.run_until_parked();
@@ -875,7 +885,10 @@ fn delayed_native_terminals_block_reopen_until_the_exact_generation_converges(
     let dependent_terminal = cx.hold_window_native_terminal(dependent);
     let anchor_terminal = cx.hold_window_native_terminal(anchor);
 
-    assert!(!cx.simulate_window_close(anchor));
+    let close = cx.simulate_window_close_request(anchor);
+    assert!(!close.native_close_allowed());
+    assert!(!close.logical_window_removed());
+    assert!(!close.native_terminal_started());
     let synchronously_frozen = cx.update(|cx| surface.window_session_status(cx));
     assert_eq!(
         synchronously_frozen.phase(),
@@ -1032,7 +1045,9 @@ fn facade_windows_retain_session_authority_after_application_drops_surface_handl
         owner.upgrade().is_some(),
         "facade-created hosts must retain their shared session authority"
     );
-    assert!(!cx.simulate_window_close(anchor));
+    let close = cx.simulate_window_close_request(anchor);
+    assert!(!close.native_close_allowed());
+    assert!(close.logical_window_removed());
     cx.update(|_| {});
     cx.run_until_parked();
 
@@ -1278,7 +1293,9 @@ fn anchor_shutdown_isolated_to_its_surface_generation(cx: &mut open_gpui::TestAp
             )
         });
 
-    assert!(!cx.simulate_window_close(first_anchor));
+    let close = cx.simulate_window_close_request(first_anchor);
+    assert!(!close.native_close_allowed());
+    assert!(close.logical_window_removed());
     cx.update(|_| {});
     cx.run_until_parked();
 

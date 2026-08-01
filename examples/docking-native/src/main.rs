@@ -1176,6 +1176,7 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
                 creation: PlatformWindowCreationCapabilities {
                     focus_on_appearing: WindowCreationSupport::Supported,
                     transient_for: WindowCreationSupport::Supported,
+                    provisional_presentation: WindowCreationSupport::Unsupported,
                     initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
                 },
                 mutations: PlatformWindowMutationCapabilities {
@@ -1230,6 +1231,7 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
                     creation: PlatformWindowCreationCapabilities {
                         focus_on_appearing: WindowCreationSupport::Supported,
                         transient_for: WindowCreationSupport::Unsupported,
+                        provisional_presentation: WindowCreationSupport::Unsupported,
                         initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
                     },
                     mutations: PlatformWindowMutationCapabilities {
@@ -2589,7 +2591,9 @@ mod tests {
             (surface, anchor, dependent)
         });
 
-        assert!(!cx.simulate_window_close(anchor));
+        let close = cx.simulate_window_close_request(anchor);
+        assert!(!close.native_close_allowed());
+        assert!(close.logical_window_removed());
         cx.run_until_parked();
 
         assert!(!cx.windows().contains(&dependent));
@@ -3872,6 +3876,7 @@ mod tests {
             creation: PlatformWindowCreationCapabilities {
                 focus_on_appearing: WindowCreationSupport::Supported,
                 transient_for: WindowCreationSupport::Unsupported,
+                provisional_presentation: WindowCreationSupport::Unsupported,
                 initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
             },
             mutations: PlatformWindowMutationCapabilities {

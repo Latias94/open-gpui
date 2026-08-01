@@ -53,6 +53,7 @@ use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use open_gpui_scheduler::Instant;
 pub use open_gpui_scheduler::RunnableMeta;
+use parking_lot::Mutex as ParkingMutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -645,6 +646,8 @@ pub struct PlatformWindowCreationCapabilities {
     pub focus_on_appearing: WindowCreationSupport,
     /// Support for a typed top-level transient owner relationship.
     pub transient_for: WindowCreationSupport,
+    /// Support for a hidden first presentation followed by an exact-generation reveal in place.
+    pub provisional_presentation: WindowCreationSupport,
     /// Required ordering of the first submitted frame and native visibility.
     pub initial_presentation_order: WindowInitialPresentationOrder,
 }
@@ -759,6 +762,483 @@ pub enum WindowInitialPresentationStatus {
     Completed,
     /// The backend rejected both bounded command attempts.
     Rejected,
+}
+
+/// The exact lifecycle phase of a private provisional top-level window session.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowProvisionalSessionPhase {
+    /// The session exists before a committed full window id is available.
+    Unbound,
+    /// The exact window is bound but remains non-interactive.
+    Gated,
+    /// The exact window was promoted in place and may accept interaction.
+    Promoted,
+    /// Presentation and interaction are terminal for this generation.
+    Terminal,
+}
+
+/// An immutable synchronous observation of one provisional-window generation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowProvisionalSessionSnapshot {
+    generation: u64,
+    window_id: Option<WindowId>,
+    phase: WindowProvisionalSessionPhase,
+}
+
+impl WindowProvisionalSessionSnapshot {
+    /// Returns the immutable provisional-session generation.
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the committed full window id once binding succeeds.
+    pub const fn window_id(self) -> Option<WindowId> {
+        self.window_id
+    }
+
+    /// Returns the exact lifecycle phase.
+    pub const fn phase(self) -> WindowProvisionalSessionPhase {
+        self.phase
+    }
+
+    /// Returns whether native and framework interaction are admitted.
+    pub const fn accepts_interaction(self) -> bool {
+        matches!(self.phase, WindowProvisionalSessionPhase::Promoted)
+    }
+
+    /// Returns whether the window must remain natively hit-transparent.
+    pub const fn requires_native_hit_transparency(self) -> bool {
+        !matches!(self.phase, WindowProvisionalSessionPhase::Promoted)
+    }
+}
+
+/// A failed exact-generation provisional-window state transition.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum WindowProvisionalSessionError {
+    /// The session generation must be non-zero.
+    #[error("provisional window-session generation must be non-zero")]
+    ZeroGeneration,
+    /// A different full window id already owns the session.
+    #[error("provisional window session is bound to a different window")]
+    WindowMismatch,
+    /// The requested transition is not valid for the current phase.
+    #[error("provisional window-session transition is not valid for the current phase")]
+    InvalidPhase,
+    /// Another pending window opening already owns this session.
+    #[error("provisional window session is already claimed by another opening")]
+    AlreadyClaimed,
+}
+
+#[derive(Debug)]
+struct WindowProvisionalSessionState {
+    window_id: Option<WindowId>,
+    phase: WindowProvisionalSessionPhase,
+    opening_claimed: bool,
+    reveal_ticket: Option<WindowProvisionalRevealTicket>,
+}
+
+pub(crate) struct WindowProvisionalOpeningClaim {
+    session: WindowProvisionalSession,
+}
+
+impl Drop for WindowProvisionalOpeningClaim {
+    fn drop(&mut self) {
+        let mut state = self.session.state.lock();
+        if state.phase == WindowProvisionalSessionPhase::Unbound && state.window_id.is_none() {
+            state.opening_claimed = false;
+        }
+    }
+}
+
+/// A generation-bound interaction and presentation gate for one provisional top-level window.
+///
+/// This is intentionally a hidden cross-crate capability used by framework-owned window
+/// authorities. It is not a general-purpose visibility or activation API.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct WindowProvisionalSession {
+    generation: u64,
+    state: Arc<ParkingMutex<WindowProvisionalSessionState>>,
+}
+
+/// Terminal status of one exact provisional reveal request.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowProvisionalRevealOutcome {
+    /// The request has not reached a terminal native boundary yet.
+    Pending,
+    /// The exact HWND became visible without activation.
+    Revealed,
+    /// The owning backend rejected the exact reveal request.
+    Rejected,
+    /// The backend accepted the command without publishing the required native observation.
+    NativeObservationMissing,
+    /// The target full window generation was no longer current.
+    Stale,
+    /// The application or native window became terminal before reveal.
+    WindowTerminal,
+}
+
+/// Relative native Z-order result observed for one provisional reveal.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowProvisionalRevealZOrder {
+    /// The requested placement was retained exactly.
+    Exact,
+    /// The platform adjusted the requested placement while retaining a usable visible window.
+    Adjusted,
+    /// The backend could not observe a meaningful relative placement.
+    Unavailable,
+}
+
+/// Native facts observed synchronously for one exact provisional reveal command.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowProvisionalRevealNativeFacts {
+    native_visible: bool,
+    foreground_unchanged: bool,
+    native_hit_transparent: bool,
+    stable_native_window_identity: bool,
+    z_order: WindowProvisionalRevealZOrder,
+}
+
+impl WindowProvisionalRevealNativeFacts {
+    /// Creates one backend observation for the exact reveal command being dispatched.
+    pub const fn new(
+        native_visible: bool,
+        foreground_unchanged: bool,
+        native_hit_transparent: bool,
+        stable_native_window_identity: bool,
+        z_order: WindowProvisionalRevealZOrder,
+    ) -> Self {
+        Self {
+            native_visible,
+            foreground_unchanged,
+            native_hit_transparent,
+            stable_native_window_identity,
+            z_order,
+        }
+    }
+
+    /// Returns whether the exact native window was visible after the command.
+    pub const fn native_visible(self) -> bool {
+        self.native_visible
+    }
+
+    /// Returns whether the command preserved the foreground window.
+    pub const fn foreground_unchanged(self) -> bool {
+        self.foreground_unchanged
+    }
+
+    /// Returns whether native hit testing observed the provisional as transparent.
+    pub const fn native_hit_transparent(self) -> bool {
+        self.native_hit_transparent
+    }
+
+    /// Returns whether the command retained the original native-window identity.
+    pub const fn stable_native_window_identity(self) -> bool {
+        self.stable_native_window_identity
+    }
+
+    /// Returns the relative native Z-order observation.
+    pub const fn z_order(self) -> WindowProvisionalRevealZOrder {
+        self.z_order
+    }
+
+    /// Returns whether the mandatory no-activation reveal facts were all satisfied.
+    pub const fn accepts_reveal(self) -> bool {
+        self.native_visible
+            && self.foreground_unchanged
+            && self.native_hit_transparent
+            && self.stable_native_window_identity
+    }
+}
+
+/// Immutable facts for one exact provisional reveal request.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowProvisionalRevealSnapshot {
+    window_id: WindowId,
+    session_generation: u64,
+    minimum_presentation_generation: u64,
+    presentation_generation: Option<u64>,
+    native_facts: Option<WindowProvisionalRevealNativeFacts>,
+    outcome: WindowProvisionalRevealOutcome,
+}
+
+impl WindowProvisionalRevealSnapshot {
+    /// Returns the exact committed full window id.
+    pub const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
+    /// Returns the owning provisional-session generation.
+    pub const fn session_generation(self) -> u64 {
+        self.session_generation
+    }
+
+    /// Returns the first renderer generation eligible to reveal the window.
+    pub const fn minimum_presentation_generation(self) -> u64 {
+        self.minimum_presentation_generation
+    }
+
+    /// Returns the exact renderer generation bound to the native reveal.
+    pub const fn presentation_generation(self) -> Option<u64> {
+        self.presentation_generation
+    }
+
+    /// Returns the native observation published by the backend.
+    pub const fn native_facts(self) -> Option<WindowProvisionalRevealNativeFacts> {
+        self.native_facts
+    }
+
+    /// Returns the terminal or pending reveal outcome.
+    pub const fn outcome(self) -> WindowProvisionalRevealOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug)]
+struct WindowProvisionalRevealState {
+    presentation_generation: Option<u64>,
+    native_facts: Option<WindowProvisionalRevealNativeFacts>,
+    outcome: WindowProvisionalRevealOutcome,
+}
+
+/// A cloneable exact-generation receipt that survives the target [`Window`].
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct WindowProvisionalRevealTicket {
+    window_id: WindowId,
+    session_generation: u64,
+    minimum_presentation_generation: u64,
+    state: Arc<ParkingMutex<WindowProvisionalRevealState>>,
+}
+
+impl WindowProvisionalRevealTicket {
+    pub(crate) fn new(
+        window_id: WindowId,
+        session_generation: u64,
+        minimum_presentation_generation: u64,
+    ) -> Self {
+        Self {
+            window_id,
+            session_generation,
+            minimum_presentation_generation,
+            state: Arc::new(ParkingMutex::new(WindowProvisionalRevealState {
+                presentation_generation: None,
+                native_facts: None,
+                outcome: WindowProvisionalRevealOutcome::Pending,
+            })),
+        }
+    }
+
+    /// Returns an immutable snapshot that survives the target window.
+    pub fn snapshot(&self) -> WindowProvisionalRevealSnapshot {
+        let state = self.state.lock();
+        WindowProvisionalRevealSnapshot {
+            window_id: self.window_id,
+            session_generation: self.session_generation,
+            minimum_presentation_generation: self.minimum_presentation_generation,
+            presentation_generation: state.presentation_generation,
+            native_facts: state.native_facts,
+            outcome: state.outcome,
+        }
+    }
+
+    pub(crate) fn bind_presentation(&self, generation: u64) -> bool {
+        let mut state = self.state.lock();
+        if state.outcome != WindowProvisionalRevealOutcome::Pending
+            || state.presentation_generation.is_some()
+            || generation < self.minimum_presentation_generation
+        {
+            return false;
+        }
+        state.presentation_generation = Some(generation);
+        true
+    }
+
+    fn record_native_facts(
+        &self,
+        generation: u64,
+        facts: WindowProvisionalRevealNativeFacts,
+    ) -> bool {
+        let mut state = self.state.lock();
+        if state.outcome != WindowProvisionalRevealOutcome::Pending
+            || state.presentation_generation != Some(generation)
+            || state.native_facts.is_some()
+        {
+            return false;
+        }
+        state.native_facts = Some(facts);
+        true
+    }
+
+    pub(crate) fn settle(&self, outcome: WindowProvisionalRevealOutcome) -> bool {
+        debug_assert_ne!(outcome, WindowProvisionalRevealOutcome::Pending);
+        let mut state = self.state.lock();
+        if state.outcome != WindowProvisionalRevealOutcome::Pending {
+            return false;
+        }
+        state.outcome = if outcome == WindowProvisionalRevealOutcome::Revealed
+            && state.native_facts.is_none()
+        {
+            WindowProvisionalRevealOutcome::NativeObservationMissing
+        } else {
+            outcome
+        };
+        true
+    }
+}
+
+impl WindowProvisionalSession {
+    /// Creates one unbound, non-interactive provisional generation.
+    pub fn new(generation: u64) -> Result<Self, WindowProvisionalSessionError> {
+        if generation == 0 {
+            return Err(WindowProvisionalSessionError::ZeroGeneration);
+        }
+        Ok(Self {
+            generation,
+            state: Arc::new(ParkingMutex::new(WindowProvisionalSessionState {
+                window_id: None,
+                phase: WindowProvisionalSessionPhase::Unbound,
+                opening_claimed: false,
+                reveal_ticket: None,
+            })),
+        })
+    }
+
+    pub(crate) fn claim_opening(
+        &self,
+    ) -> Result<WindowProvisionalOpeningClaim, WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        if state.phase != WindowProvisionalSessionPhase::Unbound || state.window_id.is_some() {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        if state.opening_claimed {
+            return Err(WindowProvisionalSessionError::AlreadyClaimed);
+        }
+        state.opening_claimed = true;
+        drop(state);
+        Ok(WindowProvisionalOpeningClaim {
+            session: self.clone(),
+        })
+    }
+
+    /// Returns one synchronous immutable snapshot without borrowing [`App`].
+    pub fn snapshot(&self) -> WindowProvisionalSessionSnapshot {
+        let state = self.state.lock();
+        WindowProvisionalSessionSnapshot {
+            generation: self.generation,
+            window_id: state.window_id,
+            phase: state.phase,
+        }
+    }
+
+    pub(crate) fn register_reveal_ticket(
+        &self,
+        ticket: WindowProvisionalRevealTicket,
+    ) -> Result<(), WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        if state.window_id != Some(ticket.window_id)
+            || state.phase != WindowProvisionalSessionPhase::Gated
+            || self.generation != ticket.session_generation
+            || state.reveal_ticket.is_some()
+        {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        state.reveal_ticket = Some(ticket);
+        Ok(())
+    }
+
+    /// Records the native facts for the exact generation currently armed by GPUI.
+    #[doc(hidden)]
+    pub fn record_native_reveal(
+        &self,
+        window_id: WindowId,
+        presentation_generation: u64,
+        facts: WindowProvisionalRevealNativeFacts,
+    ) -> Result<(), WindowProvisionalSessionError> {
+        let ticket = {
+            let state = self.state.lock();
+            if state.window_id != Some(window_id) {
+                return Err(WindowProvisionalSessionError::WindowMismatch);
+            }
+            if state.phase != WindowProvisionalSessionPhase::Gated {
+                return Err(WindowProvisionalSessionError::InvalidPhase);
+            }
+            state
+                .reveal_ticket
+                .clone()
+                .ok_or(WindowProvisionalSessionError::InvalidPhase)?
+        };
+        if ticket.record_native_facts(presentation_generation, facts) {
+            Ok(())
+        } else {
+            Err(WindowProvisionalSessionError::InvalidPhase)
+        }
+    }
+
+    /// Binds the exact committed full window id while preserving the interaction gate.
+    pub(crate) fn bind(&self, window_id: WindowId) -> Result<(), WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        match (state.window_id, state.phase) {
+            (None, WindowProvisionalSessionPhase::Unbound) if state.opening_claimed => {
+                state.window_id = Some(window_id);
+                state.phase = WindowProvisionalSessionPhase::Gated;
+                state.opening_claimed = false;
+                Ok(())
+            }
+            (Some(current), WindowProvisionalSessionPhase::Gated) if current == window_id => Ok(()),
+            (Some(current), _) if current != window_id => {
+                Err(WindowProvisionalSessionError::WindowMismatch)
+            }
+            _ => Err(WindowProvisionalSessionError::InvalidPhase),
+        }
+    }
+
+    /// Promotes the exact bound window in place and admits interaction.
+    pub(crate) fn promote(&self, window_id: WindowId) -> Result<(), WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        match (state.window_id, state.phase) {
+            (Some(current), WindowProvisionalSessionPhase::Gated) if current == window_id => {
+                state.phase = WindowProvisionalSessionPhase::Promoted;
+                Ok(())
+            }
+            (Some(current), WindowProvisionalSessionPhase::Promoted) if current == window_id => {
+                Ok(())
+            }
+            (Some(current), _) if current != window_id => {
+                Err(WindowProvisionalSessionError::WindowMismatch)
+            }
+            _ => Err(WindowProvisionalSessionError::InvalidPhase),
+        }
+    }
+
+    /// Makes presentation and interaction terminal for the exact bound window.
+    pub(crate) fn terminate(
+        &self,
+        window_id: WindowId,
+    ) -> Result<(), WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        match state.window_id {
+            Some(current) if current != window_id => {
+                Err(WindowProvisionalSessionError::WindowMismatch)
+            }
+            Some(_) => {
+                state.phase = WindowProvisionalSessionPhase::Terminal;
+                Ok(())
+            }
+            None => Err(WindowProvisionalSessionError::InvalidPhase),
+        }
+    }
+
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.generation == other.generation && Arc::ptr_eq(&self.state, &other.state)
+    }
 }
 
 /// A coherent snapshot of facts observed from a platform window.
@@ -1275,7 +1755,13 @@ pub enum ResizeEdge {
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlatformWindowCommand {
-    CompleteInitialPresentation { activate: bool },
+    CompleteInitialPresentation {
+        activate: bool,
+    },
+    RevealDeferredInitialPresentation {
+        session_generation: u64,
+        presentation_generation: u64,
+    },
     Activate,
     ShowWindowMenu(Point<Pixels>),
     StartWindowMove,
@@ -1316,6 +1802,199 @@ pub enum PlatformNativeWindowRetirementOutcome {
     NativeWindowTerminal,
     /// Retirement was not accepted and must be retried while retaining the platform-window owner.
     Rejected,
+}
+
+/// The synchronous result of asking a prepared platform window to quiesce presentation.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformPresentationShutdownOutcome {
+    /// All surface-bound renderer work acknowledged quiescence for the exact shutdown ticket.
+    Quiesced,
+    /// Quiescence could not be proven and must be retried while retaining the native owner.
+    Rejected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowPresentationShutdownPhase {
+    Claimed,
+    Quiesced,
+    NativeTerminal,
+    TerminalBeforeQuiesce,
+}
+
+/// Immutable facts for one exact presentation-shutdown generation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowPresentationShutdownSnapshot {
+    window_id: WindowId,
+    generation: u64,
+    quiesced: bool,
+    native_terminal: bool,
+    protocol_violation: bool,
+}
+
+impl WindowPresentationShutdownSnapshot {
+    /// Returns the exact full window id owned by the shutdown generation.
+    pub const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
+    /// Returns the opaque shutdown generation.
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Returns whether surface-bound presentation work acknowledged quiescence.
+    pub const fn quiesced(self) -> bool {
+        self.quiesced
+    }
+
+    /// Returns whether the native window published terminal state.
+    pub const fn native_terminal(self) -> bool {
+        self.native_terminal
+    }
+
+    /// Returns whether native terminal was observed before renderer quiescence.
+    pub const fn protocol_violation(self) -> bool {
+        self.protocol_violation
+    }
+}
+
+/// A cloneable exact-generation receipt that orders renderer quiescence before native terminal.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct WindowPresentationShutdownTicket {
+    window_id: WindowId,
+    generation: u64,
+    phase: Arc<ParkingMutex<WindowPresentationShutdownPhase>>,
+}
+
+impl WindowPresentationShutdownTicket {
+    /// Creates one exact presentation-shutdown generation for framework-owned backend work.
+    #[doc(hidden)]
+    pub fn new(window_id: WindowId, generation: u64) -> Self {
+        assert_ne!(
+            generation, 0,
+            "presentation-shutdown generation must be non-zero"
+        );
+        Self {
+            window_id,
+            generation,
+            phase: Arc::new(ParkingMutex::new(WindowPresentationShutdownPhase::Claimed)),
+        }
+    }
+
+    /// Returns immutable shutdown facts without borrowing [`App`].
+    pub fn snapshot(&self) -> WindowPresentationShutdownSnapshot {
+        let phase = *self.phase.lock();
+        WindowPresentationShutdownSnapshot {
+            window_id: self.window_id,
+            generation: self.generation,
+            quiesced: matches!(
+                phase,
+                WindowPresentationShutdownPhase::Quiesced
+                    | WindowPresentationShutdownPhase::NativeTerminal
+            ),
+            native_terminal: matches!(
+                phase,
+                WindowPresentationShutdownPhase::NativeTerminal
+                    | WindowPresentationShutdownPhase::TerminalBeforeQuiesce
+            ),
+            protocol_violation: phase == WindowPresentationShutdownPhase::TerminalBeforeQuiesce,
+        }
+    }
+
+    /// Returns whether both handles name the same exact shutdown authority.
+    #[doc(hidden)]
+    pub fn same_authority(&self, other: &Self) -> bool {
+        self.window_id == other.window_id
+            && self.generation == other.generation
+            && Arc::ptr_eq(&self.phase, &other.phase)
+    }
+
+    /// Acknowledges release of surface-bound presentation work for this exact generation.
+    #[doc(hidden)]
+    pub fn acknowledge_quiesced(&self) -> bool {
+        let mut phase = self.phase.lock();
+        match *phase {
+            WindowPresentationShutdownPhase::Claimed => {
+                *phase = WindowPresentationShutdownPhase::Quiesced;
+                true
+            }
+            WindowPresentationShutdownPhase::Quiesced
+            | WindowPresentationShutdownPhase::NativeTerminal => true,
+            WindowPresentationShutdownPhase::TerminalBeforeQuiesce => false,
+        }
+    }
+
+    /// Acknowledges the exact native-window terminal after renderer quiescence.
+    #[doc(hidden)]
+    pub fn acknowledge_native_terminal(&self) -> bool {
+        let mut phase = self.phase.lock();
+        match *phase {
+            WindowPresentationShutdownPhase::Claimed => {
+                *phase = WindowPresentationShutdownPhase::TerminalBeforeQuiesce;
+                false
+            }
+            WindowPresentationShutdownPhase::Quiesced => {
+                *phase = WindowPresentationShutdownPhase::NativeTerminal;
+                true
+            }
+            WindowPresentationShutdownPhase::NativeTerminal => true,
+            WindowPresentationShutdownPhase::TerminalBeforeQuiesce => false,
+        }
+    }
+}
+
+/// A backend-owned presentation shutdown prepared against one exact window generation.
+///
+/// Preparation may run while GPUI owns its application borrow, so it must only snapshot
+/// backend-owned memory. The retained operation performs renderer quiescence later, after the
+/// application borrow has been returned. Retries reuse the same exact authority.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PreparedPlatformPresentationShutdown {
+    ticket: WindowPresentationShutdownTicket,
+    quiesce: Rc<dyn Fn(&WindowPresentationShutdownTicket) -> PlatformPresentationShutdownOutcome>,
+}
+
+impl PreparedPlatformPresentationShutdown {
+    /// Creates a prepared presentation shutdown for a platform backend.
+    #[doc(hidden)]
+    pub fn new(
+        ticket: WindowPresentationShutdownTicket,
+        quiesce: impl Fn(&WindowPresentationShutdownTicket) -> PlatformPresentationShutdownOutcome
+        + 'static,
+    ) -> Self {
+        Self {
+            ticket,
+            quiesce: Rc::new(quiesce),
+        }
+    }
+
+    /// Returns immutable facts for the exact shutdown authority.
+    pub fn snapshot(&self) -> WindowPresentationShutdownSnapshot {
+        self.ticket.snapshot()
+    }
+
+    pub(crate) fn ticket(&self) -> &WindowPresentationShutdownTicket {
+        &self.ticket
+    }
+
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.ticket.same_authority(&other.ticket)
+    }
+
+    pub(crate) fn quiesce(&self) -> PlatformPresentationShutdownOutcome {
+        let outcome = (self.quiesce)(&self.ticket);
+        if outcome == PlatformPresentationShutdownOutcome::Quiesced
+            && !self.ticket.snapshot().quiesced()
+        {
+            PlatformPresentationShutdownOutcome::Rejected
+        } else {
+            outcome
+        }
+    }
 }
 
 /// A backend-owned pointer-capture release prepared against one exact pointer session.
@@ -2057,14 +2736,29 @@ pub struct RequestFrameOptions {
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher;
+    /// Prepares renderer quiescence without performing native or renderer effects.
+    ///
+    /// The returned operation is dispatched only after GPUI has released its application borrow.
+    #[doc(hidden)]
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown;
     /// Begins native-window retirement without consuming the platform-window owner.
     ///
     /// Backends whose object drop is an infallible retirement request may use the default. A
     /// backend with a fallible native destroy operation must report rejection so GPUI can retain
     /// the owner and retry.
     #[doc(hidden)]
-    fn retire_native_window(&self) -> PlatformNativeWindowRetirementOutcome {
-        PlatformNativeWindowRetirementOutcome::Accepted
+    fn retire_native_window(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> PlatformNativeWindowRetirementOutcome {
+        if shutdown.snapshot().quiesced() {
+            PlatformNativeWindowRetirementOutcome::Accepted
+        } else {
+            PlatformNativeWindowRetirementOutcome::Rejected
+        }
     }
     fn bounds(&self) -> Bounds<Pixels>;
     /// Returns one stable physical client-geometry observation when supported.
@@ -2170,6 +2864,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn is_fullscreen(&self) -> bool;
+    /// Requests one backend frame callback without requiring native visibility.
+    #[doc(hidden)]
+    fn request_frame(&self, _options: RequestFrameOptions) {}
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: PlatformInputCallback);
     fn on_modifiers_changed(&self, _callback: Box<dyn FnMut(ModifiersChangedEvent)>) {}
@@ -3463,6 +4160,10 @@ pub struct WindowOptions {
     /// Whether the window should be shown when created
     pub show: bool,
 
+    /// Private exact-generation provisional presentation and interaction authority.
+    #[doc(hidden)]
+    pub provisional_session: Option<WindowProvisionalSession>,
+
     /// Typed top-level owner relationship for native grouping and z-order behavior.
     ///
     /// Native ownership does not imply application lifecycle ownership.
@@ -3557,6 +4258,9 @@ pub struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub show: bool,
 
+    #[doc(hidden)]
+    pub provisional_session: Option<WindowProvisionalSession>,
+
     /// An image to set as the window icon (x11 only)
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub icon: Option<Arc<image::RgbaImage>>,
@@ -3616,6 +4320,7 @@ impl Default for WindowOptions {
             focus_on_appearing: true,
             activation_policy: WindowActivationPolicy::default(),
             show: true,
+            provisional_session: None,
             transient_for: None,
             kind: WindowKind::Normal,
             is_movable: true,
@@ -4337,6 +5042,33 @@ mod image_tests {
         for pixel in bytes.chunks_exact(4) {
             assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
         }
+    }
+}
+
+#[cfg(test)]
+mod presentation_shutdown_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_before_quiescence_permanently_poison_shutdown_ticket() {
+        let ticket = WindowPresentationShutdownTicket::new(WindowId::from(7), 1);
+
+        assert!(!ticket.acknowledge_native_terminal());
+        assert_eq!(
+            ticket.snapshot(),
+            WindowPresentationShutdownSnapshot {
+                window_id: WindowId::from(7),
+                generation: 1,
+                quiesced: false,
+                native_terminal: true,
+                protocol_violation: true,
+            }
+        );
+
+        assert!(!ticket.acknowledge_quiesced());
+        assert!(!ticket.acknowledge_native_terminal());
+        assert!(!ticket.snapshot().quiesced());
+        assert!(ticket.snapshot().protocol_violation());
     }
 }
 

@@ -9,7 +9,7 @@ use std::{
     str::FromStr,
     sync::{
         Arc, Once,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -38,6 +38,8 @@ use open_gpui::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
+static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeWindowLifecycle {
     Live,
@@ -64,12 +66,78 @@ impl Drop for CreatedNativeWindowGuard {
         let Some(hwnd) = self.hwnd.take() else {
             return;
         };
+        // This guard exists only for the internal-invariant path where
+        // `WM_NCCREATE` did not produce a `WindowsWindowInner`. Once an inner
+        // exists, `ConstructionRetirementGuard` must own retirement so the
+        // renderer is quiesced before the HWND reaches `WM_NCDESTROY`.
         if unsafe { IsWindow(Some(hwnd)).as_bool() } {
             unsafe {
                 DestroyWindow(hwnd)
                     .context("rolling back partially constructed native window")
                     .log_err();
             }
+        }
+    }
+}
+
+/// Owns a native window while fallible post-`CreateWindowExW` construction is
+/// still in progress.
+///
+/// `WM_NCCREATE` installs an HWND-owned `Rc<WindowsWindowInner>` before
+/// `CreateWindowExW` returns. Retiring that HWND through a raw `DestroyWindow`
+/// after this point would allow `WM_NCDESTROY` to run before DirectX teardown.
+/// This guard instead preserves the `Rc` until the exact presentation shutdown
+/// protocol has reached native terminal, including across a failed first
+/// `DestroyWindow` attempt.
+struct ConstructionRetirementGuard {
+    inner: Option<Rc<WindowsWindowInner>>,
+}
+
+impl ConstructionRetirementGuard {
+    fn new(inner: Rc<WindowsWindowInner>) -> Self {
+        Self { inner: Some(inner) }
+    }
+
+    fn inner(&self) -> &Rc<WindowsWindowInner> {
+        self.inner
+            .as_ref()
+            .expect("a construction-retirement guard must own its window before commit")
+    }
+
+    fn commit(mut self) -> WindowsWindow {
+        WindowsWindow(
+            self.inner
+                .take()
+                .expect("a construction-retirement guard must own its window before commit"),
+        )
+    }
+
+    fn retire(inner: &WindowsWindowInner) -> bool {
+        inner.destroy_native_window()
+    }
+}
+
+impl Drop for ConstructionRetirementGuard {
+    fn drop(&mut self) {
+        let Some(inner) = self.inner.take() else {
+            return;
+        };
+
+        let _ = Self::retire(&inner);
+        if inner.is_native_window_terminal() {
+            return;
+        }
+
+        if let Some(coordinator) = inner.native_retirement_coordinator.upgrade() {
+            log::error!(
+                "native window construction rollback did not reach native terminal; transferring the exact native window to the platform retirement coordinator"
+            );
+            coordinator.enqueue_construction_native_window(inner);
+        } else {
+            log::error!(
+                "native window construction rollback lost its platform retirement coordinator; retaining the managed native owner fail-closed"
+            );
+            std::mem::forget(inner);
         }
     }
 }
@@ -244,6 +312,9 @@ pub(crate) struct WindowsWindowInner {
     native_window_lifecycle: Cell<NativeWindowLifecycle>,
     drag_drop_registered: Cell<bool>,
     show_on_initial_presentation: Cell<bool>,
+    provisional_session: Option<WindowProvisionalSession>,
+    provisional_reveal_generation: Cell<Option<u64>>,
+    presentation_shutdown_ticket: RefCell<Option<WindowPresentationShutdownTicket>>,
     creation_facts: WindowCreationFacts,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: WindowsWindowState,
@@ -258,6 +329,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     raw_window_handles: std::sync::Weak<RegisteredWindows>,
+    pub(crate) native_retirement_coordinator: std::rc::Weak<WindowsPlatformInner>,
     owner_hwnd: Option<HWND>,
     modal_parent_disabled: Cell<bool>,
     #[cfg(test)]
@@ -562,8 +634,11 @@ impl WindowsWindowInner {
             native_window_lifecycle: Cell::new(NativeWindowLifecycle::Live),
             drag_drop_registered: Cell::new(false),
             show_on_initial_presentation: Cell::new(context.show_on_initial_presentation),
+            provisional_session: context.provisional_session.clone(),
+            provisional_reveal_generation: Cell::new(None),
+            presentation_shutdown_ticket: RefCell::new(None),
             creation_facts: WindowCreationFacts {
-                show: context.show_on_initial_presentation,
+                show: context.creation_show,
                 focus_on_appearing: context.focus_on_appearing,
                 transient_for: context.transient_for,
             },
@@ -583,6 +658,7 @@ impl WindowsWindowInner {
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
             raw_window_handles: context.raw_window_handles.clone(),
+            native_retirement_coordinator: context.native_retirement_coordinator.clone(),
             system_settings: WindowsSystemSettings::new(),
             owner_hwnd: context.owner_hwnd,
             modal_parent_disabled: Cell::new(context.modal_parent_disabled),
@@ -600,6 +676,12 @@ impl WindowsWindowInner {
     pub(crate) fn accepts_generation_bound_message(&self, generation: usize) -> bool {
         self.native_window_lifecycle.get() == NativeWindowLifecycle::Live
             && self.registration.generation() == generation
+    }
+
+    pub(crate) fn native_owner_window_id(&self) -> Option<WindowId> {
+        self.creation_facts
+            .transient_for
+            .map(|owner| owner.window_id())
     }
 
     fn revoke_drag_drop(&self) {
@@ -642,12 +724,35 @@ impl WindowsWindowInner {
         if self.native_window_lifecycle.get() == NativeWindowLifecycle::Destroyed {
             return;
         }
+        let shutdown = self.presentation_shutdown_ticket();
+        if shutdown.acknowledge_native_terminal() {
+            #[cfg(test)]
+            {
+                let snapshot = shutdown.snapshot();
+                self.lifecycle_test_probe.record_event(
+                    NativeWindowLifecycleTestEvent::NativeTerminal {
+                        window_id: snapshot.window_id(),
+                        generation: snapshot.generation(),
+                    },
+                );
+            }
+        } else {
+            let snapshot = shutdown.snapshot();
+            log::error!(
+                "native window reached WM_NCDESTROY before presentation quiescence was acknowledged for window {:?}, generation {}",
+                snapshot.window_id(),
+                snapshot.generation(),
+            );
+        }
         self.settle_pointer_capture_before_native_teardown();
         self.native_window_lifecycle
             .set(NativeWindowLifecycle::Destroyed);
         self.retire_native_callbacks();
         self.drag_drop_registered.set(false);
         self.release_modal_parent();
+        if let Some(coordinator) = self.native_retirement_coordinator.upgrade() {
+            coordinator.notify_native_window_terminal(self.registration);
+        }
     }
 
     pub(crate) fn release_modal_parent(&self) {
@@ -663,9 +768,124 @@ impl WindowsWindowInner {
         }
     }
 
-    pub(crate) fn destroy_native_window(&self) -> bool {
-        if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
+    fn bind_presentation_shutdown_ticket(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> bool {
+        if shutdown.snapshot().window_id() != self.handle.window_id() {
             return false;
+        }
+        let mut current = self.presentation_shutdown_ticket.borrow_mut();
+        if let Some(current) = current.as_ref() {
+            return current.same_authority(shutdown);
+        }
+        current.replace(shutdown.clone());
+        true
+    }
+
+    fn claim_presentation_shutdown_ticket(
+        &self,
+        candidate: WindowPresentationShutdownTicket,
+    ) -> Option<WindowPresentationShutdownTicket> {
+        if candidate.snapshot().window_id() != self.handle.window_id() {
+            return None;
+        }
+        let mut current = self.presentation_shutdown_ticket.borrow_mut();
+        if let Some(current) = current.as_ref() {
+            return Some(current.clone());
+        }
+        current.replace(candidate.clone());
+        Some(candidate)
+    }
+
+    pub(crate) fn presentation_shutdown_claimed(&self) -> bool {
+        self.presentation_shutdown_ticket.borrow().is_some()
+    }
+    pub(crate) fn presentation_shutdown_ticket(&self) -> WindowPresentationShutdownTicket {
+        if let Some(shutdown) = self.presentation_shutdown_ticket.borrow().as_ref() {
+            return shutdown.clone();
+        }
+        let generation =
+            NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION.fetch_add(1, Ordering::Relaxed);
+        assert_ne!(
+            generation, 0,
+            "emergency presentation-shutdown generation space exhausted"
+        );
+        let shutdown = WindowPresentationShutdownTicket::new(self.handle.window_id(), generation);
+        self.claim_presentation_shutdown_ticket(shutdown)
+            .expect("a new emergency shutdown ticket must match its native window")
+    }
+
+    pub(crate) fn quiesce_presentation(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> PlatformPresentationShutdownOutcome {
+        if !self.bind_presentation_shutdown_ticket(shutdown) {
+            return PlatformPresentationShutdownOutcome::Rejected;
+        }
+        #[cfg(test)]
+        let was_quiesced = shutdown.snapshot().quiesced();
+        let Ok(mut renderer) = self.state.renderer.try_borrow_mut() else {
+            return PlatformPresentationShutdownOutcome::Rejected;
+        };
+        if let Err(error) = renderer.quiesce_surface(shutdown) {
+            log::error!("failed to quiesce native window presentation: {error:#}");
+            return PlatformPresentationShutdownOutcome::Rejected;
+        }
+        drop(renderer);
+        #[cfg(test)]
+        if !was_quiesced {
+            let snapshot = shutdown.snapshot();
+            self.lifecycle_test_probe.record_event(
+                NativeWindowLifecycleTestEvent::PresentationQuiesced {
+                    window_id: snapshot.window_id(),
+                    generation: snapshot.generation(),
+                },
+            );
+        }
+        PlatformPresentationShutdownOutcome::Quiesced
+    }
+
+    pub(crate) fn destroy_native_window(&self) -> bool {
+        if self.is_native_window_terminal() {
+            return false;
+        }
+        let shutdown = self.presentation_shutdown_ticket();
+        if self.quiesce_presentation(&shutdown) != PlatformPresentationShutdownOutcome::Quiesced {
+            return false;
+        }
+        self.destroy_native_window_with_ticket(&shutdown)
+    }
+
+    fn destroy_native_window_with_ticket(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> bool {
+        if !self.bind_presentation_shutdown_ticket(shutdown) || !shutdown.snapshot().quiesced() {
+            return false;
+        }
+        let Ok(renderer) = self.state.renderer.try_borrow() else {
+            return false;
+        };
+        if !renderer.is_quiesced_for(shutdown) {
+            return false;
+        }
+        drop(renderer);
+        if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
+            if unsafe { !IsWindow(Some(self.hwnd)).as_bool() } {
+                self.mark_native_window_destroyed();
+            }
+            return false;
+        }
+        #[cfg(test)]
+        {
+            let snapshot = shutdown.snapshot();
+            self.lifecycle_test_probe.record_event(
+                NativeWindowLifecycleTestEvent::DestroyEntered {
+                    window_id: snapshot.window_id(),
+                    generation: snapshot.generation(),
+                },
+            );
         }
         #[cfg(test)]
         if self.lifecycle_test_probe.take_fail_next_destroy() {
@@ -686,7 +906,7 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn is_native_window_terminal(&self) -> bool {
-        if self.native_window_lifecycle.get() != NativeWindowLifecycle::Live {
+        if self.native_window_lifecycle.get() == NativeWindowLifecycle::Destroyed {
             return true;
         }
         if unsafe { !IsWindow(Some(self.hwnd)).as_bool() } {
@@ -893,10 +1113,98 @@ impl WindowsWindowInner {
         }
     }
 
+    pub(crate) fn provisional_accepts_interaction(&self) -> bool {
+        self.provisional_session.as_ref().is_none_or(|session| {
+            let snapshot = session.snapshot();
+            snapshot.window_id() == Some(self.handle.window_id()) && snapshot.accepts_interaction()
+        })
+    }
+
+    pub(crate) fn provisional_requires_hit_transparency(&self) -> bool {
+        self.provisional_session.is_some() && !self.provisional_accepts_interaction()
+    }
+
+    fn provisional_native_hit_is_transparent(&self) -> bool {
+        let mut rect = RECT::default();
+        if unsafe { GetWindowRect(self.hwnd, &mut rect) }.is_err() {
+            return false;
+        }
+        let x = rect
+            .left
+            .saturating_add((rect.right.saturating_sub(rect.left)) / 2);
+        let y = rect
+            .top
+            .saturating_add((rect.bottom.saturating_sub(rect.top)) / 2);
+        let packed = ((y as u32 & 0xffff) << 16) | (x as u32 & 0xffff);
+        unsafe {
+            SendMessageW(
+                self.hwnd,
+                WM_NCHITTEST,
+                Some(WPARAM::default()),
+                Some(LPARAM(packed as isize)),
+            )
+        }
+        .0 == HTTRANSPARENT as isize
+    }
+
+    fn reveal_deferred_initial_presentation(
+        self: &Rc<Self>,
+        session_generation: u64,
+        presentation_generation: u64,
+    ) -> PlatformWindowCommandOutcome {
+        if self.is_native_window_terminal()
+            || presentation_generation == 0
+            || self.provisional_reveal_generation.get().is_some()
+            || unsafe { IsWindowVisible(self.hwnd).as_bool() }
+        {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+        let Some(session) = self.provisional_session.as_ref() else {
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        let snapshot = session.snapshot();
+        if snapshot.generation() != session_generation
+            || snapshot.window_id() != Some(self.handle.window_id())
+            || snapshot.phase() != WindowProvisionalSessionPhase::Gated
+        {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+
+        self.provisional_reveal_generation
+            .set(Some(presentation_generation));
+        let foreground_before = unsafe { GetForegroundWindow() };
+        let show_result = self.present_pending_initial_placement(false, true);
+        if let Err(error) = show_result.as_ref() {
+            log::error!("failed to reveal deferred provisional presentation: {error:#}");
+        }
+        let native_visible = unsafe { IsWindowVisible(self.hwnd).as_bool() };
+        let facts = WindowProvisionalRevealNativeFacts::new(
+            native_visible,
+            unsafe { GetForegroundWindow() } == foreground_before,
+            self.provisional_native_hit_is_transparent(),
+            true,
+            WindowProvisionalRevealZOrder::Unavailable,
+        );
+        let recorded = session
+            .record_native_reveal(self.handle.window_id(), presentation_generation, facts)
+            .is_ok();
+        if matches!(show_result, Ok(true)) && recorded && facts.accepts_reveal() {
+            PlatformWindowCommandOutcome::Accepted
+        } else {
+            if native_visible {
+                unsafe {
+                    let _ = ShowWindow(self.hwnd, SW_HIDE);
+                }
+            }
+            PlatformWindowCommandOutcome::Rejected
+        }
+    }
+
     /// Must stay synchronous because activation APIs can pump window messages and command
     /// dispatch runs only after the application has released its mutable borrow.
     fn activate_now(self: &Rc<Self>) -> PlatformWindowCommandOutcome {
         if self.is_native_window_terminal()
+            || !self.provisional_accepts_interaction()
             || !self.state.activation_policy.get().accepts_activation
         {
             return PlatformWindowCommandOutcome::Rejected;
@@ -2158,13 +2466,16 @@ struct WindowCreateContext {
     main_receiver: PriorityQueueReceiver<RunnableVariant>,
     platform_window_handle: HWND,
     raw_window_handles: std::sync::Weak<RegisteredWindows>,
+    native_retirement_coordinator: std::rc::Weak<WindowsPlatformInner>,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     owner_hwnd: Option<HWND>,
     modal_parent_disabled: bool,
+    creation_show: bool,
     show_on_initial_presentation: bool,
+    provisional_session: Option<WindowProvisionalSession>,
     accepts_pointer_input: bool,
     focus_on_appearing: bool,
     activation_policy: WindowActivationPolicy,
@@ -2193,12 +2504,14 @@ impl WindowsWindow {
             main_receiver,
             platform_window_handle,
             raw_window_handles,
+            native_retirement_coordinator,
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
             #[cfg(test)]
             lifecycle_test_probe,
         } = creation_info;
+        let provisional_session = params.provisional_session.clone();
         register_window_class(icon);
         let hide_title_bar = params
             .titlebar
@@ -2286,13 +2599,16 @@ impl WindowsWindow {
             main_receiver,
             platform_window_handle,
             raw_window_handles,
+            native_retirement_coordinator,
             appearance,
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
             owner_hwnd,
             modal_parent_disabled: modal_parent_guard.owns_disable(),
-            show_on_initial_presentation: params.show,
+            creation_show: params.show,
+            show_on_initial_presentation: params.show && provisional_session.is_none(),
+            provisional_session,
             accepts_pointer_input: params.accepts_pointer_input,
             focus_on_appearing,
             activation_policy,
@@ -2328,6 +2644,17 @@ impl WindowsWindow {
             }
         };
         let hwnd_guard = CreatedNativeWindowGuard::new(hwnd);
+        let this = context
+            .inner
+            .take()
+            .context("native window creation did not initialize window state")??;
+        let construction_guard = ConstructionRetirementGuard::new(this);
+        // `WindowsWindowInner` now owns the modal-parent disable state. Keep
+        // the parent disabled if managed native retirement must retry after a
+        // fallible construction step.
+        hwnd_guard.commit();
+        modal_parent_guard.commit();
+
         if let Some(owner_hwnd) = owner_hwnd {
             let observed_owner = unsafe { GetWindow(hwnd, GW_OWNER) }
                 .context("failed to read back transient window owner")?;
@@ -2336,21 +2663,18 @@ impl WindowsWindow {
                 "native transient owner did not match the requested GPUI owner"
             );
         }
-        let this = context
-            .inner
-            .take()
-            .context("native window creation did not initialize window state")??;
-        let window = Self(this);
-        hwnd_guard.commit();
-        modal_parent_guard.commit();
 
         #[cfg(test)]
-        window.lifecycle_test_probe.record_created_hwnd(hwnd);
+        construction_guard
+            .inner()
+            .lifecycle_test_probe
+            .record_created_hwnd(hwnd);
 
-        register_drag_drop(&window.0)?;
-        window.0.drag_drop_registered.set(true);
+        register_drag_drop(construction_guard.inner())?;
+        construction_guard.inner().drag_drop_registered.set(true);
         #[cfg(test)]
-        if window
+        if construction_guard
+            .inner()
             .lifecycle_test_probe
             .take_fail_after_drag_drop_registration()
         {
@@ -2358,21 +2682,29 @@ impl WindowsWindow {
         }
         set_non_rude_hwnd(hwnd, true)?;
         configure_dwm_dark_mode(hwnd, appearance);
-        window.state.border_offset.update(hwnd)?;
+        construction_guard
+            .inner()
+            .state
+            .border_offset
+            .update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
             display,
             params.window_bounds.get_bounds(),
-            window.state.scale_factor.get(),
-            &window.state.border_offset,
+            construction_guard.inner().state.scale_factor.get(),
+            &construction_guard.inner().state.border_offset,
         )?;
         let open_status = WindowOpenStatus {
             placement,
             state: WindowOpenState::from(params.window_bounds),
         };
-        window.state.initial_placement.set(Some(open_status));
+        construction_guard
+            .inner()
+            .state
+            .initial_placement
+            .set(Some(open_status));
 
-        Ok(window)
+        Ok(construction_guard.commit())
     }
 }
 
@@ -2394,7 +2726,22 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
-        self.0.destroy_native_window();
+        let _ = self.0.destroy_native_window();
+        if self.0.is_native_window_terminal() {
+            return;
+        }
+        if let Some(coordinator) = self.0.native_retirement_coordinator.upgrade() {
+            log::error!(
+                "WindowsWindow drop did not reach native terminal; transferring it to the platform retirement coordinator"
+            );
+            coordinator.enqueue_app_owned_native_window(self.0.clone());
+        } else {
+            log::error!(
+                "WindowsWindow drop lost its platform retirement coordinator; retaining the managed native owner fail-closed"
+            );
+            let inner = self.0.clone();
+            std::mem::forget(inner);
+        }
     }
 }
 
@@ -2566,6 +2913,13 @@ impl PlatformWindow for WindowsWindow {
                     PlatformWindowCommand::CompleteInitialPresentation { activate } => {
                         window.complete_initial_presentation(activate)
                     }
+                    PlatformWindowCommand::RevealDeferredInitialPresentation {
+                        session_generation,
+                        presentation_generation,
+                    } => window.reveal_deferred_initial_presentation(
+                        session_generation,
+                        presentation_generation,
+                    ),
                     PlatformWindowCommand::Activate => window.activate_now(),
                     // Preserve the existing Windows behavior for currently unsupported commands.
                     PlatformWindowCommand::ShowWindowMenu(_)
@@ -2604,13 +2958,30 @@ impl PlatformWindow for WindowsWindow {
         )
     }
 
-    fn retire_native_window(&self) -> PlatformNativeWindowRetirementOutcome {
-        if self.0.is_native_window_terminal() {
-            return PlatformNativeWindowRetirementOutcome::NativeWindowTerminal;
-        }
-        if !self.0.destroy_native_window() {
+    fn prepare_presentation_shutdown(
+        &self,
+        shutdown: WindowPresentationShutdownTicket,
+    ) -> PreparedPlatformPresentationShutdown {
+        let window = self.0.clone();
+        let shutdown = window
+            .claim_presentation_shutdown_ticket(shutdown)
+            .expect("a platform-window shutdown ticket must match its native window");
+        PreparedPlatformPresentationShutdown::new(shutdown, move |shutdown| {
+            window.quiesce_presentation(shutdown)
+        })
+    }
+
+    fn retire_native_window(
+        &self,
+        shutdown: &WindowPresentationShutdownTicket,
+    ) -> PlatformNativeWindowRetirementOutcome {
+        if !self.0.destroy_native_window_with_ticket(shutdown) {
             return if self.0.is_native_window_terminal() {
-                PlatformNativeWindowRetirementOutcome::NativeWindowTerminal
+                if shutdown.snapshot().quiesced() {
+                    PlatformNativeWindowRetirementOutcome::NativeWindowTerminal
+                } else {
+                    PlatformNativeWindowRetirementOutcome::Rejected
+                }
             } else {
                 PlatformNativeWindowRetirementOutcome::Rejected
             };
@@ -2940,6 +3311,15 @@ impl PlatformWindow for WindowsWindow {
         self.state.is_fullscreen()
     }
 
+    fn request_frame(&self, options: RequestFrameOptions) {
+        if self.0.is_native_window_terminal() {
+            return;
+        }
+        let _ = with_windows_callback(&self.state.callbacks.request_frame, |callback| {
+            callback(options)
+        });
+    }
+
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.state.callbacks.request_frame.set(Some(callback));
     }
@@ -3074,8 +3454,13 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn a11y_init(&self, callbacks: open_gpui::A11yCallbacks) {
-        let action_handler = A11yActionHandler(callbacks.action);
-        let is_focused = unsafe { GetForegroundWindow() } == self.0.hwnd;
+        let action_handler = A11yActionHandler {
+            callback: callbacks.action,
+            provisional_session: self.0.provisional_session.clone(),
+            window_id: self.0.handle.window_id(),
+        };
+        let is_focused = self.0.provisional_accepts_interaction()
+            && unsafe { GetForegroundWindow() } == self.0.hwnd;
 
         let adapter = accesskit_windows::Adapter::new(
             accesskit_windows::HWND(self.0.hwnd.0),
@@ -3085,6 +3470,8 @@ impl PlatformWindow for WindowsWindow {
 
         let activation_handler = A11yActivationHandler {
             callback: callbacks.activation,
+            provisional_session: self.0.provisional_session.clone(),
+            window_id: self.0.handle.window_id(),
         };
 
         *self.state.a11y.borrow_mut() = Some(A11yState {
@@ -3094,6 +3481,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        if !self.0.provisional_accepts_interaction() {
+            return;
+        }
         let events = {
             let mut a11y = self.state.a11y.borrow_mut();
             a11y.as_mut()
@@ -3121,19 +3511,37 @@ pub(crate) struct A11yState {
 
 pub(crate) struct A11yActivationHandler {
     callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    provisional_session: Option<WindowProvisionalSession>,
+    window_id: WindowId,
 }
 
 impl accesskit::ActivationHandler for A11yActivationHandler {
     fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        if self.provisional_session.as_ref().is_some_and(|session| {
+            let snapshot = session.snapshot();
+            snapshot.window_id() != Some(self.window_id) || !snapshot.accepts_interaction()
+        }) {
+            return None;
+        }
         (self.callback)()
     }
 }
 
-struct A11yActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+struct A11yActionHandler {
+    callback: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
+    provisional_session: Option<WindowProvisionalSession>,
+    window_id: WindowId,
+}
 
 impl accesskit::ActionHandler for A11yActionHandler {
     fn do_action(&mut self, request: accesskit::ActionRequest) {
-        (self.0)(request);
+        if self.provisional_session.as_ref().is_some_and(|session| {
+            let snapshot = session.snapshot();
+            snapshot.window_id() != Some(self.window_id) || !snapshot.accepts_interaction()
+        }) {
+            return;
+        }
+        (self.callback)(request);
     }
 }
 
@@ -3155,6 +3563,12 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        if !self.0.provisional_accepts_interaction() {
+            unsafe {
+                *pdweffect = DROPEFFECT_NONE;
+            }
+            return Ok(());
+        }
         unsafe {
             let idata_obj = pdataobj.ok()?;
             let config = FORMATETC {
@@ -3212,6 +3626,12 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        if !self.0.provisional_accepts_interaction() {
+            unsafe {
+                *pdweffect = DROPEFFECT_NONE;
+            }
+            return Ok(());
+        }
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
             *pdweffect = DROPEFFECT_COPY;
@@ -3253,6 +3673,12 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        if !self.0.provisional_accepts_interaction() {
+            unsafe {
+                *pdweffect = DROPEFFECT_NONE;
+            }
+            return Ok(());
+        }
         let idata_obj = pdataobj.ok()?;
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {

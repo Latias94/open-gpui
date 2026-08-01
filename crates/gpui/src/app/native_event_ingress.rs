@@ -353,6 +353,18 @@ impl NativeEventIngress {
         self.enqueue_native_command(NativePlatformCommand::new(window_id, dispatcher, command));
     }
 
+    pub(super) fn enqueue_provisional_reveal(
+        &self,
+        window_id: WindowId,
+        dispatcher: PlatformWindowCommandDispatcher,
+        command: PlatformWindowCommand,
+        ticket: crate::WindowProvisionalRevealTicket,
+    ) {
+        self.enqueue_native_command(NativePlatformCommand::new_provisional_reveal(
+            window_id, dispatcher, command, ticket,
+        ));
+    }
+
     pub(super) fn enqueue_native_command(&self, command: NativePlatformCommand) {
         let sequence = self.reserve_sequence();
         self.enqueue_work(NativeWorkEnvelope::Command { sequence, command });
@@ -391,6 +403,23 @@ impl NativeEventIngress {
                 timer.await;
                 if let Some(app) = app.upgrade() {
                     app.retry_native_window_retirement(retirement);
+                }
+            })
+            .detach();
+    }
+
+    pub(super) fn schedule_shutdown_completion_retry(
+        &self,
+        timer: Task<()>,
+        generation: u64,
+        retry_epoch: u8,
+    ) {
+        let app = self.app.clone();
+        self.foreground_executor
+            .spawn(async move {
+                timer.await;
+                if let Some(app) = app.upgrade() {
+                    app.retry_shutdown_completion_from_wake(generation, retry_epoch);
                 }
             })
             .detach();
@@ -1374,9 +1403,6 @@ impl NativeEventEnvelope {
                 }
             }
             NativeWindowEvent::Closed => {
-                if let Some(app_cell) = app.this.upgrade() {
-                    app_cell.settle_native_window_terminal(window_id);
-                }
                 let logical_close = catch_unwind(AssertUnwindSafe(|| {
                     app.update_window_id_from_native(
                         window_id,
@@ -1391,6 +1417,10 @@ impl NativeEventEnvelope {
                     Ok(Err(_)) => NativeEventDisposition::StaleWindow,
                     Err(_) => NativeEventDisposition::Delivered,
                 };
+
+                if let Some(app_cell) = app.this.upgrade() {
+                    app_cell.settle_native_window_terminal(window_id);
+                }
 
                 let mut first_panic = logical_close.err();
                 let tab_cleanup = catch_unwind(AssertUnwindSafe(|| {
