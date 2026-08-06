@@ -644,30 +644,132 @@ fn reveal_live_undock_provisional_destination(
     );
 
     let mut destination_visual = VisualTestContext::from_window(destination_window, cx);
-    let reveal_authority = cx.read_entity(&destination_host, |host, cx| {
+    let (
+        reveal_key,
+        reveal_ticket,
+        initial_ticket_snapshot,
+        reveal_candidate,
+        current_batch_receipt,
+        reveal_preflight,
+        initially_submitted_frame,
+    ) = cx.read_entity(&destination_host, |host, cx| {
         let state = host
             .live_presentation_state()
             .expect("the provisional destination should retain live presentation authority");
         let crate::host::DockHostLivePresentationMode::DestinationProjection {
             leases,
-            phase: crate::host::DockHostLiveDestinationPhase::RevealArmed { ticket, .. },
+            phase:
+                crate::host::DockHostLiveDestinationPhase::RevealObserving {
+                    presentation,
+                    candidate_frame,
+                    submitted_frame,
+                    ticket,
+                },
             ..
         } = state.mode
         else {
-            panic!("the provisional destination must await exact reveal");
+            panic!("the provisional destination must retain one exact reveal observation");
         };
         (
+            state.key,
+            ticket.clone(),
             ticket.snapshot(),
+            candidate_frame,
             open_gpui::view_presentation_window::presented_batch_receipt(cx, &leases),
+            presentation,
+            submitted_frame,
         )
     });
+    assert!(
+        initially_submitted_frame.is_none(),
+        "accepted candidate frames must not publish submitted reveal authority"
+    );
+    assert_eq!(
+        initial_ticket_snapshot.minimum_presentation_generation(),
+        reveal_candidate.frame_generation(),
+        "the reveal observer must retain the ticket's first eligible accepted generation"
+    );
+    let current_candidate = current_batch_receipt
+        .and_then(|receipt| {
+            crate::surface::live_undock::DockLiveUndockPayloadPresentationReceipt::new(
+                reveal_preflight.mount(),
+                receipt,
+            )
+        })
+        .expect("the live destination should retain one current candidate frame");
+    assert_eq!(
+        current_candidate.mount(),
+        reveal_candidate.mount(),
+        "candidate drift must remain inside one exact destination mount"
+    );
+    assert!(
+        current_candidate.frame_generation() > reveal_candidate.frame_generation(),
+        "the test must retain a later accepted candidate before the reveal ticket is submitted"
+    );
+    assert!(
+        cx.update_entity(&destination_host, |host, cx| {
+            host.begin_live_destination_reveal_observation(
+                reveal_key,
+                reveal_preflight,
+                reveal_candidate,
+                cx,
+            )
+        })
+        .is_none(),
+        "one reveal authority must never admit a second observer"
+    );
+    assert!(
+        !cx.update_entity(&destination_host, |host, cx| {
+            host.settle_live_destination_reveal(
+                reveal_key,
+                reveal_preflight,
+                Some(reveal_candidate),
+                cx,
+            )
+        }),
+        "an accepted candidate cannot settle reveal before ticket submission binds it"
+    );
     let drained =
         destination_visual.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert_ne!(
         drained, 0,
         "the exact reveal observer must retain a next-frame wakeup"
     );
-    destination_visual.run_until_parked();
+    cx.run_until_parked();
+
+    let submitted_ticket_snapshot = reveal_ticket.snapshot();
+    let submitted_generation = submitted_ticket_snapshot
+        .presentation_generation()
+        .expect("the exact reveal ticket must bind one platform-submitted generation");
+    assert!(
+        submitted_generation > reveal_candidate.frame_generation(),
+        "a deferred accepted candidate must not be mistaken for the later submitted reveal frame"
+    );
+    assert_eq!(
+        submitted_generation,
+        current_candidate.frame_generation(),
+        "the reveal ticket must bind the later accepted frame that was actually submitted"
+    );
+    let final_batch_receipt = cx
+        .read_entity(&destination_host, |host, cx| {
+            let state = host
+                .live_presentation_state()
+                .expect("the revealed destination must retain its presentation state");
+            let crate::host::DockHostLivePresentationMode::DestinationProjection {
+                leases,
+                phase: crate::host::DockHostLiveDestinationPhase::RevealSettled,
+                ..
+            } = state.mode
+            else {
+                panic!("the exact submitted reveal must settle destination authority");
+            };
+            open_gpui::view_presentation_window::presented_batch_receipt(cx, &leases)
+        })
+        .expect("the settled destination must retain its submitted batch receipt");
+    assert!(
+        final_batch_receipt.frame_generation() >= submitted_generation,
+        "later accepted frames may advance the batch receipt, but never precede the submitted reveal"
+    );
 
     let destination_revealed = cx.read_entity(&fixture.source_host, |host, _| {
         matches!(
@@ -690,7 +792,7 @@ fn reveal_live_undock_provisional_destination(
     });
     assert!(
         destination_revealed,
-        "the provisional destination must produce one exact native reveal; authority={reveal_authority:?}, host={destination_presentation:?}, window={destination_window_facts:?}, owner={owner_phase:?}, windows={:?}",
+        "the provisional destination must produce one exact native reveal; initial_ticket={initial_ticket_snapshot:?}, observer_candidate={reveal_candidate:?}, later_candidate={current_candidate:?}, submitted_ticket={submitted_ticket_snapshot:?}, final_batch={final_batch_receipt:?}, host={destination_presentation:?}, window={destination_window_facts:?}, owner={owner_phase:?}, windows={:?}",
         cx.windows(),
     );
     assert!(cx.read_entity(&fixture.source_host, |host, _| {
@@ -698,6 +800,315 @@ fn reveal_live_undock_provisional_destination(
     }));
 
     (destination_window, destination_host, destination_space)
+}
+
+#[open_gpui::test]
+fn pending_reveal_observation_expires_without_next_frame_progress(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    cx.defer_next_window_frame_requests();
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    cx.run_until_parked();
+
+    let destination_window = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.window_id() != fixture.source_window.window_id())
+        .expect("live undock should retain one pending provisional destination window");
+    let destination_host = destination_window
+        .downcast::<DockHost>()
+        .expect("the provisional destination should retain a DockHost root")
+        .entity(cx)
+        .expect("the provisional destination DockHost should remain live");
+    let reveal_ticket = cx.read_entity(&destination_host, |host, _| {
+        let state = host
+            .live_presentation_state()
+            .expect("the pending destination must retain reveal authority");
+        let crate::host::DockHostLivePresentationMode::DestinationProjection {
+            phase:
+                crate::host::DockHostLiveDestinationPhase::RevealObserving {
+                    submitted_frame: None,
+                    ticket,
+                    ..
+                },
+            ..
+        } = state.mode
+        else {
+            panic!("the destination must await one exact reveal observation");
+        };
+        ticket
+    });
+    cx.executor().advance_clock(
+        crate::render::LIVE_UNDOCK_REVEAL_OBSERVATION_DEADLINE - Duration::from_millis(1),
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        reveal_ticket.snapshot().outcome(),
+        open_gpui::WindowProvisionalRevealOutcome::Pending
+    );
+    assert!(matches!(
+        cx.read_entity(&destination_host, |host, _| host
+            .live_presentation_state()
+            .map(|state| state.mode)),
+        Some(
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                phase: crate::host::DockHostLiveDestinationPhase::RevealObserving { .. },
+                ..
+            }
+        )
+    ));
+
+    cx.executor().advance_clock(Duration::from_millis(1));
+    cx.run_until_parked();
+
+    let settled_state = cx.read_entity(&destination_host, |host, _| host.live_presentation_state());
+    assert_eq!(
+        reveal_ticket.snapshot().outcome(),
+        open_gpui::WindowProvisionalRevealOutcome::Cancelled,
+        "the deadline must win the exact GPUI reveal ticket before Dock publishes failure"
+    );
+    assert!(
+        !matches!(
+            settled_state.map(|state| state.mode),
+            Some(
+                crate::host::DockHostLivePresentationMode::DestinationProjection {
+                    phase: crate::host::DockHostLiveDestinationPhase::RevealObserving { .. },
+                    ..
+                }
+            )
+        ),
+        "the reveal deadline must retire the exact observer instead of refreshing forever"
+    );
+
+    assert!(
+        !cx.windows().contains(&destination_window),
+        "the cancelled provisional destination must leave the logical window registry"
+    );
+}
+
+#[open_gpui::test]
+fn native_reveal_winner_is_joined_by_the_deadline_before_the_next_observer_frame(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    cx.defer_next_window_frame_requests();
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+
+    let destination_window = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.window_id() != fixture.source_window.window_id())
+        .expect("live undock should retain one pending provisional destination window");
+    let destination_host = destination_window
+        .downcast::<DockHost>()
+        .expect("the provisional destination should retain a DockHost root")
+        .entity(cx)
+        .expect("the provisional destination DockHost should remain live");
+    let reveal_ticket = cx.read_entity(&destination_host, |host, _| {
+        let state = host
+            .live_presentation_state()
+            .expect("the pending destination must retain reveal authority");
+        let crate::host::DockHostLivePresentationMode::DestinationProjection {
+            phase:
+                crate::host::DockHostLiveDestinationPhase::RevealObserving {
+                    submitted_frame: None,
+                    ticket,
+                    ..
+                },
+            ..
+        } = state.mode
+        else {
+            panic!("the destination must await one exact reveal observation");
+        };
+        ticket
+    });
+    assert!(cx.step_deferred_window_frame_request(destination_window));
+    assert_eq!(
+        reveal_ticket.snapshot().outcome(),
+        open_gpui::WindowProvisionalRevealOutcome::Revealed,
+        "the native reveal must win before the held observer frame"
+    );
+    assert!(matches!(
+        cx.read_entity(&destination_host, |host, _| host
+            .live_presentation_state()
+            .map(|state| state.mode)),
+        Some(
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                phase: crate::host::DockHostLiveDestinationPhase::RevealObserving {
+                    submitted_frame: None,
+                    ..
+                },
+                ..
+            }
+        )
+    ));
+
+    cx.executor()
+        .advance_clock(crate::render::LIVE_UNDOCK_REVEAL_OBSERVATION_DEADLINE);
+    cx.run_until_parked();
+
+    assert!(matches!(
+        cx.read_entity(&destination_host, |host, _| host
+            .live_presentation_state()
+            .map(|state| state.mode)),
+        Some(
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                phase: crate::host::DockHostLiveDestinationPhase::RevealSettled,
+                ..
+            }
+        )
+    ));
+    let facts = destination_window
+        .update(cx, |_, window, _| window.presentation_facts())
+        .expect("the native reveal winner should keep its destination window live");
+    assert!(facts.native_visible);
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound
+    );
+}
+
+#[open_gpui::test]
+fn logical_destination_close_settles_reveal_before_native_terminal(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    cx.defer_next_window_frame_requests();
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+
+    let destination_window = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.window_id() != fixture.source_window.window_id())
+        .expect("live undock should retain one pending provisional destination window");
+    let destination_host = destination_window
+        .downcast::<DockHost>()
+        .expect("the provisional destination should retain a DockHost root")
+        .entity(cx)
+        .expect("the provisional destination DockHost should remain live");
+    let reveal_ticket = cx.read_entity(&destination_host, |host, _| {
+        let state = host
+            .live_presentation_state()
+            .expect("the pending destination must retain reveal authority");
+        let crate::host::DockHostLivePresentationMode::DestinationProjection {
+            phase: crate::host::DockHostLiveDestinationPhase::RevealObserving { ticket, .. },
+            ..
+        } = state.mode
+        else {
+            panic!("the destination must await one exact reveal observation");
+        };
+        ticket
+    });
+    let destination_host = destination_host.downgrade();
+
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "the logical-close test must exercise an uncommitted destination"
+    );
+    assert!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_committed_destination_registration_for_logical_close(
+                destination_window.window_id(),
+            ))
+        .is_none(),
+        "the provisional destination must not delegate to committed close"
+    );
+    assert_eq!(
+        reveal_ticket.snapshot().outcome(),
+        open_gpui::WindowProvisionalRevealOutcome::Pending
+    );
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some(),
+        "the payload drag must remain live until logical close settles it"
+    );
+
+    let native_terminal = cx.hold_window_native_terminal(destination_window);
+    destination_window
+        .update(cx, |_, window, app| window.remove_window(app))
+        .expect("the provisional destination should begin logical close");
+    cx.run_until_parked();
+
+    assert!(!cx.windows().contains(&destination_window));
+    assert_eq!(
+        reveal_ticket.snapshot().outcome(),
+        open_gpui::WindowProvisionalRevealOutcome::WindowTerminal
+    );
+    assert!(
+        destination_host.upgrade().is_some(),
+        "the held native terminal should keep the window root alive and prove convergence did not rely on DockHost release"
+    );
+    assert!(matches!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Restoring
+            | crate::surface::live_undock::DockLiveUndockPhase::Idle
+    ));
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "logical close must settle drag finalization before native terminal is released"
+    );
+
+    assert!(native_terminal.release());
+    cx.run_until_parked();
+}
+
+#[open_gpui::test]
+fn settled_reveal_observation_ignores_its_stale_deadline(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, destination_host, _) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+
+    cx.executor()
+        .advance_clock(crate::render::LIVE_UNDOCK_REVEAL_OBSERVATION_DEADLINE);
+    cx.run_until_parked();
+
+    assert!(cx.windows().contains(&destination_window));
+    assert!(matches!(
+        cx.read_entity(&destination_host, |host, _| host
+            .live_presentation_state()
+            .map(|state| state.mode)),
+        Some(
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                phase: crate::host::DockHostLiveDestinationPhase::RevealSettled,
+                ..
+            }
+        )
+    ));
+    let facts = destination_window
+        .update(cx, |_, window, _| window.presentation_facts())
+        .expect("the revealed provisional destination should remain live");
+    assert!(facts.native_visible);
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "a stale reveal deadline must not disturb the active live-undock session"
+    );
 }
 
 #[open_gpui::test]
@@ -5116,12 +5527,18 @@ fn source_restoration_shutdown_before_visible_receipt_never_activates(cx: &mut T
     let runtime_identity = fixture.runtime.identity();
     let payload = fixture.payload.clone();
     let source_host_weak = fixture.source_host.downgrade();
+    let owner = fixture.surface.owner().clone();
+    let live_runtime = cx.read_entity(&owner, |owner, _| owner.live_undock_runtime());
+    let cleanup_authority = Rc::new(RefCell::new(None));
+    live_runtime.reject_orphan_recovery_records_for_test();
 
     cx.update({
         let activation = activation.clone();
-        let owner = fixture.surface.owner().clone();
+        let owner = owner.clone();
         let source_host = fixture.source_host.clone();
         let source_window = fixture.source_window;
+        let live_runtime = live_runtime.clone();
+        let cleanup_authority = cleanup_authority.clone();
         let shutdown_started_before_visible_receipt =
             shutdown_started_before_visible_receipt.clone();
         move |app| {
@@ -5153,6 +5570,11 @@ fn source_restoration_shutdown_before_visible_receipt_never_activates(cx: &mut T
                     assert!(host.native_drag_transport_proxy().is_none());
                 });
                 assert_eq!(activation.count(), activation_before_cancel);
+                *cleanup_authority.borrow_mut() = Some(
+                    live_runtime
+                        .orphan_cleanup_authority_for_test()
+                        .expect("source restoration must retain exact cleanup authority"),
+                );
                 source_window
                     .update(app, |_, window, app| window.remove_window(app))
                     .expect(
@@ -5164,6 +5586,10 @@ fn source_restoration_shutdown_before_visible_receipt_never_activates(cx: &mut T
     });
     assert!(shutdown_started_before_visible_receipt.get());
     cx.run_until_parked();
+    let (prepared_rehost, retained_visual, source_transport) = cleanup_authority
+        .borrow_mut()
+        .take()
+        .expect("the pre-shutdown cleanup authority must be captured");
 
     assert_eq!(
         activation.count(),
@@ -5172,9 +5598,61 @@ fn source_restoration_shutdown_before_visible_receipt_never_activates(cx: &mut T
     );
     assert!(cx.windows().is_empty());
     let status = cx.update(|app| fixture.surface.window_session_status(app));
-    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    let convergence = (status.phase() != crate::DockSurfaceWindowSessionPhase::Closed).then(|| {
+        cx.read_entity(fixture.surface.owner(), |owner, _| {
+            let lease = owner
+                .window_session()
+                .shutting_down_lease()
+                .expect("a non-closed status must retain its shutdown lease");
+            (
+                owner.window_session().pending_terminal_window_ids(lease),
+                owner.window_session().has_pending_dependencies(lease),
+                owner.live_undock_phase(),
+                owner.live_undock_runtime().execution_count_for_test(),
+            )
+        })
+    });
+    assert_eq!(
+        status.phase(),
+        crate::DockSurfaceWindowSessionPhase::Closed,
+        "source-restoration shutdown must fully converge: {status:?}; convergence={convergence:?}"
+    );
     assert_eq!(status.pending_terminal_ticket_count(), 0);
     assert_eq!(status.runtime_empty(), Some(true));
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner.live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Idle,
+        "shutdown cleanup must publish one terminal fact before the surface closes"
+    );
+    assert_eq!(
+        live_runtime.execution_count_for_test(),
+        0,
+        "terminal publication must remove the exact live-undock execution"
+    );
+    let recovery_count = cx.read_entity(&owner, |owner, _| {
+        owner.visible_payload_recovery_count_for_test(
+            crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
+        )
+    });
+    let rehost_absent = cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared_rehost)
+    });
+    assert!(
+        rehost_absent,
+        "shutdown fallback must retire exact rehost authority; captured_generation={}; recovery_count={recovery_count}; transport_active={}",
+        prepared_rehost.generation(),
+        source_transport.is_active(),
+    );
+    assert_eq!(
+        retained_visual.source_window(),
+        prepared_rehost.source().window_id()
+    );
+    assert!(!source_transport.is_active());
+    assert!(fixture.source_window.update(cx, |_, _, _| ()).is_err());
+    assert_eq!(
+        recovery_count, 0,
+        "shutdown fallback cleanup must not fabricate a durable recovery record"
+    );
 }
 
 #[open_gpui::test]
@@ -6050,8 +6528,31 @@ fn lost_source_host_converges_through_payload_recovery_without_retrying_forever(
         .update(cx, |_, window, app| window.remove_window(app))
         .expect("the recovered surface should remain normally closeable");
     cx.run_until_parked();
+    let live_windows = cx
+        .windows()
+        .into_iter()
+        .map(|window| window.window_id())
+        .collect::<Vec<_>>();
     let status = cx.update(|app| fixture.surface.window_session_status(app));
-    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    let convergence = (status.phase() != crate::DockSurfaceWindowSessionPhase::Closed).then(|| {
+        cx.read_entity(fixture.surface.owner(), |owner, _| {
+            let lease = owner
+                .window_session()
+                .shutting_down_lease()
+                .expect("a non-closed status must retain its shutdown lease");
+            (
+                owner.window_session().pending_terminal_window_ids(lease),
+                owner.window_session().has_pending_dependencies(lease),
+                owner.live_undock_phase(),
+                owner.live_undock_runtime().execution_count_for_test(),
+            )
+        })
+    });
+    assert_eq!(
+        status.phase(),
+        crate::DockSurfaceWindowSessionPhase::Closed,
+        "lost-source recovery shutdown must fully converge: {status:?}; convergence={convergence:?}; live_windows={live_windows:?}"
+    );
     assert_eq!(status.pending_terminal_ticket_count(), 0);
     assert_eq!(status.runtime_empty(), Some(true));
 }

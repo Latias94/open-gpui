@@ -2609,8 +2609,9 @@ impl AppCell {
                             };
                             let window_id = command.window_id();
                             let quitting = app.quitting;
-                            let dispatchable =
-                                !quitting && self.native_queries.committed(window_id).is_some();
+                            let dispatchable = !quitting
+                                && self.native_queries.committed(window_id).is_some()
+                                && command.provisional_reveal_is_pending();
                             drop(app);
                             if dispatchable {
                                 log::trace!(

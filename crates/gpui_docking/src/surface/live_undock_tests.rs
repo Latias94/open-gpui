@@ -360,7 +360,7 @@ mod reducer_tests {
     fn committed_orphan_recovery(
         payload_lease: DockLiveUndockPayloadLeaseReceipt,
     ) -> DockLiveUndockOrphanRecoveryReceipt {
-        DockLiveUndockOrphanRecoveryReceipt::new(committed_payload_recovery(
+        DockLiveUndockOrphanRecoveryReceipt::for_test(committed_payload_recovery(
             DockPayloadRecoveryAuthority::presentation_lease(payload_lease),
             DockPayloadRecoveryReason::PreCommitOrphan,
         ))
@@ -1392,6 +1392,109 @@ mod reducer_tests {
     }
 
     #[test]
+    fn stale_reveal_while_moving_retires_provisional_and_marks_route_unavailable() {
+        let (_, lease) = active_window_session(104, 214);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(314);
+        admit(&mut session, identity, window);
+        let mount = activate_payload(
+            &mut session,
+            identity,
+            source_for(identity),
+            lease_generation(13),
+            window,
+        );
+        let preflight = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 92)
+            .expect("the current reveal preflight must be non-zero");
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::PayloadPresented {
+                    identity,
+                    receipt: preflight,
+                })
+                .as_slice(),
+            [DockLiveUndockEffect::ArmExactReveal { .. }]
+        ));
+        let reveal_frame = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 93)
+            .expect("the stale reveal observation must retain an exact payload frame");
+
+        let effects = session.apply(DockLiveUndockFact::RevealObserved {
+            identity,
+            observation: DockLiveUndockRevealObservation::failed(
+                reveal_frame,
+                DockLiveUndockRevealOutcome::Stale,
+            ),
+        });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ProvisionalRetirementRequired {
+                identity: current,
+                reason: DockLiveUndockRetirementReason::PresentationUnavailable,
+                ..
+            } if *current == identity
+        )));
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RouteFeedbackChanged {
+                identity: current,
+                route: DockLiveUndockRouteFeedback::Unavailable,
+            } if *current == identity
+        )));
+        assert_eq!(session.phase(), DockLiveUndockPhase::Bound);
+    }
+
+    #[test]
+    fn stale_reveal_after_desktop_release_restores_the_source() {
+        let (_, lease) = active_window_session(104, 215);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(315);
+        admit(&mut session, identity, window);
+        let mount = activate_payload(
+            &mut session,
+            identity,
+            source_for(identity),
+            lease_generation(14),
+            window,
+        );
+        let preflight = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 94)
+            .expect("the current reveal preflight must be non-zero");
+        session.apply(DockLiveUndockFact::PayloadPresented {
+            identity,
+            receipt: preflight,
+        });
+        let release = desktop_release(placement_generation(18));
+        assert_release_placement_request(
+            &session.apply(DockLiveUndockFact::ReleaseLocked { identity, release }),
+            identity,
+            window,
+            release,
+        );
+        let reveal_frame = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 95)
+            .expect("the stale reveal observation must retain an exact payload frame");
+
+        let effects = session.apply(DockLiveUndockFact::RevealObserved {
+            identity,
+            observation: DockLiveUndockRevealObservation::failed(
+                reveal_frame,
+                DockLiveUndockRevealOutcome::Stale,
+            ),
+        });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RestoreSource {
+                identity: current,
+                restore_focus: true,
+                ..
+            } if *current == identity
+        )));
+        assert_eq!(session.phase(), DockLiveUndockPhase::Restoring);
+    }
+
+    #[test]
     fn release_before_open_return_requests_exact_placement_once_on_admission() {
         let (_, lease) = active_window_session(104, 205);
         let mut session = DockLiveUndockSession::new();
@@ -2066,6 +2169,88 @@ mod reducer_tests {
                 ),
                 ..
             }
+        )));
+        assert_eq!(session.phase(), DockLiveUndockPhase::Idle);
+    }
+
+    #[test]
+    fn shutdown_committed_same_window_recovery_keeps_dependency_until_cleanup_receipt() {
+        let (_, lease) = active_window_session(117, 217);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(317);
+        admit(&mut session, identity, window);
+        let token = prepare_desktop(&mut session, identity, window, placement_generation(20));
+        let destination = DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: window.window_id(),
+        };
+        session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
+        session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
+
+        let shutdown = session.apply(DockLiveUndockFact::ShutdownRequested { lease });
+        let dependency = shutdown
+            .as_slice()
+            .iter()
+            .find_map(|effect| match effect {
+                DockLiveUndockEffect::ShutdownFrozen(snapshot) => Some(snapshot.dependency()),
+                _ => None,
+            })
+            .expect("shutdown must claim committed-destination cleanup authority");
+        let (authority, current_token, current_destination) = shutdown
+            .as_slice()
+            .iter()
+            .find_map(|effect| match effect {
+                DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                    authority,
+                    token,
+                    destination,
+                    ..
+                } => Some((*authority, *token, *destination)),
+                _ => None,
+            })
+            .expect("shutdown must use the dedicated committed-recovery executor");
+        assert_eq!(current_token, token);
+        assert_eq!(current_destination, destination);
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+
+        let terminal = session.apply(DockLiveUndockFact::WindowTerminal {
+            identity,
+            window_id: window.window_id(),
+        });
+        assert!(matches!(
+            terminal.as_slice(),
+            [DockLiveUndockEffect::WindowTerminalSettled(outcome)]
+                if outcome.dependency().is_none()
+        ));
+        assert_eq!(
+            session
+                .shutdown_snapshot(lease)
+                .map(|snapshot| snapshot.dependency()),
+            Some(dependency)
+        );
+
+        let completed = session.apply(DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
+            identity,
+            receipt: committed_destination_recovery(authority),
+        });
+        assert!(completed.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::SettleShutdownDependency {
+                identity: current,
+                dependency: current_dependency,
+            } if *current == identity && *current_dependency == dependency
+        )));
+        assert!(completed.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::PublishTerminal {
+                identity: current,
+                result: DockLiveUndockTerminalResult::DestinationLostAfterCommit(
+                    DockLiveUndockPromotionDestination::SameWindowDesktop { .. }
+                ),
+            } if *current == identity
         )));
         assert_eq!(session.phase(), DockLiveUndockPhase::Idle);
     }
@@ -2980,6 +3165,7 @@ mod reducer_tests {
             DockLiveUndockEffect::ProvisionalRetirementRequired {
                 identity: current,
                 dependency: Some(dependency),
+                binding: Some(DockLiveUndockOpeningBinding::ExactGated),
                 reason: DockLiveUndockRetirementReason::SourceLost,
                 ..
             } if *current == identity && *dependency == snapshot.dependency()
@@ -3088,6 +3274,164 @@ mod reducer_tests {
                 && *dependency == snapshot.dependency()
         ));
         assert_eq!(session.phase(), DockLiveUndockPhase::Idle);
+    }
+
+    #[test]
+    fn shutdown_orphan_cleanup_receipt_is_terminal_without_retry() {
+        let (_, lease) = active_window_session(507, 607);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(707);
+        let source = source_for(identity);
+        admit(&mut session, identity, window);
+        activate_payload(&mut session, identity, source, lease_generation(35), window);
+
+        let recovery = session.apply(DockLiveUndockFact::SourceWindowNativeTerminal {
+            receipt: source_native_terminal(identity, source),
+        });
+        let (payload_lease, _) = orphan_recovery_request(&recovery);
+        let _ = session.apply(DockLiveUndockFact::WindowTerminal {
+            identity,
+            window_id: window.window_id(),
+        });
+        let shutdown = session.apply(DockLiveUndockFact::ShutdownRequested { lease });
+        let dependency = shutdown
+            .as_slice()
+            .iter()
+            .find_map(|effect| match effect {
+                DockLiveUndockEffect::ShutdownFrozen(snapshot) => Some(snapshot.dependency()),
+                _ => None,
+            })
+            .expect("shutdown should claim the orphan-recovery dependency");
+
+        let terminal = session.apply(DockLiveUndockFact::ShutdownOrphanCleanupCompleted {
+            receipt: DockLiveUndockOrphanCleanupReceipt::for_test(payload_lease),
+        });
+        assert!(matches!(
+            terminal.as_slice(),
+            [
+                DockLiveUndockEffect::SettleShutdownDependency {
+                    identity: current,
+                    dependency: current_dependency,
+                },
+                DockLiveUndockEffect::PublishTerminal {
+                    identity: terminal_identity,
+                    result: DockLiveUndockTerminalResult::SourceLostBeforeCommit,
+                },
+            ] if *current == identity
+                && *terminal_identity == identity
+                && *current_dependency == dependency
+        ));
+        assert_eq!(session.phase(), DockLiveUndockPhase::Idle);
+    }
+
+    #[test]
+    fn shutdown_window_terminal_cannot_consume_pending_orphan_cleanup_dependency() {
+        let (_, lease) = active_window_session(508, 608);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(708);
+        let source = source_for(identity);
+        admit(&mut session, identity, window);
+        activate_payload(&mut session, identity, source, lease_generation(36), window);
+
+        let restore = session.apply(DockLiveUndockFact::Cancel {
+            identity,
+            reason: DockLiveUndockCancelReason::CaptureLost,
+        });
+        let (_, payload_lease, _) = restoration_request(&restore);
+        let shutdown = session.apply(DockLiveUndockFact::ShutdownRequested { lease });
+        let dependency = shutdown
+            .as_slice()
+            .iter()
+            .find_map(|effect| match effect {
+                DockLiveUndockEffect::ShutdownFrozen(snapshot) => Some(snapshot.dependency()),
+                _ => None,
+            })
+            .expect("shutdown must claim cleanup authority before the window terminates");
+
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::WindowTerminal {
+                    identity,
+                    window_id: window.window_id(),
+                })
+                .as_slice(),
+            [DockLiveUndockEffect::WindowTerminalSettled(outcome)]
+                if outcome.dependency().is_none()
+        ));
+        assert_eq!(
+            session
+                .shutdown_snapshot(lease)
+                .map(|snapshot| snapshot.dependency()),
+            Some(dependency)
+        );
+
+        let recovery = session.apply(DockLiveUndockFact::SourceWindowNativeTerminal {
+            receipt: source_native_terminal(identity, source),
+        });
+        assert!(matches!(
+            recovery.as_slice(),
+            [DockLiveUndockEffect::ShutdownOrphanRecoveryRequired {
+                identity: current,
+                payload_lease: current_lease,
+                provisional: None,
+            }] if *current == identity && *current_lease == payload_lease
+        ));
+        assert_eq!(session.phase(), DockLiveUndockPhase::RecoveringOrphan);
+        assert_eq!(
+            session
+                .shutdown_snapshot(lease)
+                .map(|snapshot| snapshot.dependency()),
+            Some(dependency)
+        );
+    }
+
+    #[test]
+    fn shutdown_orphan_cleanup_failure_parks_without_retry_or_false_terminal() {
+        let (_, lease) = active_window_session(509, 609);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(709);
+        let source = source_for(identity);
+        admit(&mut session, identity, window);
+        activate_payload(&mut session, identity, source, lease_generation(37), window);
+
+        let recovery = session.apply(DockLiveUndockFact::SourceWindowNativeTerminal {
+            receipt: source_native_terminal(identity, source),
+        });
+        let (payload_lease, _) = orphan_recovery_request(&recovery);
+        let shutdown = session.apply(DockLiveUndockFact::ShutdownRequested { lease });
+        let dependency = shutdown
+            .as_slice()
+            .iter()
+            .find_map(|effect| match effect {
+                DockLiveUndockEffect::ShutdownFrozen(snapshot) => Some(snapshot.dependency()),
+                _ => None,
+            })
+            .expect("shutdown must retain one exact orphan-cleanup dependency");
+
+        let failed = session.apply(DockLiveUndockFact::ShutdownOrphanCleanupFailed {
+            identity,
+            payload_lease,
+            failure: DockLiveUndockOrphanCleanupFailure::PreflightRejected,
+        });
+        assert!(failed.is_empty());
+        assert_eq!(session.phase(), DockLiveUndockPhase::ShutdownCleanupFailed);
+        assert_eq!(
+            session
+                .shutdown_snapshot(lease)
+                .map(|snapshot| snapshot.dependency()),
+            Some(dependency)
+        );
+
+        assert!(
+            session
+                .apply(DockLiveUndockFact::ShutdownRequested { lease })
+                .is_empty(),
+            "a stable cleanup failure must not arm retries or publish a false terminal"
+        );
+        assert_eq!(session.phase(), DockLiveUndockPhase::ShutdownCleanupFailed);
     }
 
     #[test]

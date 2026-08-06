@@ -985,6 +985,20 @@ impl TestAppContext {
             .close_next_window_during_initial_presentation();
     }
 
+    /// Holds frame requests made by the next TestPlatform window until explicitly released.
+    pub fn defer_next_window_frame_requests(&self) {
+        self.test_platform.defer_next_window_frame_requests();
+    }
+
+    /// Delivers one deferred frame request for `window` while keeping later requests deferred.
+    pub fn step_deferred_window_frame_request(&self, window: AnyWindowHandle) -> bool {
+        let stepped = self
+            .test_window(window)
+            .step_deferred_frame_request_for_test();
+        self.run_until_parked();
+        stepped
+    }
+
     /// Holds the native terminal callback for `window` after its logical GPUI removal.
     ///
     /// This models backends whose owning platform window closes asynchronously. The returned

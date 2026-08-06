@@ -44,6 +44,7 @@ pub(crate) struct TestPlatform {
     next_window_initial_presentation_command_outcomes:
         RefCell<Option<VecDeque<PlatformWindowCommandOutcome>>>,
     next_window_close_during_initial_presentation: RefCell<bool>,
+    next_window_defer_frame_requests: RefCell<bool>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -172,6 +173,7 @@ impl TestPlatform {
             next_window_creation_show_fact: RefCell::new(None),
             next_window_initial_presentation_command_outcomes: RefCell::new(None),
             next_window_close_during_initial_presentation: RefCell::new(false),
+            next_window_defer_frame_requests: RefCell::new(false),
             expect_restart: Default::default(),
             quit_requested: Default::default(),
             open_urls_callback: Default::default(),
@@ -254,6 +256,10 @@ impl TestPlatform {
     pub(crate) fn close_next_window_during_initial_presentation(&self) {
         self.next_window_close_during_initial_presentation
             .replace(true);
+    }
+
+    pub(crate) fn defer_next_window_frame_requests(&self) {
+        self.next_window_defer_frame_requests.replace(true);
     }
 
     pub(crate) fn simulate_new_path_selection(
@@ -748,6 +754,7 @@ impl Platform for TestPlatform {
                 .take(),
             self.next_window_close_during_initial_presentation
                 .replace(false),
+            self.next_window_defer_frame_requests.replace(false),
         );
         self.last_created_window
             .borrow_mut()

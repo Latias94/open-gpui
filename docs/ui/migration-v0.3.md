@@ -582,6 +582,16 @@ The observable ordering rules are intentionally strict:
   ingress barriers. Commands enqueued by a command append rather than recurse, and each backend
   attempt terminates as accepted or rejected.
 
+Framework-owned provisional-window authorities may now cancel one exact reveal ticket with
+`Window::cancel_provisional_presentation`. Cancellation is a compare-and-set against the ticket's
+full window, session, and presentation generations: `Cancelled` means cancellation won before the
+native command, while `AlreadySettled` returns the stronger outcome that won first. A queued native
+reveal command rechecks the same ticket immediately before dispatch, so a cancelled request cannot
+become visible during a later command drain. Handle the new
+`WindowProvisionalRevealOutcome::Cancelled` variant in exhaustive matches. Logical window removal
+is terminal for an uncommitted provisional reveal even when native retirement still retains the
+window root; do not wait for entity release or the HWND terminal callback to begin compensation.
+
 The component-side constraints are also recorded in the
 [Open GPUI Component Contract](component-contract.md#native-window-callback-boundary).
 

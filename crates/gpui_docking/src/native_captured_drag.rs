@@ -138,6 +138,17 @@ pub(crate) struct DockNativeCapturedDragTransportLease {
     active: Rc<Cell<bool>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockNativeCapturedDragTransportRetirementReceipt {
+    key: DockNativeCapturedDragTransportKey,
+}
+
+impl DockNativeCapturedDragTransportRetirementReceipt {
+    pub(crate) const fn key(self) -> DockNativeCapturedDragTransportKey {
+        self.key
+    }
+}
+
 impl DockNativeCapturedDragTransportLease {
     fn new(key: DockNativeCapturedDragTransportKey) -> Self {
         Self {
@@ -154,8 +165,9 @@ impl DockNativeCapturedDragTransportLease {
         self.active.get()
     }
 
-    pub(crate) fn retire(&self) {
+    pub(crate) fn retire(&self) -> DockNativeCapturedDragTransportRetirementReceipt {
         self.active.set(false);
+        DockNativeCapturedDragTransportRetirementReceipt { key: self.key }
     }
 }
 

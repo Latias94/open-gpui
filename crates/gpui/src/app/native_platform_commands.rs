@@ -373,6 +373,14 @@ impl NativePlatformCommand {
         )
     }
 
+    pub(super) fn provisional_reveal_is_pending(&self) -> bool {
+        self.provisional_reveal_ticket
+            .as_ref()
+            .is_none_or(|ticket| {
+                ticket.snapshot().outcome() == WindowProvisionalRevealOutcome::Pending
+            })
+    }
+
     pub(super) fn pending_diagnostic(&self, sequence: u64) -> NativeBoundaryDiagnostic {
         let (kind, generation) = match self.command {
             PlatformWindowCommand::CompleteInitialPresentation { .. } => {
@@ -432,5 +440,33 @@ impl NativePlatformCommand {
 impl Drop for NativePlatformCommand {
     fn drop(&mut self) {
         self.settle_provisional_reveal(WindowProvisionalRevealOutcome::Rejected);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{PlatformWindowCommandOutcome, WindowProvisionalRevealCancellationOutcome};
+
+    #[test]
+    fn cancelled_provisional_reveal_command_is_not_dispatchable() {
+        let window_id = WindowId::from(71);
+        let ticket = WindowProvisionalRevealTicket::new(window_id, 9, 14);
+        let command = NativePlatformCommand::new_provisional_reveal(
+            window_id,
+            PlatformWindowCommandDispatcher::new(|_| PlatformWindowCommandOutcome::Accepted),
+            PlatformWindowCommand::RevealDeferredInitialPresentation {
+                session_generation: 9,
+                presentation_generation: 14,
+            },
+            ticket.clone(),
+        );
+        assert!(command.provisional_reveal_is_pending());
+
+        assert!(matches!(
+            ticket.cancel(),
+            WindowProvisionalRevealCancellationOutcome::Cancelled(_)
+        ));
+        assert!(!command.provisional_reveal_is_pending());
     }
 }

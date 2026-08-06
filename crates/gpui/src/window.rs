@@ -32,10 +32,10 @@ use crate::{
     WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
     WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
     WindowPresentAttemptFacts, WindowPresentationFacts, WindowProvisionalOpeningClaim,
-    WindowProvisionalRevealOutcome, WindowProvisionalRevealTicket,
-    WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsSnapshot,
-    WindowProvisionalSemanticsTicket, WindowProvisionalSession, WindowProvisionalSessionPhase,
-    WindowTextSystem,
+    WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
+    WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
+    WindowProvisionalSemanticsSnapshot, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
+    WindowProvisionalSessionPhase, WindowTextSystem,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
         SubtreeGeometryValidity,
@@ -2796,6 +2796,47 @@ impl Window {
             require_presentation: true,
         });
         Ok(ticket)
+    }
+
+    /// Atomically cancels one exact provisional reveal before a native command can win.
+    #[doc(hidden)]
+    pub fn cancel_provisional_presentation(
+        &mut self,
+        ticket: &WindowProvisionalRevealTicket,
+        _cx: &mut App,
+    ) -> Result<WindowProvisionalRevealCancellationOutcome> {
+        let ticket_snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            ticket_snapshot.window_id() == self.handle.window_id(),
+            "provisional reveal ticket belongs to a different full window id"
+        );
+        let is_current = self
+            .presentation_state
+            .provisional_reveal_ticket
+            .as_ref()
+            .is_some_and(|current| current.same_authority(ticket));
+
+        let outcome = ticket.cancel();
+        if matches!(
+            outcome,
+            WindowProvisionalRevealCancellationOutcome::Cancelled(_)
+        ) && is_current
+        {
+            self.presentation_state.provisional_reveal_ticket = None;
+            if let Some(session) = self.provisional_session.as_ref() {
+                let session_snapshot = session.snapshot();
+                if session_snapshot.window_id() == Some(self.handle.window_id())
+                    && session_snapshot.generation() == ticket_snapshot.session_generation()
+                {
+                    if let Err(error) = session.terminate(self.handle.window_id()) {
+                        log::error!(
+                            "failed to terminate a cancelled provisional presentation session: {error}"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(outcome)
     }
 
     /// Begins projecting the destination tree while native and framework interaction remain gated.

@@ -1,5 +1,9 @@
 use super::payload_recovery::{DockPayloadRecoveryAuthority, DockPayloadRecoveryCommitReceipt};
 use super::window_session::{DockSurfaceWindowSessionDependencyId, DockSurfaceWindowSessionLease};
+use crate::{
+    host::DockHostLivePresentationCleanupReceipt,
+    native_captured_drag::DockNativeCapturedDragTransportRetirementReceipt,
+};
 use open_gpui::{
     AnyWindowHandle, FocusHandle, WindowId, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealSnapshot, WindowProvisionalRevealZOrder,
@@ -186,6 +190,7 @@ pub(crate) enum DockLiveUndockPhase {
     Compensating,
     Restoring,
     RecoveringOrphan,
+    ShutdownCleanupFailed,
     RecoveringCommittedDestination,
     Retiring,
 }
@@ -750,21 +755,161 @@ impl DockLiveUndockSourceRestorationReceipt {
     }
 }
 
-/// Exact acknowledgement of one orphan-topology recovery attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DockLiveUndockOrphanRecoveryReceipt {
-    identity: DockLiveUndockIdentity,
-    payload_lease: DockLiveUndockPayloadLeaseReceipt,
-    recovery: DockPayloadRecoveryCommitReceipt,
+pub(super) enum DockLiveUndockRehostCleanupEvidence {
+    Abandoned {
+        generation: u64,
+        source_window: WindowId,
+        destination_window: WindowId,
+    },
+    AlreadyAbsent {
+        generation: u64,
+        source_window: WindowId,
+        destination_window: WindowId,
+    },
 }
 
-impl DockLiveUndockOrphanRecoveryReceipt {
-    pub(crate) fn new(recovery: DockPayloadRecoveryCommitReceipt) -> Option<Self> {
-        let payload_lease = recovery.authority().presentation()?;
+impl DockLiveUndockRehostCleanupEvidence {
+    pub(super) const fn abandoned(
+        generation: u64,
+        source_window: WindowId,
+        destination_window: WindowId,
+    ) -> Self {
+        Self::Abandoned {
+            generation,
+            source_window,
+            destination_window,
+        }
+    }
+
+    pub(super) const fn already_absent(
+        generation: u64,
+        source_window: WindowId,
+        destination_window: WindowId,
+    ) -> Self {
+        Self::AlreadyAbsent {
+            generation,
+            source_window,
+            destination_window,
+        }
+    }
+
+    pub(super) const fn authority(self) -> (u64, WindowId, WindowId) {
+        match self {
+            Self::Abandoned {
+                generation,
+                source_window,
+                destination_window,
+            }
+            | Self::AlreadyAbsent {
+                generation,
+                source_window,
+                destination_window,
+            } => (generation, source_window, destination_window),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DockLiveUndockHostCleanupEvidence {
+    Abandoned(DockHostLivePresentationCleanupReceipt),
+    AlreadyAbsent(WindowId),
+    HostUnavailable(WindowId),
+}
+
+impl DockLiveUndockHostCleanupEvidence {
+    pub(super) const fn abandoned(receipt: DockHostLivePresentationCleanupReceipt) -> Self {
+        Self::Abandoned(receipt)
+    }
+
+    pub(super) const fn already_absent(window_id: WindowId) -> Self {
+        Self::AlreadyAbsent(window_id)
+    }
+
+    pub(super) const fn host_unavailable(window_id: WindowId) -> Self {
+        Self::HostUnavailable(window_id)
+    }
+
+    fn accepts(
+        self,
+        identity: DockLiveUndockIdentity,
+        rehost_generation: u64,
+        window_id: WindowId,
+    ) -> bool {
+        match self {
+            Self::Abandoned(receipt) => {
+                let key = receipt.key();
+                key.identity() == identity
+                    && key.rehost_generation() == rehost_generation
+                    && key.binding().window_id() == window_id
+            }
+            Self::AlreadyAbsent(observed) | Self::HostUnavailable(observed) => {
+                observed == window_id
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DockLiveUndockRetainedVisualCleanupEvidence {
+    Released(TicketIdentity),
+    AlreadyReleased(TicketIdentity),
+    AuthorityAbsent(TicketIdentity),
+    WindowUnavailable(TicketIdentity),
+}
+
+impl DockLiveUndockRetainedVisualCleanupEvidence {
+    pub(super) const fn ticket(self) -> Option<TicketIdentity> {
+        match self {
+            Self::Released(ticket)
+            | Self::AlreadyReleased(ticket)
+            | Self::AuthorityAbsent(ticket)
+            | Self::WindowUnavailable(ticket) => Some(ticket),
+        }
+    }
+}
+
+/// Aggregate proof that every pre-commit presentation side effect reached an exact terminal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockLiveUndockOrphanCleanupReceipt {
+    identity: DockLiveUndockIdentity,
+    payload_lease: DockLiveUndockPayloadLeaseReceipt,
+    rehost: Option<DockLiveUndockRehostCleanupEvidence>,
+    source_host: Option<DockLiveUndockHostCleanupEvidence>,
+    destination_host: Option<DockLiveUndockHostCleanupEvidence>,
+    retained_visual: Option<DockLiveUndockRetainedVisualCleanupEvidence>,
+    transport: Option<DockNativeCapturedDragTransportRetirementReceipt>,
+}
+
+impl DockLiveUndockOrphanCleanupReceipt {
+    pub(super) fn new(
+        payload_lease: DockLiveUndockPayloadLeaseReceipt,
+        rehost: DockLiveUndockRehostCleanupEvidence,
+        source_host: DockLiveUndockHostCleanupEvidence,
+        destination_host: DockLiveUndockHostCleanupEvidence,
+        retained_visual: DockLiveUndockRetainedVisualCleanupEvidence,
+        transport: DockNativeCapturedDragTransportRetirementReceipt,
+    ) -> Option<Self> {
+        let identity = payload_lease.identity();
+        let (generation, source_window, destination_window) = rehost.authority();
+        if generation != payload_lease.rehost_generation()
+            || source_window != payload_lease.source().window_id()
+            || destination_window != payload_lease.destination_window()
+            || !source_host.accepts(identity, generation, source_window)
+            || !destination_host.accepts(identity, generation, destination_window)
+            || retained_visual.ticket() != payload_lease.retained_visual()
+            || transport.key().source_window() != source_window
+        {
+            return None;
+        }
         Some(Self {
-            identity: recovery.live_identity(),
+            identity,
             payload_lease,
-            recovery,
+            rehost: Some(rehost),
+            source_host: Some(source_host),
+            destination_host: Some(destination_host),
+            retained_visual: Some(retained_visual),
+            transport: Some(transport),
         })
     }
 
@@ -775,6 +920,74 @@ impl DockLiveUndockOrphanRecoveryReceipt {
     pub(crate) const fn payload_lease(self) -> DockLiveUndockPayloadLeaseReceipt {
         self.payload_lease
     }
+
+    #[cfg(test)]
+    pub(super) const fn for_test(payload_lease: DockLiveUndockPayloadLeaseReceipt) -> Self {
+        let identity = payload_lease.identity();
+        Self {
+            identity,
+            payload_lease,
+            rehost: None,
+            source_host: None,
+            destination_host: None,
+            retained_visual: None,
+            transport: None,
+        }
+    }
+}
+
+/// Exact acknowledgement of one orphan-topology recovery attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockLiveUndockOrphanRecoveryReceipt {
+    identity: DockLiveUndockIdentity,
+    payload_lease: DockLiveUndockPayloadLeaseReceipt,
+    recovery: DockPayloadRecoveryCommitReceipt,
+    cleanup: DockLiveUndockOrphanCleanupReceipt,
+}
+
+impl DockLiveUndockOrphanRecoveryReceipt {
+    pub(crate) fn new(
+        recovery: DockPayloadRecoveryCommitReceipt,
+        cleanup: DockLiveUndockOrphanCleanupReceipt,
+    ) -> Option<Self> {
+        let payload_lease = recovery.authority().presentation()?;
+        if cleanup.identity() != recovery.live_identity()
+            || cleanup.payload_lease() != payload_lease
+        {
+            return None;
+        }
+        Some(Self {
+            identity: recovery.live_identity(),
+            payload_lease,
+            recovery,
+            cleanup,
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn for_test(recovery: DockPayloadRecoveryCommitReceipt) -> Option<Self> {
+        let payload_lease = recovery.authority().presentation()?;
+        Some(Self {
+            identity: recovery.live_identity(),
+            payload_lease,
+            recovery,
+            cleanup: DockLiveUndockOrphanCleanupReceipt::for_test(payload_lease),
+        })
+    }
+
+    pub(crate) const fn identity(self) -> DockLiveUndockIdentity {
+        self.identity
+    }
+
+    pub(crate) const fn payload_lease(self) -> DockLiveUndockPayloadLeaseReceipt {
+        self.payload_lease
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockLiveUndockOrphanCleanupFailure {
+    PreparationRejected,
+    PreflightRejected,
 }
 
 /// Exact acknowledgement that a payload which already crossed the durable promotion boundary
@@ -1096,6 +1309,7 @@ impl DockLiveUndockPlacementOutcome {
 pub(crate) enum DockLiveUndockRevealOutcome {
     Rejected,
     NativeObservationMissing,
+    ObservationDeadlineExpired,
     Stale,
     WindowTerminal,
 }
@@ -1530,6 +1744,14 @@ pub(crate) enum DockLiveUndockFact {
         identity: DockLiveUndockIdentity,
         receipt: DockLiveUndockOrphanRecoveryReceipt,
     },
+    ShutdownOrphanCleanupCompleted {
+        receipt: DockLiveUndockOrphanCleanupReceipt,
+    },
+    ShutdownOrphanCleanupFailed {
+        identity: DockLiveUndockIdentity,
+        payload_lease: DockLiveUndockPayloadLeaseReceipt,
+        failure: DockLiveUndockOrphanCleanupFailure,
+    },
     CommittedDestinationRecoveryCommitted {
         identity: DockLiveUndockIdentity,
         receipt: DockLiveUndockCommittedDestinationRecoveryReceipt,
@@ -1583,6 +1805,7 @@ impl DockLiveUndockFact {
             | Self::SourceRestorationRetryElapsed { identity, .. }
             | Self::OrphanRecoveryCommitted { identity, .. }
             | Self::OrphanRecoveryFailed { identity, .. }
+            | Self::ShutdownOrphanCleanupFailed { identity, .. }
             | Self::CommittedDestinationRecoveryCommitted { identity, .. }
             | Self::DestinationTerminal { identity, .. }
             | Self::Cancel { identity, .. }
@@ -1590,6 +1813,7 @@ impl DockLiveUndockFact {
             | Self::WindowTerminal { identity, .. } => Some(*identity),
             Self::SourceWindowNativeTerminal { receipt } => Some(receipt.identity()),
             Self::PresentationAuthorityLost { receipt } => Some(receipt.identity()),
+            Self::ShutdownOrphanCleanupCompleted { receipt } => Some(receipt.identity()),
         }
     }
 }
@@ -1782,6 +2006,10 @@ impl<T> DockLiveUndockTransition<T> {
 
     pub(crate) fn into_parts(self) -> (T, DockLiveUndockEffects) {
         (self.outcome, self.effects)
+    }
+
+    pub(crate) fn outcome(&self) -> &T {
+        &self.outcome
     }
 }
 
@@ -2103,6 +2331,7 @@ struct DockLiveUndockOrphanRecovery {
     payload_lease: DockLiveUndockPayloadLeaseReceipt,
     cause: DockLiveUndockPayloadRecoveryCause,
     shutdown_dependency: DockLiveUndockShutdownDependency,
+    shutdown_cleanup_failure: Option<DockLiveUndockOrphanCleanupFailure>,
 }
 
 #[derive(Debug)]
@@ -2163,6 +2392,12 @@ impl DockLiveUndockOrphanRecovery {
     }
 
     fn accepts(&self, receipt: DockLiveUndockOrphanRecoveryReceipt) -> bool {
+        receipt.identity() == self.identity()
+            && receipt.payload_lease() == self.payload_lease
+            && self.active.payload.lease() == Some(self.payload_lease)
+    }
+
+    fn accepts_cleanup(&self, receipt: DockLiveUndockOrphanCleanupReceipt) -> bool {
         receipt.identity() == self.identity()
             && receipt.payload_lease() == self.payload_lease
             && self.active.payload.lease() == Some(self.payload_lease)
@@ -2821,6 +3056,8 @@ impl DockLiveUndockSession {
             | DockLiveUndockFact::PresentationAuthorityLost { .. }
             | DockLiveUndockFact::OrphanRecoveryCommitted { .. }
             | DockLiveUndockFact::OrphanRecoveryFailed { .. }
+            | DockLiveUndockFact::ShutdownOrphanCleanupCompleted { .. }
+            | DockLiveUndockFact::ShutdownOrphanCleanupFailed { .. }
             | DockLiveUndockFact::CommittedDestinationRecoveryCommitted { .. }
             | DockLiveUndockFact::OpeningReturned { .. }
             | DockLiveUndockFact::OpeningFailed { .. }
@@ -3007,16 +3244,31 @@ impl DockLiveUndockSession {
         let Some(payload_lease) = active.payload.lease() else {
             return DockLiveUndockState::Active(active);
         };
-        effects.push(DockLiveUndockEffect::RecoverOrphanedPayloadTopology {
-            identity: active.identity(),
-            payload_lease,
-            provisional: active.owned_window(),
+        let identity = active.identity();
+        let provisional = active.owned_window();
+        effects.push(match shutdown_dependency {
+            DockLiveUndockShutdownDependency::Claimed(_)
+            | DockLiveUndockShutdownDependency::Transferred => {
+                DockLiveUndockEffect::ShutdownOrphanRecoveryRequired {
+                    identity,
+                    payload_lease,
+                    provisional,
+                }
+            }
+            DockLiveUndockShutdownDependency::Unclaimed => {
+                DockLiveUndockEffect::RecoverOrphanedPayloadTopology {
+                    identity,
+                    payload_lease,
+                    provisional,
+                }
+            }
         });
         DockLiveUndockState::RecoveringOrphan(DockLiveUndockOrphanRecovery {
             active,
             payload_lease,
             cause,
             shutdown_dependency,
+            shutdown_cleanup_failure: None,
         })
     }
 
@@ -3051,11 +3303,25 @@ impl DockLiveUndockSession {
                 }
             }
         };
-        effects.push(DockLiveUndockEffect::RecoverCommittedDestinationTopology {
-            identity: active.identity(),
-            authority,
-            token,
-            destination,
+        let identity = active.identity();
+        effects.push(match shutdown_dependency {
+            DockLiveUndockShutdownDependency::Claimed(_)
+            | DockLiveUndockShutdownDependency::Transferred => {
+                DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                    identity,
+                    authority,
+                    token,
+                    destination,
+                }
+            }
+            DockLiveUndockShutdownDependency::Unclaimed => {
+                DockLiveUndockEffect::RecoverCommittedDestinationTopology {
+                    identity,
+                    authority,
+                    token,
+                    destination,
+                }
+            }
         });
         DockLiveUndockState::RecoveringCommittedDestination(
             DockLiveUndockCommittedDestinationRecovery {
@@ -3168,26 +3434,11 @@ impl DockLiveUndockSession {
                     })
                 }
                 DockLiveUndockProvisionalLifecycle::Bound(window) => {
-                    let binding = match reason {
-                        DockLiveUndockRetirementReason::OpeningBindingInvalid => {
-                            Some(DockLiveUndockOpeningBinding::Invalid)
-                        }
-                        DockLiveUndockRetirementReason::RuntimeRegistrationRejected => {
-                            Some(DockLiveUndockOpeningBinding::ExactGated)
-                        }
-                        DockLiveUndockRetirementReason::SourceRestored(_)
-                        | DockLiveUndockRetirementReason::SourceLost
-                        | DockLiveUndockRetirementReason::PresentationAuthorityLost
-                        | DockLiveUndockRetirementReason::HostCommitted
-                        | DockLiveUndockRetirementReason::HostDestinationSelected
-                        | DockLiveUndockRetirementReason::PresentationUnavailable
-                        | DockLiveUndockRetirementReason::Shutdown => None,
-                    };
                     effects.push(DockLiveUndockEffect::ProvisionalRetirementRequired {
                         identity,
                         window: Some(window),
                         dependency: shutdown_dependency.claimed(),
-                        binding,
+                        binding: Some(DockLiveUndockOpeningBinding::ExactGated),
                         reason,
                     });
                     DockLiveUndockState::Retiring(DockLiveUndockRetiring {
@@ -3304,21 +3555,6 @@ impl DockLiveUndockSession {
                 );
                 (state, effects)
             }
-            DockLiveUndockFact::ShutdownDependencyTransferred { dependency, .. }
-                if restoration.active.owned_window().is_some()
-                    && restoration.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency) =>
-            {
-                restoration.shutdown_dependency = DockLiveUndockShutdownDependency::Transferred;
-                effects.push(DockLiveUndockEffect::ShutdownDependencyTransferred {
-                    identity,
-                    dependency,
-                });
-                (
-                    Self::source_restoration_state(restoration, source_released),
-                    effects,
-                )
-            }
             DockLiveUndockFact::WindowTerminal { window_id, .. }
                 if restoration
                     .active
@@ -3329,14 +3565,11 @@ impl DockLiveUndockSession {
                 effects.push(DockLiveUndockEffect::WindowTerminalSettled(
                     DockLiveUndockWindowTerminalOutcome {
                         lease: identity.opening.lease,
-                        dependency: restoration.shutdown_dependency.claimed(),
+                        dependency: None,
                     },
                 ));
                 restoration.active.provisional =
                     DockLiveUndockProvisionalLifecycle::Terminal(window_id);
-                if restoration.shutdown_dependency.claimed().is_some() {
-                    restoration.shutdown_dependency = DockLiveUndockShutdownDependency::Transferred;
-                }
                 (
                     Self::source_restoration_state(restoration, source_released),
                     effects,
@@ -3372,35 +3605,32 @@ impl DockLiveUndockSession {
             | DockLiveUndockFact::OrphanRecoveryFailed { receipt, .. }
                 if recovery.accepts(receipt) =>
             {
-                let (terminal, retirement) = match recovery.cause {
-                    DockLiveUndockPayloadRecoveryCause::SourceNativeTerminal => (
-                        DockLiveUndockTerminalResult::SourceLostBeforeCommit,
-                        DockLiveUndockRetirementReason::SourceLost,
-                    ),
-                    DockLiveUndockPayloadRecoveryCause::PresentationAuthorityLost(cause) => (
-                        DockLiveUndockTerminalResult::PresentationAuthorityLostBeforeCommit(cause),
-                        DockLiveUndockRetirementReason::PresentationAuthorityLost,
-                    ),
-                };
-                let state = self.finish_active(
-                    recovery.active,
-                    terminal,
-                    Some(retirement),
-                    recovery.shutdown_dependency,
-                    &mut effects,
-                );
+                let state = self.finish_orphan_recovery(recovery, &mut effects);
                 (state, effects)
             }
-            DockLiveUndockFact::ShutdownDependencyTransferred { dependency, .. }
-                if recovery.active.owned_window().is_some()
-                    && recovery.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency) =>
+            DockLiveUndockFact::ShutdownOrphanCleanupCompleted { receipt }
+                if recovery.accepts_cleanup(receipt)
+                    && !matches!(
+                        recovery.shutdown_dependency,
+                        DockLiveUndockShutdownDependency::Unclaimed
+                    ) =>
             {
-                recovery.shutdown_dependency = DockLiveUndockShutdownDependency::Transferred;
-                effects.push(DockLiveUndockEffect::ShutdownDependencyTransferred {
-                    identity,
-                    dependency,
-                });
+                let state = self.finish_orphan_recovery(recovery, &mut effects);
+                (state, effects)
+            }
+            DockLiveUndockFact::ShutdownOrphanCleanupFailed {
+                identity: failed_identity,
+                payload_lease,
+                failure,
+            } if failed_identity == identity
+                && recovery.payload_lease == payload_lease
+                && recovery.active.payload.lease() == Some(payload_lease)
+                && !matches!(
+                    recovery.shutdown_dependency,
+                    DockLiveUndockShutdownDependency::Unclaimed
+                ) =>
+            {
+                recovery.shutdown_cleanup_failure = Some(failure);
                 (DockLiveUndockState::RecoveringOrphan(recovery), effects)
             }
             DockLiveUndockFact::WindowTerminal { window_id, .. }
@@ -3413,18 +3643,39 @@ impl DockLiveUndockSession {
                 effects.push(DockLiveUndockEffect::WindowTerminalSettled(
                     DockLiveUndockWindowTerminalOutcome {
                         lease: identity.opening.lease,
-                        dependency: recovery.shutdown_dependency.claimed(),
+                        dependency: None,
                     },
                 ));
                 recovery.active.provisional =
                     DockLiveUndockProvisionalLifecycle::Terminal(window_id);
-                if recovery.shutdown_dependency.claimed().is_some() {
-                    recovery.shutdown_dependency = DockLiveUndockShutdownDependency::Transferred;
-                }
                 (DockLiveUndockState::RecoveringOrphan(recovery), effects)
             }
             _ => (DockLiveUndockState::RecoveringOrphan(recovery), effects),
         }
+    }
+
+    fn finish_orphan_recovery(
+        &mut self,
+        recovery: DockLiveUndockOrphanRecovery,
+        effects: &mut DockLiveUndockEffects,
+    ) -> DockLiveUndockState {
+        let (terminal, retirement) = match recovery.cause {
+            DockLiveUndockPayloadRecoveryCause::SourceNativeTerminal => (
+                DockLiveUndockTerminalResult::SourceLostBeforeCommit,
+                DockLiveUndockRetirementReason::SourceLost,
+            ),
+            DockLiveUndockPayloadRecoveryCause::PresentationAuthorityLost(cause) => (
+                DockLiveUndockTerminalResult::PresentationAuthorityLostBeforeCommit(cause),
+                DockLiveUndockRetirementReason::PresentationAuthorityLost,
+            ),
+        };
+        self.finish_active(
+            recovery.active,
+            terminal,
+            Some(retirement),
+            recovery.shutdown_dependency,
+            effects,
+        )
     }
 
     fn reduce_committed_destination_recovery(
@@ -3464,17 +3715,6 @@ impl DockLiveUndockSession {
                     });
                 }
             }
-            DockLiveUndockFact::ShutdownDependencyTransferred { dependency, .. }
-                if recovery.active.owned_window().is_some()
-                    && recovery.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency) =>
-            {
-                recovery.shutdown_dependency = DockLiveUndockShutdownDependency::Transferred;
-                effects.push(DockLiveUndockEffect::ShutdownDependencyTransferred {
-                    identity,
-                    dependency,
-                });
-            }
             DockLiveUndockFact::WindowTerminal { window_id, .. }
                 if matches!(
                     recovery.cleanup,
@@ -3488,7 +3728,7 @@ impl DockLiveUndockSession {
                 effects.push(DockLiveUndockEffect::WindowTerminalSettled(
                     DockLiveUndockWindowTerminalOutcome {
                         lease: identity.opening.lease,
-                        dependency: recovery.shutdown_dependency.claimed(),
+                        dependency: None,
                     },
                 ));
                 recovery.active.provisional =
@@ -3499,9 +3739,6 @@ impl DockLiveUndockSession {
                     unreachable!("the exact same-window terminal guard must preserve its variant");
                 };
                 *terminal = true;
-                if recovery.shutdown_dependency.claimed().is_some() {
-                    recovery.shutdown_dependency = DockLiveUndockShutdownDependency::Transferred;
-                }
             }
             _ => {}
         }
@@ -3761,6 +3998,9 @@ impl DockLiveUndockSession {
         effects: &mut DockLiveUndockEffects,
     ) {
         let identity = recovery.identity();
+        if recovery.shutdown_cleanup_failure.is_some() {
+            return;
+        }
         let dependency = match recovery.shutdown_dependency {
             DockLiveUndockShutdownDependency::Unclaimed => {
                 let dependency =
@@ -4074,31 +4314,6 @@ impl DockLiveUndockSession {
         dependency: DockSurfaceWindowSessionDependencyId,
     ) -> bool {
         let identity = match &self.state {
-            DockLiveUndockState::Compensating(restoration)
-            | DockLiveUndockState::Restoring(restoration)
-                if restoration.identity().opening == key
-                    && restoration.active.owned_window().is_some()
-                    && restoration.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency) =>
-            {
-                restoration.identity()
-            }
-            DockLiveUndockState::RecoveringOrphan(recovery)
-                if recovery.identity().opening == key
-                    && recovery.active.owned_window().is_some()
-                    && recovery.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency) =>
-            {
-                recovery.identity()
-            }
-            DockLiveUndockState::RecoveringCommittedDestination(recovery)
-                if recovery.identity().opening == key
-                    && recovery.active.owned_window().is_some()
-                    && recovery.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency) =>
-            {
-                recovery.identity()
-            }
             DockLiveUndockState::Retiring(retiring)
                 if retiring.identity().opening == key
                     && retiring.window.is_some()
@@ -4131,28 +4346,6 @@ impl DockLiveUndockSession {
         dependency: DockSurfaceWindowSessionDependencyId,
     ) -> bool {
         matches!(
-            &self.state,
-            DockLiveUndockState::Compensating(restoration)
-                | DockLiveUndockState::Restoring(restoration)
-                if restoration.identity().opening == key
-                    && restoration.active.owned_window().is_some()
-                    && restoration.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency)
-        ) || matches!(
-            &self.state,
-            DockLiveUndockState::RecoveringOrphan(recovery)
-                if recovery.identity().opening == key
-                    && recovery.active.owned_window().is_some()
-                    && recovery.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency)
-        ) || matches!(
-            &self.state,
-            DockLiveUndockState::RecoveringCommittedDestination(recovery)
-                if recovery.identity().opening == key
-                    && recovery.active.owned_window().is_some()
-                    && recovery.shutdown_dependency
-                        == DockLiveUndockShutdownDependency::Claimed(dependency)
-        ) || matches!(
             &self.state,
             DockLiveUndockState::Retiring(retiring)
                 if retiring.identity().opening == key
@@ -4290,6 +4483,11 @@ impl DockLiveUndockSession {
             DockLiveUndockState::Active(_) => DockLiveUndockPhase::Bound,
             DockLiveUndockState::Compensating(_) => DockLiveUndockPhase::Compensating,
             DockLiveUndockState::Restoring(_) => DockLiveUndockPhase::Restoring,
+            DockLiveUndockState::RecoveringOrphan(recovery)
+                if recovery.shutdown_cleanup_failure.is_some() =>
+            {
+                DockLiveUndockPhase::ShutdownCleanupFailed
+            }
             DockLiveUndockState::RecoveringOrphan(_) => DockLiveUndockPhase::RecoveringOrphan,
             DockLiveUndockState::RecoveringCommittedDestination(_) => {
                 DockLiveUndockPhase::RecoveringCommittedDestination

@@ -529,6 +529,7 @@ pub(crate) fn retire_live_undock_provisional(
     };
     if binding != Some(live_undock::DockLiveUndockOpeningBinding::ExactGated) {
         close_live_undock_window_quietly(window, cx);
+        settle_live_undock_dependency(owner, identity, Some(dependency), cx);
         return;
     }
 
@@ -552,8 +553,8 @@ pub(crate) fn retire_live_undock_provisional(
     );
     let frozen_ownership_installed = terminal_ticket_installed
         && runtime.adopt_provisional_window_during_shutdown(window, opening);
-    if frozen_ownership_installed {
-        cx.update_entity(owner, |owner, owner_cx| {
+    let dependency_transferred = frozen_ownership_installed
+        && cx.update_entity(owner, |owner, owner_cx| {
             let outcome = owner.transfer_live_undock_dependency_to_window(opening, dependency);
             if matches!(
                 outcome,
@@ -561,10 +562,17 @@ pub(crate) fn retire_live_undock_provisional(
             ) {
                 owner_cx.notify();
             }
+            matches!(
+                outcome,
+                window_session::DockSurfaceWindowSessionDependencyTerminalOutcome::Settled
+                    | window_session::DockSurfaceWindowSessionDependencyTerminalOutcome::AlreadyTerminal
+            )
         });
+    if dependency_transferred {
         close_surface_window(owner, lease, window, cx);
     } else {
         close_live_undock_window_quietly(window, cx);
+        settle_live_undock_dependency(owner, identity, Some(dependency), cx);
     }
 }
 
@@ -608,13 +616,6 @@ fn settle_surface_window_terminal(
             .settle_live_undock_window_terminal(window_id)
             .into_parts();
         debug_assert!(live_terminal.is_none_or(|terminal| terminal.lease() == lease));
-        let dependency = live_terminal
-            .and_then(live_undock::DockLiveUndockWindowTerminalOutcome::dependency)
-            .map(|dependency| {
-                owner
-                    .window_session_mut()
-                    .settle_dependency(lease, dependency)
-            });
         let terminal = owner
             .window_session_mut()
             .settle_terminal(lease, window_id, disposition);
@@ -636,10 +637,6 @@ fn settle_surface_window_terminal(
             || matches!(
                 convergence,
                 Some(window_session::DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed)
-            )
-            || matches!(
-                dependency,
-                Some(window_session::DockSurfaceWindowSessionDependencyTerminalOutcome::Settled)
             )
         {
             owner_cx.notify();
@@ -1151,9 +1148,28 @@ pub(crate) fn handle_surface_window_closed(
         return None;
     }
 
-    cx.read_entity(owner, |owner, _| {
+    let committed_registration = cx.read_entity(owner, |owner, _| {
         owner.live_undock_committed_destination_registration_for_logical_close(window_id)
-    })
+    });
+    if committed_registration.is_some() {
+        return committed_registration;
+    }
+
+    // Logical removal is the terminal boundary for an uncommitted provisional destination. The
+    // native window may remain retained by a retirement dependency, so waiting for native-terminal
+    // observation or DockHost release would strand reveal and payload finalization authority.
+    let live_effects = cx.update_entity(owner, |owner, owner_cx| {
+        let (terminal, effects) = owner
+            .settle_live_undock_window_terminal(window_id)
+            .into_parts();
+        if terminal.is_some() || !effects.is_empty() {
+            owner_cx.notify();
+        }
+        effects
+    });
+    let live_runtime = cx.read_entity(owner, |owner, _| owner.live_undock_runtime());
+    live_runtime.enqueue_effects(live_effects, cx);
+    None
 }
 
 fn handle_surface_window_native_terminal(

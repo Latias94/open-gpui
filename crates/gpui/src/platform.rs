@@ -1122,10 +1122,22 @@ pub enum WindowProvisionalRevealOutcome {
     Rejected,
     /// The backend accepted the command without publishing the required native observation.
     NativeObservationMissing,
+    /// The exact reveal authority was cancelled before the native command could win.
+    Cancelled,
     /// The target full window generation was no longer current.
     Stale,
     /// The application or native window became terminal before reveal.
     WindowTerminal,
+}
+
+/// Result of atomically cancelling one exact provisional reveal ticket.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowProvisionalRevealCancellationOutcome {
+    /// Cancellation won while the ticket was still pending.
+    Cancelled(WindowProvisionalRevealSnapshot),
+    /// Another terminal outcome won before cancellation.
+    AlreadySettled(WindowProvisionalRevealSnapshot),
 }
 
 /// Relative native Z-order result observed for one provisional reveal.
@@ -1418,6 +1430,13 @@ impl WindowProvisionalRevealTicket {
     /// Returns an immutable snapshot that survives the target window.
     pub fn snapshot(&self) -> WindowProvisionalRevealSnapshot {
         let state = self.state.lock();
+        self.snapshot_from_state(&state)
+    }
+
+    fn snapshot_from_state(
+        &self,
+        state: &WindowProvisionalRevealState,
+    ) -> WindowProvisionalRevealSnapshot {
         WindowProvisionalRevealSnapshot {
             window_id: self.window_id,
             session_generation: self.session_generation,
@@ -1426,6 +1445,25 @@ impl WindowProvisionalRevealTicket {
             native_facts: state.native_facts,
             outcome: state.outcome,
         }
+    }
+
+    pub(crate) fn cancel(&self) -> WindowProvisionalRevealCancellationOutcome {
+        let mut state = self.state.lock();
+        if state.outcome == WindowProvisionalRevealOutcome::Pending {
+            state.outcome = WindowProvisionalRevealOutcome::Cancelled;
+            WindowProvisionalRevealCancellationOutcome::Cancelled(self.snapshot_from_state(&state))
+        } else {
+            WindowProvisionalRevealCancellationOutcome::AlreadySettled(
+                self.snapshot_from_state(&state),
+            )
+        }
+    }
+
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.window_id == other.window_id
+            && self.session_generation == other.session_generation
+            && self.minimum_presentation_generation == other.minimum_presentation_generation
+            && Arc::ptr_eq(&self.state, &other.state)
     }
 
     pub(crate) fn bind_presentation(&self, generation: u64) -> bool {

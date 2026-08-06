@@ -172,6 +172,12 @@ pub(crate) enum DockHostLiveDestinationPhase {
         presentation: DockLiveUndockPayloadPresentationReceipt,
         ticket: WindowProvisionalRevealTicket,
     },
+    RevealObserving {
+        presentation: DockLiveUndockPayloadPresentationReceipt,
+        candidate_frame: DockLiveUndockPayloadPresentationReceipt,
+        submitted_frame: Option<DockLiveUndockPayloadPresentationReceipt>,
+        ticket: WindowProvisionalRevealTicket,
+    },
     RevealSettled,
 }
 
@@ -432,6 +438,7 @@ enum DockHostLivePresentationStage {
     DestinationExposed,
     DestinationPresented,
     DestinationRevealArmed,
+    DestinationRevealObserving,
     DestinationRevealSettled,
     SourceRestoration(DockHostLiveSourceRestorationPhase),
 }
@@ -440,7 +447,18 @@ enum DockHostLivePresentationStage {
 pub(crate) struct DockHostPreparedLivePresentationAbandonment {
     key: DockHostLivePresentationKey,
     stage: DockHostLivePresentationStage,
-    leases: view_presentation_window::LeaseBatch,
+    publication: DockHostPresentationPublicationSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockHostLivePresentationCleanupReceipt {
+    key: DockHostLivePresentationKey,
+}
+
+impl DockHostLivePresentationCleanupReceipt {
+    pub(crate) const fn key(self) -> DockHostLivePresentationKey {
+        self.key
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -474,7 +492,65 @@ pub(crate) struct DockHostPreparedPayloadRecoverySourceRestorationCommit {
 pub(crate) struct DockHostPreparedPayloadRecoveryPresentationAbandonment {
     key: DockHostRecoveryPresentationKey,
     stage: DockHostRecoveryPresentationStage,
-    leases: view_presentation_window::LeaseBatch,
+    publication: DockHostPresentationPublicationSnapshot,
+}
+
+#[derive(Debug)]
+struct DockHostPresentationPublicationSnapshot {
+    logical: view_presentation_window::LeaseBatch,
+    prior: Option<view_presentation_window::LeaseBatch>,
+    // Render construction updates this journal before a candidate frame is accepted. These slots
+    // bind abandonment to the exact Host-local observation; they are not presentation receipts.
+    observed: Vec<Option<view_presentation_window::Lease>>,
+}
+
+impl DockHostPresentationPublicationSnapshot {
+    fn capture(
+        logical: view_presentation_window::LeaseBatch,
+        prior: Option<view_presentation_window::LeaseBatch>,
+        current: &HashMap<EntityId, view_presentation_window::Lease>,
+    ) -> Self {
+        let observed = logical
+            .leases()
+            .iter()
+            .map(|lease| current.get(&lease.entity_id()).copied())
+            .collect();
+        Self {
+            logical,
+            prior,
+            observed,
+        }
+    }
+
+    fn matches_exactly(&self, other: &Self) -> bool {
+        self.logical.matches_exactly(&other.logical)
+            && match (&self.prior, &other.prior) {
+                (Some(prior), Some(other_prior)) => prior.matches_exactly(other_prior),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.observed == other.observed
+    }
+
+    fn remove_observed_owned(
+        self,
+        current: &mut HashMap<EntityId, view_presentation_window::Lease>,
+    ) {
+        for (logical_lease, observed) in self.logical.leases().iter().zip(self.observed) {
+            let Some(observed) = observed else {
+                continue;
+            };
+            let was_owned = observed == *logical_lease
+                || self
+                    .prior
+                    .as_ref()
+                    .and_then(|prior| prior.lease_for(logical_lease.entity_id()))
+                    == Some(observed);
+            if was_owned && current.get(&logical_lease.entity_id()) == Some(&observed) {
+                current.remove(&logical_lease.entity_id());
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -877,6 +953,15 @@ impl DockHost {
             .as_ref()
             .filter(|proxy| proxy.is_active())
             .cloned()
+    }
+
+    pub(crate) fn has_native_drag_transport_proxy_key(
+        &self,
+        key: crate::native_captured_drag::DockNativeCapturedDragTransportKey,
+    ) -> bool {
+        self.native_drag_transport_proxy
+            .as_ref()
+            .is_some_and(|proxy| proxy.key() == key)
     }
 
     #[cfg(test)]
@@ -1642,11 +1727,12 @@ impl DockHost {
             .live_presentation
             .as_ref()
             .and_then(DockHostPresentationState::as_recovery)?;
-        let (stage, leases, generation) = match &state.mode {
+        let (stage, leases, generation, prior) = match &state.mode {
             DockHostRecoveryPresentationMode::SourceProjection { prepared, phase } => (
                 DockHostRecoveryPresentationStage::Source(*phase),
                 prepared.source().clone(),
                 prepared.generation(),
+                None,
             ),
             DockHostRecoveryPresentationMode::DestinationProjection {
                 prepared,
@@ -1657,6 +1743,7 @@ impl DockHost {
                 DockHostRecoveryPresentationStage::Destination(*phase),
                 leases.clone(),
                 prepared.generation(),
+                None,
             ),
             DockHostRecoveryPresentationMode::SourceRestoration {
                 prepared,
@@ -1667,12 +1754,22 @@ impl DockHost {
                 DockHostRecoveryPresentationStage::SourceRestoration(*phase),
                 leases.clone(),
                 prepared.generation(),
+                Some(prepared.source().clone()),
             ),
         };
         if generation != key.rehost_generation() {
             return None;
         }
-        Some(DockHostPreparedPayloadRecoveryPresentationAbandonment { key, stage, leases })
+        let publication = DockHostPresentationPublicationSnapshot::capture(
+            leases,
+            prior,
+            &self.panel_presentation_leases,
+        );
+        Some(DockHostPreparedPayloadRecoveryPresentationAbandonment {
+            key,
+            stage,
+            publication,
+        })
     }
 
     pub(crate) fn can_commit_prepared_payload_recovery_presentation_abandonment(
@@ -1684,8 +1781,7 @@ impl DockHost {
             return false;
         };
         current.stage == prepared.stage
-            && current.leases.window_id() == prepared.leases.window_id()
-            && current.leases.leases() == prepared.leases.leases()
+            && current.publication.matches_exactly(&prepared.publication)
     }
 
     pub(crate) fn commit_prepared_payload_recovery_presentation_abandonment(
@@ -1697,10 +1793,9 @@ impl DockHost {
             self.can_commit_prepared_payload_recovery_presentation_abandonment(&prepared),
             "prepared payload-recovery presentation abandonment must remain exact until commit"
         );
-        let leases = prepared.leases;
+        let publication = prepared.publication;
         self.live_presentation = None;
-        self.panel_presentation_leases
-            .retain(|_, lease| !leases.leases().contains(lease));
+        publication.remove_observed_owned(&mut self.panel_presentation_leases);
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
         cx.notify();
@@ -1852,10 +1947,121 @@ impl DockHost {
                 })
     }
 
+    pub(crate) fn begin_live_destination_reveal_observation(
+        &mut self,
+        key: DockHostLivePresentationKey,
+        presentation: DockLiveUndockPayloadPresentationReceipt,
+        candidate_frame: DockLiveUndockPayloadPresentationReceipt,
+        cx: &mut Context<Self>,
+    ) -> Option<WindowProvisionalRevealTicket> {
+        if !self.accepts_live_presentation_key(key) {
+            return None;
+        }
+        let Some(DockHostLivePresentationState {
+            mode: DockHostLivePresentationMode::DestinationProjection { phase, .. },
+            ..
+        }) = self
+            .live_presentation
+            .as_mut()
+            .and_then(DockHostPresentationState::as_live_mut)
+        else {
+            return None;
+        };
+        let DockHostLiveDestinationPhase::RevealArmed {
+            presentation: current,
+            ticket,
+        } = phase
+        else {
+            return None;
+        };
+        let ticket_snapshot = ticket.snapshot();
+        if *current != presentation
+            || candidate_frame.mount() != presentation.mount()
+            || candidate_frame.frame_generation() <= presentation.frame_generation()
+            || candidate_frame.frame_generation()
+                < ticket_snapshot.minimum_presentation_generation()
+            || candidate_frame.window_id() != ticket_snapshot.window_id()
+            || candidate_frame
+                .mount()
+                .proxy()
+                .lease()
+                .provisional_session_generation()
+                != ticket_snapshot.session_generation()
+        {
+            return None;
+        }
+        let ticket = ticket.clone();
+        *phase = DockHostLiveDestinationPhase::RevealObserving {
+            presentation,
+            candidate_frame,
+            submitted_frame: None,
+            ticket: ticket.clone(),
+        };
+        cx.notify();
+        Some(ticket)
+    }
+
+    pub(crate) fn bind_live_destination_reveal_submission(
+        &mut self,
+        key: DockHostLivePresentationKey,
+        presentation: DockLiveUndockPayloadPresentationReceipt,
+        submitted_frame: DockLiveUndockPayloadPresentationReceipt,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.accepts_live_presentation_key(key) {
+            return false;
+        }
+        let Some(DockHostLivePresentationState {
+            mode: DockHostLivePresentationMode::DestinationProjection { phase, .. },
+            ..
+        }) = self
+            .live_presentation
+            .as_mut()
+            .and_then(DockHostPresentationState::as_live_mut)
+        else {
+            return false;
+        };
+        let DockHostLiveDestinationPhase::RevealObserving {
+            presentation: current,
+            candidate_frame,
+            submitted_frame: current_submitted_frame,
+            ticket,
+        } = phase
+        else {
+            return false;
+        };
+        let snapshot = ticket.snapshot();
+        if *current != presentation
+            || candidate_frame.mount() != presentation.mount()
+            || submitted_frame.mount() != presentation.mount()
+            || submitted_frame.frame_generation() <= presentation.frame_generation()
+            || submitted_frame.frame_generation() < candidate_frame.frame_generation()
+            || snapshot.window_id() != submitted_frame.window_id()
+            || snapshot.session_generation()
+                != submitted_frame
+                    .mount()
+                    .proxy()
+                    .lease()
+                    .provisional_session_generation()
+            || snapshot.presentation_generation() != Some(submitted_frame.frame_generation())
+        {
+            return false;
+        }
+        match current_submitted_frame {
+            Some(current) => *current == submitted_frame,
+            slot @ None => {
+                *slot = Some(submitted_frame);
+                cx.notify();
+                true
+            }
+        }
+    }
+
     pub(crate) fn settle_live_destination_reveal(
         &mut self,
         key: DockHostLivePresentationKey,
         presentation: DockLiveUndockPayloadPresentationReceipt,
+        submitted_frame: Option<DockLiveUndockPayloadPresentationReceipt>,
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.accepts_live_presentation_key(key) {
@@ -1873,10 +2079,12 @@ impl DockHost {
         };
         if !matches!(
             phase,
-            DockHostLiveDestinationPhase::RevealArmed {
+            DockHostLiveDestinationPhase::RevealObserving {
                 presentation: current,
+                candidate_frame: _,
+                submitted_frame: current_submitted_frame,
                 ..
-            } if *current == presentation
+            } if *current == presentation && *current_submitted_frame == submitted_frame
         ) {
             return false;
         }
@@ -2130,13 +2338,14 @@ impl DockHost {
             .live_presentation
             .as_ref()
             .and_then(DockHostPresentationState::as_live)?;
-        let (stage, leases, prepared_generation) = match &state.mode {
+        let (stage, leases, prepared_generation, prior) = match &state.mode {
             DockHostLivePresentationMode::SourceProjection {
                 prepared, phase, ..
             } => (
                 DockHostLivePresentationStage::Source(*phase),
                 prepared.source().clone(),
                 prepared.generation(),
+                None,
             ),
             DockHostLivePresentationMode::DestinationProjection {
                 prepared,
@@ -2157,11 +2366,14 @@ impl DockHost {
                     DockHostLiveDestinationPhase::RevealArmed { .. } => {
                         DockHostLivePresentationStage::DestinationRevealArmed
                     }
+                    DockHostLiveDestinationPhase::RevealObserving { .. } => {
+                        DockHostLivePresentationStage::DestinationRevealObserving
+                    }
                     DockHostLiveDestinationPhase::RevealSettled => {
                         DockHostLivePresentationStage::DestinationRevealSettled
                     }
                 };
-                (stage, leases.clone(), prepared.generation())
+                (stage, leases.clone(), prepared.generation(), None)
             }
             DockHostLivePresentationMode::SourceRestoration {
                 prepared,
@@ -2172,17 +2384,22 @@ impl DockHost {
                 DockHostLivePresentationStage::SourceRestoration(*phase),
                 leases.clone(),
                 prepared.generation(),
+                Some(prepared.source().clone()),
             ),
         };
-        if prepared_generation != key.rehost_generation
-            || leases
-                .leases()
-                .iter()
-                .any(|lease| self.panel_presentation_leases.get(&lease.entity_id()) != Some(lease))
-        {
+        if prepared_generation != key.rehost_generation {
             return None;
         }
-        Some(DockHostPreparedLivePresentationAbandonment { key, stage, leases })
+        let publication = DockHostPresentationPublicationSnapshot::capture(
+            leases,
+            prior,
+            &self.panel_presentation_leases,
+        );
+        Some(DockHostPreparedLivePresentationAbandonment {
+            key,
+            stage,
+            publication,
+        })
     }
 
     pub(crate) fn can_commit_prepared_live_presentation_abandonment(
@@ -2193,28 +2410,27 @@ impl DockHost {
             return false;
         };
         current.stage == prepared.stage
-            && current.leases.window_id() == prepared.leases.window_id()
-            && current.leases.leases() == prepared.leases.leases()
+            && current.publication.matches_exactly(&prepared.publication)
     }
 
     pub(crate) fn commit_prepared_live_presentation_abandonment(
         &mut self,
         prepared: DockHostPreparedLivePresentationAbandonment,
         cx: &mut Context<Self>,
-    ) {
+    ) -> DockHostLivePresentationCleanupReceipt {
         assert!(
             self.can_commit_prepared_live_presentation_abandonment(&prepared),
             "prepared live-presentation abandonment must remain exact until commit"
         );
         let key = prepared.key;
-        let leases = prepared.leases;
+        let publication = prepared.publication;
         self.live_presentation = None;
         self.clear_live_source_semantic_proxy_for_key(key);
-        self.panel_presentation_leases
-            .retain(|_, lease| !leases.leases().contains(lease));
+        publication.remove_observed_owned(&mut self.panel_presentation_leases);
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
         cx.notify();
+        DockHostLivePresentationCleanupReceipt { key }
     }
 
     pub(crate) fn prepare_live_source_retirement(
@@ -3001,6 +3217,31 @@ impl DockHost {
                     .as_ref()
                     .map(|owner| (owner.downgrade(), state.key))
             });
+        let live_destination_reveal_release = self
+            .live_presentation
+            .as_ref()
+            .and_then(DockHostPresentationState::as_live)
+            .and_then(|state| {
+                let DockHostLivePresentationMode::DestinationProjection {
+                    phase:
+                        DockHostLiveDestinationPhase::RevealObserving {
+                            candidate_frame,
+                            submitted_frame,
+                            ..
+                        },
+                    ..
+                } = &state.mode
+                else {
+                    return None;
+                };
+                self.surface_owner.as_ref().map(|owner| {
+                    (
+                        owner.downgrade(),
+                        state.key,
+                        submitted_frame.unwrap_or(*candidate_frame),
+                    )
+                })
+            });
         let pending_stable_source = self
             .live_presentation
             .as_ref()
@@ -3051,6 +3292,11 @@ impl DockHost {
         if let Some((owner, key)) = live_source_release {
             crate::surface::live_undock_runtime::live_undock_host_presentation_released(
                 owner, key, cx,
+            );
+        }
+        if let Some((owner, key, receipt)) = live_destination_reveal_release {
+            crate::surface::live_undock_runtime::live_undock_destination_reveal_released(
+                owner, key, receipt, cx,
             );
         }
     }

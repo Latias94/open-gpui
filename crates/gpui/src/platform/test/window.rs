@@ -248,6 +248,7 @@ impl TestWindow {
         creation_show_fact: Option<bool>,
         initial_presentation_command_outcomes: Option<VecDeque<PlatformWindowCommandOutcome>>,
         close_on_next_present: bool,
+        defer_frame_requests: bool,
     ) -> Self {
         let provisional_session = params.provisional_session.clone();
         let show_on_initial_presentation = params.show && provisional_session.is_none();
@@ -334,7 +335,7 @@ impl TestWindow {
                 native_retirement_rejections_remaining: 0,
                 presentation_shutdown_blocked: false,
                 draw_count: 0,
-                defer_frame_requests: false,
+                defer_frame_requests,
                 deferred_frame_request: None,
             })),
             true,
@@ -425,7 +426,7 @@ impl TestWindow {
         options.is_some_and(|options| self.simulate_frame(options))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn step_deferred_frame_request_for_test(&self) -> bool {
         let options = {
             let mut state = self.0.lock();
@@ -3598,6 +3599,207 @@ mod window_mutation_tests {
             1,
             "later submitted frames must not reveal the same provisional generation twice"
         );
+    }
+
+    #[crate::test]
+    fn cancelling_exact_provisional_reveal_blocks_late_frame_and_native_command(
+        cx: &mut TestAppContext,
+    ) {
+        let session =
+            WindowProvisionalSession::new(411).expect("the provisional generation should be valid");
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+        assert!(!platform_window.is_visible());
+        platform_window.defer_frame_requests_for_test();
+
+        let ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(&session, app)
+                    .expect("the matching bound session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Pending
+        );
+
+        let cancellation = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .cancel_provisional_presentation(&ticket, app)
+                    .expect("the exact pending reveal should cancel")
+            })
+            .expect("the provisional window should remain live");
+        let crate::WindowProvisionalRevealCancellationOutcome::Cancelled(snapshot) = cancellation
+        else {
+            panic!("cancellation must win before the deferred reveal frame");
+        };
+        assert_eq!(
+            snapshot.outcome(),
+            crate::WindowProvisionalRevealOutcome::Cancelled
+        );
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::Terminal
+        );
+
+        assert!(
+            platform_window.release_deferred_frame_request_for_test(),
+            "the armed reveal must retain one late frame request"
+        );
+        cx.run_until_parked();
+
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Cancelled,
+            "late presentation cannot overwrite the cancellation winner"
+        );
+        assert!(!platform_window.is_visible());
+        assert!(
+            platform_window
+                .platform_command_history()
+                .iter()
+                .all(|command| !matches!(
+                    command,
+                    PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
+                )),
+            "a cancelled ticket must never dispatch its native reveal command"
+        );
+    }
+
+    #[crate::test]
+    fn queued_provisional_reveal_is_fenced_before_native_drain(cx: &mut TestAppContext) {
+        let session =
+            WindowProvisionalSession::new(413).expect("the provisional generation should be valid");
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+        platform_window.clear_platform_command_history();
+        platform_window.defer_frame_requests_for_test();
+        let app_cell = cx.app.clone();
+
+        let ticket = cx
+            .update_window(handle, |_, window, app| {
+                let ticket = window
+                    .arm_provisional_presentation(&session, app)
+                    .expect("the matching bound session should arm presentation");
+                let presentation_generation = ticket.snapshot().minimum_presentation_generation();
+                app_cell.enqueue_provisional_window_reveal(
+                    handle.window_id(),
+                    platform_window.command_dispatcher(),
+                    PlatformWindowCommand::RevealDeferredInitialPresentation {
+                        session_generation: session.snapshot().generation(),
+                        presentation_generation,
+                    },
+                    ticket.clone(),
+                );
+                assert!(
+                    platform_window.platform_command_history().is_empty(),
+                    "the reveal command must remain queued while the App update owns the borrow"
+                );
+                assert!(matches!(
+                    window.cancel_provisional_presentation(&ticket, app),
+                    Ok(crate::WindowProvisionalRevealCancellationOutcome::Cancelled(_))
+                ));
+                ticket
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Cancelled
+        );
+        assert!(
+            platform_window
+                .platform_command_history()
+                .iter()
+                .all(|command| !matches!(
+                    command,
+                    PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
+                )),
+            "AppCell must re-check the exact ticket immediately before native dispatch"
+        );
+        assert!(!platform_window.is_visible());
+    }
+
+    #[crate::test]
+    fn cancelling_after_native_reveal_preserves_the_reveal_winner(cx: &mut TestAppContext) {
+        let session =
+            WindowProvisionalSession::new(412).expect("the provisional generation should be valid");
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+        let ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(&session, app)
+                    .expect("the matching bound session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+
+        let cancellation = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .cancel_provisional_presentation(&ticket, app)
+                    .expect("the exact settled reveal should remain addressable")
+            })
+            .expect("the provisional window should remain live");
+        let crate::WindowProvisionalRevealCancellationOutcome::AlreadySettled(snapshot) =
+            cancellation
+        else {
+            panic!("native reveal must remain the single terminal winner");
+        };
+        assert_eq!(
+            snapshot.outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::Gated,
+            "losing cancellation must not terminate a successfully revealed session"
+        );
+        assert!(platform_window.is_visible());
     }
 
     #[crate::test]

@@ -2348,6 +2348,7 @@ impl DockViewportRuntimeHandle {
         request: &crate::surface::live_undock::DockLiveUndockOpenRequest,
         cx: &mut App,
     ) -> Result<open_gpui::WindowHandle<DockHost>> {
+        self.ensure_window_closed_observer(cx);
         let opening = request.key();
         options.show = true;
         options.focus_on_appearing = false;

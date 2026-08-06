@@ -46,19 +46,23 @@ use crate::{
     },
 };
 use open_gpui::{
-    AccessibleAction, AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, CursorStyle,
-    DispatchPhase, DragMoveEvent, DropEvent, Entity, HitboxBehavior, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, PointerCaptureHandle, PrepaintPublicationId, Render, Rgba, Role,
-    SharedString, StatefulInteractiveElement, Styled, SubtreePresentation, SubtreePresentationExt,
-    WeakEntity, Window, WindowId, WindowProvisionalRevealOutcome, canvas, div, point, px, quad,
-    retained_visual, rgba, view_presentation_window,
+    AccessibleAction, AnyElement, AnyWindowHandle, App, AppContext as _, BorderStyle, Bounds,
+    Context, CursorStyle, DispatchPhase, DragMoveEvent, DropEvent, Entity, HitboxBehavior,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, PointerCaptureHandle, PrepaintPublicationId, Render, Rgba,
+    Role, SharedString, StatefulInteractiveElement, Styled, SubtreePresentation,
+    SubtreePresentationExt, WeakEntity, Window, WindowId,
+    WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome, canvas, div, point,
+    px, quad, retained_visual, rgba, view_presentation_window,
 };
 use open_gpui_motion::MotionTransition;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    time::Duration,
 };
+
+pub(crate) const LIVE_UNDOCK_REVEAL_OBSERVATION_DEADLINE: Duration = Duration::from_millis(500);
 
 #[derive(Clone)]
 pub(crate) struct DockViewportHostSceneCandidate {
@@ -909,6 +913,55 @@ fn live_destination_is_reveal_armed(
     .unwrap_or(false)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DockLiveRevealObserverAuthority {
+    candidate_frame: DockLiveUndockPayloadPresentationReceipt,
+    submitted_frame: Option<DockLiveUndockPayloadPresentationReceipt>,
+}
+
+fn live_destination_reveal_observer_authority(
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    presentation: DockLiveUndockPayloadPresentationReceipt,
+    candidate_frame: DockLiveUndockPayloadPresentationReceipt,
+    ticket: &open_gpui::WindowProvisionalRevealTicket,
+    cx: &App,
+) -> Option<DockLiveRevealObserverAuthority> {
+    let expected_ticket = ticket.snapshot();
+    host.read_with(cx, |host, _| {
+        let state = host.live_presentation_state()?;
+        if state.key != key {
+            return None;
+        }
+        let DockHostLivePresentationMode::DestinationProjection {
+            phase:
+                DockHostLiveDestinationPhase::RevealObserving {
+                    presentation: current,
+                    candidate_frame: current_candidate_frame,
+                    submitted_frame,
+                    ticket: current_ticket,
+                },
+            ..
+        } = state.mode
+        else {
+            return None;
+        };
+        let current_ticket = current_ticket.snapshot();
+        (current == presentation
+            && current_candidate_frame == candidate_frame
+            && current_ticket.window_id() == expected_ticket.window_id()
+            && current_ticket.session_generation() == expected_ticket.session_generation()
+            && current_ticket.minimum_presentation_generation()
+                == expected_ticket.minimum_presentation_generation())
+        .then_some(DockLiveRevealObserverAuthority {
+            candidate_frame,
+            submitted_frame,
+        })
+    })
+    .ok()
+    .flatten()
+}
+
 fn submit_live_undock_fact(
     owner: &WeakEntity<DockSurfaceOwner>,
     fact: DockLiveUndockFact,
@@ -1313,6 +1366,7 @@ fn dock_live_reveal_outcome(
         WindowProvisionalRevealOutcome::NativeObservationMissing => {
             Some(DockLiveUndockRevealOutcome::NativeObservationMissing)
         }
+        WindowProvisionalRevealOutcome::Cancelled => Some(DockLiveUndockRevealOutcome::Stale),
         WindowProvisionalRevealOutcome::Stale => Some(DockLiveUndockRevealOutcome::Stale),
         WindowProvisionalRevealOutcome::WindowTerminal => {
             Some(DockLiveUndockRevealOutcome::WindowTerminal)
@@ -1320,12 +1374,231 @@ fn dock_live_reveal_outcome(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockLiveRevealSnapshotClassification {
+    Pending,
+    Revealed,
+    Failed(DockLiveUndockRevealOutcome),
+}
+
+fn classify_live_reveal_snapshot(
+    outcome: WindowProvisionalRevealOutcome,
+    presentation_generation: Option<u64>,
+    submitted_frame_generation: Option<u64>,
+) -> DockLiveRevealSnapshotClassification {
+    let exact_submission = presentation_generation
+        .zip(submitted_frame_generation)
+        .is_some_and(|(presentation, submitted)| presentation == submitted);
+    match outcome {
+        WindowProvisionalRevealOutcome::Pending
+            if presentation_generation.is_none() && submitted_frame_generation.is_none() =>
+        {
+            DockLiveRevealSnapshotClassification::Pending
+        }
+        WindowProvisionalRevealOutcome::Pending if exact_submission => {
+            DockLiveRevealSnapshotClassification::Pending
+        }
+        WindowProvisionalRevealOutcome::Revealed if exact_submission => {
+            DockLiveRevealSnapshotClassification::Revealed
+        }
+        WindowProvisionalRevealOutcome::Pending | WindowProvisionalRevealOutcome::Revealed => {
+            DockLiveRevealSnapshotClassification::Failed(DockLiveUndockRevealOutcome::Stale)
+        }
+        terminal => DockLiveRevealSnapshotClassification::Failed(
+            dock_live_reveal_outcome(terminal)
+                .expect("a non-pending reveal outcome must map to a Dock terminal outcome"),
+        ),
+    }
+}
+
+fn current_live_destination_reveal_frame(
+    preflight: DockLiveUndockPayloadPresentationReceipt,
+    leases: &view_presentation_window::LeaseBatch,
+    cx: &App,
+) -> Option<DockLiveUndockPayloadPresentationReceipt> {
+    view_presentation_window::presented_batch_receipt(cx, leases).and_then(|receipt| {
+        DockLiveUndockPayloadPresentationReceipt::new(preflight.mount(), receipt)
+    })
+}
+
+fn bind_live_destination_reveal_submission(
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    preflight: DockLiveUndockPayloadPresentationReceipt,
+    submitted_frame: DockLiveUndockPayloadPresentationReceipt,
+    authority: &mut DockLiveRevealObserverAuthority,
+    cx: &mut App,
+) -> bool {
+    if authority.submitted_frame == Some(submitted_frame) {
+        return true;
+    }
+    let bound = host
+        .update(cx, |host, cx| {
+            host.bind_live_destination_reveal_submission(key, preflight, submitted_frame, cx)
+        })
+        .unwrap_or(false);
+    if bound {
+        authority.submitted_frame = Some(submitted_frame);
+    }
+    bound
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expire_live_destination_reveal_observation(
+    owner: WeakEntity<DockSurfaceOwner>,
+    host: WeakEntity<DockHost>,
+    window: AnyWindowHandle,
+    key: DockHostLivePresentationKey,
+    preflight: DockLiveUndockPayloadPresentationReceipt,
+    candidate_frame: DockLiveUndockPayloadPresentationReceipt,
+    leases: view_presentation_window::LeaseBatch,
+    ticket: open_gpui::WindowProvisionalRevealTicket,
+    cx: &mut App,
+) {
+    let Some(mut authority) = live_destination_reveal_observer_authority(
+        &host,
+        key,
+        preflight,
+        candidate_frame,
+        &ticket,
+        cx,
+    ) else {
+        return;
+    };
+    let cancellation = match window.update(cx, |_, window, cx| {
+        window.cancel_provisional_presentation(&ticket, cx)
+    }) {
+        Ok(Ok(cancellation)) => cancellation,
+        Ok(Err(error)) => {
+            log::error!(
+                "failed to cancel exact live-undock reveal ticket at its deadline: {error}"
+            );
+            let snapshot = ticket.snapshot();
+            let outcome = dock_live_reveal_outcome(snapshot.outcome())
+                .unwrap_or(DockLiveUndockRevealOutcome::Stale);
+            let observation = DockLiveUndockRevealObservation::failed(
+                authority
+                    .submitted_frame
+                    .unwrap_or(authority.candidate_frame),
+                outcome,
+            );
+            submit_live_destination_reveal_observation(
+                &owner,
+                &host,
+                key,
+                preflight,
+                authority.submitted_frame,
+                observation,
+                cx,
+            );
+            return;
+        }
+        Err(error) => {
+            log::debug!(
+                "live-undock reveal deadline observed a logically unavailable window: {error}"
+            );
+            let observation = DockLiveUndockRevealObservation::failed(
+                authority
+                    .submitted_frame
+                    .unwrap_or(authority.candidate_frame),
+                DockLiveUndockRevealOutcome::WindowTerminal,
+            );
+            submit_live_destination_reveal_observation(
+                &owner,
+                &host,
+                key,
+                preflight,
+                authority.submitted_frame,
+                observation,
+                cx,
+            );
+            return;
+        }
+    };
+    let deadline_won = matches!(
+        cancellation,
+        WindowProvisionalRevealCancellationOutcome::Cancelled(_)
+    );
+    let snapshot = match cancellation {
+        WindowProvisionalRevealCancellationOutcome::Cancelled(snapshot)
+        | WindowProvisionalRevealCancellationOutcome::AlreadySettled(snapshot) => snapshot,
+    };
+    if authority.submitted_frame.is_none()
+        && let Some(presentation_generation) = snapshot.presentation_generation()
+        && let Some(submitted_frame) = current_live_destination_reveal_frame(preflight, &leases, cx)
+        && submitted_frame.frame_generation() == presentation_generation
+        && !bind_live_destination_reveal_submission(
+            &host,
+            key,
+            preflight,
+            submitted_frame,
+            &mut authority,
+            cx,
+        )
+    {
+        return;
+    }
+
+    let classification = if deadline_won {
+        DockLiveRevealSnapshotClassification::Failed(
+            DockLiveUndockRevealOutcome::ObservationDeadlineExpired,
+        )
+    } else {
+        classify_live_reveal_snapshot(
+            snapshot.outcome(),
+            snapshot.presentation_generation(),
+            authority
+                .submitted_frame
+                .map(DockLiveUndockPayloadPresentationReceipt::frame_generation),
+        )
+    };
+    let observation = match classification {
+        DockLiveRevealSnapshotClassification::Revealed => {
+            let Some(submitted_frame) = authority.submitted_frame else {
+                return;
+            };
+            let Some(receipt) =
+                DockLiveUndockRevealReceipt::new(preflight, submitted_frame, snapshot)
+            else {
+                submit_live_presentation_failure(
+                    &owner,
+                    &host,
+                    key,
+                    DockLiveUndockPresentationFailure::ExactRevealTicket {
+                        presentation: preflight,
+                    },
+                    cx,
+                );
+                return;
+            };
+            DockLiveUndockRevealObservation::Visible(receipt)
+        }
+        DockLiveRevealSnapshotClassification::Failed(outcome) => {
+            DockLiveUndockRevealObservation::failed(
+                authority
+                    .submitted_frame
+                    .unwrap_or(authority.candidate_frame),
+                outcome,
+            )
+        }
+        DockLiveRevealSnapshotClassification::Pending => return,
+    };
+    submit_live_destination_reveal_observation(
+        &owner,
+        &host,
+        key,
+        preflight,
+        authority.submitted_frame,
+        observation,
+        cx,
+    );
+}
+
 fn capture_live_destination_reveal_frame(
     owner: WeakEntity<DockSurfaceOwner>,
     host: WeakEntity<DockHost>,
     key: DockHostLivePresentationKey,
     preflight: DockLiveUndockPayloadPresentationReceipt,
-    ticket: open_gpui::WindowProvisionalRevealTicket,
     leases: view_presentation_window::LeaseBatch,
     accepted_frame: u64,
     window: &mut Window,
@@ -1346,7 +1619,7 @@ fn capture_live_destination_reveal_frame(
         );
         return;
     };
-    let Some(reveal_frame) =
+    let Some(candidate_frame) =
         DockLiveUndockPayloadPresentationReceipt::new(preflight.mount(), gpui_receipt)
     else {
         submit_live_presentation_failure(
@@ -1360,8 +1633,8 @@ fn capture_live_destination_reveal_frame(
         );
         return;
     };
-    if reveal_frame.frame_generation() != accepted_frame
-        || reveal_frame.frame_generation() <= preflight.frame_generation()
+    if candidate_frame.frame_generation() != accepted_frame
+        || candidate_frame.frame_generation() <= preflight.frame_generation()
     {
         submit_live_presentation_failure(
             &owner,
@@ -1375,13 +1648,49 @@ fn capture_live_destination_reveal_frame(
         return;
     }
 
+    let Some(ticket) = host
+        .update(cx, |host, cx| {
+            host.begin_live_destination_reveal_observation(key, preflight, candidate_frame, cx)
+        })
+        .ok()
+        .flatten()
+    else {
+        return;
+    };
+
+    let deadline_owner = owner.clone();
+    let deadline_host = host.clone();
+    let deadline_window = window.window_handle();
+    let deadline_leases = leases.clone();
+    let deadline_ticket = ticket.clone();
+    cx.spawn(async move |cx| {
+        cx.background_executor()
+            .timer(LIVE_UNDOCK_REVEAL_OBSERVATION_DEADLINE)
+            .await;
+        cx.update(|cx| {
+            expire_live_destination_reveal_observation(
+                deadline_owner,
+                deadline_host,
+                deadline_window,
+                key,
+                preflight,
+                candidate_frame,
+                deadline_leases,
+                deadline_ticket,
+                cx,
+            );
+        });
+    })
+    .detach();
+
     window.on_next_frame(move |window, cx| {
         observe_live_destination_reveal_native(
             owner,
             host,
             key,
             preflight,
-            reveal_frame,
+            candidate_frame,
+            leases,
             ticket,
             window,
             cx,
@@ -1396,33 +1705,125 @@ fn observe_live_destination_reveal_native(
     host: WeakEntity<DockHost>,
     key: DockHostLivePresentationKey,
     preflight: DockLiveUndockPayloadPresentationReceipt,
-    reveal_frame: DockLiveUndockPayloadPresentationReceipt,
+    candidate_frame: DockLiveUndockPayloadPresentationReceipt,
+    leases: view_presentation_window::LeaseBatch,
     ticket: open_gpui::WindowProvisionalRevealTicket,
     window: &mut Window,
     cx: &mut App,
 ) {
-    if !live_destination_is_reveal_armed(&host, key, preflight, cx) {
+    let Some(mut authority) = live_destination_reveal_observer_authority(
+        &host,
+        key,
+        preflight,
+        candidate_frame,
+        &ticket,
+        cx,
+    ) else {
         return;
-    }
-    let snapshot = ticket.snapshot();
-    if snapshot
-        .presentation_generation()
-        .is_some_and(|generation| generation != reveal_frame.frame_generation())
+    };
+    let mut snapshot = ticket.snapshot();
+    let mut wait_for_submitted_frame = false;
+
+    if authority.submitted_frame.is_none()
+        && let Some(presentation_generation) = snapshot.presentation_generation()
     {
+        match current_live_destination_reveal_frame(preflight, &leases, cx) {
+            Some(submitted_frame)
+                if submitted_frame.frame_generation() == presentation_generation =>
+            {
+                if !bind_live_destination_reveal_submission(
+                    &host,
+                    key,
+                    preflight,
+                    submitted_frame,
+                    &mut authority,
+                    cx,
+                ) {
+                    return;
+                }
+            }
+            Some(current_frame)
+                if current_frame.frame_generation() < presentation_generation
+                    && snapshot.outcome() == WindowProvisionalRevealOutcome::Pending =>
+            {
+                wait_for_submitted_frame = true;
+            }
+            None if snapshot.outcome() == WindowProvisionalRevealOutcome::Pending => {
+                wait_for_submitted_frame = true;
+            }
+            None => {}
+            Some(_) => {}
+        }
+    }
+
+    if wait_for_submitted_frame {
+        let next_owner = owner.clone();
+        let next_host = host.clone();
+        let next_ticket = ticket.clone();
+        let next_leases = leases.clone();
+        window.on_next_frame(move |window, cx| {
+            observe_live_destination_reveal_native(
+                next_owner,
+                next_host,
+                key,
+                preflight,
+                candidate_frame,
+                next_leases,
+                next_ticket,
+                window,
+                cx,
+            );
+        });
+        window.refresh();
         return;
     }
-    let observation = match snapshot.outcome() {
-        WindowProvisionalRevealOutcome::Pending => {
+
+    let mut classification = classify_live_reveal_snapshot(
+        snapshot.outcome(),
+        snapshot.presentation_generation(),
+        authority
+            .submitted_frame
+            .map(DockLiveUndockPayloadPresentationReceipt::frame_generation),
+    );
+    if matches!(
+        classification,
+        DockLiveRevealSnapshotClassification::Failed(DockLiveUndockRevealOutcome::Stale)
+    ) && matches!(
+        snapshot.outcome(),
+        WindowProvisionalRevealOutcome::Pending | WindowProvisionalRevealOutcome::Revealed
+    ) {
+        match window.cancel_provisional_presentation(&ticket, cx) {
+            Ok(WindowProvisionalRevealCancellationOutcome::Cancelled(settled))
+            | Ok(WindowProvisionalRevealCancellationOutcome::AlreadySettled(settled)) => {
+                snapshot = settled;
+                classification = classify_live_reveal_snapshot(
+                    snapshot.outcome(),
+                    snapshot.presentation_generation(),
+                    authority
+                        .submitted_frame
+                        .map(DockLiveUndockPayloadPresentationReceipt::frame_generation),
+                );
+            }
+            Err(error) => {
+                log::error!("failed to cancel a stale exact live-undock reveal ticket: {error}");
+            }
+        }
+    }
+
+    let observation = match classification {
+        DockLiveRevealSnapshotClassification::Pending => {
             let next_owner = owner.clone();
             let next_host = host.clone();
             let next_ticket = ticket.clone();
+            let next_leases = leases.clone();
             window.on_next_frame(move |window, cx| {
                 observe_live_destination_reveal_native(
                     next_owner,
                     next_host,
                     key,
                     preflight,
-                    reveal_frame,
+                    candidate_frame,
+                    next_leases,
                     next_ticket,
                     window,
                     cx,
@@ -1431,8 +1832,12 @@ fn observe_live_destination_reveal_native(
             window.refresh();
             return;
         }
-        WindowProvisionalRevealOutcome::Revealed => {
-            let Some(receipt) = DockLiveUndockRevealReceipt::new(preflight, reveal_frame, snapshot)
+        DockLiveRevealSnapshotClassification::Revealed => {
+            let Some(submitted_frame) = authority.submitted_frame else {
+                unreachable!("a revealed snapshot must retain its exact submitted frame");
+            };
+            let Some(receipt) =
+                DockLiveUndockRevealReceipt::new(preflight, submitted_frame, snapshot)
             else {
                 submit_live_presentation_failure(
                     &owner,
@@ -1447,21 +1852,43 @@ fn observe_live_destination_reveal_native(
             };
             DockLiveUndockRevealObservation::Visible(receipt)
         }
-        terminal => {
-            let Some(outcome) = dock_live_reveal_outcome(terminal) else {
-                return;
-            };
-            DockLiveUndockRevealObservation::failed(reveal_frame, outcome)
+        DockLiveRevealSnapshotClassification::Failed(outcome) => {
+            DockLiveUndockRevealObservation::failed(
+                authority
+                    .submitted_frame
+                    .unwrap_or(authority.candidate_frame),
+                outcome,
+            )
         }
     };
-    let settled = host
+    submit_live_destination_reveal_observation(
+        &owner,
+        &host,
+        key,
+        preflight,
+        authority.submitted_frame,
+        observation,
+        cx,
+    );
+}
+
+fn submit_live_destination_reveal_observation(
+    owner: &WeakEntity<DockSurfaceOwner>,
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    preflight: DockLiveUndockPayloadPresentationReceipt,
+    submitted_frame: Option<DockLiveUndockPayloadPresentationReceipt>,
+    observation: DockLiveUndockRevealObservation,
+    cx: &mut App,
+) {
+    if host
         .update(cx, |host, cx| {
-            host.settle_live_destination_reveal(key, preflight, cx)
+            host.settle_live_destination_reveal(key, preflight, submitted_frame, cx)
         })
-        .unwrap_or(false);
-    if settled {
+        .unwrap_or(false)
+    {
         submit_live_undock_fact(
-            &owner,
+            owner,
             DockLiveUndockFact::RevealObserved {
                 identity: key.identity(),
                 observation,
@@ -2306,10 +2733,7 @@ impl DockHost {
                             .into_any_element(),
                         )
                     }
-                    DockHostLiveDestinationPhase::RevealArmed {
-                        presentation,
-                        ticket,
-                    } => {
+                    DockHostLiveDestinationPhase::RevealArmed { presentation, .. } => {
                         let next_owner = owner.clone();
                         let next_host = host.clone();
                         Some(
@@ -2317,7 +2741,6 @@ impl DockHost {
                                 move |_, window, _| {
                                     let next_owner = next_owner.clone();
                                     let next_host = next_host.clone();
-                                    let ticket = ticket.clone();
                                     let leases = leases.clone();
                                     window.record_prepaint_focus_stable_commit(
                                         move |frame, window, cx| {
@@ -2326,7 +2749,6 @@ impl DockHost {
                                                 next_host.clone(),
                                                 state.key,
                                                 presentation,
-                                                ticket.clone(),
                                                 leases.clone(),
                                                 frame,
                                                 window,
@@ -2343,6 +2765,7 @@ impl DockHost {
                         )
                     }
                     DockHostLiveDestinationPhase::Presented(_)
+                    | DockHostLiveDestinationPhase::RevealObserving { .. }
                     | DockHostLiveDestinationPhase::RevealSettled => None,
                 };
                 if let Some(observer) = observer {
@@ -3762,6 +4185,60 @@ mod tests {
         };
 
         panic!("a prepaint without a pending candidate must take the cleanup branch");
+    }
+
+    #[test]
+    fn reveal_generation_drift_settles_without_overwriting_stronger_terminal_outcomes() {
+        assert_eq!(
+            classify_live_reveal_snapshot(
+                WindowProvisionalRevealOutcome::Pending,
+                Some(41),
+                Some(42),
+            ),
+            DockLiveRevealSnapshotClassification::Failed(DockLiveUndockRevealOutcome::Stale)
+        );
+        assert_eq!(
+            classify_live_reveal_snapshot(
+                WindowProvisionalRevealOutcome::Revealed,
+                Some(41),
+                Some(42),
+            ),
+            DockLiveRevealSnapshotClassification::Failed(DockLiveUndockRevealOutcome::Stale)
+        );
+        assert_eq!(
+            classify_live_reveal_snapshot(
+                WindowProvisionalRevealOutcome::Rejected,
+                Some(41),
+                Some(42),
+            ),
+            DockLiveRevealSnapshotClassification::Failed(DockLiveUndockRevealOutcome::Rejected)
+        );
+        assert_eq!(
+            classify_live_reveal_snapshot(
+                WindowProvisionalRevealOutcome::WindowTerminal,
+                Some(41),
+                Some(42),
+            ),
+            DockLiveRevealSnapshotClassification::Failed(
+                DockLiveUndockRevealOutcome::WindowTerminal
+            )
+        );
+        assert_eq!(
+            classify_live_reveal_snapshot(WindowProvisionalRevealOutcome::Pending, None, None),
+            DockLiveRevealSnapshotClassification::Pending
+        );
+        assert_eq!(
+            classify_live_reveal_snapshot(WindowProvisionalRevealOutcome::Pending, Some(42), None,),
+            DockLiveRevealSnapshotClassification::Failed(DockLiveUndockRevealOutcome::Stale)
+        );
+        assert_eq!(
+            classify_live_reveal_snapshot(
+                WindowProvisionalRevealOutcome::Revealed,
+                Some(42),
+                Some(42),
+            ),
+            DockLiveRevealSnapshotClassification::Revealed
+        );
     }
 
     fn preview(rejected: bool, payload_tab: bool) -> DockDropPreview {

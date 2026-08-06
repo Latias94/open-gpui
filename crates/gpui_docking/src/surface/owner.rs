@@ -374,7 +374,20 @@ impl DockSurfaceOwner {
         &mut self,
         window_id: WindowId,
     ) -> DockLiveUndockTransition<Option<DockLiveUndockWindowTerminalOutcome>> {
-        self.live_undock.settle_window_terminal(window_id)
+        let transition = self.live_undock.settle_window_terminal(window_id);
+        if let Some(terminal) = transition.outcome()
+            && let Some(dependency) = terminal.dependency()
+        {
+            let outcome = self
+                .window_session
+                .settle_dependency(terminal.lease(), dependency);
+            debug_assert!(matches!(
+                outcome,
+                DockSurfaceWindowSessionDependencyTerminalOutcome::Settled
+                    | DockSurfaceWindowSessionDependencyTerminalOutcome::AlreadyTerminal
+            ));
+        }
+        transition
     }
 
     pub(crate) fn prepare_payload_recovery(
