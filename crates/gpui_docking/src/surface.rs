@@ -464,18 +464,9 @@ pub(crate) fn finish_live_undock_open_return(
     owner: &Entity<DockSurfaceOwner>,
     opening: live_undock::DockLiveUndockOpeningKey,
     window: open_gpui::AnyWindowHandle,
-    retirement_dependency_registered: bool,
+    runtime_registered: bool,
     cx: &mut App,
 ) -> live_undock::DockLiveUndockOpenReturnOutcome {
-    let (runtime, can_admit) = cx.read_entity(owner, |owner, _| {
-        (
-            owner.runtime(),
-            owner.can_admit_live_undock_open_return(opening, window.window_id()),
-        )
-    });
-    let runtime_registered = retirement_dependency_registered
-        && can_admit
-        && runtime.register_provisional_window(window, opening);
     let (outcome, effects) = cx.update_entity(owner, |owner, owner_cx| {
         let (outcome, effects) = owner
             .complete_live_undock_opening(opening, window, runtime_registered)

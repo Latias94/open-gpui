@@ -77,6 +77,11 @@ impl DockLiveUndockOpeningKey {
     pub(crate) const fn generation(self) -> u64 {
         self.generation
     }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(lease: DockSurfaceWindowSessionLease, generation: u64) -> Self {
+        Self { lease, generation }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

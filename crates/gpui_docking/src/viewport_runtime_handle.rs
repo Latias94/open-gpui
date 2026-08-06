@@ -14,16 +14,17 @@ use crate::{
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
     DockViewportPlatformSyncDispatch, DockViewportPlatformSyncRejectedReason,
-    DockViewportPlatformSyncRequest, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropRouteOutcome, DockViewportRestoreReadiness,
-    DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeCommitAuthority,
-    DockViewportRuntimeLineage, DockViewportRuntimeLineageActivationOutcome,
-    DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportRuntimeWorkContext,
-    DockViewportShouldCloseOutcome, DockViewportSurfaceShutdownReservation,
-    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
-    DockViewportTearOffRequest, DockViewportWindowEffects, DockViewportWindowFacts,
-    DockViewportWindowOpenAttemptKey, DockVisualAffordanceDebugSummary,
-    apply_viewport_window_effects, apply_viewport_window_effects_excluding, close_window_quietly,
+    DockViewportPlatformSyncRequest, DockViewportProvisionalOpenAttemptCompletion,
+    DockViewportResolvedDropRoute, DockViewportResolvedDropRouteOutcome,
+    DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntime,
+    DockViewportRuntimeCommitAuthority, DockViewportRuntimeLineage,
+    DockViewportRuntimeLineageActivationOutcome, DockViewportRuntimeStatus,
+    DockViewportRuntimeUpdate, DockViewportRuntimeWorkContext, DockViewportShouldCloseOutcome,
+    DockViewportSurfaceShutdownReservation, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
+    DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOpenAttemptKey,
+    DockVisualAffordanceDebugSummary, apply_viewport_window_effects,
+    apply_viewport_window_effects_excluding, close_window_quietly,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -796,14 +797,25 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().surface_generation_empty(lease)
     }
 
-    pub(crate) fn register_provisional_window(
+    pub(crate) fn begin_live_undock_provisional_open_attempt(
         &self,
         window: AnyWindowHandle,
         opening: DockLiveUndockOpeningKey,
-    ) -> bool {
+    ) -> Option<DockViewportWindowOpenAttemptKey> {
         self.runtime
             .borrow_mut()
-            .register_provisional_window(window, opening)
+            .begin_live_undock_provisional_open_attempt(window, opening)
+    }
+
+    pub(crate) fn complete_live_undock_provisional_open_attempt(
+        &self,
+        attempt: DockViewportWindowOpenAttemptKey,
+        opening: DockLiveUndockOpeningKey,
+        admit: bool,
+    ) -> DockViewportProvisionalOpenAttemptCompletion {
+        self.runtime
+            .borrow_mut()
+            .complete_live_undock_provisional_open_attempt(attempt, opening, admit)
     }
 
     pub(crate) fn prepare_live_undock_provisional_promotion(
@@ -2356,9 +2368,15 @@ impl DockViewportRuntimeHandle {
 
         let controller = self.runtime.borrow().controller_entity();
         let host_runtime = self.clone();
+        let open_attempt_runtime = host_runtime.clone();
+        let open_attempt_slot = Rc::new(Cell::new(None));
+        let open_attempt_slot_for_builder = open_attempt_slot.clone();
         let owner = managed_surface.owner.clone();
         let open_result = catch_unwind(AssertUnwindSafe(|| {
-            cx.open_window(options, move |_, cx| {
+            cx.open_window(options, move |window, cx| {
+                let open_attempt = open_attempt_runtime
+                    .begin_live_undock_provisional_open_attempt(window.window_handle(), opening);
+                open_attempt_slot_for_builder.set(open_attempt);
                 cx.new(move |cx| {
                     DockHost::from_provisional_surface_owner(
                         controller,
@@ -2374,6 +2392,9 @@ impl DockViewportRuntimeHandle {
         let opened = match open_result {
             Ok(Ok(opened)) => opened,
             Ok(Err(error)) => {
+                if let Some(open_attempt) = open_attempt_slot.take() {
+                    let _ = self.abort_window_open_attempt(open_attempt);
+                }
                 crate::surface::finish_live_undock_open_failure(
                     &managed_surface.owner,
                     opening,
@@ -2382,6 +2403,9 @@ impl DockViewportRuntimeHandle {
                 return Err(error);
             }
             Err(payload) => {
+                if let Some(open_attempt) = open_attempt_slot.take() {
+                    let _ = self.abort_window_open_attempt(open_attempt);
+                }
                 crate::surface::finish_live_undock_open_failure(
                     &managed_surface.owner,
                     opening,
@@ -2391,13 +2415,37 @@ impl DockViewportRuntimeHandle {
             }
         };
         let window: AnyWindowHandle = opened.into();
+        let Some(open_attempt) = open_attempt_slot.take() else {
+            close_window_quietly(window, cx);
+            crate::surface::finish_live_undock_open_return(
+                &managed_surface.owner,
+                opening,
+                window,
+                false,
+                cx,
+            );
+            return Err(std::io::Error::other(
+                "live-undock provisional window id is already owned by another runtime generation",
+            )
+            .into());
+        };
         let retirement_dependency =
             self.register_managed_surface_retirement_dependency(Some(managed_surface), window, cx);
+        let can_admit = cx.read_entity(&managed_surface.owner, |owner, _| {
+            owner.can_admit_live_undock_open_return(opening, window.window_id())
+        });
+        let runtime_registered = self
+            .complete_live_undock_provisional_open_attempt(
+                open_attempt,
+                opening,
+                retirement_dependency.is_ok() && can_admit,
+            )
+            .is_admitted();
         let outcome = crate::surface::finish_live_undock_open_return(
             &managed_surface.owner,
             opening,
             window,
-            retirement_dependency.is_ok(),
+            runtime_registered,
             cx,
         );
         if let Err(error) = retirement_dependency {

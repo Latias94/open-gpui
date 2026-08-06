@@ -22,8 +22,9 @@ use crate::{
     DockViewportIdentity, DockViewportMergeBackClosePlan, DockViewportPayloadDragState,
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
-    DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportRestoreReadiness,
-    DockViewportRoutedDropPreviewState, DockViewportRuntimeAdmission, DockViewportRuntimeHandle,
+    DockViewportPlatformSyncRecord, DockViewportProvisionalOpenAttemptCompletion,
+    DockViewportRegisterOutcome, DockViewportRestoreReadiness, DockViewportRoutedDropPreviewState,
+    DockViewportRuntimeAdmission, DockViewportRuntimeHandle,
     DockViewportRuntimeLineageActivationOutcome, DockViewportRuntimeLineageFreezeOutcome,
     DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportRuntimeWorkContext,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
@@ -1615,27 +1616,33 @@ impl DockViewportRuntime {
         )
     }
 
-    pub(crate) fn register_provisional_window(
+    pub(crate) fn begin_live_undock_provisional_open_attempt(
         &mut self,
         window: AnyWindowHandle,
         opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
-    ) -> bool {
-        #[cfg(test)]
-        if std::mem::take(&mut self.reject_next_provisional_registration) {
-            return false;
-        }
+    ) -> Option<DockViewportWindowOpenAttemptKey> {
         let lineage = crate::DockViewportRuntimeLineage::Surface(opening.lease());
         if !self.admission.get().admits(lineage) {
-            return false;
+            return None;
         }
-        let Some(ownership) = self
-            .window_ownership
-            .register_provisional_window(window, opening)
-        else {
-            return false;
-        };
-        debug_assert_eq!(ownership.window_id(), window.window_id());
-        true
+        self.window_ownership
+            .begin_provisional_open_attempt(window, opening)
+    }
+
+    pub(crate) fn complete_live_undock_provisional_open_attempt(
+        &mut self,
+        attempt: DockViewportWindowOpenAttemptKey,
+        opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
+        admit: bool,
+    ) -> DockViewportProvisionalOpenAttemptCompletion {
+        let lineage = crate::DockViewportRuntimeLineage::Surface(opening.lease());
+        let mut admit = admit && self.admission.get().admits(lineage);
+        #[cfg(test)]
+        if std::mem::take(&mut self.reject_next_provisional_registration) {
+            admit = false;
+        }
+        self.window_ownership
+            .complete_provisional_open_attempt(attempt, opening, admit)
     }
 
     pub(crate) fn prepare_live_undock_provisional_promotion(
