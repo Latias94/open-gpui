@@ -595,6 +595,15 @@ window root; do not wait for entity release or the HWND terminal callback to beg
 The component-side constraints are also recorded in the
 [Open GPUI Component Contract](component-contract.md#native-window-callback-boundary).
 
+## Presentation Lease Batch Authority
+
+`view_presentation_window::claim_batch` now assigns one lease generation to every newly claimed
+root in the atomic batch. This is required for stable and presented batch receipts, which prove
+that all roots mounted in one accepted frame. Roots that were already claimed separately under
+different generations cannot be retroactively combined: handle `ClaimError::MixedBatchGenerations`
+by claiming the roots together before rendering or by keeping them as separate batches. Existing
+authority is never reminted to make an incompatible batch appear valid.
+
 ## Platform Atlas Texture Lease Contract
 
 `PlatformAtlas` no longer supplies compatibility defaults for renderer texture leasing. Every

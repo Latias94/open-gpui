@@ -583,6 +583,8 @@ pub enum ClaimError {
     WindowUnavailable,
     /// The root is already governed by another window.
     AlreadyBound { current: Lease },
+    /// Existing roots belong to different atomic lease generations.
+    MixedBatchGenerations { first: Lease, current: Lease },
     /// The root already participates in a prepared rehost.
     RehostInFlight,
 }
@@ -914,7 +916,7 @@ impl Registry {
         if entity_ids.is_empty() {
             return Err(ClaimError::Empty);
         }
-
+        let mut first_existing = None;
         let mut unique = FxHashSet::default();
         for entity_id in entity_ids.iter().copied() {
             if !unique.insert(entity_id) {
@@ -931,8 +933,21 @@ impl Registry {
                     current: binding.current,
                 });
             }
+            match first_existing {
+                None => first_existing = Some(binding.current),
+                Some(first) if first.generation == binding.current.generation => {}
+                Some(first) => {
+                    return Err(ClaimError::MixedBatchGenerations {
+                        first,
+                        current: binding.current,
+                    });
+                }
+            }
         }
 
+        let batch_generation = first_existing
+            .map(Lease::generation)
+            .unwrap_or_else(|| self.allocate_generation());
         let mut leases = Vec::with_capacity(entity_ids.len());
         for entity_id in entity_ids.iter().copied() {
             if let Some(binding) = self.bindings.get(&entity_id).copied() {
@@ -941,7 +956,7 @@ impl Registry {
             }
             let lease = Lease {
                 entity_id,
-                generation: self.allocate_generation(),
+                generation: batch_generation,
                 window_id,
             };
             self.bindings.insert(
@@ -4921,6 +4936,84 @@ mod tests {
         ));
         assert!(!registry.governs(first));
         assert!(registry.admits(conflicting, destination));
+    }
+
+    #[test]
+    fn initial_batch_claim_uses_one_generation_and_yields_a_stable_receipt() {
+        let mut cx = TestAppContext::single();
+        let source = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .window_id();
+        let first = probe_entity_id(&mut cx);
+        let second = probe_entity_id(&mut cx);
+        let mut registry = Registry::default();
+        let mut current_windows = FxHashMap::default();
+
+        let batch = registry.claim_batch(&[first, second], source).unwrap();
+        let generation = batch.leases()[0].generation();
+        assert!(
+            batch
+                .leases()
+                .iter()
+                .all(|lease| lease.generation() == generation)
+        );
+        for lease in batch.leases().iter().copied() {
+            registry
+                .commit_mount(lease, 17, &mut current_windows)
+                .unwrap();
+        }
+
+        let receipt = registry
+            .stable_batch_presentation_receipt(&batch)
+            .expect("one atomic claim mounted in one frame must yield a stable receipt");
+        assert_eq!(receipt.window_id(), source);
+        assert_eq!(receipt.lease_generation(), generation);
+        assert_eq!(receipt.root_count(), 2);
+        assert_eq!(receipt.frame_generation(), 17);
+    }
+
+    #[test]
+    fn separately_claimed_generations_cannot_be_retroactively_grouped() {
+        let mut cx = TestAppContext::single();
+        let source = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .window_id();
+        let first = probe_entity_id(&mut cx);
+        let second = probe_entity_id(&mut cx);
+        let unclaimed = probe_entity_id(&mut cx);
+        let mut registry = Registry::default();
+        let first_lease = registry.claim(first, source).unwrap();
+        let second_lease = registry.claim(second, source).unwrap();
+
+        assert!(matches!(
+            registry.claim_batch(&[first, second, unclaimed], source),
+            Err(ClaimError::MixedBatchGenerations { first, current })
+                if first == first_lease && current == second_lease
+        ));
+        assert!(!registry.governs(unclaimed));
+        assert!(registry.admits(first_lease, source));
+        assert!(registry.admits(second_lease, source));
+    }
+
+    #[test]
+    fn an_unclaimed_root_can_join_one_existing_atomic_batch_generation() {
+        let mut cx = TestAppContext::single();
+        let source = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .window_id();
+        let first = probe_entity_id(&mut cx);
+        let second = probe_entity_id(&mut cx);
+        let joined = probe_entity_id(&mut cx);
+        let mut registry = Registry::default();
+        let initial = registry.claim_batch(&[first, second], source).unwrap();
+        let generation = initial.leases()[0].generation();
+
+        let extended = registry
+            .claim_batch(&[first, second, joined], source)
+            .unwrap();
+        assert_eq!(extended.lease_for(first), initial.lease_for(first));
+        assert_eq!(extended.lease_for(second), initial.lease_for(second));
+        assert_eq!(extended.lease_for(joined).unwrap().generation(), generation);
     }
 
     #[test]
