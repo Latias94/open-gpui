@@ -601,6 +601,28 @@ pub(crate) fn settle_live_undock_dependency(
     close_surface_anchor_after_dependents(owner, &runtime, lease, cx);
 }
 
+pub(crate) fn fail_live_undock_dependency(
+    owner: &Entity<DockSurfaceOwner>,
+    identity: live_undock::DockLiveUndockIdentity,
+    dependency: window_session::DockSurfaceWindowSessionDependencyId,
+    cx: &mut App,
+) {
+    let lease = identity.opening().lease();
+    cx.update_entity(owner, |owner, owner_cx| {
+        let outcome = owner
+            .window_session_mut()
+            .fail_dependency(lease, dependency);
+        if matches!(
+            outcome,
+            window_session::DockSurfaceWindowSessionDependencyTerminalOutcome::Failed
+        ) {
+            owner_cx.notify();
+        }
+    });
+    let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
+    close_surface_anchor_after_dependents(owner, &runtime, lease, cx);
+}
+
 fn settle_surface_window_terminal(
     owner: &Entity<DockSurfaceOwner>,
     runtime: &DockViewportRuntimeHandle,

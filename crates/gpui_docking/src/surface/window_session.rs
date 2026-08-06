@@ -24,6 +24,7 @@ pub struct DockSurfaceWindowSessionStatus {
     reason: Option<DockSurfaceWindowSessionReason>,
     terminal_ticket_count: usize,
     pending_terminal_ticket_count: usize,
+    failed_terminal_ticket_count: usize,
     runtime_empty: Option<bool>,
 }
 
@@ -59,6 +60,14 @@ impl DockSurfaceWindowSessionStatus {
     /// Returns the number of shutdown-convergence tickets that have not settled.
     pub const fn pending_terminal_ticket_count(self) -> usize {
         self.pending_terminal_ticket_count
+    }
+
+    /// Returns the number of shutdown dependencies that reached an explicit failure terminal.
+    ///
+    /// Failed dependencies no longer block native window convergence, but remain visible so an
+    /// application can distinguish a clean shutdown from a best-effort terminal cleanup.
+    pub const fn failed_terminal_ticket_count(self) -> usize {
+        self.failed_terminal_ticket_count
     }
 
     /// Returns current-generation runtime convergence during or after shutdown.
@@ -323,6 +332,7 @@ impl DockSurfaceWindowSessionDependencyId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockSurfaceWindowSessionDependencyTerminalOutcome {
     Settled,
+    Failed,
     AlreadyTerminal,
     UnknownDependency,
     StaleLease,
@@ -387,15 +397,29 @@ impl DockSurfaceWindowSessionTerminalTicket {
 #[derive(Debug)]
 struct DockSurfaceWindowSessionDependencyTicket {
     id: DockSurfaceWindowSessionDependencyId,
-    terminal: bool,
+    terminal: Option<DockSurfaceWindowSessionDependencyTerminalDisposition>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockSurfaceWindowSessionDependencyTerminalDisposition {
+    Settled,
+    Failed,
 }
 
 impl DockSurfaceWindowSessionDependencyTicket {
     fn pending(id: DockSurfaceWindowSessionDependencyId) -> Self {
-        Self {
-            id,
-            terminal: false,
-        }
+        Self { id, terminal: None }
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.terminal.is_some()
+    }
+
+    fn failed(&self) -> bool {
+        matches!(
+            self.terminal,
+            Some(DockSurfaceWindowSessionDependencyTerminalDisposition::Failed)
+        )
     }
 }
 
@@ -471,7 +495,7 @@ impl DockSurfaceWindowSession {
                         .count()
                         + dependency_tickets
                             .iter()
-                            .filter(|ticket| !ticket.terminal)
+                            .filter(|ticket| !ticket.is_terminal())
                             .count(),
                 });
             }
@@ -741,6 +765,31 @@ impl DockSurfaceWindowSession {
         lease: DockSurfaceWindowSessionLease,
         dependency: DockSurfaceWindowSessionDependencyId,
     ) -> DockSurfaceWindowSessionDependencyTerminalOutcome {
+        self.complete_dependency(
+            lease,
+            dependency,
+            DockSurfaceWindowSessionDependencyTerminalDisposition::Settled,
+        )
+    }
+
+    pub(crate) fn fail_dependency(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        dependency: DockSurfaceWindowSessionDependencyId,
+    ) -> DockSurfaceWindowSessionDependencyTerminalOutcome {
+        self.complete_dependency(
+            lease,
+            dependency,
+            DockSurfaceWindowSessionDependencyTerminalDisposition::Failed,
+        )
+    }
+
+    fn complete_dependency(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        dependency: DockSurfaceWindowSessionDependencyId,
+        disposition: DockSurfaceWindowSessionDependencyTerminalDisposition,
+    ) -> DockSurfaceWindowSessionDependencyTerminalOutcome {
         match &mut self.state {
             DockSurfaceWindowSessionState::ShuttingDown {
                 lease: current,
@@ -753,11 +802,18 @@ impl DockSurfaceWindowSession {
                 else {
                     return DockSurfaceWindowSessionDependencyTerminalOutcome::UnknownDependency;
                 };
-                if ticket.terminal {
+                if ticket.terminal.is_some() {
                     DockSurfaceWindowSessionDependencyTerminalOutcome::AlreadyTerminal
                 } else {
-                    ticket.terminal = true;
-                    DockSurfaceWindowSessionDependencyTerminalOutcome::Settled
+                    ticket.terminal = Some(disposition);
+                    match disposition {
+                        DockSurfaceWindowSessionDependencyTerminalDisposition::Settled => {
+                            DockSurfaceWindowSessionDependencyTerminalOutcome::Settled
+                        }
+                        DockSurfaceWindowSessionDependencyTerminalDisposition::Failed => {
+                            DockSurfaceWindowSessionDependencyTerminalOutcome::Failed
+                        }
+                    }
                 }
             }
             DockSurfaceWindowSessionState::ShuttingDown { .. } => {
@@ -777,7 +833,7 @@ impl DockSurfaceWindowSession {
                 lease: current,
                 dependency_tickets,
                 ..
-            } if *current == lease && dependency_tickets.iter().any(|ticket| !ticket.terminal)
+            } if *current == lease && dependency_tickets.iter().any(|ticket| ticket.terminal.is_none())
         )
     }
 
@@ -994,7 +1050,7 @@ impl DockSurfaceWindowSession {
                     .count()
                     + dependency_tickets
                         .iter()
-                        .filter(|ticket| !ticket.terminal)
+                        .filter(|ticket| !ticket.is_terminal())
                         .count();
                 if !*runtime_empty || pending_terminal_tickets != 0 {
                     return DockSurfaceWindowSessionShutdownConvergenceOutcome::Waiting {
@@ -1053,6 +1109,7 @@ impl DockSurfaceWindowSession {
                 reason: None,
                 terminal_ticket_count: 0,
                 pending_terminal_ticket_count: 0,
+                failed_terminal_ticket_count: 0,
                 runtime_empty: None,
             },
             DockSurfaceWindowSessionState::Opening { token } => DockSurfaceWindowSessionStatus {
@@ -1062,6 +1119,7 @@ impl DockSurfaceWindowSession {
                 reason: None,
                 terminal_ticket_count: 0,
                 pending_terminal_ticket_count: 0,
+                failed_terminal_ticket_count: 0,
                 runtime_empty: None,
             },
             DockSurfaceWindowSessionState::Active { lease } => DockSurfaceWindowSessionStatus {
@@ -1071,6 +1129,7 @@ impl DockSurfaceWindowSession {
                 reason: None,
                 terminal_ticket_count: 0,
                 pending_terminal_ticket_count: 0,
+                failed_terminal_ticket_count: 0,
                 runtime_empty: None,
             },
             DockSurfaceWindowSessionState::ShuttingDown {
@@ -1091,8 +1150,12 @@ impl DockSurfaceWindowSession {
                     .count()
                     + dependency_tickets
                         .iter()
-                        .filter(|ticket| !ticket.terminal)
+                        .filter(|ticket| !ticket.is_terminal())
                         .count(),
+                failed_terminal_ticket_count: dependency_tickets
+                    .iter()
+                    .filter(|ticket| ticket.failed())
+                    .count(),
                 runtime_empty: Some(*runtime_empty),
             },
             DockSurfaceWindowSessionState::Closed {
@@ -1108,6 +1171,10 @@ impl DockSurfaceWindowSession {
                 reason: Some(*reason),
                 terminal_ticket_count: terminal_tickets.len() + dependency_tickets.len(),
                 pending_terminal_ticket_count: 0,
+                failed_terminal_ticket_count: dependency_tickets
+                    .iter()
+                    .filter(|ticket| ticket.failed())
+                    .count(),
                 runtime_empty: Some(true),
             },
         }

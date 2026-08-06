@@ -2741,6 +2741,7 @@ impl DockHost {
                 Err(
                     view_presentation_window::ClaimError::Empty
                     | view_presentation_window::ClaimError::DuplicateEntity(_)
+                    | view_presentation_window::ClaimError::MixedBatchGenerations { .. }
                     | view_presentation_window::ClaimError::WindowUnavailable,
                 ) => None,
             }

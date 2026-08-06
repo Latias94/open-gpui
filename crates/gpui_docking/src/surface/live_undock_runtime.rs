@@ -1,6 +1,7 @@
 use super::{
     DockSurfaceOwner,
     live_undock::{
+        DockLiveUndockCommittedDestinationRecoveryFailure,
         DockLiveUndockCommittedDestinationRecoveryReceipt,
         DockLiveUndockDestinationInteractionReceipt, DockLiveUndockDestinationSemanticsReceipt,
         DockLiveUndockEffect, DockLiveUndockEffects, DockLiveUndockFact,
@@ -789,6 +790,8 @@ struct DockLiveUndockRuntimeState {
     #[cfg(test)]
     reject_orphan_recovery_records: bool,
     #[cfg(test)]
+    reject_committed_destination_recovery_records: bool,
+    #[cfg(test)]
     terminate_next_same_window_destination_before_semantics_ack: bool,
     #[cfg(test)]
     before_destination_interaction_activation_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
@@ -872,6 +875,13 @@ impl DockLiveUndockRuntime {
     #[cfg(test)]
     pub(crate) fn reject_orphan_recovery_records_for_test(&self) {
         self.state.borrow_mut().reject_orphan_recovery_records = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reject_committed_destination_recovery_records_for_test(&self) {
+        self.state
+            .borrow_mut()
+            .reject_committed_destination_recovery_records = true;
     }
 
     #[cfg(test)]
@@ -3672,6 +3682,14 @@ impl DockLiveUndockRuntime {
         destination: DockLiveUndockPromotionDestination,
         cx: &mut App,
     ) -> Option<DockLiveUndockPreparedCommittedDestinationRecoveryExecution> {
+        #[cfg(test)]
+        if self
+            .state
+            .borrow()
+            .reject_committed_destination_recovery_records
+        {
+            return None;
+        }
         let (
             runtime,
             payload_identity,
@@ -3888,6 +3906,30 @@ impl DockLiveUndockRuntime {
             }
             Some(receipt)
         })
+    }
+
+    fn attempt_committed_destination_recovery(
+        &self,
+        owner: &Entity<DockSurfaceOwner>,
+        identity: DockLiveUndockIdentity,
+        authority: DockPayloadRecoveryAuthority,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+        cx: &mut App,
+    ) -> Result<DockPayloadRecoveryCommitReceipt, DockLiveUndockCommittedDestinationRecoveryFailure>
+    {
+        let prepared = self
+            .prepare_committed_destination_recovery(
+                owner,
+                identity,
+                authority,
+                token,
+                destination,
+                cx,
+            )
+            .ok_or(DockLiveUndockCommittedDestinationRecoveryFailure::PreparationRejected)?;
+        self.commit_committed_destination_recovery(owner, prepared, cx)
+            .ok_or(DockLiveUndockCommittedDestinationRecoveryFailure::PreflightRejected)
     }
 
     fn prepare_host_promotion(
@@ -5732,42 +5774,39 @@ impl DockLiveUndockRuntime {
                 token,
                 destination,
             } => {
-                let recovery = self
-                    .prepare_committed_destination_recovery(
-                        owner,
+                match self.attempt_committed_destination_recovery(
+                    owner,
+                    identity,
+                    authority,
+                    token,
+                    destination,
+                    cx,
+                ) {
+                    Ok(recovery) => {
+                        self.clear_committed_destination_recovery_retry(identity);
+                        self.enqueue_fact(
+                            DockLiveUndockQueuedFact::Reduce(
+                                DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
+                                    identity,
+                                    receipt:
+                                        DockLiveUndockCommittedDestinationRecoveryReceipt::new(
+                                            recovery,
+                                        )
+                                        .expect(
+                                            "committed destination recovery must retain durable authority",
+                                        ),
+                                },
+                            ),
+                            cx,
+                        );
+                    }
+                    Err(_) => self.schedule_committed_destination_recovery_retry(
                         identity,
                         authority,
                         token,
                         destination,
                         cx,
-                    )
-                    .and_then(|prepared| {
-                        self.commit_committed_destination_recovery(owner, prepared, cx)
-                    });
-                if let Some(recovery) = recovery {
-                    self.clear_committed_destination_recovery_retry(identity);
-                    self.enqueue_fact(
-                        DockLiveUndockQueuedFact::Reduce(
-                            DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
-                                identity,
-                                receipt: DockLiveUndockCommittedDestinationRecoveryReceipt::new(
-                                    recovery,
-                                )
-                                .expect(
-                                    "committed destination recovery must retain durable authority",
-                                ),
-                            },
-                        ),
-                        cx,
-                    );
-                } else {
-                    self.schedule_committed_destination_recovery_retry(
-                        identity,
-                        authority,
-                        token,
-                        destination,
-                        cx,
-                    );
+                    ),
                 }
             }
             DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
@@ -5777,17 +5816,30 @@ impl DockLiveUndockRuntime {
                 destination,
             } => {
                 self.clear_committed_destination_recovery_retry(identity);
-                self.enqueue_effects(
-                    DockLiveUndockEffects::single(
-                        DockLiveUndockEffect::RecoverCommittedDestinationTopology {
+                let fact = match self.attempt_committed_destination_recovery(
+                    owner,
+                    identity,
+                    authority,
+                    token,
+                    destination,
+                    cx,
+                ) {
+                    Ok(recovery) => DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
+                        identity,
+                        receipt: DockLiveUndockCommittedDestinationRecoveryReceipt::new(recovery)
+                            .expect("committed destination recovery must retain durable authority"),
+                    },
+                    Err(failure) => {
+                        DockLiveUndockFact::ShutdownCommittedDestinationRecoveryFailed {
                             identity,
                             authority,
                             token,
                             destination,
-                        },
-                    ),
-                    cx,
-                );
+                            failure,
+                        }
+                    }
+                };
+                self.enqueue_fact(DockLiveUndockQueuedFact::Reduce(fact), cx);
             }
             DockLiveUndockEffect::RetireCommittedSameWindowDestination {
                 identity,
@@ -5838,6 +5890,16 @@ impl DockLiveUndockRuntime {
             } => super::settle_live_undock_dependency(owner, identity, Some(dependency), cx),
             DockLiveUndockEffect::PublishTerminal { identity, .. } => {
                 self.finalize_live_payload_drag(identity, cx);
+            }
+            DockLiveUndockEffect::FailShutdownDependency {
+                identity,
+                dependency,
+                failure,
+            } => {
+                log::error!(
+                    "live-undock shutdown cleanup failed; closing with an explicit failure terminal: identity={identity:?}, dependency={dependency:?}, failure={failure:?}"
+                );
+                super::fail_live_undock_dependency(owner, identity, dependency, cx);
             }
             DockLiveUndockEffect::TriggerDeferred { .. }
             | DockLiveUndockEffect::RouteFeedbackChanged { .. }

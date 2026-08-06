@@ -249,6 +249,52 @@ fn provisional_opening_dependency_blocks_shutdown_and_reopen_until_exact_settlem
 }
 
 #[test]
+fn failed_shutdown_dependency_is_terminal_but_remains_observable_after_close() {
+    let mut session = DockSurfaceWindowSession::new(EntityId::from(2));
+    let opening = session.reserve_opening().expect("G1 should reserve");
+    let anchor = WindowId::from((8_u64 << 32) | 1);
+    let lease = session
+        .commit_opening(opening, anchor)
+        .expect("G1 should activate");
+    let dependency = DockSurfaceWindowSessionDependencyId::live_undock(42);
+
+    assert!(matches!(
+        session.begin_shutdown_with_dependencies(
+            lease,
+            DockSurfaceWindowSessionShutdownReason::AppShutdown,
+            [anchor],
+            [dependency],
+        ),
+        DockSurfaceWindowSessionBeginShutdownOutcome::Started { .. }
+    ));
+    assert_eq!(
+        session.fail_dependency(lease, dependency),
+        DockSurfaceWindowSessionDependencyTerminalOutcome::Failed
+    );
+    assert!(!session.has_pending_dependencies(lease));
+    assert_eq!(
+        session.mark_runtime_empty(lease),
+        DockSurfaceWindowSessionRuntimeEmptyOutcome::Marked
+    );
+    assert_eq!(
+        session.settle_terminal(
+            lease,
+            anchor,
+            DockSurfaceWindowSessionTerminalDisposition::ObservedClosed,
+        ),
+        DockSurfaceWindowSessionTerminalOutcome::Settled
+    );
+    assert_eq!(
+        session.complete_shutdown(lease),
+        DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed
+    );
+    let status = session.status();
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.failed_terminal_ticket_count(), 1);
+}
+
+#[test]
 fn late_returned_window_is_adopted_before_the_anchor_shutdown_ticket() {
     let mut session = DockSurfaceWindowSession::new(EntityId::from(1));
     let opening = session.reserve_opening().expect("G1 should reserve");

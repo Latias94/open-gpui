@@ -6367,20 +6367,23 @@ fn stale_selected_same_window_registration_falls_back_to_ordinary_close_before_r
     );
 }
 
-#[open_gpui::test]
-fn committed_destination_admission_failure_recovers_before_retiring_its_window(
+fn trigger_committed_destination_admission_failure(
+    fixture: &mut NativeCapturedSourceFixture,
     cx: &mut TestAppContext,
-) {
-    let mut fixture = native_captured_source_fixture(cx);
-    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    reject_recovery: bool,
+) -> (AnyWindowHandle, DockSpaceId) {
+    begin_native_live_undock_with_released_source(fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
     let (destination_window, _destination_host, destination_space) =
-        reveal_live_undock_provisional_destination(&fixture, cx);
+        reveal_live_undock_provisional_destination(fixture, cx);
 
     let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
         owner.live_undock_runtime()
     });
     live_runtime.reject_next_destination_interaction_admission_for_test();
+    if reject_recovery {
+        live_runtime.reject_committed_destination_recovery_records_for_test();
+    }
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
         PlatformWindowHitStack::try_available(
@@ -6407,6 +6410,16 @@ fn committed_destination_admission_failure_recovers_before_retiring_its_window(
     );
     assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
     cx.run_until_parked();
+    (destination_window, destination_space)
+}
+
+#[open_gpui::test]
+fn committed_destination_admission_failure_recovers_before_retiring_its_window(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let (destination_window, destination_space) =
+        trigger_committed_destination_admission_failure(&mut fixture, cx, false);
 
     let (phase, execution_count, recovery_count) =
         cx.read_entity(fixture.surface.owner(), |owner, _| {
@@ -6461,6 +6474,60 @@ fn committed_destination_admission_failure_recovers_before_retiring_its_window(
             "the committed destination topology must survive native window retirement",
         );
     });
+}
+
+#[open_gpui::test]
+fn shutdown_committed_destination_recovery_failure_closes_with_failure_evidence(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let (destination_window, _destination_space) =
+        trigger_committed_destination_admission_failure(&mut fixture, cx, true);
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::RecoveringCommittedDestination,
+        "a permanent recovery rejection must wait for the explicit shutdown failure path"
+    );
+
+    let close = cx.simulate_window_close_request(fixture.source_window);
+    assert!(!close.native_close_allowed());
+    assert!(close.terminal_transition_started());
+    cx.run_until_parked();
+
+    let status = cx.update(|app| fixture.surface.window_session_status(app));
+    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.failed_terminal_ticket_count(), 1);
+    assert_eq!(status.runtime_empty(), Some(true));
+    assert_eq!(cx.windows().len(), 0);
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| {
+            (
+                owner.live_undock_phase(),
+                owner.live_undock_runtime().execution_count_for_test(),
+                owner.visible_payload_recovery_count_for_test(
+                    crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+                ),
+            )
+        }),
+        (
+            crate::surface::live_undock::DockLiveUndockPhase::ShutdownCleanupFailed,
+            0,
+            0,
+        )
+    );
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "failure-terminal shutdown must settle the exact drag finalizer before closing the anchor"
+    );
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "failure-terminal shutdown must still retire the provisional destination HWND"
+    );
 }
 
 #[open_gpui::test]

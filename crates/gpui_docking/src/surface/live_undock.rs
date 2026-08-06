@@ -990,6 +990,18 @@ pub(crate) enum DockLiveUndockOrphanCleanupFailure {
     PreflightRejected,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockLiveUndockCommittedDestinationRecoveryFailure {
+    PreparationRejected,
+    PreflightRejected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockLiveUndockShutdownFailure {
+    OrphanCleanup(DockLiveUndockOrphanCleanupFailure),
+    CommittedDestinationRecovery(DockLiveUndockCommittedDestinationRecoveryFailure),
+}
+
 /// Exact acknowledgement that a payload which already crossed the durable promotion boundary
 /// was recorded in the surface-owned recovery registry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1615,6 +1627,7 @@ pub(crate) enum DockLiveUndockTerminalResult {
     PresentationAuthorityLostBeforeCommit(DockLiveUndockPresentationAuthorityLoss),
     Committed(DockLiveUndockPromotionDestination),
     DestinationLostAfterCommit(DockLiveUndockPromotionDestination),
+    ShutdownCleanupFailed(DockLiveUndockShutdownFailure),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1756,6 +1769,13 @@ pub(crate) enum DockLiveUndockFact {
         identity: DockLiveUndockIdentity,
         receipt: DockLiveUndockCommittedDestinationRecoveryReceipt,
     },
+    ShutdownCommittedDestinationRecoveryFailed {
+        identity: DockLiveUndockIdentity,
+        authority: DockPayloadRecoveryAuthority,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+        failure: DockLiveUndockCommittedDestinationRecoveryFailure,
+    },
     DestinationTerminal {
         identity: DockLiveUndockIdentity,
         window_id: WindowId,
@@ -1807,6 +1827,7 @@ impl DockLiveUndockFact {
             | Self::OrphanRecoveryFailed { identity, .. }
             | Self::ShutdownOrphanCleanupFailed { identity, .. }
             | Self::CommittedDestinationRecoveryCommitted { identity, .. }
+            | Self::ShutdownCommittedDestinationRecoveryFailed { identity, .. }
             | Self::DestinationTerminal { identity, .. }
             | Self::Cancel { identity, .. }
             | Self::ShutdownDependencyTransferred { identity, .. }
@@ -1968,6 +1989,11 @@ pub(crate) enum DockLiveUndockEffect {
     SettleShutdownDependency {
         identity: DockLiveUndockIdentity,
         dependency: DockSurfaceWindowSessionDependencyId,
+    },
+    FailShutdownDependency {
+        identity: DockLiveUndockIdentity,
+        dependency: DockSurfaceWindowSessionDependencyId,
+        failure: DockLiveUndockShutdownFailure,
     },
     WindowTerminalSettled(DockLiveUndockWindowTerminalOutcome),
 }
@@ -2331,7 +2357,6 @@ struct DockLiveUndockOrphanRecovery {
     payload_lease: DockLiveUndockPayloadLeaseReceipt,
     cause: DockLiveUndockPayloadRecoveryCause,
     shutdown_dependency: DockLiveUndockShutdownDependency,
-    shutdown_cleanup_failure: Option<DockLiveUndockOrphanCleanupFailure>,
 }
 
 #[derive(Debug)]
@@ -2449,6 +2474,10 @@ enum DockLiveUndockState {
     Restoring(DockLiveUndockSourceRestoration),
     RecoveringOrphan(DockLiveUndockOrphanRecovery),
     RecoveringCommittedDestination(DockLiveUndockCommittedDestinationRecovery),
+    ShutdownFailed {
+        identity: DockLiveUndockIdentity,
+        failure: DockLiveUndockShutdownFailure,
+    },
     Retiring(DockLiveUndockRetiring),
 }
 
@@ -2579,6 +2608,9 @@ impl DockLiveUndockSession {
             {
                 self.reduce_committed_destination_recovery(recovery, fact)
             }
+            DockLiveUndockState::ShutdownFailed {
+                identity: current, ..
+            } if current == identity => (state, DockLiveUndockEffects::default()),
             DockLiveUndockState::Retiring(retiring) if retiring.identity() == identity => {
                 self.reduce_retiring(retiring, fact)
             }
@@ -3059,6 +3091,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockFact::ShutdownOrphanCleanupCompleted { .. }
             | DockLiveUndockFact::ShutdownOrphanCleanupFailed { .. }
             | DockLiveUndockFact::CommittedDestinationRecoveryCommitted { .. }
+            | DockLiveUndockFact::ShutdownCommittedDestinationRecoveryFailed { .. }
             | DockLiveUndockFact::OpeningReturned { .. }
             | DockLiveUndockFact::OpeningFailed { .. }
             | DockLiveUndockFact::PresentationLeaseActivated { .. }
@@ -3268,7 +3301,6 @@ impl DockLiveUndockSession {
             payload_lease,
             cause,
             shutdown_dependency,
-            shutdown_cleanup_failure: None,
         })
     }
 
@@ -3474,6 +3506,32 @@ impl DockLiveUndockSession {
         next
     }
 
+    fn finish_shutdown_cleanup_failure(
+        &mut self,
+        active: DockLiveUndockActive,
+        failure: DockLiveUndockShutdownFailure,
+        shutdown_dependency: DockLiveUndockShutdownDependency,
+        effects: &mut DockLiveUndockEffects,
+    ) -> DockLiveUndockState {
+        let identity = active.identity();
+        let claimed_dependency = shutdown_dependency.claimed();
+        let _ = self.finish_active(
+            active,
+            DockLiveUndockTerminalResult::ShutdownCleanupFailed(failure),
+            Some(DockLiveUndockRetirementReason::Shutdown),
+            DockLiveUndockShutdownDependency::Transferred,
+            effects,
+        );
+        if let Some(dependency) = claimed_dependency {
+            effects.push(DockLiveUndockEffect::FailShutdownDependency {
+                identity,
+                dependency,
+                failure,
+            });
+        }
+        DockLiveUndockState::ShutdownFailed { identity, failure }
+    }
+
     fn reduce_source_restoration(
         &mut self,
         mut restoration: DockLiveUndockSourceRestoration,
@@ -3630,8 +3688,13 @@ impl DockLiveUndockSession {
                     DockLiveUndockShutdownDependency::Unclaimed
                 ) =>
             {
-                recovery.shutdown_cleanup_failure = Some(failure);
-                (DockLiveUndockState::RecoveringOrphan(recovery), effects)
+                let state = self.finish_shutdown_cleanup_failure(
+                    recovery.active,
+                    DockLiveUndockShutdownFailure::OrphanCleanup(failure),
+                    recovery.shutdown_dependency,
+                    &mut effects,
+                );
+                (state, effects)
             }
             DockLiveUndockFact::WindowTerminal { window_id, .. }
                 if recovery
@@ -3714,6 +3777,29 @@ impl DockLiveUndockSession {
                         window_id: *window_id,
                     });
                 }
+            }
+            DockLiveUndockFact::ShutdownCommittedDestinationRecoveryFailed {
+                authority,
+                token,
+                destination,
+                failure,
+                ..
+            } if recovery.authority == authority
+                && recovery.token == token
+                && recovery.destination == destination
+                && recovery.active.durable_promotion() == Some((token, destination))
+                && !matches!(
+                    recovery.shutdown_dependency,
+                    DockLiveUndockShutdownDependency::Unclaimed
+                ) =>
+            {
+                let state = self.finish_shutdown_cleanup_failure(
+                    recovery.active,
+                    DockLiveUndockShutdownFailure::CommittedDestinationRecovery(failure),
+                    recovery.shutdown_dependency,
+                    &mut effects,
+                );
+                return (state, effects);
             }
             DockLiveUndockFact::WindowTerminal { window_id, .. }
                 if matches!(
@@ -3998,9 +4084,6 @@ impl DockLiveUndockSession {
         effects: &mut DockLiveUndockEffects,
     ) {
         let identity = recovery.identity();
-        if recovery.shutdown_cleanup_failure.is_some() {
-            return;
-        }
         let dependency = match recovery.shutdown_dependency {
             DockLiveUndockShutdownDependency::Unclaimed => {
                 let dependency =
@@ -4169,6 +4252,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
+            | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => None,
         }
     }
@@ -4244,6 +4328,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
+            | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => None,
         }
     }
@@ -4280,6 +4365,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
+            | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => {
                 return DockLiveUndockTransition::new(
                     DockLiveUndockOpenFailureOutcome::Stale,
@@ -4404,6 +4490,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
+            | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => None,
         }
     }
@@ -4457,6 +4544,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
+            | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => {
                 return DockLiveUndockTransition::new(None, DockLiveUndockEffects::default());
             }
@@ -4483,14 +4571,13 @@ impl DockLiveUndockSession {
             DockLiveUndockState::Active(_) => DockLiveUndockPhase::Bound,
             DockLiveUndockState::Compensating(_) => DockLiveUndockPhase::Compensating,
             DockLiveUndockState::Restoring(_) => DockLiveUndockPhase::Restoring,
-            DockLiveUndockState::RecoveringOrphan(recovery)
-                if recovery.shutdown_cleanup_failure.is_some() =>
-            {
-                DockLiveUndockPhase::ShutdownCleanupFailed
-            }
             DockLiveUndockState::RecoveringOrphan(_) => DockLiveUndockPhase::RecoveringOrphan,
             DockLiveUndockState::RecoveringCommittedDestination(_) => {
                 DockLiveUndockPhase::RecoveringCommittedDestination
+            }
+            DockLiveUndockState::ShutdownFailed { failure, .. } => {
+                let _ = failure;
+                DockLiveUndockPhase::ShutdownCleanupFailed
             }
             DockLiveUndockState::Retiring(_) => DockLiveUndockPhase::Retiring,
         }
@@ -4505,6 +4592,7 @@ impl DockLiveUndockSession {
             DockLiveUndockState::RecoveringCommittedDestination(recovery) => {
                 Some(recovery.identity())
             }
+            DockLiveUndockState::ShutdownFailed { identity, .. } => Some(*identity),
             DockLiveUndockState::Retiring(retiring) => Some(retiring.identity()),
             DockLiveUndockState::Idle => None,
         }

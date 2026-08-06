@@ -2256,6 +2256,94 @@ mod reducer_tests {
     }
 
     #[test]
+    fn shutdown_committed_destination_recovery_failure_finishes_with_typed_failure_terminal() {
+        let (_, lease) = active_window_session(130, 230);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(430);
+        admit(&mut session, identity, window);
+        let token = prepare_desktop(&mut session, identity, window, placement_generation(32));
+        let destination = DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: window.window_id(),
+        };
+        session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
+        session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
+
+        let shutdown = session.apply(DockLiveUndockFact::ShutdownRequested { lease });
+        let dependency = shutdown
+            .as_slice()
+            .iter()
+            .find_map(|effect| match effect {
+                DockLiveUndockEffect::ShutdownFrozen(snapshot) => Some(snapshot.dependency()),
+                _ => None,
+            })
+            .expect("shutdown must retain exact committed-recovery cleanup authority");
+        let authority =
+            DockPayloadRecoveryAuthority::durable_promotion(identity, token, destination);
+
+        let failure = DockLiveUndockCommittedDestinationRecoveryFailure::PreparationRejected;
+        let failed = session.apply(
+            DockLiveUndockFact::ShutdownCommittedDestinationRecoveryFailed {
+                identity,
+                authority,
+                token,
+                destination,
+                failure,
+            },
+        );
+        let publish_index = failed
+            .as_slice()
+            .iter()
+            .position(|effect| {
+                matches!(
+                    effect,
+                    DockLiveUndockEffect::PublishTerminal {
+                        identity: current_identity,
+                        result: DockLiveUndockTerminalResult::ShutdownCleanupFailed(
+                            DockLiveUndockShutdownFailure::CommittedDestinationRecovery(
+                                current_failure,
+                            ),
+                        ),
+                    } if *current_identity == identity && *current_failure == failure
+                )
+            })
+            .expect("shutdown failure must publish a typed terminal result");
+        let fail_dependency_index = failed
+            .as_slice()
+            .iter()
+            .position(|effect| {
+                matches!(
+                    effect,
+                    DockLiveUndockEffect::FailShutdownDependency {
+                        identity: current_identity,
+                        dependency: current_dependency,
+                        failure: DockLiveUndockShutdownFailure::CommittedDestinationRecovery(
+                            current_failure,
+                        ),
+                    } if *current_identity == identity
+                        && *current_dependency == dependency
+                        && *current_failure == failure
+                )
+            })
+            .expect("shutdown failure must terminate its exact dependency");
+        assert!(publish_index < fail_dependency_index);
+        assert!(!failed.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::SettleShutdownDependency { .. }
+        )));
+        assert_eq!(session.phase(), DockLiveUndockPhase::ShutdownCleanupFailed);
+        assert!(session.shutdown_snapshot(lease).is_none());
+
+        assert!(
+            session
+                .apply(DockLiveUndockFact::ShutdownRequested { lease })
+                .is_empty(),
+            "a terminal committed-recovery failure must not re-arm recovery or publish success"
+        );
+        assert_eq!(session.phase(), DockLiveUndockPhase::ShutdownCleanupFailed);
+    }
+
+    #[test]
     fn host_destination_recovery_receipt_is_the_terminal_cleanup_authority() {
         let (_, lease) = active_window_session(129, 229);
         let mut session = DockLiveUndockSession::new();
@@ -3388,7 +3476,7 @@ mod reducer_tests {
     }
 
     #[test]
-    fn shutdown_orphan_cleanup_failure_parks_without_retry_or_false_terminal() {
+    fn shutdown_orphan_cleanup_failure_finishes_with_typed_failure_terminal() {
         let (_, lease) = active_window_session(509, 609);
         let mut session = DockLiveUndockSession::new();
         let identity = start(&mut session, lease, 1);
@@ -3411,25 +3499,43 @@ mod reducer_tests {
             })
             .expect("shutdown must retain one exact orphan-cleanup dependency");
 
+        let failure = DockLiveUndockOrphanCleanupFailure::PreflightRejected;
         let failed = session.apply(DockLiveUndockFact::ShutdownOrphanCleanupFailed {
             identity,
             payload_lease,
-            failure: DockLiveUndockOrphanCleanupFailure::PreflightRejected,
+            failure,
         });
-        assert!(failed.is_empty());
+        assert!(failed.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::PublishTerminal {
+                identity: current_identity,
+                result: DockLiveUndockTerminalResult::ShutdownCleanupFailed(
+                    DockLiveUndockShutdownFailure::OrphanCleanup(current_failure),
+                ),
+            } if *current_identity == identity && *current_failure == failure
+        )));
+        assert!(failed.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::FailShutdownDependency {
+                identity: current_identity,
+                dependency: current_dependency,
+                failure: DockLiveUndockShutdownFailure::OrphanCleanup(current_failure),
+            } if *current_identity == identity
+                && *current_dependency == dependency
+                && *current_failure == failure
+        )));
+        assert!(!failed.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::SettleShutdownDependency { .. }
+        )));
         assert_eq!(session.phase(), DockLiveUndockPhase::ShutdownCleanupFailed);
-        assert_eq!(
-            session
-                .shutdown_snapshot(lease)
-                .map(|snapshot| snapshot.dependency()),
-            Some(dependency)
-        );
+        assert!(session.shutdown_snapshot(lease).is_none());
 
         assert!(
             session
                 .apply(DockLiveUndockFact::ShutdownRequested { lease })
                 .is_empty(),
-            "a stable cleanup failure must not arm retries or publish a false terminal"
+            "a terminal cleanup failure must not arm retries or publish a false terminal"
         );
         assert_eq!(session.phase(), DockLiveUndockPhase::ShutdownCleanupFailed);
     }
