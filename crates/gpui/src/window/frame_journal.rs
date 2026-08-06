@@ -1,9 +1,10 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::Bounds;
 use crate::{
-    AccessibilityTreeScope, AnyElement, AnyTooltip, App, AtlasAccessDiagnostic, CursorStyle,
-    DispatchNodeId, DispatchTree, ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior,
-    HitboxId, LineLayoutIndex, Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene,
+    AccessibilityTreeScope, AnyElement, AnyTooltip, App, AtlasAccessDiagnostic,
+    AtlasTextureInstanceId, AtlasTextureLease, AtlasTextureLeaseError, CursorStyle, DispatchNodeId,
+    DispatchTree, ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, HitboxId,
+    LineLayoutIndex, Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene,
     SubtreePresentation, SubtreeTransformDiagnostic, TabStopMap, TextStyleRefinement, Window,
     WindowControlArea,
     geometry::{ClipStackSnapshot, ResolvedSubtreeTransform, SubtreeGeometryValidity},
@@ -19,11 +20,12 @@ use std::{
 };
 
 use super::{
-    AnyMouseListener, AnyPointerCancelListener, CursorStyleRequest, ElementStateBox, FocusId,
-    HitTest, ImagePaintDiagnostic, PrepaintPublicationId, TooltipId,
+    AcceptedFrameFence, AnyMouseListener, AnyPointerCancelListener, CursorStyleRequest,
+    ElementStateBox, FocusId, HitTest, ImagePaintDiagnostic, PrepaintPublicationId, TooltipId,
     a11y::AccessibilityDeferredParent,
     bring_into_view::{RevealTargetBinding, RevealTargetKey, ScrollContainerBinding},
     portal_anchor::{PortalAnchorBinding, PortalAnchorId},
+    retained_visual::{CommittedSourceRecord, PendingSourcePublication, SourceId, TicketIdentity},
 };
 
 #[derive(Clone, Copy)]
@@ -49,8 +51,14 @@ pub(crate) struct PrepaintCommit {
     pub(super) phase: PrepaintCommitPhase,
     pub(super) publication: Option<PrepaintPublicationId>,
     pub(super) presentation: SubtreePresentation,
-    pub(super) commit: Rc<dyn Fn(u64, &mut Window, &mut App)>,
-    pub(super) discard: Option<Rc<dyn Fn(u64, &mut Window, &mut App)>>,
+    pub(super) commit: PrepaintCommitCallback,
+    pub(super) discard: Option<PrepaintCommitCallback>,
+}
+
+#[derive(Clone)]
+pub(crate) enum PrepaintCommitCallback {
+    Revision(Rc<dyn Fn(u64, &mut Window, &mut App)>),
+    AcceptedFrame(Rc<dyn Fn(AcceptedFrameFence, &mut Window, &mut App)>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,6 +119,9 @@ pub(crate) struct Frame {
     pub(crate) pointer_cancel_listeners: Vec<FrameOutput<Option<AnyPointerCancelListener>>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
+    pub(super) atlas_texture_lease_entries: Vec<AtlasTextureLeaseEntry>,
+    pub(super) atlas_texture_leases_by_instance:
+        FxHashMap<AtlasTextureInstanceId, Rc<AtlasTextureLease>>,
     pub(crate) atlas_access_diagnostic_entries: Vec<FrameOutput<AtlasAccessDiagnostic>>,
     pub(crate) image_paint_diagnostic_entries: Vec<FrameOutput<ImagePaintDiagnostic>>,
     pub(crate) atlas_access_diagnostics: Vec<AtlasAccessDiagnostic>,
@@ -124,6 +135,9 @@ pub(crate) struct Frame {
     pub(super) reveal_target_bindings: Vec<FrameOutput<RevealTargetBinding>>,
     reveal_target_binding_locations: FxHashMap<RevealTargetKey, RevealTargetBindingLocation>,
     pub(crate) retained_resources: Vec<Rc<dyn Any>>,
+    pub(crate) retained_visual_publications: Vec<PendingSourcePublication>,
+    pub(crate) retained_visual_replays: Vec<TicketIdentity>,
+    pub(crate) retained_visual_sources: FxHashMap<SourceId, CommittedSourceRecord>,
     pub(crate) prepaint_commits: Vec<FrameOutput<PrepaintCommit>>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -164,8 +178,11 @@ pub(crate) struct PrepaintStateIndex {
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     pub(super) scene_index: usize,
+    pub(super) atlas_texture_lease_entries_index: usize,
     pub(super) atlas_access_diagnostics_index: usize,
     pub(super) image_paint_diagnostics_index: usize,
+    pub(super) retained_visual_publications_index: usize,
+    pub(super) retained_visual_replays_index: usize,
     pub(super) mouse_listeners_index: usize,
     pub(super) pointer_cancel_listeners_index: usize,
     pub(super) input_handlers_index: usize,
@@ -181,6 +198,29 @@ pub(crate) struct PaintIndex {
     pub(super) subtree_transform_diagnostics_index: usize,
 }
 
+/// Frame-journal cursor for paint-only replay.
+///
+/// Unlike [`PaintIndex`], this deliberately excludes every interactive and semantic channel.
+/// It is used by a same-window visual hold that must preserve the last committed pixels without
+/// reviving hitboxes, input handlers, focus traversal, or accessibility ownership.
+#[derive(Clone, Default)]
+pub(crate) struct VisualPaintIndex {
+    pub(super) scene_index: usize,
+    pub(super) atlas_texture_lease_entries_index: usize,
+    pub(super) atlas_access_diagnostics_index: usize,
+    pub(super) image_paint_diagnostics_index: usize,
+    pub(super) subtree_transform_diagnostics_index: usize,
+}
+
+/// Frame-journal cursor for resources and deferred output owned by a retained visual source.
+#[derive(Clone, Default)]
+pub(crate) struct VisualPrepaintIndex {
+    pub(super) retained_resources_index: usize,
+    pub(super) deferred_draws_index: usize,
+}
+
+pub(crate) type AtlasTextureLeaseEntry = Result<Rc<AtlasTextureLease>, AtlasTextureLeaseError>;
+
 impl Frame {
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
@@ -194,6 +234,8 @@ impl Frame {
             pointer_cancel_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
+            atlas_texture_lease_entries: Vec::new(),
+            atlas_texture_leases_by_instance: FxHashMap::default(),
             atlas_access_diagnostic_entries: Vec::new(),
             image_paint_diagnostic_entries: Vec::new(),
             atlas_access_diagnostics: Vec::new(),
@@ -207,6 +249,9 @@ impl Frame {
             reveal_target_bindings: Vec::new(),
             reveal_target_binding_locations: FxHashMap::default(),
             retained_resources: Vec::new(),
+            retained_visual_publications: Vec::new(),
+            retained_visual_replays: Vec::new(),
+            retained_visual_sources: FxHashMap::default(),
             prepaint_commits: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
@@ -240,6 +285,8 @@ impl Frame {
         self.pointer_cancel_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
+        self.atlas_texture_lease_entries.clear();
+        self.atlas_texture_leases_by_instance.clear();
         self.generation = 0;
         self.atlas_access_diagnostic_entries.clear();
         self.image_paint_diagnostic_entries.clear();
@@ -257,6 +304,9 @@ impl Frame {
         self.reveal_target_bindings.clear();
         self.reveal_target_binding_locations.clear();
         self.retained_resources.clear();
+        self.retained_visual_publications.clear();
+        self.retained_visual_replays.clear();
+        self.retained_visual_sources.clear();
         self.prepaint_commits.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
@@ -503,6 +553,7 @@ impl Frame {
                 }
             }
         }
+        self.settle_retained_visual_sources();
         self.scene.finish();
     }
 }

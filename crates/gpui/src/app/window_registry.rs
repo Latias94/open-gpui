@@ -429,6 +429,8 @@ fn unregister_removed_window(app: &mut App, id: WindowId) -> Option<Box<dyn Any 
 }
 
 fn cleanup_entity_window_links(app: &mut App, id: WindowId) {
+    app.view_presentation_windows
+        .window_closed(id, &mut app.current_window_by_entity);
     if let Some(tracked) = app.tracked_entities.remove(&id) {
         for entity_id in tracked {
             if let Some(windows) = app.window_invalidators_by_entity.get_mut(&entity_id) {

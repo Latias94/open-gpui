@@ -59,7 +59,6 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    mem,
     ops::Range,
     rc::Rc,
 };
@@ -249,7 +248,7 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source: &mut DispatchNode, validity: Option<SubtreeGeometryValidity>) {
+    fn replay_node(&mut self, source: &DispatchNode, validity: Option<SubtreeGeometryValidity>) {
         let validity = SubtreeGeometryValidity::replayed_under(source.validity.as_ref(), validity);
         self.push_node_scoped(validity);
         if let Some(context) = source.context.clone() {
@@ -263,15 +262,17 @@ impl DispatchTree {
         }
 
         let target = self.active_node();
-        target.key_listeners = mem::take(&mut source.key_listeners);
-        target.action_listeners = mem::take(&mut source.action_listeners);
-        target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
+        target.key_listeners.clone_from(&source.key_listeners);
+        target.action_listeners.clone_from(&source.action_listeners);
+        target
+            .modifiers_changed_listeners
+            .clone_from(&source.modifiers_changed_listeners);
     }
 
     pub fn reuse_subtree(
         &mut self,
         old_range: Range<usize>,
-        source: &mut Self,
+        source: &Self,
         focus: Option<FocusId>,
         validity: Option<SubtreeGeometryValidity>,
     ) -> ReusedSubtree {
@@ -281,7 +282,7 @@ impl DispatchTree {
         let mut source_stack = vec![];
         for (source_node_id, source_node) in source
             .nodes
-            .iter_mut()
+            .iter()
             .enumerate()
             .skip(old_range.start)
             .take(old_range.len())
@@ -300,7 +301,7 @@ impl DispatchTree {
             if source_node.focus_id.is_some() && source_node.focus_id == focus {
                 contains_focus = true;
             }
-            self.move_node(source_node, validity.clone());
+            self.replay_node(source_node, validity.clone());
         }
 
         while !source_stack.is_empty() {

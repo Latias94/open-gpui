@@ -53,11 +53,11 @@ pub(crate) struct DirectXRenderer {
     width: u32,
     height: u32,
 
-    /// Whether we want to skip drwaing due to device lost events.
+    /// Whether device recovery invalidated every scene accepted before the reset.
     ///
-    /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
-    /// meaning we lost all the allocated gpu textures and scene resources.
-    skip_draws: bool,
+    /// This remains set until a scene reaches `draw`, so native frame throttling cannot consume the
+    /// recovery signal before GPUI establishes sticky fresh-paint authority.
+    repaint_required_after_recovery: bool,
     surface_quiesced_for: Option<WindowPresentationShutdownTicket>,
 }
 
@@ -182,7 +182,7 @@ impl DirectXRenderer {
             font_info: Self::get_font_info(),
             width: 1,
             height: 1,
-            skip_draws: false,
+            repaint_required_after_recovery: false,
             surface_quiesced_for: None,
         })
     }
@@ -316,11 +316,11 @@ impl DirectXRenderer {
         self.globals = globals;
         self.pipelines = pipelines;
         self.direct_composition = direct_composition;
-        self.skip_draws = true;
+        self.repaint_required_after_recovery = true;
         Ok(())
     }
 
-    /// Defers the frame when device recovery invalidated its texture resources.
+    /// Rejects replay of the first scene observed after device recovery.
     pub(crate) fn draw(
         &mut self,
         scene: &Scene,
@@ -329,8 +329,8 @@ impl DirectXRenderer {
         if self.surface_quiesced_for.is_some() {
             return Ok(PlatformWindowPresentOutcome::Rejected);
         }
-        if self.skip_draws {
-            return Ok(PlatformWindowPresentOutcome::Deferred);
+        if std::mem::take(&mut self.repaint_required_after_recovery) {
+            return Ok(PlatformWindowPresentOutcome::RepaintRequired);
         }
         self.draw_scene_to_target(scene, background_appearance)?;
         self.present()?;
@@ -342,11 +342,6 @@ impl DirectXRenderer {
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
-        if self.skip_draws {
-            // skip drawing this frame, we just recovered from a device lost event
-            // and so likely do not have the textures anymore that are required for drawing
-            return Ok(());
-        }
         self.pre_draw(
             &match background_appearance {
                 WindowBackgroundAppearance::Opaque => [1.0f32; 4],
@@ -367,14 +362,14 @@ impl DirectXRenderer {
                     self.draw_paths_from_intermediate(paths)
                 }
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
-                PrimitiveBatch::MonochromeSprites { texture_id, range } => {
-                    self.draw_monochrome_sprites(texture_id, range.start, range.len())
+                PrimitiveBatch::MonochromeSprites { texture, range } => {
+                    self.draw_monochrome_sprites(texture, range.start, range.len())
                 }
-                PrimitiveBatch::SubpixelSprites { texture_id, range } => {
-                    self.draw_subpixel_sprites(texture_id, range.start, range.len())
+                PrimitiveBatch::SubpixelSprites { texture, range } => {
+                    self.draw_subpixel_sprites(texture, range.start, range.len())
                 }
-                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
-                    self.draw_polychrome_sprites(texture_id, range.start, range.len())
+                PrimitiveBatch::PolychromeSprites { texture, range } => {
+                    self.draw_polychrome_sprites(texture, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
             }
@@ -400,6 +395,10 @@ impl DirectXRenderer {
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<RgbaImage> {
+        anyhow::ensure!(
+            !self.repaint_required_after_recovery,
+            "cannot capture a scene whose DirectX atlas resources were invalidated by device recovery"
+        );
         self.draw_scene_to_target(scene, background_appearance)?;
         self.read_render_target_to_image()
     }
@@ -775,7 +774,7 @@ impl DirectXRenderer {
 
     fn draw_monochrome_sprites(
         &mut self,
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         start: usize,
         len: usize,
     ) -> Result<()> {
@@ -784,7 +783,7 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let texture_view = self.atlas.get_texture_view(texture);
         self.pipelines.mono_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
@@ -800,7 +799,7 @@ impl DirectXRenderer {
 
     fn draw_subpixel_sprites(
         &mut self,
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         start: usize,
         len: usize,
     ) -> Result<()> {
@@ -809,7 +808,7 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let texture_view = self.atlas.get_texture_view(texture);
         self.pipelines.subpixel_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
@@ -825,7 +824,7 @@ impl DirectXRenderer {
 
     fn draw_polychrome_sprites(
         &mut self,
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         start: usize,
         len: usize,
     ) -> Result<()> {
@@ -834,7 +833,7 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let texture_view = self.atlas.get_texture_view(texture);
         self.pipelines.poly_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
@@ -902,12 +901,6 @@ impl DirectXRenderer {
         })
     }
 
-    pub(crate) fn mark_drawable(&mut self) {
-        if self.surface_quiesced_for.is_none() {
-            self.skip_draws = false;
-        }
-    }
-
     pub(crate) fn quiesce_surface(
         &mut self,
         shutdown: &WindowPresentationShutdownTicket,
@@ -920,7 +913,7 @@ impl DirectXRenderer {
             return Ok(());
         }
 
-        self.skip_draws = true;
+        self.repaint_required_after_recovery = false;
         if let Some(devices) = self.devices.as_ref() {
             unsafe {
                 devices.device_context.OMSetRenderTargets(None, None);
@@ -947,7 +940,6 @@ impl DirectXRenderer {
             .is_some_and(|current| current.same_authority(shutdown))
             && self.resources.is_none()
             && self.direct_composition.is_none()
-            && self.skip_draws
     }
 }
 
@@ -1515,11 +1507,11 @@ const _: () = {
     assert!(std::mem::size_of::<Quad>() == 184);
     assert!(std::mem::size_of::<Shadow>() == 136);
     assert!(std::mem::size_of::<Underline>() == 88);
-    assert!(std::mem::size_of::<MonochromeSprite>() == 112);
-    assert!(std::mem::size_of::<SubpixelSprite>() == 112);
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, transform) == 104);
-    assert!(std::mem::size_of::<DirectXPolychromeSprite>() == 120);
-    assert!(104 + std::mem::size_of::<PrimitiveTransform>() == 120);
+    assert!(std::mem::size_of::<MonochromeSprite>() == 120);
+    assert!(std::mem::size_of::<SubpixelSprite>() == 120);
+    assert!(std::mem::offset_of!(DirectXPolychromeSprite, transform) == 112);
+    assert!(std::mem::size_of::<DirectXPolychromeSprite>() == 128);
+    assert!(112 + std::mem::size_of::<PrimitiveTransform>() == 128);
     assert!(std::mem::offset_of!(PathRasterizationSprite, transform) == 128);
     assert!(std::mem::size_of::<PathRasterizationSprite>() == 144);
     assert!(128 + std::mem::size_of::<PrimitiveTransform>() == 144);

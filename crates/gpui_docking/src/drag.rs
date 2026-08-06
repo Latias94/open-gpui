@@ -126,6 +126,10 @@ impl DockDragPayload {
         }
     }
 
+    pub(crate) fn title(&self) -> &str {
+        &self.title
+    }
+
     pub(crate) fn identity(&self) -> DockDragPayloadIdentity {
         DockDragPayloadIdentity {
             source_space: self.source_space.clone(),
@@ -282,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn drag_payload_identity_ignores_preview_title() {
+    fn drag_payload_identity_ignores_title() {
         let source_space = DockSpaceId::from("main");
         let source_tabs = DockNodeId::null();
         let original = DockDragPayload::new_item(

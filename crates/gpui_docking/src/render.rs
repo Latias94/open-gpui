@@ -1,7 +1,8 @@
 use crate::{
-    DockDropGuideVisualState, DockHost, DockNode, DockNodeId, DockRoutePreviewVisualState,
-    DockSpaceId, DockSplitterVisualState, DockSplitterVisualStyle, DockTargetPreviewVisualState,
-    DockViewportHostGeometry, DockViewportRuntimeHandle, DockViewportRuntimeWorkContext, DropZone,
+    DockDropGuideVisualState, DockFloatingContainer, DockHost, DockNode, DockNodeId,
+    DockRoutePreviewVisualState, DockSpaceId, DockSplitterVisualState, DockSplitterVisualStyle,
+    DockTargetPreviewVisualState, DockViewportHostGeometry, DockViewportRuntimeHandle,
+    DockViewportRuntimeWorkContext, DropZone,
     accessibility_scene::DockAccessibilityScene,
     debug::DockDebugRegion,
     divider_hit_map::{DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget},
@@ -10,11 +11,29 @@ use crate::{
         DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
     },
     drop_scene_fact, geometry,
-    host::DockHostWindowBinding,
+    host::{
+        DockHostLiveDestinationPhase, DockHostLivePresentationKey, DockHostLivePresentationMode,
+        DockHostLiveSourcePhase, DockHostLiveSourceRestorationPhase,
+        DockHostRecoveryDestinationPhase, DockHostRecoveryPresentationMode,
+        DockHostRecoverySourcePhase, DockHostWindowBinding,
+    },
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostRenderSession, selected_index},
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
+    surface::{
+        DockSurfaceOwner,
+        live_undock::{
+            DockLiveUndockFact, DockLiveUndockPayloadLeaseReceipt,
+            DockLiveUndockPayloadMountReceipt, DockLiveUndockPayloadPresentationReceipt,
+            DockLiveUndockPresentationFailure, DockLiveUndockRevealObservation,
+            DockLiveUndockRevealOutcome, DockLiveUndockRevealReceipt,
+            DockLiveUndockSourceProxyReceipt, DockLiveUndockSourceRestorationFailure,
+            DockLiveUndockSourceRestorationReceipt,
+        },
+        live_undock_runtime::DockLiveUndockSourceFinishOutcome,
+        payload_recovery::DockPayloadRecoveryEntry,
+    },
     transition_executor::{
         DockDividerSample, DockPaneClipSample, DockTransitionSample, DockVisualAffordanceSample,
     },
@@ -27,14 +46,19 @@ use crate::{
     },
 };
 use open_gpui::{
-    AnyElement, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
-    DropEvent, Entity, HitboxBehavior, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PointerCaptureHandle,
-    PrepaintPublicationId, Render, Rgba, SharedString, Styled, Window, WindowId, canvas, div,
-    point, px, quad, rgba,
+    AccessibleAction, AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, CursorStyle,
+    DispatchPhase, DragMoveEvent, DropEvent, Entity, HitboxBehavior, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, PointerCaptureHandle, PrepaintPublicationId, Render, Rgba, Role,
+    SharedString, StatefulInteractiveElement, Styled, SubtreePresentation, SubtreePresentationExt,
+    WeakEntity, Window, WindowId, WindowProvisionalRevealOutcome, canvas, div, point, px, quad,
+    retained_visual, rgba, view_presentation_window,
 };
 use open_gpui_motion::MotionTransition;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 #[derive(Clone)]
 pub(crate) struct DockViewportHostSceneCandidate {
@@ -373,7 +397,7 @@ fn record_viewport_host_scene_transaction(
                     ) {
                         return (false, false);
                     }
-                    host.set_last_presentation_scene(presentation_scene);
+                    host.set_last_presentation_scene(presentation_scene.clone());
                     (
                         true,
                         host.publish_rendered_viewport_host_scene_frame_from_render(
@@ -397,6 +421,7 @@ fn record_viewport_host_scene_transaction(
                         space.clone(),
                         frame.clone(),
                         committed_native_scene,
+                        presentation_scene,
                     ),
                     app,
                 );
@@ -480,6 +505,18 @@ impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
         self.ensure_window_binding(window, cx);
+        let visual_style = self.resolve_visual_style(window, cx);
+        #[cfg(test)]
+        {
+            self.record_resolved_visual_style_for_test(visual_style.clone());
+        }
+        let mut session = self.render_session_with_visual_style(visual_style.clone(), cx);
+        if matches!(
+            session.kind(),
+            crate::host_render_session::DockHostPresentationKind::PayloadRecoveryProjection
+        ) {
+            return self.render_payload_recovery_projection(&session, window, cx);
+        }
         let runtime_work_context = self.runtime_work_context(cx);
         let runtime_publication_admitted = runtime_work_context.is_some();
         if runtime_publication_admitted {
@@ -491,16 +528,31 @@ impl Render for DockHost {
             self.ensure_viewport_activation_subscription(window, cx);
             self.ensure_viewport_bounds_subscription(window, cx);
             self.ensure_viewport_release_subscription(window, cx);
-            self.prepare_pending_focus_selection_from_render(window, cx);
         }
+        if matches!(
+            session.kind(),
+            crate::host_render_session::DockHostPresentationKind::LivePayloadProjection
+        ) {
+            return self.render_live_payload_projection(&session, window, cx);
+        }
+        if session.is_provisional_shell() {
+            let mut background = session.visual_style().host.background;
+            background.a = background.a.max(1.0 / 255.0);
+            return div()
+                .size_full()
+                .overflow_hidden()
+                .bg(background)
+                .into_any_element();
+        }
+        if runtime_publication_admitted
+            && self.prepare_pending_focus_selection_from_render(window, cx)
+        {
+            session = self.render_session_with_visual_style(visual_style, cx);
+        }
+        let payload_recovery_entries = self.visible_payload_recovery_entries(cx);
+
         let raw_drag_pointer_capture = self.ensure_pointer_session(window);
         let window_binding = self.current_window_binding();
-        let visual_style = self.resolve_visual_style(window, cx);
-        #[cfg(test)]
-        {
-            self.record_resolved_visual_style_for_test(visual_style.clone());
-        }
-        let session = self.render_session_with_visual_style(visual_style, cx);
         self.sync_panel_focus_trackers(session.visible_panel_items(), window, cx);
         let drop_host_space = session.space().clone();
         let viewport_host_scene_frame =
@@ -726,15 +778,1590 @@ impl Render for DockHost {
             );
         }
 
+        if let Some(semantics) = self.render_live_destination_semantics_marker(cx) {
+            host = host.child(semantics);
+        }
+
+        if let Some(restoration) = self.render_live_source_restoration_layer(cx) {
+            host = host.child(restoration);
+        }
+
+        if let Some(recovery_region) =
+            self.render_payload_recovery_region(&payload_recovery_entries, &session, cx)
+        {
+            host = host.child(recovery_region);
+        }
+
         if runtime_publication_admitted {
             self.apply_pending_focus_from_render(&session, window, cx);
         }
+        self.apply_payload_recovery_entry_focus_from_render(&payload_recovery_entries, window, cx);
+        self.apply_payload_recovery_restore_focus_from_render(&session, window, cx);
 
-        host
+        let restoration_is_staging = matches!(
+            self.live_presentation_state().map(|state| state.mode),
+            Some(DockHostLivePresentationMode::SourceRestoration {
+                phase: DockHostLiveSourceRestorationPhase::Staging,
+                ..
+            })
+        );
+        let rendered_host = if restoration_is_staging {
+            host.with_subtree_presentation(SubtreePresentation::Inert)
+                .into_any_element()
+        } else {
+            host.into_any_element()
+        };
+        self.wrap_transport_and_semantic_proxies(rendered_host, window)
+    }
+}
+
+fn live_presentation_key_is_current(
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    cx: &App,
+) -> bool {
+    host.read_with(cx, |host, _| host.accepts_live_presentation_key(key))
+        .unwrap_or(false)
+}
+
+fn live_source_is_releasing(
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    cx: &App,
+) -> bool {
+    host.read_with(cx, |host, _| {
+        host.live_presentation_state().is_some_and(|state| {
+            state.key == key
+                && matches!(
+                    state.mode,
+                    DockHostLivePresentationMode::SourceProjection {
+                        phase: DockHostLiveSourcePhase::Releasing,
+                        ..
+                    }
+                )
+        })
+    })
+    .unwrap_or(false)
+}
+
+fn live_destination_is_staging(
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    cx: &App,
+) -> bool {
+    host.read_with(cx, |host, _| {
+        host.live_presentation_state().is_some_and(|state| {
+            state.key == key
+                && matches!(
+                    state.mode,
+                    DockHostLivePresentationMode::DestinationProjection {
+                        phase: DockHostLiveDestinationPhase::Staging,
+                        ..
+                    }
+                )
+        })
+    })
+    .unwrap_or(false)
+}
+
+fn live_destination_is_exposed(
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    mount: DockLiveUndockPayloadMountReceipt,
+    cx: &App,
+) -> bool {
+    host.read_with(cx, |host, _| {
+        host.live_presentation_state().is_some_and(|state| {
+            state.key == key
+                && matches!(
+                    state.mode,
+                    DockHostLivePresentationMode::DestinationProjection {
+                        phase: DockHostLiveDestinationPhase::Exposed(current),
+                        ..
+                    } if current == mount
+                )
+        })
+    })
+    .unwrap_or(false)
+}
+
+fn live_destination_is_reveal_armed(
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    presentation: DockLiveUndockPayloadPresentationReceipt,
+    cx: &App,
+) -> bool {
+    host.read_with(cx, |host, _| {
+        host.live_presentation_state().is_some_and(|state| {
+            state.key == key
+                && matches!(
+                    state.mode,
+                    DockHostLivePresentationMode::DestinationProjection {
+                        phase: DockHostLiveDestinationPhase::RevealArmed {
+                            presentation: current,
+                            ..
+                        },
+                        ..
+                    } if current == presentation
+                )
+        })
+    })
+    .unwrap_or(false)
+}
+
+fn submit_live_undock_fact(
+    owner: &WeakEntity<DockSurfaceOwner>,
+    fact: DockLiveUndockFact,
+    cx: &mut App,
+) {
+    let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
+        return;
+    };
+    let _ = runtime.submit(fact, cx);
+}
+
+fn submit_live_presentation_failure(
+    owner: &WeakEntity<DockSurfaceOwner>,
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    failure: DockLiveUndockPresentationFailure,
+    cx: &mut App,
+) {
+    if !live_presentation_key_is_current(host, key, cx) {
+        return;
+    }
+    submit_live_undock_fact(
+        owner,
+        DockLiveUndockFact::PresentationStageFailed {
+            identity: key.identity(),
+            failure,
+        },
+        cx,
+    );
+}
+
+fn defer_live_source_restoration(
+    owner: &WeakEntity<DockSurfaceOwner>,
+    key: DockHostLivePresentationKey,
+    lease: DockLiveUndockPayloadLeaseReceipt,
+    failure: DockLiveUndockSourceRestorationFailure,
+    cx: &mut App,
+) {
+    let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
+        return;
+    };
+    runtime.defer_source_restoration(key.identity(), lease.source(), lease, failure, cx);
+}
+
+fn observe_live_source_restoration(
+    owner: WeakEntity<DockSurfaceOwner>,
+    host: WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    lease: DockLiveUndockPayloadLeaseReceipt,
+    prepared: view_presentation_window::PreparedRehost,
+    leases: view_presentation_window::LeaseBatch,
+    phase: DockHostLiveSourceRestorationPhase,
+    retained: Option<retained_visual::Ticket>,
+    replay_succeeded: Option<bool>,
+    accepted_frame: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let current = host
+        .read_with(cx, |host, _| {
+            host.live_presentation_state().is_some_and(|state| {
+                state.key == key
+                    && matches!(
+                        state.mode,
+                        DockHostLivePresentationMode::SourceRestoration {
+                            leases: ref current,
+                            phase: current_phase,
+                            ..
+                        } if current_phase == phase
+                            && current.window_id() == leases.window_id()
+                            && current.leases() == leases.leases()
+                    )
+            })
+        })
+        .unwrap_or(false);
+    if !current {
+        return;
+    }
+    if retained.is_some() && replay_succeeded != Some(true) {
+        defer_live_source_restoration(
+            &owner,
+            key,
+            lease,
+            DockLiveUndockSourceRestorationFailure::RetainedVisualReplayRejected,
+            cx,
+        );
+        return;
+    }
+
+    match phase {
+        DockHostLiveSourceRestorationPhase::Staging => {
+            if prepared.accepted_source_restoration().is_none() {
+                defer_live_source_restoration(
+                    &owner,
+                    key,
+                    lease,
+                    DockLiveUndockSourceRestorationFailure::PresentationTransitionRejected,
+                    cx,
+                );
+                return;
+            }
+            let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
+                defer_live_source_restoration(
+                    &owner,
+                    key,
+                    lease,
+                    DockLiveUndockSourceRestorationFailure::ExecutionAuthorityUnavailable,
+                    cx,
+                );
+                return;
+            };
+            match runtime.finish_source_restoration_presentation(
+                key.identity(),
+                key,
+                lease,
+                &prepared,
+                &leases,
+                cx,
+            ) {
+                DockLiveUndockSourceFinishOutcome::Finished => {}
+                DockLiveUndockSourceFinishOutcome::AuthorityLossSubmitted => return,
+                DockLiveUndockSourceFinishOutcome::Retry => {
+                    defer_live_source_restoration(
+                        &owner,
+                        key,
+                        lease,
+                        DockLiveUndockSourceRestorationFailure::PresentationTransitionRejected,
+                        cx,
+                    );
+                    return;
+                }
+            }
+            #[cfg(test)]
+            if runtime.take_replace_source_host_after_finish_for_test() {
+                window.replace_root(cx, |_, _| open_gpui::Empty);
+                return;
+            }
+            let advanced = host
+                .update(cx, |host, cx| {
+                    host.mark_live_source_restoration_visible_pending(key, &leases, cx)
+                })
+                .unwrap_or(false);
+            if !advanced {
+                defer_live_source_restoration(
+                    &owner,
+                    key,
+                    lease,
+                    DockLiveUndockSourceRestorationFailure::SourcePresentationMutationRejected,
+                    cx,
+                );
+            }
+        }
+        DockHostLiveSourceRestorationPhase::AwaitingVisibleFrame => {
+            let Some(stable) =
+                view_presentation_window::stable_batch_presentation_receipt(cx, &leases)
+                    .filter(|receipt| receipt.frame_generation() == accepted_frame)
+            else {
+                defer_live_source_restoration(
+                    &owner,
+                    key,
+                    lease,
+                    DockLiveUndockSourceRestorationFailure::StablePresentationUnavailable,
+                    cx,
+                );
+                return;
+            };
+            let Some(receipt) =
+                DockLiveUndockSourceRestorationReceipt::source_presented_after_release(
+                    lease, &prepared, &leases, stable,
+                )
+            else {
+                defer_live_source_restoration(
+                    &owner,
+                    key,
+                    lease,
+                    DockLiveUndockSourceRestorationFailure::RestorationReceiptUnavailable,
+                    cx,
+                );
+                return;
+            };
+            let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
+                defer_live_source_restoration(
+                    &owner,
+                    key,
+                    lease,
+                    DockLiveUndockSourceRestorationFailure::ExecutionAuthorityUnavailable,
+                    cx,
+                );
+                return;
+            };
+            if !runtime.stage_source_restoration_receipt(key.identity(), key, receipt)
+                || !runtime.release_source_restoration_visual_in_frame(
+                    key.identity(),
+                    lease,
+                    window,
+                )
+            {
+                defer_live_source_restoration(
+                    &owner,
+                    key,
+                    lease,
+                    DockLiveUndockSourceRestorationFailure::SourcePresentationMutationRejected,
+                    cx,
+                );
+                return;
+            }
+            runtime.finish_source_restoration_checkpoint(key.identity(), key, receipt, cx);
+        }
+    }
+}
+
+fn observe_live_source_proxy_commit(
+    owner: WeakEntity<DockSurfaceOwner>,
+    host: WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    lease: DockLiveUndockPayloadLeaseReceipt,
+    prepared: view_presentation_window::PreparedRehost,
+    accepted_frame: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if !live_source_is_releasing(&host, key, cx) {
+        return;
+    }
+    let Some(gpui_receipt) = prepared
+        .snapshot()
+        .source_proxy_receipt()
+        .filter(|receipt| receipt.frame_generation() == accepted_frame)
+    else {
+        let _ = window;
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::SourceProxyReplay { lease },
+            cx,
+        );
+        return;
+    };
+    let Some(receipt) = DockLiveUndockSourceProxyReceipt::new(lease, gpui_receipt) else {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::SourceProxyReplay { lease },
+            cx,
+        );
+        return;
+    };
+    let advanced = host
+        .update(cx, |host, cx| host.mark_live_source_frozen(key, cx))
+        .unwrap_or(false);
+    if advanced {
+        submit_live_undock_fact(
+            &owner,
+            DockLiveUndockFact::SourceProxyCommitted {
+                identity: key.identity(),
+                receipt,
+            },
+            cx,
+        );
+    }
+}
+
+fn observe_live_destination_mount(
+    owner: WeakEntity<DockSurfaceOwner>,
+    host: WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    proxy: DockLiveUndockSourceProxyReceipt,
+    prepared: view_presentation_window::PreparedRehost,
+    accepted_frame: u64,
+    cx: &mut App,
+) {
+    if !live_destination_is_staging(&host, key, cx) {
+        return;
+    }
+    let Some(mount) = prepared.destination_ready_for_exposure() else {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::DestinationExposureFinish { proxy },
+            cx,
+        );
+        return;
+    };
+    if mount.frame_generation() != accepted_frame {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::DestinationExposureFinish { proxy },
+            cx,
+        );
+        return;
+    }
+    let Ok(outcome) = view_presentation_window::expose_destination(cx, &prepared) else {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::DestinationExposureFinish { proxy },
+            cx,
+        );
+        return;
+    };
+    let view_presentation_window::DestinationExposureOutcome { batch, exposure } = outcome;
+    let Some(receipt) = DockLiveUndockPayloadMountReceipt::new(proxy, exposure) else {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::DestinationExposureFinish { proxy },
+            cx,
+        );
+        return;
+    };
+    let advanced = host
+        .update(cx, |host, cx| {
+            host.expose_live_destination_projection(key, batch, receipt, cx)
+        })
+        .unwrap_or(false);
+    if advanced {
+        submit_live_undock_fact(
+            &owner,
+            DockLiveUndockFact::PayloadMounted {
+                identity: key.identity(),
+                receipt,
+            },
+            cx,
+        );
+    }
+}
+
+fn observe_live_destination_presentation(
+    owner: WeakEntity<DockSurfaceOwner>,
+    host: WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    mount: DockLiveUndockPayloadMountReceipt,
+    leases: view_presentation_window::LeaseBatch,
+    accepted_frame: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if !live_destination_is_exposed(&host, key, mount, cx) {
+        return;
+    }
+    let Some(gpui_receipt) = view_presentation_window::presented_batch_receipt(cx, &leases) else {
+        let _ = window;
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::PayloadPresentationObservation { mount },
+            cx,
+        );
+        return;
+    };
+    let Some(receipt) = DockLiveUndockPayloadPresentationReceipt::new(mount, gpui_receipt) else {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::PayloadPresentationObservation { mount },
+            cx,
+        );
+        return;
+    };
+    if receipt.frame_generation() != accepted_frame {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::PayloadPresentationObservation { mount },
+            cx,
+        );
+        return;
+    }
+    let advanced = host
+        .update(cx, |host, cx| {
+            host.mark_live_destination_presented(key, receipt, cx)
+        })
+        .unwrap_or(false);
+    if advanced {
+        submit_live_undock_fact(
+            &owner,
+            DockLiveUndockFact::PayloadPresented {
+                identity: key.identity(),
+                receipt,
+            },
+            cx,
+        );
+    }
+}
+
+fn dock_live_reveal_outcome(
+    outcome: WindowProvisionalRevealOutcome,
+) -> Option<DockLiveUndockRevealOutcome> {
+    match outcome {
+        WindowProvisionalRevealOutcome::Pending | WindowProvisionalRevealOutcome::Revealed => None,
+        WindowProvisionalRevealOutcome::Rejected => Some(DockLiveUndockRevealOutcome::Rejected),
+        WindowProvisionalRevealOutcome::NativeObservationMissing => {
+            Some(DockLiveUndockRevealOutcome::NativeObservationMissing)
+        }
+        WindowProvisionalRevealOutcome::Stale => Some(DockLiveUndockRevealOutcome::Stale),
+        WindowProvisionalRevealOutcome::WindowTerminal => {
+            Some(DockLiveUndockRevealOutcome::WindowTerminal)
+        }
+    }
+}
+
+fn capture_live_destination_reveal_frame(
+    owner: WeakEntity<DockSurfaceOwner>,
+    host: WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    preflight: DockLiveUndockPayloadPresentationReceipt,
+    ticket: open_gpui::WindowProvisionalRevealTicket,
+    leases: view_presentation_window::LeaseBatch,
+    accepted_frame: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if !live_destination_is_reveal_armed(&host, key, preflight, cx) {
+        return;
+    }
+    let Some(gpui_receipt) = view_presentation_window::presented_batch_receipt(cx, &leases) else {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::ExactRevealTicket {
+                presentation: preflight,
+            },
+            cx,
+        );
+        return;
+    };
+    let Some(reveal_frame) =
+        DockLiveUndockPayloadPresentationReceipt::new(preflight.mount(), gpui_receipt)
+    else {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::ExactRevealTicket {
+                presentation: preflight,
+            },
+            cx,
+        );
+        return;
+    };
+    if reveal_frame.frame_generation() != accepted_frame
+        || reveal_frame.frame_generation() <= preflight.frame_generation()
+    {
+        submit_live_presentation_failure(
+            &owner,
+            &host,
+            key,
+            DockLiveUndockPresentationFailure::ExactRevealTicket {
+                presentation: preflight,
+            },
+            cx,
+        );
+        return;
+    }
+
+    window.on_next_frame(move |window, cx| {
+        observe_live_destination_reveal_native(
+            owner,
+            host,
+            key,
+            preflight,
+            reveal_frame,
+            ticket,
+            window,
+            cx,
+        );
+    });
+    window.refresh();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_live_destination_reveal_native(
+    owner: WeakEntity<DockSurfaceOwner>,
+    host: WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    preflight: DockLiveUndockPayloadPresentationReceipt,
+    reveal_frame: DockLiveUndockPayloadPresentationReceipt,
+    ticket: open_gpui::WindowProvisionalRevealTicket,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if !live_destination_is_reveal_armed(&host, key, preflight, cx) {
+        return;
+    }
+    let snapshot = ticket.snapshot();
+    if snapshot
+        .presentation_generation()
+        .is_some_and(|generation| generation != reveal_frame.frame_generation())
+    {
+        return;
+    }
+    let observation = match snapshot.outcome() {
+        WindowProvisionalRevealOutcome::Pending => {
+            let next_owner = owner.clone();
+            let next_host = host.clone();
+            let next_ticket = ticket.clone();
+            window.on_next_frame(move |window, cx| {
+                observe_live_destination_reveal_native(
+                    next_owner,
+                    next_host,
+                    key,
+                    preflight,
+                    reveal_frame,
+                    next_ticket,
+                    window,
+                    cx,
+                );
+            });
+            window.refresh();
+            return;
+        }
+        WindowProvisionalRevealOutcome::Revealed => {
+            let Some(receipt) = DockLiveUndockRevealReceipt::new(preflight, reveal_frame, snapshot)
+            else {
+                submit_live_presentation_failure(
+                    &owner,
+                    &host,
+                    key,
+                    DockLiveUndockPresentationFailure::ExactRevealTicket {
+                        presentation: preflight,
+                    },
+                    cx,
+                );
+                return;
+            };
+            DockLiveUndockRevealObservation::Visible(receipt)
+        }
+        terminal => {
+            let Some(outcome) = dock_live_reveal_outcome(terminal) else {
+                return;
+            };
+            DockLiveUndockRevealObservation::failed(reveal_frame, outcome)
+        }
+    };
+    let settled = host
+        .update(cx, |host, cx| {
+            host.settle_live_destination_reveal(key, preflight, cx)
+        })
+        .unwrap_or(false);
+    if settled {
+        submit_live_undock_fact(
+            &owner,
+            DockLiveUndockFact::RevealObserved {
+                identity: key.identity(),
+                observation,
+            },
+            cx,
+        );
     }
 }
 
 impl DockHost {
+    fn render_payload_recovery_region(
+        &mut self,
+        entries: &[DockPayloadRecoveryEntry],
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if entries.is_empty() {
+            return None;
+        }
+
+        let window_binding = self.current_window_binding();
+        let mut region = div()
+            .id("dock-lost-viewport-recovery-region")
+            .absolute()
+            .top(px(12.0))
+            .right(px(12.0))
+            .w(px(280.0))
+            .flex()
+            .flex_col()
+            .gap_2();
+        for entry in entries {
+            let payload_name = self
+                .with_workspace(cx, |workspace| {
+                    entry
+                        .items()
+                        .iter()
+                        .map(|item| {
+                            workspace
+                                .panels()
+                                .catalog()
+                                .descriptor(item)
+                                .map(|descriptor| descriptor.title().to_string())
+                                .unwrap_or_else(|| item.to_string())
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .join(", ");
+            let accessible_name: SharedString =
+                format!("Lost viewport recovery for {payload_name}").into();
+            let action = entry.action();
+            let click_action = action;
+            let accessibility_action = action;
+            let accessibility_host = cx.entity();
+            let entry_focus = entry.focus_handle().clone();
+            let focus_ring = session.visual_style().focus_ring.clone();
+            let background = session.visual_style().tabs.frame_background;
+            let hover_background = session.visual_style().tabs.hovered.background;
+            let border = session.visual_style().tabs.frame_border;
+            let foreground = session.visual_style().host.foreground;
+            let muted = session.visual_style().host.empty_text;
+            let accent = session.visual_style().tabs.selected.text;
+            let card = div()
+                .id(format!(
+                    "dock-lost-viewport-recovery:{}",
+                    entry.generation()
+                ))
+                .role(Role::Group)
+                .aria_label(accessible_name)
+                .aria_actions([AccessibleAction::Click])
+                .focusable()
+                .track_focus(&entry_focus)
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_3()
+                .rounded_sm()
+                .border_1()
+                .border_color(border)
+                .bg(background)
+                .text_color(foreground)
+                .cursor_pointer()
+                .occlude()
+                .hover(move |style| style.bg(hover_background))
+                .focus_visible(move |style| style.shadow(focus_ring.clone()))
+                .on_click(cx.listener(move |host, _, window, cx| {
+                    if !host
+                        .accepts_window_callback(window_binding, window.window_handle().window_id())
+                    {
+                        return;
+                    }
+                    let _ = host.restore_payload_recovery_from_render(click_action, window, cx);
+                }))
+                .on_a11y_action(AccessibleAction::Click, move |_, window, app| {
+                    accessibility_host.update(app, |host, cx| {
+                        if !host.accepts_window_callback(
+                            window_binding,
+                            window.window_handle().window_id(),
+                        ) {
+                            return;
+                        }
+                        let _ = host.restore_payload_recovery_from_render(
+                            accessibility_action,
+                            window,
+                            cx,
+                        );
+                    });
+                })
+                .child(div().text_sm().text_color(muted).child("Lost viewport"))
+                .child(div().child(payload_name))
+                .child(div().text_sm().text_color(accent).child("Restore"));
+            region = region.child(card);
+        }
+        Some(region.into_any_element())
+    }
+
+    fn render_live_destination_semantics_marker(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let semantics = self.live_destination_semantics()?;
+        let owner = self.surface_owner_entity()?.downgrade();
+        let host = cx.entity().downgrade();
+        Some(
+            canvas(
+                move |_, window, _| {
+                    let owner = owner.clone();
+                    let host = host.clone();
+                    let semantics = semantics.clone();
+                    window.record_prepaint_focus_stable_commit(move |frame, window, cx| {
+                        let Some(owner) = owner.upgrade() else {
+                            return;
+                        };
+                        let Some(host) = host.upgrade() else {
+                            return;
+                        };
+                        let runtime =
+                            cx.read_entity(&owner, |owner, _| owner.live_undock_runtime());
+                        runtime.accept_destination_semantics_frame(
+                            &host, &semantics, frame, window, cx,
+                        );
+                    });
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full()
+            .into_any_element(),
+        )
+    }
+
+    fn render_live_source_restoration_layer(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let state = self.live_presentation_state()?;
+        let DockHostLivePresentationMode::SourceRestoration {
+            lease,
+            prepared,
+            leases,
+            retained,
+            phase,
+        } = state.mode
+        else {
+            return None;
+        };
+        let owner = self.surface_owner_entity()?.downgrade();
+        let host = cx.entity().downgrade();
+        let retained_ticket = retained.as_ref().map(|(ticket, _)| *ticket);
+        let retained_bounds = retained.as_ref().map(|(_, carrier)| carrier.bounds);
+        let replay_succeeded = Rc::new(Cell::new(None));
+        let observe_replay_succeeded = replay_succeeded.clone();
+        let paint_replay_succeeded = replay_succeeded;
+        let observe_owner = owner.clone();
+        let observe_host = host.clone();
+        let observe_prepared = prepared.clone();
+        let observe_leases = leases.clone();
+        let observer = canvas(
+            move |_, window, _| {
+                let owner = observe_owner.clone();
+                let host = observe_host.clone();
+                let prepared = observe_prepared.clone();
+                let leases = observe_leases.clone();
+                let replay_succeeded = observe_replay_succeeded.clone();
+                window.record_prepaint_focus_stable_commit(move |frame, window, cx| {
+                    observe_live_source_restoration(
+                        owner.clone(),
+                        host.clone(),
+                        state.key,
+                        lease,
+                        prepared.clone(),
+                        leases.clone(),
+                        phase,
+                        retained_ticket,
+                        replay_succeeded.take(),
+                        frame,
+                        window,
+                        cx,
+                    );
+                });
+            },
+            move |_, _, window, _| {
+                paint_replay_succeeded.set(Some(
+                    retained_ticket
+                        .map(|retained| retained_visual::replay(window, &retained).is_ok())
+                        .unwrap_or(true),
+                ));
+            },
+        )
+        .absolute()
+        .size_full();
+
+        if let Some(bounds) = retained_bounds {
+            Some(
+                div()
+                    .id(format!(
+                        "dock-live-source-restoration:{}:{}",
+                        state.key.identity().opening().generation(),
+                        state.key.identity().drag_generation().get()
+                    ))
+                    .relative()
+                    .absolute()
+                    .left(bounds.origin.x)
+                    .top(bounds.origin.y)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .occlude()
+                    .child(observer)
+                    .into_any_element(),
+            )
+        } else {
+            Some(observer.into_any_element())
+        }
+    }
+
+    fn render_live_source_semantic_proxy(&self, window: &Window) -> Option<AnyElement> {
+        let proxy = self.live_source_semantic_proxy()?;
+        if matches!(
+            self.live_presentation_state().map(|state| state.mode),
+            Some(DockHostLivePresentationMode::SourceRestoration {
+                phase: DockHostLiveSourceRestorationPhase::AwaitingVisibleFrame,
+                ..
+            })
+        ) {
+            return None;
+        }
+
+        let key = proxy.key();
+        let bounds = proxy.carrier().bounds;
+        let mut element = div()
+            .id(format!(
+                "dock-live-source-semantic-proxy:{}:{}:{}:{}:{}",
+                key.identity().opening().generation(),
+                key.identity().drag_generation().get(),
+                key.rehost_generation(),
+                key.binding().generation(),
+                key.epoch(),
+            ))
+            .absolute()
+            .left(bounds.origin.x)
+            .top(bounds.origin.y)
+            .w(bounds.size.width)
+            .h(bounds.size.height)
+            .role(Role::Group)
+            .aria_label(proxy.accessible_name().clone())
+            .aria_actions([]);
+        if let Some(source_focus) = proxy
+            .source_focus()
+            .filter(|focus| focus.claim_revision() == window.focus_claim_revision())
+        {
+            element = element.track_accessibility_focus(source_focus.focus_handle());
+        }
+        Some(element.into_any_element())
+    }
+
+    fn render_native_drag_transport_proxy(&self) -> Option<AnyElement> {
+        let proxy = self.native_drag_transport_proxy()?;
+        // This hitbox transports capture identity only, so its geometry stays host-local.
+        Some(
+            div()
+                .absolute()
+                .size(px(1.0))
+                .track_pointer_capture(&proxy.pointer_capture())
+                .into_any_element(),
+        )
+    }
+
+    fn wrap_transport_and_semantic_proxies(
+        &self,
+        visual: AnyElement,
+        window: &Window,
+    ) -> AnyElement {
+        let semantic_proxy = self.render_live_source_semantic_proxy(window);
+        let transport_proxy = self.render_native_drag_transport_proxy();
+        if semantic_proxy.is_none() && transport_proxy.is_none() {
+            return visual;
+        }
+
+        let mut root = div().relative().size_full().child(visual);
+        if let Some(transport_proxy) = transport_proxy {
+            root = root.child(transport_proxy);
+        }
+        if let Some(semantic_proxy) = semantic_proxy {
+            root = root.child(semantic_proxy);
+        }
+        root.into_any_element()
+    }
+
+    fn render_payload_recovery_projection(
+        &mut self,
+        session: &DockHostRenderSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let viewport_host_scene_frame =
+            Rc::new(RefCell::new(DockViewportHostSceneCandidateState::default()));
+        let selector = self.record_debug_selector(
+            DockDebugRegion::Host,
+            format!("{}:payload-recovery", session.selector_prefix()),
+        );
+        let mut root = div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .relative()
+            .flex()
+            .flex_col()
+            .size_full()
+            .overflow_hidden()
+            .text_color(session.visual_style().host.foreground)
+            .bg(session.visual_style().host.background);
+        let Some(state) = self.payload_recovery_presentation_state() else {
+            return root
+                .with_subtree_presentation(SubtreePresentation::Inert)
+                .into_any_element();
+        };
+        let destination_awaits_source_release = matches!(
+            &state.mode,
+            DockHostRecoveryPresentationMode::DestinationProjection {
+                phase: DockHostRecoveryDestinationPhase::AwaitingSourceRelease,
+                ..
+            }
+        );
+        if !destination_awaits_source_release {
+            if let Some(node) = session.root() {
+                root = root.child(self.render_node(
+                    node,
+                    session,
+                    &viewport_host_scene_frame,
+                    window,
+                    cx,
+                ));
+            }
+            for floating in session.floating_containers() {
+                root = root.child(self.render_payload_recovery_floating_container(
+                    *floating,
+                    session,
+                    &viewport_host_scene_frame,
+                    window,
+                    cx,
+                ));
+            }
+        }
+        let Some(owner) = self.surface_owner_entity().map(|owner| owner.downgrade()) else {
+            return root
+                .with_subtree_presentation(SubtreePresentation::Inert)
+                .into_any_element();
+        };
+        let host = cx.entity().downgrade();
+        let key = state.key;
+
+        match state.mode {
+            DockHostRecoveryPresentationMode::SourceProjection { prepared, phase } => {
+                if phase == DockHostRecoverySourcePhase::Releasing {
+                    let proxy_color = rgba(0x00000001);
+                    let barrier = view_presentation_window::source_release_barrier(
+                        prepared.clone(),
+                        move |attempt| {
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, _, window, _| {
+                                    window.paint_quad(quad(
+                                        bounds,
+                                        px(0.0),
+                                        proxy_color,
+                                        px(0.0),
+                                        proxy_color,
+                                        BorderStyle::Solid,
+                                    ));
+                                    let _ = view_presentation_window::source_proxy_replay_succeeded(
+                                        &attempt, window,
+                                    );
+                                },
+                            )
+                            .absolute()
+                            .size_full()
+                        },
+                    );
+                    let observer_owner = owner.clone();
+                    let observer_host = host.clone();
+                    let observer_prepared = prepared;
+                    let observer = canvas(
+                        move |_, window, _| {
+                            let owner = observer_owner.clone();
+                            let host = observer_host.clone();
+                            let prepared = observer_prepared.clone();
+                            window.record_prepaint_focus_stable_commit(
+                                move |accepted_frame, _, cx| {
+                                    crate::surface::payload_recovery_executor::payload_recovery_source_proxy_committed(
+                                        owner.clone(),
+                                        host.clone(),
+                                        key,
+                                        prepared.clone(),
+                                        accepted_frame,
+                                        cx,
+                                    );
+                                },
+                            );
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full();
+                    root = root.child(barrier).child(observer);
+                }
+            }
+            DockHostRecoveryPresentationMode::DestinationProjection {
+                prepared,
+                leases,
+                resolved_roots,
+                phase,
+            } => {
+                if let Some(hidden_roots) =
+                    self.render_payload_recovery_hidden_roots(&resolved_roots, session, window, cx)
+                {
+                    root = root.child(hidden_roots);
+                }
+                let observer_owner = owner.clone();
+                let observer_host = host.clone();
+                let observer_prepared = prepared;
+                let observer_leases = leases;
+                let observer = canvas(
+                    move |_, window, _| {
+                        let owner = observer_owner.clone();
+                        let host = observer_host.clone();
+                        let prepared = observer_prepared.clone();
+                        let leases = observer_leases.clone();
+                        window.record_prepaint_focus_stable_commit(
+                            move |accepted_frame, _, cx| match phase {
+                                DockHostRecoveryDestinationPhase::AwaitingSourceRelease => {}
+                                DockHostRecoveryDestinationPhase::Staging => {
+                                    crate::surface::payload_recovery_executor::payload_recovery_destination_mounted(
+                                        owner.clone(),
+                                        host.clone(),
+                                        key,
+                                        prepared.clone(),
+                                        leases.clone(),
+                                        accepted_frame,
+                                        cx,
+                                    );
+                                }
+                                DockHostRecoveryDestinationPhase::Exposed(_) => {
+                                    crate::surface::payload_recovery_executor::payload_recovery_destination_presented(
+                                        owner.clone(),
+                                        host.clone(),
+                                        key,
+                                        prepared.clone(),
+                                        leases.clone(),
+                                        accepted_frame,
+                                        cx,
+                                    );
+                                }
+                            },
+                        );
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full();
+                root = root.child(observer);
+            }
+            DockHostRecoveryPresentationMode::SourceRestoration {
+                prepared,
+                resolved_roots,
+                ..
+            } => {
+                if let Some(hidden_roots) =
+                    self.render_payload_recovery_hidden_roots(&resolved_roots, session, window, cx)
+                {
+                    root = root.child(hidden_roots);
+                }
+                let observer_owner = owner;
+                let observer_host = host;
+                let observer = canvas(
+                    move |_, window, _| {
+                        let owner = observer_owner.clone();
+                        let host = observer_host.clone();
+                        let prepared = prepared.clone();
+                        window.record_prepaint_focus_stable_commit(move |_, _, cx| {
+                            crate::surface::payload_recovery_executor::payload_recovery_source_restoration_frame_committed(
+                                owner.clone(),
+                                host.clone(),
+                                key,
+                                prepared.clone(),
+                                cx,
+                            );
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full();
+                root = root.child(observer);
+            }
+        }
+
+        root.with_subtree_presentation(SubtreePresentation::Inert)
+            .into_any_element()
+    }
+
+    fn render_payload_recovery_hidden_roots(
+        &mut self,
+        resolved_roots: &[open_gpui::AnyView],
+        session: &DockHostRenderSession,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let visible = session.resolved_visible_panel_entity_ids();
+        let hidden_roots = resolved_roots
+            .iter()
+            .filter(|root| !visible.contains(&root.entity_id()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if hidden_roots.is_empty() {
+            return None;
+        }
+        let mut hidden_lane = div().absolute().size_full();
+        for root in hidden_roots {
+            hidden_lane = hidden_lane.child(self.present_panel_view(root, window, cx));
+        }
+        Some(
+            hidden_lane
+                .with_subtree_presentation(SubtreePresentation::Hidden)
+                .into_any_element(),
+        )
+    }
+
+    fn render_payload_recovery_floating_container(
+        &mut self,
+        container: DockFloatingContainer,
+        session: &DockHostRenderSession,
+        viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let content = session
+            .floating_child(container.node)
+            .map(|child| self.render_node(child, session, viewport_host_scene_frame, window, cx))
+            .unwrap_or_else(|| self.render_missing_node(container.node, session));
+        let floating_style = &session.visual_style().floating;
+        div()
+            .absolute()
+            .left(container.bounds.origin.x)
+            .top(container.bounds.origin.y)
+            .w(container.bounds.size.width)
+            .h(container.bounds.size.height)
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .border_1()
+            .border_color(floating_style.border)
+            .bg(floating_style.background)
+            .child(content)
+            .into_any_element()
+    }
+
+    fn render_live_destination_geometry_probe(
+        &self,
+        work_context: DockViewportRuntimeWorkContext,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entity = _cx.entity();
+        let binding = self
+            .current_window_binding()
+            .expect("a live destination projection must retain its window binding");
+        canvas(
+            move |bounds, window, app| {
+                let window_id = window.window_handle().window_id();
+                let window_facts = crate::DockViewportWindowFacts::from_window(window, app);
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                let host_geometry = DockViewportHostGeometry::from_hitbox(&hitbox);
+                window.record_prepaint_focus_stable_commit({
+                    let entity = entity.clone();
+                    move |_, _, app| {
+                        entity.update(app, |host, cx| {
+                            host.commit_live_destination_geometry_from_accepted_frame(
+                                binding,
+                                work_context,
+                                window_facts.current_bounds,
+                                host_geometry.clone(),
+                                window_id,
+                                cx,
+                            );
+                        });
+                    }
+                });
+            },
+            |_, _, _, _| (),
+        )
+        .absolute()
+        .size_full()
+        .into_any_element()
+    }
+
+    fn render_live_payload_projection(
+        &mut self,
+        session: &DockHostRenderSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        debug_assert!(
+            session.floating_containers().is_empty(),
+            "a detached payload projection must not retain source floating wrappers"
+        );
+        let viewport_host_scene_frame =
+            Rc::new(RefCell::new(DockViewportHostSceneCandidateState::default()));
+        let selector = self.record_debug_selector(
+            DockDebugRegion::Host,
+            format!("{}:live-payload", session.selector_prefix()),
+        );
+        let mut root = div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .relative()
+            .flex()
+            .flex_col()
+            .size_full()
+            .overflow_hidden()
+            .text_color(session.visual_style().host.foreground)
+            .bg(session.visual_style().host.background);
+        if let Some(node) = session.root() {
+            root =
+                root.child(self.render_node(node, session, &viewport_host_scene_frame, window, cx));
+        }
+
+        let Some(state) = self.live_presentation_state() else {
+            return root
+                .with_subtree_presentation(SubtreePresentation::Inert)
+                .into_any_element();
+        };
+        let Some(owner) = self.surface_owner_entity().map(|owner| owner.downgrade()) else {
+            return root
+                .with_subtree_presentation(SubtreePresentation::Inert)
+                .into_any_element();
+        };
+        let host = cx.entity().downgrade();
+        match state.mode {
+            DockHostLivePresentationMode::SourceProjection {
+                lease,
+                prepared,
+                retained,
+                carrier,
+                phase,
+            } => {
+                let (proxy, observer) = match phase {
+                    DockHostLiveSourcePhase::Releasing => {
+                        let observe_owner = owner.clone();
+                        let observe_host = host.clone();
+                        let observe_prepared = prepared.clone();
+                        let barrier =
+                            view_presentation_window::retained_visual_source_release_barrier(
+                                prepared,
+                                &retained,
+                                move |attempt| {
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |_, _, window, cx| {
+                                            let replay = retained_visual::replay(window, &retained);
+                                            let _ = replay.is_ok_and(|receipt| {
+                                                view_presentation_window::retained_visual_source_proxy_replay_succeeded(
+                                                    &attempt,
+                                                    receipt,
+                                                    window,
+                                                )
+                                                .is_ok()
+                                            });
+                                            let _ = cx;
+                                        },
+                                    )
+                                    .size_full()
+                                },
+                            );
+                        let observer = canvas(
+                            move |_, window, _| {
+                                window.record_prepaint_focus_stable_commit(
+                                    move |frame, window, cx| {
+                                        observe_live_source_proxy_commit(
+                                            observe_owner.clone(),
+                                            observe_host.clone(),
+                                            state.key,
+                                            lease,
+                                            observe_prepared.clone(),
+                                            frame,
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                );
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                        .into_any_element();
+                        (Some(barrier.into_any_element()), Some(observer))
+                    }
+                    DockHostLiveSourcePhase::Frozen => {
+                        let paint_owner = owner.clone();
+                        let paint_host = host.clone();
+                        let replay_succeeded = Rc::new(Cell::new(None));
+                        let observe_replay_succeeded = replay_succeeded.clone();
+                        let paint_replay_succeeded = replay_succeeded;
+                        (
+                            Some(
+                                canvas(
+                                    move |_, window, _| {
+                                        let paint_owner = paint_owner.clone();
+                                        let paint_host = paint_host.clone();
+                                        let replay_succeeded = observe_replay_succeeded.clone();
+                                        window.record_prepaint_focus_stable_commit(
+                                            move |_, _, cx| {
+                                                if replay_succeeded.take() != Some(true) {
+                                                    submit_live_presentation_failure(
+                                                        &paint_owner,
+                                                        &paint_host,
+                                                        state.key,
+                                                        DockLiveUndockPresentationFailure::SourceProxyReplay {
+                                                            lease,
+                                                        },
+                                                        cx,
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    },
+                                    move |_, _, window, _| {
+                                        paint_replay_succeeded
+                                            .set(Some(retained_visual::replay(window, &retained).is_ok()));
+                                    },
+                                )
+                                .size_full()
+                                .into_any_element(),
+                            ),
+                            None,
+                        )
+                    }
+                    DockHostLiveSourcePhase::Retired => (None, None),
+                };
+                if let Some(proxy) = proxy {
+                    let mut overlay = div()
+                        .id(format!(
+                            "dock-live-source-proxy:{}:{}",
+                            state.key.identity().opening().generation(),
+                            state.key.identity().drag_generation().get()
+                        ))
+                        .relative()
+                        .absolute()
+                        .left(carrier.bounds.origin.x)
+                        .top(carrier.bounds.origin.y)
+                        .w(carrier.bounds.size.width)
+                        .h(carrier.bounds.size.height)
+                        .occlude()
+                        .child(proxy);
+                    if let Some(observer) = observer {
+                        overlay = overlay.child(observer);
+                    }
+                    root = root.child(overlay);
+                }
+            }
+            DockHostLivePresentationMode::DestinationProjection {
+                proxy,
+                prepared,
+                leases,
+                phase,
+                ..
+            } => {
+                if let Some(work_context) = self.live_destination_runtime_work_context(cx) {
+                    root =
+                        root.child(self.render_live_destination_geometry_probe(work_context, cx));
+                }
+                let observer = match phase {
+                    DockHostLiveDestinationPhase::Staging => {
+                        let next_owner = owner.clone();
+                        let next_host = host.clone();
+                        Some(
+                            canvas(
+                                move |_, window, _| {
+                                    let next_owner = next_owner.clone();
+                                    let next_host = next_host.clone();
+                                    let prepared = prepared.clone();
+                                    window.record_prepaint_focus_stable_commit(
+                                        move |frame, _, cx| {
+                                            observe_live_destination_mount(
+                                                next_owner.clone(),
+                                                next_host.clone(),
+                                                state.key,
+                                                proxy,
+                                                prepared.clone(),
+                                                frame,
+                                                cx,
+                                            );
+                                        },
+                                    );
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                            .into_any_element(),
+                        )
+                    }
+                    DockHostLiveDestinationPhase::Exposed(mount) => {
+                        let next_owner = owner.clone();
+                        let next_host = host.clone();
+                        Some(
+                            canvas(
+                                move |_, window, _| {
+                                    let next_owner = next_owner.clone();
+                                    let next_host = next_host.clone();
+                                    let leases = leases.clone();
+                                    window.record_prepaint_focus_stable_commit(
+                                        move |frame, window, cx| {
+                                            observe_live_destination_presentation(
+                                                next_owner.clone(),
+                                                next_host.clone(),
+                                                state.key,
+                                                mount,
+                                                leases.clone(),
+                                                frame,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    );
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                            .into_any_element(),
+                        )
+                    }
+                    DockHostLiveDestinationPhase::RevealArmed {
+                        presentation,
+                        ticket,
+                    } => {
+                        let next_owner = owner.clone();
+                        let next_host = host.clone();
+                        Some(
+                            canvas(
+                                move |_, window, _| {
+                                    let next_owner = next_owner.clone();
+                                    let next_host = next_host.clone();
+                                    let ticket = ticket.clone();
+                                    let leases = leases.clone();
+                                    window.record_prepaint_focus_stable_commit(
+                                        move |frame, window, cx| {
+                                            capture_live_destination_reveal_frame(
+                                                next_owner.clone(),
+                                                next_host.clone(),
+                                                state.key,
+                                                presentation,
+                                                ticket.clone(),
+                                                leases.clone(),
+                                                frame,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    );
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                            .into_any_element(),
+                        )
+                    }
+                    DockHostLiveDestinationPhase::Presented(_)
+                    | DockHostLiveDestinationPhase::RevealSettled => None,
+                };
+                if let Some(observer) = observer {
+                    root = root.child(observer);
+                }
+            }
+            DockHostLivePresentationMode::SourceRestoration { .. } => {
+                debug_assert!(
+                    false,
+                    "source restoration must render through its workspace presentation session"
+                );
+            }
+        }
+        let visual = root
+            .with_subtree_presentation(SubtreePresentation::Inert)
+            .into_any_element();
+        self.wrap_transport_and_semantic_proxies(visual, window)
+    }
+
     fn drop_preview_payload_tab_layout(
         &self,
         session: &DockHostRenderSession,

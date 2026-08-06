@@ -163,6 +163,7 @@ impl Element for AnyView {
                         && element_state.cache_key.text_style == text_style
                         && element_state.cache_key.subtree_presentation == subtree_presentation
                         && element_state.cache_key.subtree_transform == subtree_transform
+                        && window.can_reuse_paint(&element_state.paint_range)
                         && !window.dirty_views.contains(&self.entity_id())
                         && !window.refreshing
                         && !window.portal_anchor_dependency_invalidates_view(self.entity_id())
@@ -227,27 +228,35 @@ impl Element for AnyView {
         window.with_rendered_view(self.entity_id(), |window| {
             let caching_disabled = window.is_inspector_picking(cx) || window.a11y.is_active();
             if self.cached_style.is_some() && !caching_disabled {
-                window.with_element_state::<AnyViewState, _>(
-                    global_id.unwrap(),
-                    |element_state, window| {
-                        let mut element_state = element_state.unwrap();
+                window.with_atlas_texture_lease_paint_scope(|window| {
+                    window.with_element_state::<AnyViewState, _>(
+                        global_id.unwrap(),
+                        |element_state, window| {
+                            let mut element_state = element_state.unwrap();
 
-                        let paint_start = window.paint_index();
+                            let paint_start = window.paint_index();
 
-                        if let Some(element) = element {
-                            let refreshing = mem::replace(&mut window.refreshing, true);
-                            element.paint(window, cx);
-                            window.refreshing = refreshing;
-                        } else {
-                            window.reuse_paint(element_state.paint_range.clone());
-                        }
+                            let paint_succeeded = if let Some(element) = element {
+                                let refreshing = mem::replace(&mut window.refreshing, true);
+                                element.paint(window, cx);
+                                window.refreshing = refreshing;
+                                true
+                            } else {
+                                window.reuse_paint(element_state.paint_range.clone())
+                            };
 
-                        let paint_end = window.paint_index();
-                        element_state.paint_range = paint_start..paint_end;
+                            if paint_succeeded {
+                                let paint_end = window.paint_index();
+                                element_state.paint_range = paint_start..paint_end;
+                            } else {
+                                let view_id = self.entity_id();
+                                window.on_next_frame(move |_, cx| cx.notify(view_id));
+                            }
 
-                        ((), element_state)
-                    },
-                )
+                            ((), element_state)
+                        },
+                    )
+                })
             } else {
                 element.as_mut().unwrap().paint(window, cx);
             }

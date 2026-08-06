@@ -1,0 +1,13 @@
+error[E0599]: no method named `visible` found for struct `open_gpui::Div` in the current scope
+ --> tests/compile_fail/presentation/retired_visible_method.rs:5:19
+  |
+5 |     let _ = div().visible();
+  |                   ^^^^^^^
+  |
+help: there is a method `focus_visible` with a similar name, but with different arguments
+ --> src/elements/div.rs
+  |
+  | /     fn focus_visible(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+  | |     where
+  | |         Self: Sized,
+  | |____________________^

@@ -98,6 +98,10 @@ jobs:
         shell: pwsh
         run: cargo run -p xtask -- verify
 
+      - name: Run GPUI presentation public-surface contract
+        if: matrix.name != 'windows'
+        run: cargo nextest run -p open-gpui --all-features --test presentation_surface --locked --no-fail-fast
+
       - name: Run xtask tests
         if: matrix.name == 'windows'
         shell: pwsh
@@ -141,3 +145,8 @@ jobs:
 
       - name: Check native WGPU font-kit path
         run: cargo check -p open-gpui-wgpu --features font-kit --locked
+
+      - name: Run native WGPU package tests
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run -p open-gpui-wgpu --features font-kit --locked --no-fail-fast

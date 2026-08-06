@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use crate::PlatformPixelBuffer;
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, Corners, Edges, Hsla, Pixels, Point,
+    AtlasTextureInstanceId, AtlasTile, Background, Bounds, Corners, Edges, Hsla, Pixels, Point,
     ScaledPixels, Size, SubtreeTransformError,
     bounds_tree::BoundsTree,
     geometry::{
@@ -103,6 +103,20 @@ pub struct Scene {
     clip_stack_ranges: Vec<Range<u32>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RetainedVisualSceneError {
+    InvalidRange,
+    InvalidGeometry,
+    Geometry(SubtreeGeometryError),
+}
+
+#[derive(Clone, Copy)]
+struct SceneJournalCheckpoint {
+    paint_operations_len: usize,
+    clip_shapes_len: usize,
+    clip_stack_ranges_len: usize,
+}
+
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
@@ -153,6 +167,58 @@ impl Scene {
         self.paint_operations.len()
     }
 
+    pub(crate) fn retained_visual_fragment(
+        &self,
+        range: Range<usize>,
+    ) -> Result<(Self, Box<[Option<SubtreeGeometryValidity>]>), RetainedVisualSceneError> {
+        let Some(operations) = self.paint_operations.get(range.clone()) else {
+            return Err(RetainedVisualSceneError::InvalidRange);
+        };
+        if operations.iter().any(|operation| {
+            operation
+                .validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+        }) {
+            return Err(RetainedVisualSceneError::InvalidGeometry);
+        }
+
+        let mut fragment = Scene::default();
+        fragment
+            .replay(range, self, None)
+            .map_err(RetainedVisualSceneError::Geometry)?;
+        let validities = operations
+            .iter()
+            .map(|operation| operation.validity.clone())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Ok((fragment, validities))
+    }
+
+    pub(crate) fn atlas_texture_instances(&self) -> Vec<AtlasTextureInstanceId> {
+        let mut textures = Vec::new();
+        for operation in &self.paint_operations {
+            let texture = match &operation.kind {
+                PaintOperationKind::Primitive(Primitive::MonochromeSprite(sprite)) => {
+                    Some(sprite.tile.texture_instance())
+                }
+                PaintOperationKind::Primitive(Primitive::SubpixelSprite(sprite)) => {
+                    Some(sprite.tile.texture_instance())
+                }
+                PaintOperationKind::Primitive(Primitive::PolychromeSprite(sprite)) => {
+                    Some(sprite.tile.texture_instance())
+                }
+                _ => None,
+            };
+            if let Some(texture) = texture
+                && !textures.contains(&texture)
+            {
+                textures.push(texture);
+            }
+        }
+        textures
+    }
+
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         self.push_layer_scoped(bounds, None);
     }
@@ -162,12 +228,16 @@ impl Scene {
         bounds: Bounds<ScaledPixels>,
         validity: Option<SubtreeGeometryValidity>,
     ) {
-        let order = self.primitive_bounds.insert(bounds);
-        self.layer_stack.push(order);
+        self.push_layer_for_render(bounds);
         self.paint_operations.push(PaintOperation {
             kind: PaintOperationKind::StartLayer(bounds),
             validity,
         });
+    }
+
+    fn push_layer_for_render(&mut self, bounds: Bounds<ScaledPixels>) {
+        let order = self.primitive_bounds.insert(bounds);
+        self.layer_stack.push(order);
     }
 
     pub fn pop_layer(&mut self) {
@@ -175,11 +245,15 @@ impl Scene {
     }
 
     pub(crate) fn pop_layer_scoped(&mut self, validity: Option<SubtreeGeometryValidity>) {
-        self.layer_stack.pop();
+        self.pop_layer_for_render();
         self.paint_operations.push(PaintOperation {
             kind: PaintOperationKind::EndLayer,
             validity,
         });
+    }
+
+    fn pop_layer_for_render(&mut self) {
+        self.layer_stack.pop();
     }
 
     pub(crate) fn insert_primitive_scoped(
@@ -211,12 +285,26 @@ impl Scene {
         mut primitive: Primitive,
         validity: Option<SubtreeGeometryValidity>,
     ) -> Result<(), SubtreeGeometryError> {
+        if !self.push_primitive_for_render(&mut primitive)? {
+            return Ok(());
+        }
+        self.paint_operations.push(PaintOperation {
+            kind: PaintOperationKind::Primitive(primitive),
+            validity,
+        });
+        Ok(())
+    }
+
+    fn push_primitive_for_render(
+        &mut self,
+        primitive: &mut Primitive,
+    ) -> Result<bool, SubtreeGeometryError> {
         let clipped_bounds = primitive
             .try_visual_bounds()?
             .intersect(&primitive.clip_envelope().conservative_bounds);
 
         if clipped_bounds.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         let order = self
@@ -224,7 +312,7 @@ impl Scene {
             .last()
             .copied()
             .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
-        match &mut primitive {
+        match primitive {
             Primitive::Shadow(shadow) => {
                 shadow.order = order;
                 self.shadows.push(*shadow);
@@ -259,11 +347,7 @@ impl Scene {
                 self.surfaces.push(surface.clone());
             }
         }
-        self.paint_operations.push(PaintOperation {
-            kind: PaintOperationKind::Primitive(primitive),
-            validity,
-        });
-        Ok(())
+        Ok(true)
     }
 
     fn intern_clip_stack(
@@ -341,24 +425,36 @@ impl Scene {
         prev_scene: &Scene,
         validity: Option<SubtreeGeometryValidity>,
     ) -> Result<(), SubtreeGeometryError> {
-        for operation in &prev_scene.paint_operations[range] {
-            let replayed_validity = SubtreeGeometryValidity::replayed_under(
-                operation.validity.as_ref(),
-                validity.clone(),
-            );
-            match &operation.kind {
-                PaintOperationKind::Primitive(primitive) => self.insert_primitive_with_gpu_clips(
-                    primitive.clone(),
-                    prev_scene.clip_shapes_for(primitive.clip_envelope())?,
-                    replayed_validity,
-                )?,
-                PaintOperationKind::StartLayer(bounds) => {
-                    self.push_layer_scoped(*bounds, replayed_validity)
+        let checkpoint = self.journal_checkpoint();
+        let result = (|| {
+            let operations = prev_scene
+                .paint_operations
+                .get(range)
+                .ok_or(SubtreeGeometryError::DeviceConversion)?;
+            for operation in operations {
+                let replayed_validity = SubtreeGeometryValidity::replayed_under(
+                    operation.validity.as_ref(),
+                    validity.clone(),
+                );
+                match &operation.kind {
+                    PaintOperationKind::Primitive(primitive) => self
+                        .insert_primitive_with_gpu_clips(
+                            primitive.clone(),
+                            prev_scene.clip_shapes_for(primitive.clip_envelope())?,
+                            replayed_validity,
+                        )?,
+                    PaintOperationKind::StartLayer(bounds) => {
+                        self.push_layer_scoped(*bounds, replayed_validity)
+                    }
+                    PaintOperationKind::EndLayer => self.pop_layer_scoped(replayed_validity),
                 }
-                PaintOperationKind::EndLayer => self.pop_layer_scoped(replayed_validity),
             }
+            Ok(())
+        })();
+        if result.is_err() {
+            self.rollback_to(checkpoint);
         }
-        Ok(())
+        result
     }
 
     pub fn finish(&mut self) {
@@ -368,40 +464,7 @@ impl Scene {
                 .as_ref()
                 .is_some_and(|validity| !validity.is_valid())
         }) {
-            let operations = std::mem::take(&mut self.paint_operations);
-            let old_clip_shapes = std::mem::take(&mut self.clip_shapes);
-            self.clear();
-            for operation in operations {
-                if operation
-                    .validity
-                    .as_ref()
-                    .is_some_and(|validity| !validity.is_valid())
-                {
-                    continue;
-                }
-                match operation.kind {
-                    PaintOperationKind::Primitive(mut primitive) => {
-                        let envelope = primitive.clip_envelope();
-                        let start = envelope.first_clip as usize;
-                        let end = start
-                            .checked_add(envelope.clip_count as usize)
-                            .expect("accepted clip range must remain representable");
-                        let shapes = old_clip_shapes
-                            .get(start..end)
-                            .expect("accepted primitive must reference its source clip arena");
-                        let remapped = self
-                            .intern_gpu_clip_stack(shapes)
-                            .expect("accepted clip stack must remain representable");
-                        primitive.set_clip_envelope(remapped);
-                        self.record_primitive(primitive, operation.validity)
-                            .expect("accepted scene primitive must remain representable");
-                    }
-                    PaintOperationKind::StartLayer(bounds) => {
-                        self.push_layer_scoped(bounds, operation.validity)
-                    }
-                    PaintOperationKind::EndLayer => self.pop_layer_scoped(operation.validity),
-                }
-            }
+            self.rebuild_render_state_from_journal();
         }
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
@@ -414,6 +477,60 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+    }
+
+    fn journal_checkpoint(&self) -> SceneJournalCheckpoint {
+        SceneJournalCheckpoint {
+            paint_operations_len: self.paint_operations.len(),
+            clip_shapes_len: self.clip_shapes.len(),
+            clip_stack_ranges_len: self.clip_stack_ranges.len(),
+        }
+    }
+
+    fn rollback_to(&mut self, checkpoint: SceneJournalCheckpoint) {
+        self.paint_operations
+            .truncate(checkpoint.paint_operations_len);
+        self.clip_shapes.truncate(checkpoint.clip_shapes_len);
+        self.clip_stack_ranges
+            .truncate(checkpoint.clip_stack_ranges_len);
+        self.rebuild_render_state_from_journal();
+    }
+
+    fn rebuild_render_state_from_journal(&mut self) {
+        let operations = std::mem::take(&mut self.paint_operations);
+        self.clear_render_state();
+        for operation in &operations {
+            if operation
+                .validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+            {
+                continue;
+            }
+            match &operation.kind {
+                PaintOperationKind::Primitive(primitive) => {
+                    let mut primitive = primitive.clone();
+                    self.push_primitive_for_render(&mut primitive)
+                        .expect("accepted scene primitive must remain representable");
+                }
+                PaintOperationKind::StartLayer(bounds) => self.push_layer_for_render(*bounds),
+                PaintOperationKind::EndLayer => self.pop_layer_for_render(),
+            }
+        }
+        self.paint_operations = operations;
+    }
+
+    fn clear_render_state(&mut self) {
+        self.primitive_bounds.clear();
+        self.layer_stack.clear();
+        self.paths.clear();
+        self.shadows.clear();
+        self.quads.clear();
+        self.underlines.clear();
+        self.monochrome_sprites.clear();
+        self.subpixel_sprites.clear();
+        self.polychrome_sprites.clear();
+        self.surfaces.clear();
     }
 
     #[cfg_attr(
@@ -501,6 +618,19 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+        }
+    }
+
+    pub(crate) fn atlas_texture_instance(&self) -> Option<AtlasTextureInstanceId> {
+        match self {
+            Primitive::MonochromeSprite(sprite) => Some(sprite.tile.texture_instance()),
+            Primitive::SubpixelSprite(sprite) => Some(sprite.tile.texture_instance()),
+            Primitive::PolychromeSprite(sprite) => Some(sprite.tile.texture_instance()),
+            Primitive::Shadow(_)
+            | Primitive::Quad(_)
+            | Primitive::Path(_)
+            | Primitive::Underline(_)
+            | Primitive::Surface(_) => None,
         }
     }
 
@@ -683,7 +813,12 @@ impl<'a> Iterator for BatchIterator<'a> {
                 Some(PrimitiveBatch::Underlines(underlines_start..underlines_end))
             }
             PrimitiveKind::MonochromeSprite => {
-                let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let texture = self
+                    .monochrome_sprites_iter
+                    .peek()
+                    .unwrap()
+                    .tile
+                    .texture_instance();
                 let sprites_start = self.monochrome_sprites_start;
                 let mut sprites_end = sprites_start + 1;
                 self.monochrome_sprites_iter.next();
@@ -691,7 +826,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .monochrome_sprites_iter
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
-                            && sprite.tile.texture_id == texture_id
+                            && sprite.tile.texture_instance() == texture
                     })
                     .is_some()
                 {
@@ -699,12 +834,17 @@ impl<'a> Iterator for BatchIterator<'a> {
                 }
                 self.monochrome_sprites_start = sprites_end;
                 Some(PrimitiveBatch::MonochromeSprites {
-                    texture_id,
+                    texture,
                     range: sprites_start..sprites_end,
                 })
             }
             PrimitiveKind::SubpixelSprite => {
-                let texture_id = self.subpixel_sprites_iter.peek().unwrap().tile.texture_id;
+                let texture = self
+                    .subpixel_sprites_iter
+                    .peek()
+                    .unwrap()
+                    .tile
+                    .texture_instance();
                 let sprites_start = self.subpixel_sprites_start;
                 let mut sprites_end = sprites_start + 1;
                 self.subpixel_sprites_iter.next();
@@ -712,7 +852,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .subpixel_sprites_iter
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
-                            && sprite.tile.texture_id == texture_id
+                            && sprite.tile.texture_instance() == texture
                     })
                     .is_some()
                 {
@@ -720,12 +860,17 @@ impl<'a> Iterator for BatchIterator<'a> {
                 }
                 self.subpixel_sprites_start = sprites_end;
                 Some(PrimitiveBatch::SubpixelSprites {
-                    texture_id,
+                    texture,
                     range: sprites_start..sprites_end,
                 })
             }
             PrimitiveKind::PolychromeSprite => {
-                let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let texture = self
+                    .polychrome_sprites_iter
+                    .peek()
+                    .unwrap()
+                    .tile
+                    .texture_instance();
                 let sprites_start = self.polychrome_sprites_start;
                 let mut sprites_end = sprites_start + 1;
                 self.polychrome_sprites_iter.next();
@@ -733,7 +878,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .polychrome_sprites_iter
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
-                            && sprite.tile.texture_id == texture_id
+                            && sprite.tile.texture_instance() == texture
                     })
                     .is_some()
                 {
@@ -741,7 +886,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 }
                 self.polychrome_sprites_start = sprites_end;
                 Some(PrimitiveBatch::PolychromeSprites {
-                    texture_id,
+                    texture,
                     range: sprites_start..sprites_end,
                 })
             }
@@ -778,16 +923,16 @@ pub enum PrimitiveBatch {
     Paths(Range<usize>),
     Underlines(Range<usize>),
     MonochromeSprites {
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         range: Range<usize>,
     },
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     SubpixelSprites {
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         range: Range<usize>,
     },
     PolychromeSprites {
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
@@ -1558,7 +1703,63 @@ mod tests {
     }
 
     #[test]
-    fn scene_finish_discards_invalid_operations_and_compacts_clip_ranges() {
+    fn scene_replay_rolls_back_every_channel_after_a_late_error() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let clip = rounded_stack(viewport, logical_bounds(20.0, 20.0, 80.0, 80.0));
+        let mut source = Scene::default();
+        for x in [30.0, 60.0] {
+            source
+                .insert_primitive_scoped(
+                    Quad {
+                        bounds: scaled_bounds(x, 30.0, 20.0, 20.0),
+                        ..Default::default()
+                    },
+                    &clip,
+                    1.0,
+                    None,
+                )
+                .unwrap();
+        }
+        let PaintOperationKind::Primitive(second) = &mut source.paint_operations[1].kind else {
+            panic!("test source should contain a primitive");
+        };
+        let mut invalid_envelope = second.clip_envelope();
+        invalid_envelope.first_clip = u32::MAX;
+        second.set_clip_envelope(invalid_envelope);
+
+        let mut target = Scene::default();
+        target
+            .insert_primitive_scoped(
+                Quad {
+                    bounds: scaled_bounds(30.0, 30.0, 10.0, 10.0),
+                    ..Default::default()
+                },
+                &clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        let journal_len = target.journal_len();
+        let clip_shapes = target.clip_shapes().to_vec();
+        let quad_count = target.quads.len();
+        let quad_order = target.quads[0].order;
+        let quad_bounds = target.quads[0].bounds;
+        let quad_clip = target.quads[0].clip;
+
+        assert_eq!(
+            target.replay(0..source.journal_len(), &source, None),
+            Err(SubtreeGeometryError::DeviceConversion)
+        );
+        assert_eq!(target.journal_len(), journal_len);
+        assert_eq!(target.clip_shapes(), clip_shapes);
+        assert_eq!(target.quads.len(), quad_count);
+        assert_eq!(target.quads[0].order, quad_order);
+        assert_eq!(target.quads[0].bounds, quad_bounds);
+        assert_eq!(target.quads[0].clip, quad_clip);
+    }
+
+    #[test]
+    fn scene_finish_discards_invalid_render_output_without_compacting_the_journal() {
         let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
         let invalid_clip = rounded_stack(viewport, logical_bounds(10.0, 10.0, 60.0, 60.0));
         let valid_clip = rounded_stack(viewport, logical_bounds(80.0, 80.0, 60.0, 60.0));
@@ -1586,19 +1787,26 @@ mod tests {
                 None,
             )
             .unwrap();
-        let valid_shapes = {
-            let envelope = scene.quads[1].clip;
-            scene.clip_shapes()
-                [envelope.first_clip as usize..(envelope.first_clip + envelope.clip_count) as usize]
-                .to_vec()
-        };
+        let journal_len = scene.journal_len();
+        let clip_shapes = scene.clip_shapes().to_vec();
+        let valid_envelope = scene.quads[1].clip;
 
         invalidity.invalidate(SubtreeClipError::UnrepresentableResult);
         scene.finish();
 
         assert_eq!(scene.quads.len(), 1);
         assert_eq!(scene.quads[0].bounds, scaled_bounds(90.0, 90.0, 20.0, 20.0));
-        assert_eq!(scene.quads[0].clip.first_clip, 0);
-        assert_eq!(scene.clip_shapes(), valid_shapes);
+        assert_eq!(scene.quads[0].clip, valid_envelope);
+        assert_eq!(scene.journal_len(), journal_len);
+        assert_eq!(scene.clip_shapes(), clip_shapes);
+
+        let mut replayed = Scene::default();
+        replayed.replay(1..2, &scene, None).unwrap();
+        replayed.finish();
+        assert_eq!(replayed.quads.len(), 1);
+        assert_eq!(
+            replayed.quads[0].bounds,
+            scaled_bounds(90.0, 90.0, 20.0, 20.0)
+        );
     }
 }

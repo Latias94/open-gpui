@@ -5,6 +5,7 @@ use crate::{
         DockResolvedDropTargetKind, validate_resolved_drop_target,
     },
     geometry::DockDropBoxKind,
+    locked_drop_identity::DockLockedTargetIdentity,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,29 +44,39 @@ impl DockWorkspaceResolvedDropTarget {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockWorkspaceDropCommitTarget {
-    target_space: DockSpaceId,
-    kind: DockWorkspaceDropCommitTargetKind,
+    identity: DockLockedTargetIdentity,
 }
 
 impl DockWorkspaceDropCommitTarget {
     pub(crate) fn target_space(&self) -> &DockSpaceId {
-        &self.target_space
+        self.identity.target_space()
     }
 
     pub(crate) fn into_parts(self) -> DockWorkspaceDropCommitTargetParts {
-        DockWorkspaceDropCommitTargetParts {
-            target_space: self.target_space,
-            kind: self.kind,
-        }
+        let target_space = self.identity.target_space().clone();
+        let kind = match self.identity {
+            DockLockedTargetIdentity::Empty { target_space } => {
+                DockWorkspaceDropCommitTargetKind::EmptyDockSpace(target_space)
+            }
+            identity => DockWorkspaceDropCommitTargetKind::Graph(identity.graph_target()),
+        };
+        DockWorkspaceDropCommitTargetParts { target_space, kind }
+    }
+
+    pub(crate) fn into_locked_identity(self) -> DockLockedTargetIdentity {
+        self.identity
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockWorkspaceDropCommitTargetParts {
     pub(crate) target_space: DockSpaceId,
     pub(crate) kind: DockWorkspaceDropCommitTargetKind,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockWorkspaceDropCommitTargetKind {
     Graph(DockGraphDropTarget),
     EmptyDockSpace(DockSpaceId),
@@ -90,50 +101,80 @@ pub(crate) fn resolve_workspace_drop_commit_target(
     validate_resolved_target_drop_box(&target)?;
     validate_resolved_target_graph_identity(workspace, &drop_target.target_space, &target)?;
 
-    let kind = match target.kind {
+    let identity = match &target.kind {
         DockResolvedDropTargetKind::TabBar {
             target_tabs,
             insert_index,
-        } => DockWorkspaceDropCommitTargetKind::Graph(DockGraphDropTarget::tab_bar(
-            target_tabs,
-            insert_index,
-        )),
-        DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
-        | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
-            DockWorkspaceDropCommitTargetKind::Graph(DockGraphDropTarget::center(target_tabs))
+        } => DockLockedTargetIdentity::tab_bar(
+            workspace.graph(),
+            drop_target.target_space.clone(),
+            *target_tabs,
+            *insert_index,
+        )?,
+        DockResolvedDropTargetKind::LeafCenter { root, target_tabs } => {
+            DockLockedTargetIdentity::leaf_center(
+                workspace.graph(),
+                drop_target.target_space.clone(),
+                *root,
+                *target_tabs,
+            )?
         }
+        DockResolvedDropTargetKind::FloatingTitleBar {
+            floating,
+            target_tabs,
+        } => DockLockedTargetIdentity::floating_title_bar(
+            workspace.graph(),
+            drop_target.target_space.clone(),
+            *floating,
+            *target_tabs,
+        )?,
         DockResolvedDropTargetKind::InnerEdge {
             root: _,
             target_tabs,
             zone,
-        } => DockWorkspaceDropCommitTargetKind::Graph(resolve_edge_graph_drop_target(
-            workspace,
-            &drop_target.target_space,
-            target_tabs,
-            zone,
-            &target,
-        )?),
-        DockResolvedDropTargetKind::RootEdge { root, zone, .. } => {
-            DockWorkspaceDropCommitTargetKind::Graph(resolve_edge_graph_drop_target(
+        } => {
+            let graph_target = resolve_edge_graph_drop_target(
                 workspace,
                 &drop_target.target_space,
-                root,
-                zone,
+                *target_tabs,
+                *zone,
                 &target,
-            )?)
+            )?;
+            let DockGraphDropTarget::Edge { plan } = graph_target else {
+                unreachable!("edge target resolution must produce an edge graph target")
+            };
+            DockLockedTargetIdentity::edge(
+                workspace.graph(),
+                drop_target.target_space.clone(),
+                plan,
+            )?
+        }
+        DockResolvedDropTargetKind::RootEdge { root, zone, .. } => {
+            let graph_target = resolve_edge_graph_drop_target(
+                workspace,
+                &drop_target.target_space,
+                *root,
+                *zone,
+                &target,
+            )?;
+            let DockGraphDropTarget::Edge { plan } = graph_target else {
+                unreachable!("edge target resolution must produce an edge graph target")
+            };
+            DockLockedTargetIdentity::edge(
+                workspace.graph(),
+                drop_target.target_space.clone(),
+                plan,
+            )?
         }
         DockResolvedDropTargetKind::EmptyDockSpace { space } => {
             if target.is_central_region {
                 workspace.policy().validate_central_region_dock_over()?;
             }
-            DockWorkspaceDropCommitTargetKind::EmptyDockSpace(space)
+            DockLockedTargetIdentity::empty(space.clone())
         }
     };
 
-    Ok(DockWorkspaceDropCommitTarget {
-        target_space: drop_target.target_space,
-        kind,
-    })
+    Ok(DockWorkspaceDropCommitTarget { identity })
 }
 
 fn resolve_edge_graph_drop_target(

@@ -7,14 +7,15 @@ use crate::PlatformPixelBuffer;
 use crate::app::{AppCell, PlatformWindowCommandSink};
 use crate::{
     Action, AnyElement, AnyEntity, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena,
-    Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic, AvailableSpace,
-    Background, BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode,
-    CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree,
-    DisplayId, Edges, ElementGeometry, Entity, EntityId, EventEmitter, FontId, Global,
-    GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic,
+    AtlasTextureInstanceId, AtlasTextureLease, AtlasTextureLeaseError, AvailableSpace, Background,
+    BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle,
+    Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId,
+    Edges, ElementGeometry, Entity, EntityId, EventEmitter, FontId, Global, GlobalElementId,
+    GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
     PlatformWindowMutationObservation, PlatformWindowPresentOutcome, PlatformWindowProfile, Point,
     PointerCancelEvent, PointerCancelReason, PolychromeSprite,
@@ -31,8 +32,10 @@ use crate::{
     WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
     WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
     WindowPresentAttemptFacts, WindowPresentationFacts, WindowProvisionalOpeningClaim,
-    WindowProvisionalRevealOutcome, WindowProvisionalRevealTicket, WindowProvisionalSession,
-    WindowProvisionalSessionPhase, WindowTextSystem,
+    WindowProvisionalRevealOutcome, WindowProvisionalRevealTicket,
+    WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsSnapshot,
+    WindowProvisionalSemanticsTicket, WindowProvisionalSession, WindowProvisionalSessionPhase,
+    WindowTextSystem,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
         SubtreeGeometryValidity,
@@ -85,6 +88,8 @@ mod invalidator;
 mod pointer_session;
 mod portal_anchor;
 mod prompts;
+#[doc(hidden)]
+pub mod retained_visual;
 
 use self::a11y::A11y;
 pub use self::a11y::{
@@ -107,8 +112,8 @@ pub use self::bring_into_view::{
     ScrollChainFence,
 };
 pub(crate) use self::frame_journal::{
-    DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintCommitPhase,
-    PrepaintStateIndex, TooltipRequest,
+    DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintCommitCallback,
+    PrepaintCommitPhase, PrepaintStateIndex, TooltipRequest, VisualPaintIndex, VisualPrepaintIndex,
 };
 use self::frame_pump::{FrameThrottleFacts, PresentFacts, frame_should_wait};
 pub(crate) use self::invalidator::WindowInvalidator;
@@ -648,10 +653,11 @@ fn next_presentation_shutdown_ticket(
 
 /// A stable identity for one cross-frame publication produced during prepaint.
 ///
-/// Reuse the same ID for one logical publication on every frame. GPUI commits a valid current
-/// frame, discards an invalid one, and also invokes the previous frame's discard callback when the
-/// publication is absent from the next frame. The absence rule retracts state when a subtree is
-/// removed, skipped by an invalid ancestor transform, or rolled back by [`Window::transact`].
+/// Reuse the same ID for one logical publication on every frame. GPUI commits or discards only
+/// after accepting the candidate frame and passes the callback an [`AcceptedFrameFence`]. It also
+/// invokes the previous frame's discard callback when the publication is absent from the next
+/// accepted frame. The absence rule retracts state when a subtree is removed, skipped by an
+/// invalid ancestor transform, or rolled back by [`Window::transact`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct PrepaintPublicationId(u64);
 
@@ -667,6 +673,43 @@ impl PrepaintPublicationId {
 impl Default for PrepaintPublicationId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Proof that one candidate frame has become the rendered frame for a specific window.
+///
+/// GPUI creates this value only while committing or discarding a
+/// [`Window::record_prepaint_window_transaction`] publication after the candidate frame swap.
+/// Consumers may use it to distinguish work that is already backed by an accepted frame from
+/// ordinary event-driven work that must wait for a future frame.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct AcceptedFrameFence {
+    window_id: WindowId,
+    generation: u64,
+}
+
+impl AcceptedFrameFence {
+    fn new(window_id: WindowId, generation: u64) -> Self {
+        Self {
+            window_id,
+            generation,
+        }
+    }
+
+    /// Returns the window that accepted this frame.
+    pub const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
+    /// Returns the accepted rendered-frame generation.
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Returns whether this fence is satisfied by the window's current rendered frame.
+    pub fn is_satisfied_by(self, window: &Window) -> bool {
+        self.window_id == window.handle.window_id()
+            && window.rendered_frame_revision() >= self.generation
     }
 }
 
@@ -1174,6 +1217,7 @@ impl TooltipId {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct TooltipBounds {
     id: TooltipId,
     bounds: Bounds<Pixels>,
@@ -1285,6 +1329,11 @@ struct ClipStackScopeGuard {
     entered_depth: usize,
 }
 
+struct AtlasTextureLeasePaintScopeGuard {
+    stack: Rc<RefCell<SmallVec<[FxHashSet<AtlasTextureInstanceId>; 8]>>>,
+    entered_depth: usize,
+}
+
 struct PrepaintLayoutScopeGuard {
     current: Rc<Cell<Option<LayoutId>>>,
     entered: LayoutId,
@@ -1324,6 +1373,24 @@ impl Drop for ClipStackScopeGuard {
             debug_assert_eq!(stack.len(), self.entered_depth + 1);
         }
         stack.truncate(self.entered_depth);
+    }
+}
+
+impl Drop for AtlasTextureLeasePaintScopeGuard {
+    fn drop(&mut self) {
+        let mut stack = self.stack.borrow_mut();
+        if std::thread::panicking() {
+            stack.truncate(self.entered_depth);
+            return;
+        }
+
+        debug_assert_eq!(stack.len(), self.entered_depth + 1);
+        let completed = stack
+            .pop()
+            .expect("an entered atlas paint scope must remain on the stack");
+        if let Some(parent) = stack.last_mut() {
+            parent.extend(completed);
+        }
     }
 }
 
@@ -1418,9 +1485,21 @@ struct WindowPresentationState {
     present_submitted_generation: Option<u64>,
     non_empty_presented_generation: Option<u64>,
     latest_present_attempt: Option<WindowPresentAttemptFacts>,
+    renderer_invalidated_generation: Option<u64>,
     initial_presentation: WindowInitialPresentationStatus,
     provisional_reveal_ticket: Option<WindowProvisionalRevealTicket>,
 }
+
+#[derive(Default)]
+struct InitialPresentationRetryState {
+    minimum_generation: Option<u64>,
+    attempts_started: u8,
+    presentation_retry_generation: Option<u64>,
+    presentation_retries_started: u8,
+}
+
+const FRESH_INITIAL_PRESENTATION_ATTEMPT_LIMIT: u8 = 3;
+const INITIAL_PRESENTATION_RETRY_LIMIT: u8 = 3;
 
 /// Holds the state for a specific window.
 pub struct Window {
@@ -1433,6 +1512,7 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     platform_command_sink: PlatformWindowCommandSink,
     initial_presentation_command: Option<PlatformWindowCommand>,
+    initial_presentation_retry: InitialPresentationRetryState,
     presentation_shutdown: Option<PreparedPlatformPresentationShutdown>,
     provisional_session: Option<WindowProvisionalSession>,
     _provisional_opening_claim: Option<WindowProvisionalOpeningClaim>,
@@ -1469,6 +1549,15 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    atlas_texture_lease_paint_scopes: Rc<RefCell<SmallVec<[FxHashSet<AtlasTextureInstanceId>; 8]>>>,
+    candidate_frame_transfers: CandidateFrameTransfers,
+    next_candidate_frame_attempt_id: u64,
+    candidate_frame_transaction: Option<CandidateFrameTransaction>,
+    candidate_atlas_lease_failure: Option<AtlasTextureLeaseError>,
+    last_atlas_frame_rejection: Option<AtlasFrameRejection>,
+    candidate_pending_input_clear: bool,
+    candidate_pending_input_notification: bool,
+    retained_visual_registry: retained_visual::Registry,
     #[cfg(any(test, feature = "test-support"))]
     capture_generation: Cell<u64>,
     atlas_remove_diagnostics: Vec<AtlasRemoveDiagnostic>,
@@ -1521,6 +1610,7 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    candidate_accessibility_focus: Option<FocusId>,
     pending_focus_claim: Option<PendingFocusClaim>,
     pending_focus_reveal_fence: Option<PendingFocusRevealFence>,
     pending_blur_claim_generation: Option<u64>,
@@ -1573,6 +1663,124 @@ struct PendingFocusRevealFence {
 struct ProvisionalFocusClaim {
     target: FocusId,
     fallback: Option<FocusId>,
+}
+
+#[derive(Default)]
+struct CandidateFrameTransfers {
+    element_states: Vec<(GlobalElementId, TypeId)>,
+    mouse_listeners: Vec<(usize, usize)>,
+    input_handlers: Vec<(usize, usize)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CandidateFrameAttemptId(u64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CandidateFrameTransactionPhase {
+    Building,
+    Accepted,
+}
+
+struct CandidatePrepaintCommitPlan {
+    target_revision: u64,
+    current_commits: Vec<FrameOutput<PrepaintCommit>>,
+    previous_commits: Vec<FrameOutput<PrepaintCommit>>,
+}
+
+struct CandidateFrameTransaction {
+    attempt_id: CandidateFrameAttemptId,
+    frame_generation: u64,
+    phase: CandidateFrameTransactionPhase,
+    replayed_retained_visuals: FxHashSet<retained_visual::TicketIdentity>,
+    focus_completion_ids: FxHashSet<u64>,
+    prepaint_commit_plan: Option<Rc<CandidatePrepaintCommitPlan>>,
+}
+
+impl CandidateFrameTransaction {
+    fn new(attempt_id: CandidateFrameAttemptId, frame_generation: u64) -> Self {
+        Self {
+            attempt_id,
+            frame_generation,
+            phase: CandidateFrameTransactionPhase::Building,
+            replayed_retained_visuals: FxHashSet::default(),
+            focus_completion_ids: FxHashSet::default(),
+            prepaint_commit_plan: None,
+        }
+    }
+
+    fn retained_visual_was_replayed(&self, ticket: retained_visual::TicketIdentity) -> bool {
+        self.replayed_retained_visuals.contains(&ticket)
+    }
+
+    fn record_retained_visual_replay(&mut self, ticket: retained_visual::TicketIdentity) {
+        assert!(
+            self.replayed_retained_visuals.insert(ticket),
+            "one candidate attempt must record each retained visual replay at most once"
+        );
+    }
+
+    fn record_focus_completion(&mut self, id: u64) {
+        assert!(
+            self.focus_completion_ids.insert(id),
+            "one candidate attempt must record each focus completion at most once"
+        );
+    }
+
+    fn owns_focus_completion(&self, id: u64) -> bool {
+        self.focus_completion_ids.contains(&id)
+    }
+
+    fn prepare_prepaint_commits(
+        &mut self,
+        current_commits: Vec<FrameOutput<PrepaintCommit>>,
+        previous_commits: Vec<FrameOutput<PrepaintCommit>>,
+    ) -> Rc<CandidatePrepaintCommitPlan> {
+        assert_eq!(self.phase, CandidateFrameTransactionPhase::Building);
+        assert!(
+            self.prepaint_commit_plan.is_none(),
+            "one candidate frame must prepare its prepaint commit plan exactly once"
+        );
+        let plan = Rc::new(CandidatePrepaintCommitPlan {
+            target_revision: self.frame_generation,
+            current_commits,
+            previous_commits,
+        });
+        self.prepaint_commit_plan = Some(plan.clone());
+        plan
+    }
+
+    fn mark_accepted(&mut self) {
+        assert_eq!(self.phase, CandidateFrameTransactionPhase::Building);
+        assert!(
+            self.prepaint_commit_plan.is_some(),
+            "a candidate frame must prepare publications before acceptance"
+        );
+        self.phase = CandidateFrameTransactionPhase::Accepted;
+    }
+
+    fn is_accepted(&self) -> bool {
+        self.phase == CandidateFrameTransactionPhase::Accepted
+    }
+}
+
+struct CandidateFrameAuthorityCheckpoint {
+    focus: Option<FocusId>,
+    pending_focus_claim: Option<PendingFocusClaim>,
+    pending_focus_reveal_fence: Option<PendingFocusRevealFence>,
+    pending_blur_claim_generation: Option<u64>,
+    provisional_focus_claim: Option<ProvisionalFocusClaim>,
+    pending_focus_completion: Option<PendingFocusCompletion>,
+    focus_claim_resolutions_len: usize,
+    focus_claim_revision: u64,
+    requested_autoscroll: Option<AutoscrollIntent>,
+    tooltip_bounds: Option<TooltipBounds>,
+    focus_followup_requested: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AtlasFrameRejection {
+    generation: u64,
+    error: AtlasTextureLeaseError,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2390,6 +2598,7 @@ impl Window {
                         && activation_policy.accepts_activation,
                 },
             ),
+            initial_presentation_retry: InitialPresentationRetryState::default(),
             presentation_shutdown: None,
             provisional_session,
             _provisional_opening_claim: provisional_opening_claim,
@@ -2421,6 +2630,15 @@ impl Window {
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            atlas_texture_lease_paint_scopes: Rc::new(RefCell::new(SmallVec::new())),
+            candidate_frame_transfers: CandidateFrameTransfers::default(),
+            next_candidate_frame_attempt_id: 0,
+            candidate_frame_transaction: None,
+            candidate_atlas_lease_failure: None,
+            last_atlas_frame_rejection: None,
+            candidate_pending_input_clear: false,
+            candidate_pending_input_notification: false,
+            retained_visual_registry: retained_visual::Registry::default(),
             #[cfg(any(test, feature = "test-support"))]
             capture_generation: Cell::new(0),
             atlas_remove_diagnostics: Vec::new(),
@@ -2471,6 +2689,7 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            candidate_accessibility_focus: None,
             pending_focus_claim: None,
             pending_focus_reveal_fence: None,
             pending_blur_claim_generation: None,
@@ -2519,6 +2738,9 @@ impl Window {
     }
 
     pub(crate) fn claim_presentation_shutdown(&mut self) -> PreparedPlatformPresentationShutdown {
+        if self.presentation_shutdown.is_none() {
+            self.retire_retained_visuals();
+        }
         self.presentation_shutdown
             .get_or_insert_with(|| {
                 self.platform_window.prepare_presentation_shutdown(
@@ -2576,13 +2798,14 @@ impl Window {
         Ok(ticket)
     }
 
-    /// Promotes the exact provisional session in place and schedules its first interactive frame.
+    /// Begins projecting the destination tree while native and framework interaction remain gated.
     #[doc(hidden)]
-    pub fn promote_provisional_presentation(
+    pub fn begin_provisional_destination_semantics(
         &mut self,
         session: &WindowProvisionalSession,
+        destination_generation: u64,
         _cx: &mut App,
-    ) -> Result<()> {
+    ) -> Result<WindowProvisionalSemanticsTicket> {
         let owned = self
             .provisional_session
             .as_ref()
@@ -2595,6 +2818,10 @@ impl Window {
         anyhow::ensure!(
             snapshot.window_id() == Some(self.handle.window_id()),
             "provisional presentation session is not bound to this full window id"
+        );
+        anyhow::ensure!(
+            self.creation_can_commit() && self.presentation_shutdown.is_none(),
+            "a terminal window cannot project provisional destination semantics"
         );
         let reveal = self
             .presentation_state
@@ -2609,8 +2836,99 @@ impl Window {
                     .is_some_and(|facts| facts.accepts_reveal()),
             "provisional presentation has not completed its exact native reveal"
         );
-        session.promote(self.handle.window_id())?;
+        let reveal_generation = reveal.presentation_generation().ok_or_else(|| {
+            anyhow!("provisional reveal has no committed presentation generation")
+        })?;
+        let minimum_frame_generation = self
+            .rendered_frame
+            .generation
+            .max(reveal_generation)
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("provisional semantics frame generation overflow"))?;
+        let ticket = session.begin_destination_semantics(
+            self.handle.window_id(),
+            destination_generation,
+            minimum_frame_generation,
+        )?;
         self.refresh();
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        });
+        Ok(ticket)
+    }
+
+    /// Accepts the exact destination-semantics marker produced by a focus-stable candidate frame.
+    #[doc(hidden)]
+    pub fn accept_provisional_destination_semantics_frame(
+        &mut self,
+        session: &WindowProvisionalSession,
+        ticket: &WindowProvisionalSemanticsTicket,
+        frame_generation: u64,
+        _cx: &mut App,
+    ) -> Result<WindowProvisionalSemanticsSnapshot> {
+        anyhow::ensure!(
+            self.prepaint_commit_phase.get() == Some(PrepaintCommitPhase::FocusStable),
+            "destination semantics can only be accepted from a focus-stable prepaint commit"
+        );
+        anyhow::ensure!(
+            frame_generation == self.sealed_focus_authority_frame().generation,
+            "destination semantics must name the exact candidate frame"
+        );
+        let owned = self
+            .provisional_session
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no provisional presentation session"))?;
+        anyhow::ensure!(
+            owned.same_authority(session),
+            "provisional presentation session authority does not match the window"
+        );
+        let session_snapshot = session.snapshot();
+        let ticket_snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            session_snapshot.window_id() == Some(self.handle.window_id())
+                && session_snapshot.phase()
+                    == WindowProvisionalSessionPhase::ProjectingDestinationSemantics,
+            "provisional session is not projecting destination semantics for this window"
+        );
+        anyhow::ensure!(
+            ticket_snapshot.window_id() == self.handle.window_id()
+                && ticket_snapshot.session_generation() == session_snapshot.generation()
+                && ticket_snapshot.outcome() == WindowProvisionalSemanticsOutcome::Pending
+                && frame_generation >= ticket_snapshot.minimum_frame_generation(),
+            "destination semantics ticket does not admit the candidate frame"
+        );
+        session
+            .commit_destination_semantics(self.handle.window_id(), ticket, frame_generation)
+            .map_err(|error| anyhow!(error))?;
+        Ok(ticket.snapshot())
+    }
+
+    /// Admits interaction after the exact destination-semantics frame has committed.
+    #[doc(hidden)]
+    pub fn admit_provisional_interaction(
+        &mut self,
+        session: &WindowProvisionalSession,
+        ticket: &WindowProvisionalSemanticsTicket,
+        _cx: &mut App,
+    ) -> Result<()> {
+        let owned = self
+            .provisional_session
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no provisional presentation session"))?;
+        anyhow::ensure!(
+            owned.same_authority(session),
+            "provisional presentation session authority does not match the window"
+        );
+        anyhow::ensure!(
+            session.snapshot().window_id() == Some(self.handle.window_id()),
+            "provisional presentation session is not bound to this full window id"
+        );
+        anyhow::ensure!(
+            self.creation_can_commit() && self.presentation_shutdown.is_none(),
+            "a terminal window cannot admit provisional interaction"
+        );
+        session.admit_interaction(self.handle.window_id(), ticket)?;
         Ok(())
     }
 
@@ -2618,6 +2936,14 @@ impl Window {
         self.provisional_session.as_ref().is_none_or(|session| {
             let snapshot = session.snapshot();
             snapshot.window_id() == Some(self.handle.window_id()) && snapshot.accepts_interaction()
+        })
+    }
+
+    fn provisional_session_projects_destination_semantics(&self) -> bool {
+        self.provisional_session.as_ref().is_none_or(|session| {
+            let snapshot = session.snapshot();
+            snapshot.window_id() == Some(self.handle.window_id())
+                && snapshot.projects_destination_semantics()
         })
     }
 
@@ -2639,12 +2965,38 @@ impl Window {
         {
             return Ok(());
         }
+        if self.presentation_state.frame_accepted_generation != Some(self.rendered_frame.generation)
+        {
+            let minimum_generation = self.last_atlas_frame_rejection.map_or_else(
+                || self.rendered_frame.generation.saturating_add(1),
+                |rejection| rejection.generation,
+            );
+            self.initial_presentation_retry = InitialPresentationRetryState {
+                minimum_generation: Some(minimum_generation),
+                attempts_started: 0,
+                presentation_retry_generation: None,
+                presentation_retries_started: 0,
+            };
+            self.request_fresh_initial_presentation_frame();
+            return Ok(());
+        }
         anyhow::ensure!(
             !self.platform_window.is_visible(),
             "platform window became visible before its first presentation"
         );
+        let outcome = self.present();
+        if outcome == PlatformWindowPresentOutcome::RepaintRequired {
+            self.initial_presentation_retry.minimum_generation =
+                Some(self.rendered_frame.generation.saturating_add(1));
+            anyhow::ensure!(
+                !self.platform_window.is_visible(),
+                "platform window became visible during its hidden first presentation"
+            );
+            self.request_fresh_initial_presentation_frame();
+            return Ok(());
+        }
         anyhow::ensure!(
-            self.present() == PlatformWindowPresentOutcome::Submitted,
+            outcome == PlatformWindowPresentOutcome::Submitted,
             "platform rejected or deferred the initial frame submission"
         );
         anyhow::ensure!(
@@ -2654,9 +3006,173 @@ impl Window {
         Ok(())
     }
 
+    fn request_fresh_initial_presentation_frame(&mut self) {
+        self.refresh();
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: true,
+            require_presentation: true,
+        });
+    }
+
+    fn request_initial_presentation_retry(&self) {
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        });
+    }
+
+    fn renderer_repaint_is_pending(&self) -> bool {
+        self.presentation_state
+            .renderer_invalidated_generation
+            .is_some_and(|generation| self.rendered_frame.generation <= generation)
+    }
+
+    fn request_renderer_repaint_frame(&mut self) {
+        self.refresh();
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: true,
+            require_presentation: true,
+        });
+    }
+
+    fn begin_fresh_initial_presentation_attempt(&mut self, cx: &mut App) -> bool {
+        if !self.fresh_initial_presentation_is_pending() {
+            return true;
+        }
+        if self.fresh_initial_presentation_attempts_exhausted() {
+            self.fail_fresh_initial_presentation(cx);
+            return false;
+        }
+        self.initial_presentation_retry.attempts_started += 1;
+        true
+    }
+
+    fn finish_fresh_initial_presentation_if_ready(&mut self, cx: &mut App) {
+        let Some(minimum_generation) = self.initial_presentation_retry.minimum_generation else {
+            return;
+        };
+        let Some(generation) = self.presentation_state.frame_accepted_generation else {
+            return;
+        };
+        if generation < minimum_generation
+            || generation != self.rendered_frame.generation
+            || self.presentation_state.present_submitted_generation != Some(generation)
+            || self.presentation_state.non_empty_presented_generation != Some(generation)
+        {
+            return;
+        }
+
+        let Some(command) = self.initial_presentation_command.take() else {
+            self.fail_fresh_initial_presentation(cx);
+            return;
+        };
+        self.initial_presentation_retry = InitialPresentationRetryState::default();
+        self.platform_command_sink.enqueue(command);
+    }
+
+    fn fresh_initial_presentation_is_pending(&self) -> bool {
+        self.initial_presentation_retry.minimum_generation.is_some()
+    }
+
+    fn fresh_initial_presentation_frame_is_required(&self) -> bool {
+        let Some(minimum_generation) = self.initial_presentation_retry.minimum_generation else {
+            return false;
+        };
+        let generation = self.rendered_frame.generation;
+        if self.presentation_state.frame_accepted_generation != Some(generation)
+            || generation < minimum_generation
+            || self.renderer_repaint_is_pending()
+        {
+            return true;
+        }
+
+        self.presentation_state
+            .latest_present_attempt
+            .filter(|attempt| attempt.generation == generation)
+            .is_some_and(|attempt| match attempt.outcome {
+                PlatformWindowPresentOutcome::Deferred => false,
+                PlatformWindowPresentOutcome::Submitted => {
+                    self.presentation_state.non_empty_presented_generation != Some(generation)
+                }
+                PlatformWindowPresentOutcome::RepaintRequired
+                | PlatformWindowPresentOutcome::Rejected => true,
+            })
+    }
+
+    fn fresh_initial_presentation_attempts_exhausted(&self) -> bool {
+        self.fresh_initial_presentation_is_pending()
+            && self.initial_presentation_retry.attempts_started
+                >= FRESH_INITIAL_PRESENTATION_ATTEMPT_LIMIT
+    }
+
+    fn begin_initial_presentation_retry(&mut self, cx: &mut App) -> bool {
+        let generation = self.rendered_frame.generation;
+        if self
+            .initial_presentation_retry
+            .presentation_retry_generation
+            != Some(generation)
+        {
+            self.initial_presentation_retry
+                .presentation_retry_generation = Some(generation);
+            self.initial_presentation_retry.presentation_retries_started = 0;
+        }
+        if self.initial_presentation_retries_exhausted() {
+            self.fail_fresh_initial_presentation(cx);
+            return false;
+        }
+        self.initial_presentation_retry.presentation_retries_started += 1;
+        true
+    }
+
+    fn initial_presentation_retries_exhausted(&self) -> bool {
+        self.initial_presentation_retry
+            .presentation_retry_generation
+            == Some(self.rendered_frame.generation)
+            && self.initial_presentation_retry.presentation_retries_started
+                >= INITIAL_PRESENTATION_RETRY_LIMIT
+    }
+
+    fn fresh_initial_presentation_is_deferred_retry(&self) -> bool {
+        let generation = self.rendered_frame.generation;
+        self.presentation_state
+            .latest_present_attempt
+            .is_some_and(|attempt| {
+                attempt.generation == generation
+                    && attempt.outcome == PlatformWindowPresentOutcome::Deferred
+            })
+    }
+
+    fn fail_fresh_initial_presentation(&mut self, cx: &mut App) {
+        if !self.fresh_initial_presentation_is_pending() {
+            return;
+        }
+        let attempts = self.initial_presentation_retry.attempts_started;
+        let presentation_retries = self.initial_presentation_retry.presentation_retries_started;
+        let minimum_generation = self.initial_presentation_retry.minimum_generation;
+        self.initial_presentation_retry = InitialPresentationRetryState::default();
+        self.initial_presentation_command.take();
+        log::error!(
+            target: "open_gpui::presentation",
+            "closing a hidden window after {attempts} fresh initial-presentation attempts and {presentation_retries} same-generation retries could not reach required generation {minimum_generation:?}"
+        );
+        let failure_notification = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.initial_presentation_failed(cx)
+        }));
+        let removal =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.remove_window(cx)));
+        finish_after_window_cleanup(
+            failure_notification,
+            removal,
+            "fresh initial-presentation failure",
+        );
+    }
+
     pub(crate) fn take_initial_presentation_command(
         &mut self,
     ) -> Option<(PlatformWindowCommandSink, PlatformWindowCommand)> {
+        if self.fresh_initial_presentation_is_pending() {
+            return None;
+        }
         self.initial_presentation_command
             .take()
             .map(|command| (self.platform_command_sink.clone(), command))
@@ -2935,6 +3451,13 @@ impl Window {
     #[cfg(test)]
     pub(crate) fn refresh_pending_for_test(&self) -> bool {
         self.invalidator.is_dirty()
+    }
+
+    /// Replaces the window atlas for deterministic candidate-frame tests.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn set_sprite_atlas_for_test(&mut self, atlas: Arc<dyn PlatformAtlas>) {
+        self.sprite_atlas = atlas;
     }
 
     /// Runs an element subtree while bypassing cached-view journal reuse when requested.
@@ -3262,6 +3785,7 @@ impl Window {
             target_generation: 0,
             callback,
         };
+        self.record_candidate_focus_completion(&completion);
         let _ = self.focus_impl(handle, Some(completion), None, cx);
         subscription
     }
@@ -3295,6 +3819,7 @@ impl Window {
             target_generation: 0,
             callback,
         };
+        self.record_candidate_focus_completion(&completion);
         let _ = self.focus_impl(handle, Some(completion), Some(fence), cx);
         subscription
     }
@@ -3332,13 +3857,18 @@ impl Window {
         self.pending_blur_claim_generation = None;
 
         if self.frame_focus_authority_sealed {
-            let already_committed = self.focus == Some(handle.id)
-                && self.next_frame.focus == Some(handle.id)
-                && self
-                    .next_frame
-                    .dispatch_tree
-                    .valid_focusable_node_id(handle.id)
-                    .is_some();
+            let (accepted_generation, already_committed) = {
+                let accepted_frame = self.sealed_focus_authority_frame();
+                (
+                    accepted_frame.generation,
+                    self.focus == Some(handle.id)
+                        && accepted_frame.focus == Some(handle.id)
+                        && accepted_frame
+                            .dispatch_tree
+                            .valid_focusable_node_id(handle.id)
+                            .is_some(),
+                )
+            };
             if already_committed {
                 if let Some(completion) = completion {
                     self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Committed);
@@ -3351,7 +3881,7 @@ impl Window {
                 target: handle.id,
                 fence,
             });
-            let target_generation = self.next_frame.generation.saturating_add(1);
+            let target_generation = accepted_generation.saturating_add(1);
             self.pending_focus_claim = Some(PendingFocusClaim {
                 target: handle.id,
                 target_generation,
@@ -3420,11 +3950,30 @@ impl Window {
         }
     }
 
+    fn record_candidate_focus_completion(&mut self, completion: &PendingFocusCompletion) {
+        if let Some(candidate_frame) = self.candidate_frame_transaction.as_mut() {
+            candidate_frame.record_focus_completion(completion.id);
+        }
+    }
+
     fn focus_mutations_enabled(&self) -> bool {
         self.focus_enabled
             && self.provisional_session_accepts_interaction()
             && self.subtree_presentation().is_interactive()
             && self.prepaint_commit_phase.get() != Some(PrepaintCommitPhase::FocusStable)
+    }
+
+    fn sealed_focus_authority_frame(&self) -> &Frame {
+        debug_assert!(self.frame_focus_authority_sealed);
+        let candidate_frame = self
+            .candidate_frame_transaction
+            .as_ref()
+            .expect("sealed focus authority must belong to one candidate frame transaction");
+        if candidate_frame.is_accepted() {
+            &self.rendered_frame
+        } else {
+            &self.next_frame
+        }
     }
 
     fn queue_focus_claim_resolution(
@@ -3521,7 +4070,12 @@ impl Window {
             .map(|pending| pending.fence)
     }
 
-    fn defer_pending_input_changed(&self, cx: &mut App) {
+    fn defer_pending_input_changed(&mut self, cx: &mut App) {
+        if self.invalidator.is_building_frame() {
+            self.candidate_pending_input_notification = true;
+            return;
+        }
+
         // Avoid re-entrant entity updates by deferring observer notifications to the end of the
         // current effect cycle, and only for this window.
         let window_handle = self.handle;
@@ -3599,16 +4153,16 @@ impl Window {
         }
     }
 
-    fn discard_resolved_candidate_focus_claim(&mut self) {
+    fn discard_resolved_candidate_focus_claim(&mut self, accepted_generation: u64) {
         if self
             .pending_focus_claim
-            .is_some_and(|claim| claim.target_generation <= self.next_frame.generation)
+            .is_some_and(|claim| claim.target_generation <= accepted_generation)
         {
             self.pending_focus_claim = None;
         }
         if self
             .pending_blur_claim_generation
-            .is_some_and(|generation| generation <= self.next_frame.generation)
+            .is_some_and(|generation| generation <= accepted_generation)
         {
             self.pending_blur_claim_generation = None;
         }
@@ -3730,6 +4284,7 @@ impl Window {
             target_generation: 0,
             callback,
         };
+        self.record_candidate_focus_completion(&completion);
         let _ = self.blur_impl(Some(completion));
         self.schedule_focus_claim_resolution_dispatch(cx);
         subscription
@@ -3759,7 +4314,13 @@ impl Window {
         self.pending_focus_reveal_fence = None;
         self.pending_blur_claim_generation = None;
         if self.frame_focus_authority_sealed {
-            let already_committed = self.focus.is_none() && self.next_frame.focus.is_none();
+            let (accepted_generation, already_committed) = {
+                let accepted_frame = self.sealed_focus_authority_frame();
+                (
+                    accepted_frame.generation,
+                    self.focus.is_none() && accepted_frame.focus.is_none(),
+                )
+            };
             if already_committed {
                 if let Some(completion) = completion {
                     self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Committed);
@@ -3767,7 +4328,7 @@ impl Window {
                 self.reconcile_focus_followup_refresh();
                 return true;
             }
-            let target_generation = self.next_frame.generation.saturating_add(1);
+            let target_generation = accepted_generation.saturating_add(1);
             self.pending_blur_claim_generation = Some(target_generation);
             if let Some(mut completion) = completion {
                 completion.target_generation = target_generation;
@@ -4919,6 +5480,23 @@ impl Window {
         self.scale_factor
     }
 
+    /// Returns the debug selectors and bounds from the most recently committed frame.
+    ///
+    /// This is test-only inspection data. Production code must not use debug selectors as
+    /// interaction or layout authority.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn committed_debug_bounds_for_test(&self) -> Vec<(String, Bounds<Pixels>)> {
+        let mut bounds = self
+            .rendered_frame
+            .debug_bounds
+            .iter()
+            .map(|(selector, bounds)| (selector.clone(), *bounds))
+            .collect::<Vec<_>>();
+        bounds.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        bounds
+    }
+
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
@@ -5120,14 +5698,29 @@ impl Window {
         request_frame_options: RequestFrameOptions,
         cx: &mut App,
     ) {
-        let min_frame_interval = FrameThrottleFacts {
-            force_render: request_frame_options.force_render,
-            require_presentation: request_frame_options.require_presentation,
-            has_next_frame_callbacks: !self.next_frame_callbacks.borrow().is_empty(),
-            active: self.active.get(),
-            thermal_state: Some(cx.thermal_state()),
-        }
-        .min_frame_interval();
+        let renderer_repaint_pending = self.renderer_repaint_is_pending();
+        let initial_presentation_pending = self.fresh_initial_presentation_is_pending();
+        let fresh_frame_required =
+            self.fresh_initial_presentation_frame_is_required() || renderer_repaint_pending;
+        // A force hint can outlive the recovery draw it requested. Once a suitable fresh scene is
+        // already accepted, presenting that scene takes precedence over producing another one.
+        let force_render = fresh_frame_required
+            || (request_frame_options.force_render
+                && !(initial_presentation_pending && !fresh_frame_required));
+        let min_frame_interval = if initial_presentation_pending || renderer_repaint_pending {
+            // Recovery authority must survive inactive and thermal throttling. A hidden window has
+            // no ordinary frame pump, while an invalidated scene must never be submitted again.
+            None
+        } else {
+            FrameThrottleFacts {
+                force_render,
+                require_presentation: request_frame_options.require_presentation,
+                has_next_frame_callbacks: !self.next_frame_callbacks.borrow().is_empty(),
+                active: self.active.get(),
+                thermal_state: Some(cx.thermal_state()),
+            }
+            .min_frame_interval()
+        };
         let now = Instant::now();
         if frame_should_wait(now, self.last_frame_time.get(), min_frame_interval) {
             self.complete_frame();
@@ -5152,20 +5745,192 @@ impl Window {
         }
         .needs_present();
 
-        if self.invalidator.is_dirty() || request_frame_options.force_render {
+        if self.invalidator.is_dirty() || force_render {
             measure("frame duration", || {
-                if request_frame_options.force_render {
+                if force_render {
                     self.refresh();
                 }
+                let accepted_generation = self.presentation_state.frame_accepted_generation;
                 let arena_clear_needed = self.draw(cx);
-                self.present();
+                if self.presentation_state.frame_accepted_generation != accepted_generation {
+                    self.present();
+                }
                 arena_clear_needed.clear();
             })
         } else if needs_present {
+            if self.fresh_initial_presentation_is_pending()
+                && !self.fresh_initial_presentation_frame_is_required()
+                && self.fresh_initial_presentation_is_deferred_retry()
+                && !self.begin_initial_presentation_retry(cx)
+            {
+                self.complete_frame();
+                return;
+            }
             self.present();
         }
 
+        if !self.presentation_is_allowed() {
+            self.complete_frame();
+            return;
+        }
+        self.finish_fresh_initial_presentation_if_ready(cx);
+        if self.fresh_initial_presentation_is_pending() {
+            if self.fresh_initial_presentation_frame_is_required() {
+                if self.fresh_initial_presentation_attempts_exhausted() {
+                    self.fail_fresh_initial_presentation(cx);
+                } else {
+                    self.request_fresh_initial_presentation_frame();
+                }
+            } else if self.initial_presentation_retries_exhausted() {
+                self.fail_fresh_initial_presentation(cx);
+            } else {
+                self.request_initial_presentation_retry();
+            }
+        } else if self.renderer_repaint_is_pending() && self.presentation_is_allowed() {
+            self.request_renderer_repaint_frame();
+        }
+
         self.complete_frame();
+    }
+
+    fn candidate_frame_authority_checkpoint(&self) -> CandidateFrameAuthorityCheckpoint {
+        CandidateFrameAuthorityCheckpoint {
+            focus: self.focus,
+            pending_focus_claim: self.pending_focus_claim,
+            pending_focus_reveal_fence: self.pending_focus_reveal_fence.clone(),
+            pending_blur_claim_generation: self.pending_blur_claim_generation,
+            provisional_focus_claim: self.provisional_focus_claim,
+            pending_focus_completion: self.pending_focus_completion.clone(),
+            focus_claim_resolutions_len: self.focus_claim_resolutions.len(),
+            focus_claim_revision: self.focus_claim_revision,
+            requested_autoscroll: self.requested_autoscroll.clone(),
+            tooltip_bounds: self.tooltip_bounds.clone(),
+            focus_followup_requested: self.focus_followup_requested,
+        }
+    }
+
+    fn restore_candidate_frame_authority(&mut self, checkpoint: CandidateFrameAuthorityCheckpoint) {
+        self.focus = checkpoint.focus;
+        self.pending_focus_claim = checkpoint.pending_focus_claim;
+        self.pending_focus_reveal_fence = checkpoint.pending_focus_reveal_fence;
+        self.pending_blur_claim_generation = checkpoint.pending_blur_claim_generation;
+        self.provisional_focus_claim = checkpoint.provisional_focus_claim;
+        self.pending_focus_completion = checkpoint.pending_focus_completion;
+        self.focus_claim_resolutions
+            .truncate(checkpoint.focus_claim_resolutions_len);
+        self.focus_claim_revision = checkpoint.focus_claim_revision;
+        self.requested_autoscroll = checkpoint.requested_autoscroll;
+        self.tooltip_bounds = checkpoint.tooltip_bounds;
+        self.focus_followup_requested = checkpoint.focus_followup_requested;
+        self.candidate_pending_input_clear = false;
+        self.candidate_pending_input_notification = false;
+    }
+
+    fn focus_resolutions_for_rejected_candidate(
+        &mut self,
+        candidate: &CandidateFrameTransaction,
+        checkpoint: &CandidateFrameAuthorityCheckpoint,
+    ) -> Vec<FocusClaimResolution> {
+        let candidate_resolutions = self
+            .focus_claim_resolutions
+            .split_off(checkpoint.focus_claim_resolutions_len);
+        let mut terminal_resolutions = candidate_resolutions
+            .into_iter()
+            .filter(|resolution| candidate.owns_focus_completion(resolution.id))
+            .map(|mut resolution| {
+                if resolution.outcome == FocusClaimOutcome::Committed {
+                    resolution.outcome = FocusClaimOutcome::Rejected;
+                }
+                resolution
+            })
+            .collect::<Vec<_>>();
+
+        if self
+            .pending_focus_completion
+            .as_ref()
+            .is_some_and(|completion| candidate.owns_focus_completion(completion.id))
+            && let Some(completion) = self.pending_focus_completion.take()
+        {
+            terminal_resolutions.push(FocusClaimResolution {
+                id: completion.id,
+                outcome: FocusClaimOutcome::Rejected,
+                callback: completion.callback,
+            });
+        }
+
+        terminal_resolutions
+    }
+
+    fn append_focus_claim_resolutions(&mut self, resolutions: Vec<FocusClaimResolution>) {
+        for resolution in resolutions {
+            debug_assert!(
+                self.focus_claim_resolutions
+                    .iter()
+                    .all(|queued| queued.id != resolution.id),
+                "a focus claim must have exactly one terminal result"
+            );
+            self.focus_claim_resolutions.push(resolution);
+        }
+    }
+
+    fn rollback_candidate_frame_transfers(&mut self) {
+        for key in self.candidate_frame_transfers.element_states.drain(..) {
+            let state = self
+                .next_frame
+                .element_states
+                .remove(&key)
+                .expect("candidate element state transfer must remain available for rollback");
+            assert!(
+                self.rendered_frame
+                    .element_states
+                    .insert(key, state)
+                    .is_none(),
+                "candidate element state rollback must restore one vacant committed slot"
+            );
+        }
+
+        for (rendered_index, candidate_index) in
+            self.candidate_frame_transfers.mouse_listeners.drain(..)
+        {
+            let listener = self.next_frame.mouse_listeners[candidate_index]
+                .value
+                .take();
+            assert!(
+                self.rendered_frame.mouse_listeners[rendered_index]
+                    .value
+                    .is_none(),
+                "candidate mouse-listener rollback must restore one vacant committed slot"
+            );
+            self.rendered_frame.mouse_listeners[rendered_index].value = listener;
+        }
+
+        for (rendered_index, candidate_index) in
+            self.candidate_frame_transfers.input_handlers.drain(..)
+        {
+            let mut handler = self.next_frame.input_handlers[candidate_index].value.take();
+            if let Some(handler) = handler.as_mut() {
+                handler.set_validity(
+                    self.rendered_frame.input_handlers[rendered_index]
+                        .validity
+                        .clone(),
+                );
+            }
+            assert!(
+                self.rendered_frame.input_handlers[rendered_index]
+                    .value
+                    .is_none(),
+                "candidate input-handler rollback must restore one vacant committed slot"
+            );
+            self.rendered_frame.input_handlers[rendered_index].value = handler;
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn accept_visual_test_frame_transfers(&mut self) {
+        // VisualTestContext paints an element directly into `next_frame` and then asks the
+        // platform test window to commit that frame. Those transfers are therefore accepted by
+        // the test harness rather than owned by a later full-window candidate transaction.
+        self.candidate_frame_transfers = CandidateFrameTransfers::default();
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -5176,6 +5941,10 @@ impl Window {
         // This ensures that multiple test Apps have isolated arenas.
         let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
+        if !self.begin_fresh_initial_presentation_attempt(cx) {
+            return ArenaClearNeeded::new(&cx.element_arena);
+        }
+
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -5185,40 +5954,119 @@ impl Window {
         debug_assert!(!self.frame_focus_authority_sealed);
         debug_assert!(!self.focus_followup_requested);
         debug_assert!(self.sealed_focus_retry_rejection.is_none());
+        debug_assert!(self.candidate_frame_transfers.element_states.is_empty());
+        debug_assert!(self.candidate_frame_transfers.mouse_listeners.is_empty());
+        debug_assert!(self.candidate_frame_transfers.input_handlers.is_empty());
+        debug_assert!(self.candidate_frame_transaction.is_none());
+        debug_assert!(self.candidate_atlas_lease_failure.is_none());
+        debug_assert!(!self.candidate_pending_input_clear);
+        debug_assert!(!self.candidate_pending_input_notification);
+        let authority_checkpoint = self.candidate_frame_authority_checkpoint();
+        self.candidate_accessibility_focus = None;
+        self.candidate_atlas_lease_failure = None;
+        self.candidate_pending_input_clear = false;
+        self.candidate_pending_input_notification = false;
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
         self.next_frame.generation = self.rendered_frame.generation.saturating_add(1);
+        self.next_candidate_frame_attempt_id = self
+            .next_candidate_frame_attempt_id
+            .checked_add(1)
+            .expect("candidate-frame attempt identity space exhausted");
+        self.candidate_frame_transaction = Some(CandidateFrameTransaction::new(
+            CandidateFrameAttemptId(self.next_candidate_frame_attempt_id),
+            self.next_frame.generation,
+        ));
         self.promote_pending_blur_claim();
 
         // Restore the previously-used input handler.
         // Place it back into a None slot (left by a previous .take()) so that
         // cached paint_range indices in reuse_paint find the handler at the
         // expected position.
+        let rendered_input_handlers_len = self.rendered_frame.input_handlers.len();
+        let mut restored_input_handler_index = None;
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             let validity = input_handler.validity();
-            if let Some(slot) = self
+            if let Some((index, slot)) = self
                 .rendered_frame
                 .input_handlers
                 .iter_mut()
+                .enumerate()
                 .rev()
-                .find(|output| output.value.is_none())
+                .find(|(_, output)| output.value.is_none())
             {
                 slot.value = Some(input_handler);
                 slot.validity = validity;
+                restored_input_handler_index = Some(index);
             } else {
+                restored_input_handler_index = Some(self.rendered_frame.input_handlers.len());
                 self.rendered_frame
                     .input_handlers
                     .push(FrameOutput::new(Some(input_handler), validity));
             }
         }
-        if !cx.mode.skip_drawing() && self.presentation_is_allowed() {
-            if self.provisional_session_accepts_interaction() {
-                self.draw_roots(cx);
+        let (candidate_a11y_update, candidate_stale_pointer_owner) =
+            if !cx.mode.skip_drawing() && self.presentation_is_allowed() {
+                if self.provisional_session_projects_destination_semantics() {
+                    self.draw_roots(cx)
+                } else {
+                    self.with_subtree_presentation(SubtreePresentation::Inert, |window| {
+                        window.draw_roots(cx)
+                    })
+                }
             } else {
-                self.with_subtree_presentation(SubtreePresentation::Inert, |window| {
-                    window.draw_roots(cx);
-                });
+                (
+                    None,
+                    self.stale_pointer_session_owner_in_candidate_frame(cx)
+                        .map(|owner| (owner, false)),
+                )
+            };
+        if let Some(error) = self.candidate_atlas_lease_failure.take() {
+            let rejected_generation = self.next_frame.generation;
+            let rejected_attempt = self
+                .candidate_frame_transaction
+                .take()
+                .expect("an atlas-rejected candidate must own a frame transaction");
+            debug_assert_eq!(rejected_attempt.frame_generation, rejected_generation);
+            let rejected_focus_resolutions = self
+                .focus_resolutions_for_rejected_candidate(&rejected_attempt, &authority_checkpoint);
+            self.last_atlas_frame_rejection = Some(AtlasFrameRejection {
+                generation: rejected_generation,
+                error,
+            });
+            self.refreshing = false;
+            self.invalidator.set_phase(DrawPhase::None);
+            self.layout_engine.as_mut().unwrap().clear();
+            self.text_system().abort_frame();
+            self.a11y.discard_candidate_frame();
+            self.rollback_candidate_frame_transfers();
+            self.next_frame.clear();
+            self.restore_candidate_frame_authority(authority_checkpoint);
+            self.append_focus_claim_resolutions(rejected_focus_resolutions);
+            self.schedule_focus_claim_resolution_dispatch(cx);
+            self.candidate_accessibility_focus = None;
+            self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
+            if let Some(index) = restored_input_handler_index
+                && let Some(input_handler) = self.rendered_frame.input_handlers[index].value.take()
+            {
+                self.platform_window.set_input_handler(input_handler);
             }
+            self.rendered_frame
+                .input_handlers
+                .truncate(rendered_input_handlers_len);
+            log::error!(
+                target: "open_gpui::atlas",
+                "rejected candidate attempt {:?} for frame generation {rejected_generation} after atlas lease failure: {error}",
+                rejected_attempt.attempt_id
+            );
+            if self.fresh_initial_presentation_attempts_exhausted() {
+                self.fail_fresh_initial_presentation(cx);
+            } else {
+                // The candidate did not commit, so every view rendered for it must remain dirty.
+                self.refreshing = true;
+                self.invalidator.set_dirty(true);
+            }
+            return ArenaClearNeeded::new(&cx.element_arena);
         }
         self.frame_focus_authority_sealed = true;
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
@@ -5226,6 +6074,11 @@ impl Window {
         debug_assert!(self.scroll_ancestry_stack.borrow().is_empty());
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
+        if mem::take(&mut self.candidate_pending_input_clear) {
+            self.pending_input.take();
+        }
+        let notify_pending_input_changed =
+            mem::take(&mut self.candidate_pending_input_notification);
 
         // Keep the frame slots in place because cached paint ranges address them by index.
         let mut rendered_input_handlers = self
@@ -5244,6 +6097,9 @@ impl Window {
         // Painting is complete. Cleanup callbacks may now schedule normal notifications.
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
+        if notify_pending_input_changed {
+            self.defer_pending_input_changed(cx);
+        }
         if let Some(input_handler) = self.select_frame_input_handler_after_composition_cleanup(
             &mut rendered_input_handlers,
             &mut next_input_handlers,
@@ -5254,25 +6110,23 @@ impl Window {
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
-        self.next_frame.finish(&mut self.rendered_frame);
-
-        let stale_capture_owner = self.captured_pointer.and_then(|captured| {
-            self.pointer_capture_hitbox_for_handle_in_frame(captured.handle(), &self.next_frame)
-                .is_none()
-                .then_some(captured.handle())
-        });
-        let stale_drag_owner = cx.active_drag.as_ref().and_then(|drag| {
-            (drag.window_id == self.handle.window_id())
-                .then_some(drag.source)
-                .flatten()
-                .filter(|owner| {
-                    self.pointer_capture_hitbox_for_handle_in_frame(*owner, &self.next_frame)
-                        .is_none()
-                })
-        });
-        if let Some(owner) = stale_capture_owner.or(stale_drag_owner) {
-            self.queue_pointer_session_cancellation(owner, PointerCancelReason::CaptureRevoked, cx);
+        if let Some((owner, refresh_after_drag_removal)) = candidate_stale_pointer_owner {
+            if refresh_after_drag_removal {
+                self.queue_pointer_session_cancellation(
+                    owner,
+                    PointerCancelReason::CaptureRevoked,
+                    cx,
+                );
+            } else {
+                self.queue_candidate_pointer_session_cancellation(
+                    owner,
+                    PointerCancelReason::CaptureRevoked,
+                    cx,
+                );
+            }
         }
+        self.next_frame.finish(&mut self.rendered_frame);
+        self.candidate_frame_transfers = CandidateFrameTransfers::default();
 
         if self.focus.is_some_and(|focus| {
             self.next_frame
@@ -5294,17 +6148,58 @@ impl Window {
         // Settle one-generation focus authority before cached publications replay. A rejected
         // publication may observe that result, but it cannot renew the same request indefinitely.
         self.sealed_focus_retry_rejection = self.settle_focus_claim_for_candidate_generation();
+        let prepaint_commit_plan = self.prepare_candidate_prepaint_commit_plan();
 
-        // Publications must observe the input authority of the frame they publish.
-        self.commit_prepaint(cx);
-        self.sealed_focus_retry_rejection = None;
-        self.discard_resolved_candidate_focus_claim();
+        // Ordinary normal-phase commits may prepare accepted-frame publications and follow-up
+        // focus work, but cross-frame publications remain private until the candidate is swapped.
+        self.commit_prepaint_non_publications(
+            &prepaint_commit_plan,
+            PrepaintCommitPhase::Normal,
+            cx,
+        );
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_committed_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
+        debug_assert_eq!(
+            self.candidate_frame_transaction
+                .as_ref()
+                .expect("an accepted candidate must own a frame transaction")
+                .frame_generation,
+            self.next_frame.generation
+        );
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.candidate_frame_transaction
+            .as_mut()
+            .expect("the swapped candidate must retain its frame transaction")
+            .mark_accepted();
+
+        // Cross-frame publications now observe the frame that is actually visible. Focus-stable
+        // commits remain ordered after every normal commit, including accepted publications.
+        self.commit_prepaint_publications(&prepaint_commit_plan, cx);
+        self.commit_prepaint_non_publications(
+            &prepaint_commit_plan,
+            PrepaintCommitPhase::FocusStable,
+            cx,
+        );
+        self.sealed_focus_retry_rejection = None;
+        let accepted_generation = self.rendered_frame.generation;
+        self.discard_resolved_candidate_focus_claim(accepted_generation);
+        let accepted_candidate = self
+            .candidate_frame_transaction
+            .take()
+            .expect("an accepted candidate must own a frame transaction");
+        debug_assert!(accepted_candidate.is_accepted());
+        debug_assert_eq!(accepted_candidate.frame_generation, accepted_generation);
         self.next_frame.clear();
+        if let Some((tree_update, activation_generation)) = candidate_a11y_update {
+            log::debug!(
+                "Sending a11y tree update: {} nodes",
+                tree_update.nodes.len()
+            );
+            self.a11y.publish(&tree_update, activation_generation);
+            self.platform_window.a11y_tree_update(tree_update);
+        }
         self.frame_focus_authority_sealed = false;
         self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
         self.commit_native_window_control_area(cx);
@@ -5367,7 +6262,6 @@ impl Window {
         }
         self.needs_present.set(true);
         self.presentation_state.frame_accepted_generation = Some(self.rendered_frame.generation);
-
         ArenaClearNeeded::new(&cx.element_arena)
     }
 
@@ -5473,6 +6367,11 @@ impl Window {
     #[profiling::function]
     fn present(&mut self) -> PlatformWindowPresentOutcome {
         let generation = self.rendered_frame.generation;
+        if self.renderer_repaint_is_pending() {
+            self.needs_present.set(false);
+            profiling::finish_frame!();
+            return PlatformWindowPresentOutcome::RepaintRequired;
+        }
         let non_empty = self.rendered_frame.scene.has_primitives();
         let outcome = if self.presentation_is_allowed() {
             self.platform_window.draw(&self.rendered_frame.scene)
@@ -5484,6 +6383,21 @@ impl Window {
             outcome,
             contained_valid_primitives: non_empty,
         });
+        if outcome == PlatformWindowPresentOutcome::RepaintRequired {
+            let invalidated_generation = self
+                .presentation_state
+                .renderer_invalidated_generation
+                .get_or_insert(generation);
+            *invalidated_generation = (*invalidated_generation).max(generation);
+            self.needs_present.set(false);
+            self.refresh();
+        } else if self
+            .presentation_state
+            .renderer_invalidated_generation
+            .is_some_and(|invalidated_generation| generation > invalidated_generation)
+        {
+            self.presentation_state.renderer_invalidated_generation = None;
+        }
         if outcome == PlatformWindowPresentOutcome::Submitted {
             self.presentation_state.present_submitted_generation = Some(generation);
             if non_empty {
@@ -5517,7 +6431,7 @@ impl Window {
                 }
             }
             self.needs_present.set(false);
-        } else {
+        } else if outcome != PlatformWindowPresentOutcome::RepaintRequired {
             self.needs_present.set(true);
         }
         #[cfg(feature = "input-latency-histogram")]
@@ -5534,7 +6448,13 @@ impl Window {
         self.input_latency_tracker.snapshot()
     }
 
-    fn draw_roots(&mut self, cx: &mut App) {
+    fn draw_roots(
+        &mut self,
+        cx: &mut App,
+    ) -> (
+        Option<(accesskit::TreeUpdate, u64)>,
+        Option<(PointerCaptureHandle, bool)>,
+    ) {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
@@ -5578,27 +6498,15 @@ impl Window {
             self.prompt = Some(prompt);
         }
 
-        let stale_drag_owner = cx.active_drag.as_ref().and_then(|drag| {
-            (drag.window_id == self.handle.window_id())
-                .then_some(drag.source)
-                .flatten()
-                .filter(|owner| {
-                    self.pointer_capture_hitbox_for_handle_in_frame(*owner, &self.next_frame)
-                        .is_none()
-                })
-        });
-        if let Some(owner) = stale_drag_owner {
-            self.queue_pointer_session_cancellation(owner, PointerCancelReason::CaptureRevoked, cx);
-        }
+        let stale_pointer_owner = self.stale_pointer_session_owner_in_candidate_frame(cx);
 
         let mut active_drag_element = None;
         let mut tooltip_element = None;
-        if prompt_element.is_none()
-            && cx
-                .active_drag
-                .as_ref()
-                .is_some_and(|drag| drag.window_id == self.handle.window_id())
-        {
+        let window_owns_active_drag = cx
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.window_id == self.handle.window_id());
+        if prompt_element.is_none() && window_owns_active_drag && stale_pointer_owner.is_none() {
             let active_drag = cx
                 .active_drag
                 .take()
@@ -5608,7 +6516,7 @@ impl Window {
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
             cx.active_drag = Some(active_drag);
-        } else if prompt_element.is_none() {
+        } else if prompt_element.is_none() && !window_owns_active_drag {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
@@ -5626,9 +6534,11 @@ impl Window {
 
         self.paint_deferred_draws(cx);
 
+        let mut active_drag_preview_painted = false;
         if let Some(mut prompt_element) = prompt_element {
             prompt_element.paint(self, cx);
         } else if let Some(mut drag_element) = active_drag_element {
+            active_drag_preview_painted = true;
             drag_element.paint(self, cx);
         } else if let Some(mut tooltip) = tooltip_element
             && tooltip
@@ -5650,7 +6560,13 @@ impl Window {
         // after those late validity results are known, then resolve accessibility from the same
         // final authority.
         self.resolve_provisional_focus_claim(cx);
-        self.a11y.resolve_focus(self.focus);
+        self.a11y
+            .resolve_focus(self.candidate_accessibility_focus.or(self.focus));
+
+        let stale_pointer_owner = stale_pointer_owner.map(|owner| (owner, false)).or_else(|| {
+            self.stale_pointer_session_owner_in_candidate_frame(cx)
+                .map(|owner| (owner, active_drag_preview_painted))
+        });
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
@@ -5663,32 +6579,80 @@ impl Window {
             && a11y_active_end_of_frame
             && a11y_generation_start_of_frame == a11y_generation_end_of_frame;
 
-        if a11y_active_start_of_frame {
+        let a11y_update = if a11y_active_start_of_frame {
             // clear the builder state regardless
             let tree_update = self.a11y.end_frame();
 
             if should_send_a11y_update {
-                log::debug!(
-                    "Sending a11y tree update: {} nodes",
-                    tree_update.nodes.len()
-                );
-                self.a11y
-                    .publish(&tree_update, a11y_generation_start_of_frame);
-                self.platform_window.a11y_tree_update(tree_update);
+                Some((tree_update, a11y_generation_start_of_frame))
+            } else {
+                self.a11y.discard_candidate_frame();
+                None
             }
+        } else {
+            None
+        };
+        (a11y_update, stale_pointer_owner)
+    }
+
+    fn stale_pointer_session_owner_in_candidate_frame(
+        &self,
+        cx: &App,
+    ) -> Option<PointerCaptureHandle> {
+        let stale_capture_owner = self.captured_pointer.and_then(|captured| {
+            self.pointer_capture_hitbox_for_handle_in_frame(captured.handle(), &self.next_frame)
+                .is_none()
+                .then_some(captured.handle())
+        });
+        let stale_drag_owner = cx.active_drag.as_ref().and_then(|drag| {
+            (drag.window_id == self.handle.window_id())
+                .then_some(drag.source)
+                .flatten()
+                .filter(|owner| {
+                    self.pointer_capture_hitbox_for_handle_in_frame(*owner, &self.next_frame)
+                        .is_none()
+                })
+        });
+        stale_capture_owner.or(stale_drag_owner)
+    }
+
+    fn prepare_candidate_prepaint_commit_plan(&mut self) -> Rc<CandidatePrepaintCommitPlan> {
+        let current_commits = self.next_frame.prepaint_commits.clone();
+        let previous_commits = self.rendered_frame.prepaint_commits.clone();
+        self.candidate_frame_transaction
+            .as_mut()
+            .expect("one candidate frame transaction must own its prepaint commit plan")
+            .prepare_prepaint_commits(current_commits, previous_commits)
+    }
+
+    fn commit_prepaint_non_publications(
+        &mut self,
+        plan: &CandidatePrepaintCommitPlan,
+        phase: PrepaintCommitPhase,
+        cx: &mut App,
+    ) {
+        for output in &plan.current_commits {
+            if output.value.publication.is_some() || output.value.phase != phase {
+                continue;
+            }
+            self.commit_prepaint_output(output, plan.target_revision, None, phase, cx);
         }
     }
 
-    fn commit_prepaint(&mut self, cx: &mut App) {
-        let target_revision = self.next_frame.generation;
-        let commits = self.next_frame.prepaint_commits.clone();
-        let current_publications = commits
+    fn commit_prepaint_publications(&mut self, plan: &CandidatePrepaintCommitPlan, cx: &mut App) {
+        assert_eq!(
+            self.rendered_frame.generation, plan.target_revision,
+            "accepted publications must be committed against the frame that was just swapped"
+        );
+        let accepted_frame =
+            AcceptedFrameFence::new(self.handle.window_id(), self.rendered_frame.generation);
+        let current_publications = plan
+            .current_commits
             .iter()
             .filter_map(|output| output.value.publication)
             .collect::<FxHashSet<_>>();
-        let previous_commits = self.rendered_frame.prepaint_commits.clone();
         let mut expired_publications = FxHashSet::default();
-        for output in previous_commits {
+        for output in &plan.previous_commits {
             let Some(publication) = output.value.publication else {
                 continue;
             };
@@ -5698,36 +6662,78 @@ impl Window {
             {
                 continue;
             }
-            if let Some(discard) = output.value.discard {
-                self.with_subtree_presentation(SubtreePresentation::Hidden, |window| {
-                    discard(target_revision, window, cx)
-                });
+            if let Some(discard) = output.value.discard.clone() {
+                self.run_prepaint_commit_callback(
+                    discard,
+                    plan.target_revision,
+                    Some(accepted_frame),
+                    PrepaintCommitPhase::Normal,
+                    SubtreePresentation::Hidden,
+                    cx,
+                );
             }
         }
-        for phase in [
-            PrepaintCommitPhase::Normal,
-            PrepaintCommitPhase::FocusStable,
-        ] {
-            for output in &commits {
-                if output.value.phase != phase {
-                    continue;
-                }
-                if output.is_valid() {
-                    let presentation = output.value.presentation;
-                    self.with_prepaint_commit_phase(phase, |window| {
-                        window.with_subtree_presentation(presentation, |window| {
-                            (output.value.commit)(target_revision, window, cx)
-                        })
-                    });
-                } else if let Some(discard) = output.value.discard.clone() {
-                    self.with_prepaint_commit_phase(phase, |window| {
-                        window.with_subtree_presentation(SubtreePresentation::Hidden, |window| {
-                            discard(target_revision, window, cx)
-                        })
-                    });
-                }
+
+        for output in &plan.current_commits {
+            if output.value.publication.is_none() {
+                continue;
             }
+            self.commit_prepaint_output(
+                output,
+                plan.target_revision,
+                Some(accepted_frame),
+                PrepaintCommitPhase::Normal,
+                cx,
+            );
         }
+    }
+
+    fn commit_prepaint_output(
+        &mut self,
+        output: &FrameOutput<PrepaintCommit>,
+        target_revision: u64,
+        accepted_frame: Option<AcceptedFrameFence>,
+        phase: PrepaintCommitPhase,
+        cx: &mut App,
+    ) {
+        let (callback, presentation) = if output.is_valid() {
+            (output.value.commit.clone(), output.value.presentation)
+        } else if let Some(discard) = output.value.discard.clone() {
+            (discard, SubtreePresentation::Hidden)
+        } else {
+            return;
+        };
+        self.run_prepaint_commit_callback(
+            callback,
+            target_revision,
+            accepted_frame,
+            phase,
+            presentation,
+            cx,
+        );
+    }
+
+    fn run_prepaint_commit_callback(
+        &mut self,
+        callback: PrepaintCommitCallback,
+        target_revision: u64,
+        accepted_frame: Option<AcceptedFrameFence>,
+        phase: PrepaintCommitPhase,
+        presentation: SubtreePresentation,
+        cx: &mut App,
+    ) {
+        self.with_prepaint_commit_phase(phase, |window| {
+            window.with_subtree_presentation(presentation, |window| match callback {
+                PrepaintCommitCallback::Revision(callback) => callback(target_revision, window, cx),
+                PrepaintCommitCallback::AcceptedFrame(callback) => callback(
+                    accepted_frame.expect(
+                        "accepted-frame publication callbacks require a committed candidate fence",
+                    ),
+                    window,
+                    cx,
+                ),
+            })
+        });
     }
 
     fn with_prepaint_commit_phase<T>(
@@ -5968,39 +6974,53 @@ impl Window {
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
 
-            let paint_start = self.paint_index();
-            let clip_stack = deferred_draw.clip_stack.clone();
-            let subtree_presentation = deferred_draw.subtree_presentation;
-            if deferred_draw
-                .subtree_geometry_validity
-                .as_ref()
-                .is_some_and(|validity| !validity.is_valid())
-            {
-                // The owning transform scope is layout-only for this frame.
-            } else if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_subtree_presentation(subtree_presentation, |window| {
-                    window.with_resolved_subtree_transform(
-                        deferred_draw.subtree_transform,
-                        deferred_draw.subtree_geometry_validity.clone(),
-                        |window| {
-                            window.with_rendered_view(deferred_draw.current_view, |window| {
-                                window.with_resolved_clip_stack(clip_stack, |window| {
-                                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                                        element.paint(window, cx);
-                                    });
+            self.with_atlas_texture_lease_paint_scope(|window| {
+                let paint_start = window.paint_index();
+                let clip_stack = deferred_draw.clip_stack.clone();
+                let subtree_presentation = deferred_draw.subtree_presentation;
+                let paint_succeeded = if deferred_draw
+                    .subtree_geometry_validity
+                    .as_ref()
+                    .is_some_and(|validity| !validity.is_valid())
+                {
+                    // The owning transform scope is layout-only for this frame.
+                    true
+                } else if let Some(element) = deferred_draw.element.as_mut() {
+                    window.with_subtree_presentation(subtree_presentation, |window| {
+                        window.with_resolved_subtree_transform(
+                            deferred_draw.subtree_transform,
+                            deferred_draw.subtree_geometry_validity.clone(),
+                            |window| {
+                                window.with_rendered_view(deferred_draw.current_view, |window| {
+                                    window.with_resolved_clip_stack(clip_stack, |window| {
+                                        window.with_rem_size(
+                                            Some(deferred_draw.rem_size),
+                                            |window| {
+                                                element.paint(window, cx);
+                                            },
+                                        );
+                                    })
                                 })
-                            })
-                        },
-                    );
-                });
-                if let Some(validity) = deferred_draw.subtree_geometry_validity.as_ref() {
-                    self.record_subtree_geometry_scope_diagnostic(validity);
+                            },
+                        );
+                    });
+                    if let Some(validity) = deferred_draw.subtree_geometry_validity.as_ref() {
+                        window.record_subtree_geometry_scope_diagnostic(validity);
+                    }
+                    true
+                } else {
+                    let replayed = window.reuse_paint(deferred_draw.paint_range.clone());
+                    if !replayed {
+                        let view_id = deferred_draw.current_view;
+                        window.on_next_frame(move |_, cx| cx.notify(view_id));
+                    }
+                    replayed
+                };
+                let paint_end = window.paint_index();
+                if paint_succeeded {
+                    deferred_draw.paint_range = paint_start..paint_end;
                 }
-            } else {
-                self.reuse_paint(deferred_draw.paint_range.clone());
-            }
-            let paint_end = self.paint_index();
-            deferred_draw.paint_range = paint_start..paint_end;
+            });
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
@@ -6119,9 +7139,9 @@ impl Window {
         self.next_frame.tooltip_requests.extend(
             self.rendered_frame.tooltip_requests
                 [range.start.tooltips_index..range.end.tooltips_index]
-                .iter_mut()
+                .iter()
                 .map(|request| {
-                    request.take().map(|mut request| {
+                    request.clone().map(|mut request| {
                         request.validity = SubtreeGeometryValidity::replayed_under(
                             request.validity.as_ref(),
                             validity.clone(),
@@ -6162,7 +7182,7 @@ impl Window {
 
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
-            &mut self.rendered_frame.dispatch_tree,
+            &self.rendered_frame.dispatch_tree,
             self.focus,
             validity.clone(),
         );
@@ -6204,8 +7224,11 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.journal_len(),
+            atlas_texture_lease_entries_index: self.next_frame.atlas_texture_lease_entries.len(),
             atlas_access_diagnostics_index: self.next_frame.atlas_access_diagnostic_entries.len(),
             image_paint_diagnostics_index: self.next_frame.image_paint_diagnostic_entries.len(),
+            retained_visual_publications_index: self.next_frame.retained_visual_publications.len(),
+            retained_visual_replays_index: self.next_frame.retained_visual_replays.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             pointer_cancel_listeners_index: self.next_frame.pointer_cancel_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
@@ -6225,8 +7248,108 @@ impl Window {
         }
     }
 
-    pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+    pub(crate) fn with_atlas_texture_lease_paint_scope<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let entered_depth = {
+            let mut stack = self.atlas_texture_lease_paint_scopes.borrow_mut();
+            let entered_depth = stack.len();
+            stack.push(FxHashSet::default());
+            entered_depth
+        };
+        let _guard = AtlasTextureLeasePaintScopeGuard {
+            stack: self.atlas_texture_lease_paint_scopes.clone(),
+            entered_depth,
+        };
+        f(self)
+    }
+
+    fn record_atlas_texture_lease_entry(&mut self, entry: frame_journal::AtlasTextureLeaseEntry) {
+        let should_record = {
+            let mut scopes = self.atlas_texture_lease_paint_scopes.borrow_mut();
+            let Some(scope) = scopes.last_mut() else {
+                return;
+            };
+            match &entry {
+                Ok(lease) => lease
+                    .texture_instances()
+                    .iter()
+                    .fold(false, |new_dependency, texture| {
+                        scope.insert(*texture) || new_dependency
+                    }),
+                Err(
+                    AtlasTextureLeaseError::TextureUnavailable { texture, .. }
+                    | AtlasTextureLeaseError::LeaseCountOverflow { texture, .. },
+                ) => scope.insert(*texture),
+            }
+        };
+        if should_record {
+            self.next_frame.atlas_texture_lease_entries.push(entry);
+        }
+    }
+
+    pub(crate) fn can_reuse_paint(&self, range: &Range<PaintIndex>) -> bool {
+        self.rendered_frame
+            .atlas_texture_lease_entries
+            .get(
+                range.start.atlas_texture_lease_entries_index
+                    ..range.end.atlas_texture_lease_entries_index,
+            )
+            .is_some_and(|entries| {
+                let mut validated_instances = FxHashSet::default();
+                entries.iter().all(|entry| {
+                    let Ok(lease) = entry else {
+                        return false;
+                    };
+                    let introduces_dependency =
+                        lease
+                            .texture_instances()
+                            .iter()
+                            .fold(false, |new_dependency, texture| {
+                                validated_instances.insert(*texture) || new_dependency
+                            });
+                    !introduces_dependency || lease.validate().is_ok()
+                })
+            })
+    }
+
+    pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) -> bool {
+        if !self.can_reuse_paint(&range) {
+            return false;
+        }
+
+        let retained_visual_replays = self.rendered_frame.retained_visual_replays
+            [range.start.retained_visual_replays_index..range.end.retained_visual_replays_index]
+            .to_vec();
+        let replay_identity_conflicts = {
+            let candidate = self
+                .candidate_frame_transaction
+                .as_ref()
+                .expect("cached paint replay must run inside one candidate frame transaction");
+            let mut range_identities = FxHashSet::default();
+            retained_visual_replays.iter().any(|identity| {
+                !range_identities.insert(*identity)
+                    || candidate.retained_visual_was_replayed(*identity)
+            })
+        };
+        if replay_identity_conflicts {
+            return false;
+        }
+
         let validity = self.subtree_geometry_validity();
+        let atlas_texture_lease_entries = self.rendered_frame.atlas_texture_lease_entries[range
+            .start
+            .atlas_texture_lease_entries_index
+            ..range.end.atlas_texture_lease_entries_index]
+            .to_vec();
+        let retained_visual_publications = self.rendered_frame.retained_visual_publications[range
+            .start
+            .retained_visual_publications_index
+            ..range.end.retained_visual_publications_index]
+            .iter()
+            .map(|publication| publication.replayed_under(validity.clone()))
+            .collect::<Vec<_>>();
         let window_control_start = self.next_frame.window_control_hitboxes.len();
         self.next_frame.window_control_hitboxes.extend(
             self.rendered_frame.window_control_hitboxes[range.start.window_control_hitboxes_index
@@ -6285,40 +7408,55 @@ impl Window {
                     request
                 }),
         );
-        self.next_frame.input_handlers.extend(
-            self.rendered_frame.input_handlers
-                [range.start.input_handlers_index..range.end.input_handlers_index]
-                .iter_mut()
-                .map(|output| {
-                    let mut handler = output.value.take();
-                    let replayed_validity = SubtreeGeometryValidity::replayed_under(
+        for rendered_index in range.start.input_handlers_index..range.end.input_handlers_index {
+            let (mut handler, replayed_validity) = {
+                let output = &mut self.rendered_frame.input_handlers[rendered_index];
+                (
+                    output.value.take(),
+                    SubtreeGeometryValidity::replayed_under(
                         output.validity.as_ref(),
                         validity.clone(),
-                    );
-                    if let Some(handler) = handler.as_mut() {
-                        handler.set_validity(replayed_validity.clone());
-                    }
-                    FrameOutput::new(handler, replayed_validity)
-                }),
-        );
-        self.next_frame.mouse_listeners.extend(
-            self.rendered_frame.mouse_listeners
-                [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
-                .iter_mut()
-                .map(|output| {
-                    FrameOutput::new(
-                        output.value.take(),
-                        SubtreeGeometryValidity::replayed_under(
-                            output.validity.as_ref(),
-                            validity.clone(),
-                        ),
-                    )
-                }),
-        );
+                    ),
+                )
+            };
+            if let Some(handler) = handler.as_mut() {
+                handler.set_validity(replayed_validity.clone());
+            }
+            let candidate_index = self.next_frame.input_handlers.len();
+            if handler.is_some() {
+                self.candidate_frame_transfers
+                    .input_handlers
+                    .push((rendered_index, candidate_index));
+            }
+            self.next_frame
+                .input_handlers
+                .push(FrameOutput::new(handler, replayed_validity));
+        }
+        for rendered_index in range.start.mouse_listeners_index..range.end.mouse_listeners_index {
+            let (listener, replayed_validity) = {
+                let output = &mut self.rendered_frame.mouse_listeners[rendered_index];
+                (
+                    output.value.take(),
+                    SubtreeGeometryValidity::replayed_under(
+                        output.validity.as_ref(),
+                        validity.clone(),
+                    ),
+                )
+            };
+            let candidate_index = self.next_frame.mouse_listeners.len();
+            if listener.is_some() {
+                self.candidate_frame_transfers
+                    .mouse_listeners
+                    .push((rendered_index, candidate_index));
+            }
+            self.next_frame
+                .mouse_listeners
+                .push(FrameOutput::new(listener, replayed_validity));
+        }
         self.next_frame.pointer_cancel_listeners.extend(
             self.rendered_frame.pointer_cancel_listeners[range.start.pointer_cancel_listeners_index
                 ..range.end.pointer_cancel_listeners_index]
-                .iter_mut()
+                .iter()
                 .map(|output| {
                     FrameOutput::new(
                         output.value.clone(),
@@ -6401,11 +7539,36 @@ impl Window {
         let replay_result = self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
-            self.subtree_geometry_validity(),
+            validity,
         );
         if let Err(error) = replay_result {
             self.record_subtree_geometry_failure(error);
+        } else {
+            for identity in &retained_visual_replays {
+                self.candidate_frame_transaction
+                    .as_mut()
+                    .expect("cached paint replay must retain its candidate frame transaction")
+                    .record_retained_visual_replay(*identity);
+            }
+            self.next_frame
+                .retained_visual_replays
+                .extend(retained_visual_replays);
+            for entry in atlas_texture_lease_entries {
+                if let Ok(lease) = &entry {
+                    for texture in lease.texture_instances() {
+                        self.next_frame
+                            .atlas_texture_leases_by_instance
+                            .entry(*texture)
+                            .or_insert_with(|| lease.clone());
+                    }
+                }
+                self.record_atlas_texture_lease_entry(entry);
+            }
+            self.next_frame
+                .retained_visual_publications
+                .extend(retained_visual_publications);
         }
+        true
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -6847,6 +8010,9 @@ impl Window {
             self.next_frame
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
+            self.next_frame
+                .subtree_transform_diagnostics
+                .truncate(index.subtree_transform_diagnostics_index);
             self.text_system.truncate_layouts(index.line_layout_index);
             #[cfg(any(test, feature = "test-support"))]
             {
@@ -7390,7 +8556,44 @@ impl Window {
         }
     }
 
-    fn insert_scene_primitive(&mut self, primitive: impl Into<Primitive>) {
+    fn retain_frame_atlas_texture_instance(
+        &mut self,
+        texture: AtlasTextureInstanceId,
+    ) -> Result<Rc<AtlasTextureLease>, AtlasTextureLeaseError> {
+        if let Some(lease) = self
+            .next_frame
+            .atlas_texture_leases_by_instance
+            .get(&texture)
+        {
+            return Ok(lease.clone());
+        }
+
+        let lease = Rc::new(
+            self.sprite_atlas
+                .clone()
+                .retain_texture_instances(&[texture])?,
+        );
+        self.next_frame
+            .atlas_texture_leases_by_instance
+            .insert(texture, lease.clone());
+        Ok(lease)
+    }
+
+    fn insert_scene_primitive(&mut self, primitive: impl Into<Primitive>) -> bool {
+        let primitive = primitive.into();
+        let atlas_texture_lease = match primitive.atlas_texture_instance() {
+            Some(texture) => match self.retain_frame_atlas_texture_instance(texture) {
+                Ok(lease) => Some(Ok(lease)),
+                Err(error) => {
+                    if self.candidate_atlas_lease_failure.is_none() {
+                        self.candidate_atlas_lease_failure = Some(error);
+                    }
+                    self.record_atlas_texture_lease_entry(Err(error));
+                    return false;
+                }
+            },
+            None => None,
+        };
         let clip_stack = self.clip_stack();
         let scale_factor = self.scale_factor();
         if let Err(error) = self.next_frame.scene.insert_primitive_scoped(
@@ -7400,6 +8603,12 @@ impl Window {
             self.subtree_geometry_validity(),
         ) {
             self.record_subtree_geometry_failure(error);
+            false
+        } else if let Some(lease) = atlas_texture_lease {
+            self.record_atlas_texture_lease_entry(lease);
+            true
+        } else {
+            true
         }
     }
 
@@ -7498,12 +8707,17 @@ impl Window {
             .element_state_validities
             .insert(key.clone(), self.subtree_geometry_validity());
 
-        if let Some(any) = self
-            .next_frame
-            .element_states
-            .remove(&key)
-            .or_else(|| self.rendered_frame.element_states.remove(&key))
-        {
+        let candidate_state = self.next_frame.element_states.remove(&key);
+        let state = candidate_state.or_else(|| {
+            let state = self.rendered_frame.element_states.remove(&key);
+            if state.is_some() {
+                self.candidate_frame_transfers
+                    .element_states
+                    .push(key.clone());
+            }
+            state
+        });
+        if let Some(any) = state {
             let ElementStateBox {
                 inner,
                 #[cfg(debug_assertions)]
@@ -8341,7 +9555,7 @@ impl Window {
                 return Ok(());
             }
         };
-        self.insert_scene_primitive(PolychromeSprite {
+        if !self.insert_scene_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
             grayscale,
@@ -8351,7 +9565,9 @@ impl Window {
             tile,
             opacity,
             transform,
-        });
+        }) {
+            return Ok(());
+        }
         let validity = self.subtree_geometry_validity();
         self.next_frame
             .atlas_access_diagnostic_entries
@@ -8461,7 +9677,7 @@ impl Window {
                 phase,
                 publication: None,
                 presentation: self.subtree_presentation(),
-                commit: Rc::new(commit),
+                commit: PrepaintCommitCallback::Revision(Rc::new(commit)),
                 discard: None,
             },
             self.subtree_geometry_validity(),
@@ -8470,32 +9686,35 @@ impl Window {
 
     /// Records a validity-gated, cross-frame publication transaction.
     ///
-    /// The commit callback runs after painting when the current transform stack is valid. The
-    /// discard callback runs instead when painting proves that the recorded subtree geometry is
-    /// invalid. It also runs when a valid publication from the previous frame is absent from the
-    /// current frame, including when an enclosing [`Self::transact`] rolls back or an ancestor
-    /// transform prevents this subtree from prepainting.
+    /// The commit callback runs only after a valid candidate has replaced the window's rendered
+    /// frame and receives an [`AcceptedFrameFence`] proving that acceptance. The discard callback
+    /// receives the same proof after an accepted frame establishes that the recorded subtree
+    /// geometry is invalid. It also runs when a valid publication from the previous accepted frame
+    /// is absent from the newly accepted frame, including when an enclosing [`Self::transact`]
+    /// rolls back or an ancestor transform prevents this subtree from prepainting. A candidate
+    /// rejected before the frame swap produces no fence, runs neither callback, and preserves the
+    /// previously accepted publication.
     ///
     /// Use one stable [`PrepaintPublicationId`] for each logical publication and record it at most
     /// once per frame. Cached subtrees retain both the ID and callbacks in their frame journal.
     /// Valid commits run under their captured presentation state. Discards run suppressed because
-    /// their producer has no interactive authority in the committed frame.
+    /// their producer has no interactive authority in the committed frame. Use this transaction,
+    /// rather than [`Self::record_prepaint_window_commit`], for state whose public meaning must
+    /// always agree with the currently rendered frame.
     pub fn record_prepaint_window_transaction(
         &mut self,
         publication: PrepaintPublicationId,
-        commit: impl Fn(u64, &mut Window, &mut App) + 'static,
-        discard: impl Fn(u64, &mut Window, &mut App) + 'static,
+        commit: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
+        discard: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_prepaint();
-        let commit: Rc<dyn Fn(u64, &mut Window, &mut App)> = Rc::new(commit);
-        let discard: Rc<dyn Fn(u64, &mut Window, &mut App)> = Rc::new(discard);
         self.next_frame.prepaint_commits.push(FrameOutput::new(
             PrepaintCommit {
                 phase: PrepaintCommitPhase::Normal,
                 publication: Some(publication),
                 presentation: self.subtree_presentation(),
-                commit,
-                discard: Some(discard),
+                commit: PrepaintCommitCallback::AcceptedFrame(Rc::new(commit)),
+                discard: Some(PrepaintCommitCallback::AcceptedFrame(Rc::new(discard))),
             },
             self.subtree_geometry_validity(),
         ));
@@ -8512,7 +9731,7 @@ impl Window {
                 phase: PrepaintCommitPhase::Normal,
                 publication: None,
                 presentation: self.subtree_presentation(),
-                commit: Rc::new(commit),
+                commit: PrepaintCommitCallback::Revision(Rc::new(commit)),
                 discard: None,
             },
             intent.validity,
@@ -8675,6 +9894,16 @@ impl Window {
         self.next_frame.generation
     }
 
+    pub(crate) fn preparing_frame_attempt_id(&self) -> u64 {
+        self.candidate_frame_transaction
+            .as_ref()
+            .expect(
+                "frame-attempt identity is available only while building or committing a candidate",
+            )
+            .attempt_id
+            .0
+    }
+
     pub(super) fn current_interaction_frame(&self) -> &Frame {
         if self.next_frame.generation > self.rendered_frame.generation {
             &self.next_frame
@@ -8764,6 +9993,24 @@ impl Window {
         self.promote_pending_focus_claim();
         if focus_handle.is_focused(self) {
             self.next_frame.focus = Some(focus_handle.id);
+        }
+    }
+
+    /// Associates the current accessibility node with tree focus without admitting input.
+    ///
+    /// This is a candidate-frame-only override. It intentionally does not add the focus identity
+    /// to the dispatch tree, bind a reveal target, or mutate GPUI's committed input focus.
+    pub(crate) fn set_accessibility_focus_handle(&mut self, focus_handle: &FocusHandle) {
+        self.invalidator.debug_assert_prepaint();
+        if !self.subtree_presentation().is_interactive() {
+            return;
+        }
+        match self.candidate_accessibility_focus {
+            None => self.candidate_accessibility_focus = Some(focus_handle.id),
+            Some(current) => debug_assert_eq!(
+                current, focus_handle.id,
+                "one candidate frame cannot publish conflicting accessibility-only focus owners"
+            ),
         }
     }
 
@@ -9640,7 +10887,11 @@ impl Window {
     }
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.pending_input.take();
+        if self.invalidator.is_building_frame() {
+            self.candidate_pending_input_clear = true;
+        } else {
+            self.pending_input.take();
+        }
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -11069,6 +12320,1744 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod cached_paint_atlas_tests {
+    use super::*;
+    use crate::{
+        AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureLeaseEpoch, AtlasTile, Empty,
+        ImageSource, PlatformWindowCommandOutcome, StyleRefinement, TestAppContext, TileId, canvas,
+        div, img, red,
+        retained_visual::{
+            self, Invalidation as RetainedVisualInvalidation,
+            ReplayReceipt as RetainedReplayReceipt, SourceId as RetainedVisualSourceId,
+            Ticket as RetainedVisualTicket,
+        },
+    };
+    use image::{Frame, ImageBuffer, Rgba};
+    use parking_lot::Mutex;
+
+    struct EpochAtlas(Mutex<AtlasTextureLeaseEpoch>);
+
+    impl EpochAtlas {
+        fn new() -> Self {
+            Self(Mutex::new(AtlasTextureLeaseEpoch::INITIAL))
+        }
+
+        fn reset(&self) {
+            let mut epoch = self.0.lock();
+            *epoch = epoch.next();
+        }
+    }
+
+    impl PlatformAtlas for EpochAtlas {
+        fn get_or_insert_with<'a>(
+            &self,
+            _key: &AtlasKey,
+            _build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+        ) -> Result<Option<crate::AtlasTile>> {
+            Ok(None)
+        }
+
+        fn remove(&self, _key: &AtlasKey) {}
+
+        fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch {
+            *self.0.lock()
+        }
+
+        unsafe fn acquire_atlas_texture_leases(
+            &self,
+            _textures: &[AtlasTextureInstanceId],
+        ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError> {
+            Ok(*self.0.lock())
+        }
+
+        unsafe fn release_atlas_texture_leases(
+            &self,
+            _epoch: AtlasTextureLeaseEpoch,
+            _textures: &[AtlasTextureInstanceId],
+        ) {
+        }
+    }
+
+    struct CachedImageChild {
+        image: Arc<RenderImage>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for CachedImageChild {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            img(ImageSource::Render(self.image.clone()))
+        }
+    }
+
+    struct CachedImageRoot {
+        child: Entity<CachedImageChild>,
+    }
+
+    impl Render for CachedImageRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            AnyView::from(self.child.clone()).cached(StyleRefinement::default().size_full())
+        }
+    }
+
+    struct RepeatedAtlasPrimitiveChild {
+        tile: AtlasTile,
+        primitive_count: u32,
+    }
+
+    impl Render for RepeatedAtlasPrimitiveChild {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let tile = self.tile;
+            let primitive_count = self.primitive_count;
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let bounds = window.device_local_bounds(bounds);
+                    for order in 0..primitive_count {
+                        assert!(window.insert_scene_primitive(MonochromeSprite {
+                            order,
+                            pad: 0,
+                            bounds,
+                            clip: Default::default(),
+                            color: red(),
+                            tile,
+                            transform: PrimitiveTransform::IDENTITY,
+                        }));
+                    }
+                },
+            )
+            .size_full()
+        }
+    }
+
+    struct RepeatedAtlasPrimitiveRoot {
+        child: Entity<RepeatedAtlasPrimitiveChild>,
+    }
+
+    impl Render for RepeatedAtlasPrimitiveRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            AnyView::from(self.child.clone()).cached(StyleRefinement::default().size_full())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum RetainedReplayAtlasMode {
+        Source,
+        Replay(RetainedVisualTicket),
+    }
+
+    struct RetainedReplayAtlasRoot {
+        mode: RetainedReplayAtlasMode,
+        source_id: RetainedVisualSourceId,
+        source_tile: AtlasTile,
+        candidate_tile: AtlasTile,
+        replay_outcomes: Rc<
+            RefCell<Vec<std::result::Result<RetainedReplayReceipt, RetainedVisualInvalidation>>>,
+        >,
+        prior_receipt_matches_candidate: Rc<RefCell<Vec<bool>>>,
+    }
+
+    impl Render for RetainedReplayAtlasRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            match self.mode {
+                RetainedReplayAtlasMode::Source => {
+                    let tile = self.source_tile;
+                    retained_visual::source(
+                        self.source_id.clone(),
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, _| {
+                                let bounds = window.device_local_bounds(bounds);
+                                assert!(window.insert_scene_primitive(MonochromeSprite {
+                                    order: 0,
+                                    pad: 0,
+                                    bounds,
+                                    clip: Default::default(),
+                                    color: red(),
+                                    tile,
+                                    transform: PrimitiveTransform::IDENTITY,
+                                }));
+                            },
+                        )
+                        .size_full(),
+                    )
+                    .into_any_element()
+                }
+                RetainedReplayAtlasMode::Replay(ticket) => {
+                    let candidate_tile = self.candidate_tile;
+                    let replay_outcomes = self.replay_outcomes.clone();
+                    let prior_receipt_matches_candidate =
+                        self.prior_receipt_matches_candidate.clone();
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            let prior_receipt = replay_outcomes
+                                .borrow()
+                                .iter()
+                                .rev()
+                                .find_map(|outcome| outcome.as_ref().ok().copied());
+                            if let Some(prior_receipt) = prior_receipt {
+                                prior_receipt_matches_candidate
+                                    .borrow_mut()
+                                    .push(prior_receipt.matches_candidate(window));
+                            }
+                            replay_outcomes
+                                .borrow_mut()
+                                .push(retained_visual::replay(window, &ticket));
+                            let bounds = window.device_local_bounds(bounds);
+                            let _ = window.insert_scene_primitive(PolychromeSprite {
+                                order: 1,
+                                pad: 0,
+                                grayscale: false,
+                                opacity: 1.0,
+                                bounds,
+                                clip: Default::default(),
+                                corner_radii: Default::default(),
+                                tile: candidate_tile,
+                                transform: PrimitiveTransform::IDENTITY,
+                            });
+                        },
+                    )
+                    .size_full()
+                    .into_any_element()
+                }
+            }
+        }
+    }
+
+    struct CachedRetainedReplayChild {
+        ticket: RetainedVisualTicket,
+        renders: Rc<Cell<usize>>,
+        outcomes: Rc<
+            RefCell<Vec<std::result::Result<RetainedReplayReceipt, RetainedVisualInvalidation>>>,
+        >,
+    }
+
+    impl Render for CachedRetainedReplayChild {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let ticket = self.ticket;
+            let outcomes = self.outcomes.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    outcomes
+                        .borrow_mut()
+                        .push(retained_visual::replay(window, &ticket));
+                },
+            )
+            .size_full()
+        }
+    }
+
+    struct CachedRetainedReplayRoot {
+        source_id: RetainedVisualSourceId,
+        source_tile: AtlasTile,
+        cached_child: Option<Entity<CachedRetainedReplayChild>>,
+        direct_ticket: Option<RetainedVisualTicket>,
+        direct_outcomes: Rc<
+            RefCell<Vec<std::result::Result<RetainedReplayReceipt, RetainedVisualInvalidation>>>,
+        >,
+    }
+
+    impl Render for CachedRetainedReplayRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let Some(cached_child) = self.cached_child.as_ref() else {
+                let tile = self.source_tile;
+                return retained_visual::source(
+                    self.source_id.clone(),
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            let bounds = window.device_local_bounds(bounds);
+                            assert!(window.insert_scene_primitive(MonochromeSprite {
+                                order: 0,
+                                pad: 0,
+                                bounds,
+                                clip: Default::default(),
+                                color: red(),
+                                tile,
+                                transform: PrimitiveTransform::IDENTITY,
+                            }));
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element();
+            };
+
+            let direct_ticket = self.direct_ticket;
+            let direct_outcomes = self.direct_outcomes.clone();
+            div()
+                .size_full()
+                .child(
+                    AnyView::from(cached_child.clone())
+                        .cached(StyleRefinement::default().size_full()),
+                )
+                .when_some(direct_ticket, |this, ticket| {
+                    this.child(
+                        canvas(
+                            |_, _, _| {},
+                            move |_, _, window, _| {
+                                direct_outcomes
+                                    .borrow_mut()
+                                    .push(retained_visual::replay(window, &ticket));
+                            },
+                        )
+                        .size_full(),
+                    )
+                })
+                .into_any_element()
+        }
+    }
+
+    struct CandidateFocusCompletionRoot {
+        focus: FocusHandle,
+        tile: AtlasTile,
+        remaining_requests: Rc<Cell<usize>>,
+        next_request_id: Rc<Cell<usize>>,
+        outcomes: Rc<RefCell<Vec<(usize, FocusClaimOutcome)>>>,
+        subscriptions: Rc<RefCell<Vec<Subscription>>>,
+    }
+
+    impl Render for CandidateFocusCompletionRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let focus = self.focus.clone();
+            let completion_focus = focus.clone();
+            let remaining_requests = self.remaining_requests.clone();
+            let next_request_id = self.next_request_id.clone();
+            let outcomes = self.outcomes.clone();
+            let subscriptions = self.subscriptions.clone();
+            let tile = self.tile;
+
+            div()
+                .child(
+                    div()
+                        .id("candidate-focus-completion-target")
+                        .focusable()
+                        .track_focus(&focus),
+                )
+                .child(
+                    canvas(
+                        move |_, window, cx| {
+                            let remaining = remaining_requests.get();
+                            if remaining == 0 {
+                                return;
+                            }
+                            remaining_requests.set(remaining - 1);
+                            let request_id = next_request_id.get() + 1;
+                            next_request_id.set(request_id);
+                            let outcomes = outcomes.clone();
+                            let subscription = window.focus_with_completion(
+                                &completion_focus,
+                                cx,
+                                move |outcome, _, _| {
+                                    outcomes.borrow_mut().push((request_id, outcome));
+                                },
+                            );
+                            subscriptions.borrow_mut().push(subscription);
+                        },
+                        move |bounds, _, window, _| {
+                            let bounds = window.device_local_bounds(bounds);
+                            let _ = window.insert_scene_primitive(MonochromeSprite {
+                                order: 0,
+                                pad: 0,
+                                bounds,
+                                clip: Default::default(),
+                                color: red(),
+                                tile,
+                                transform: PrimitiveTransform::IDENTITY,
+                            });
+                        },
+                    )
+                    .size_full(),
+                )
+        }
+    }
+
+    struct RejectOnceAtlasState {
+        fail_next_lease: bool,
+        lease_attempts: usize,
+    }
+
+    struct RejectOnceAtlas(Mutex<RejectOnceAtlasState>);
+
+    impl RejectOnceAtlas {
+        fn new() -> Self {
+            Self(Mutex::new(RejectOnceAtlasState {
+                fail_next_lease: false,
+                lease_attempts: 0,
+            }))
+        }
+
+        fn fail_next_lease(&self) {
+            self.0.lock().fail_next_lease = true;
+        }
+
+        fn lease_attempts(&self) -> usize {
+            self.0.lock().lease_attempts
+        }
+
+        fn tile(kind: AtlasTextureKind) -> AtlasTile {
+            AtlasTile {
+                texture_id: AtlasTextureId { index: 1, kind },
+                tile_id: TileId(1),
+                padding: 0,
+                bounds: Bounds::new(Point::default(), size(DevicePixels(1), DevicePixels(1))),
+                texture_generation: 1,
+                texture_generation_padding: 0,
+            }
+        }
+    }
+
+    impl PlatformAtlas for RejectOnceAtlas {
+        fn get_or_insert_with<'a>(
+            &self,
+            key: &AtlasKey,
+            _build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+        ) -> Result<Option<AtlasTile>> {
+            Ok(Some(Self::tile(key.texture_kind())))
+        }
+
+        fn remove(&self, _key: &AtlasKey) {}
+
+        fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch {
+            AtlasTextureLeaseEpoch::INITIAL
+        }
+
+        unsafe fn acquire_atlas_texture_leases(
+            &self,
+            textures: &[AtlasTextureInstanceId],
+        ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError> {
+            let mut state = self.0.lock();
+            state.lease_attempts += 1;
+            if state.fail_next_lease {
+                state.fail_next_lease = false;
+                return Err(AtlasTextureLeaseError::TextureUnavailable {
+                    texture: *textures
+                        .first()
+                        .expect("a sprite lease must name one texture instance"),
+                    epoch: AtlasTextureLeaseEpoch::INITIAL,
+                });
+            }
+            Ok(AtlasTextureLeaseEpoch::INITIAL)
+        }
+
+        unsafe fn release_atlas_texture_leases(
+            &self,
+            _epoch: AtlasTextureLeaseEpoch,
+            _textures: &[AtlasTextureInstanceId],
+        ) {
+        }
+    }
+
+    struct AlwaysRejectAtlas {
+        lease_attempts: Mutex<usize>,
+    }
+
+    impl AlwaysRejectAtlas {
+        fn new() -> Self {
+            Self {
+                lease_attempts: Mutex::new(0),
+            }
+        }
+
+        fn lease_attempts(&self) -> usize {
+            *self.lease_attempts.lock()
+        }
+    }
+
+    impl PlatformAtlas for AlwaysRejectAtlas {
+        fn get_or_insert_with<'a>(
+            &self,
+            key: &AtlasKey,
+            _build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+        ) -> Result<Option<AtlasTile>> {
+            Ok(Some(RejectOnceAtlas::tile(key.texture_kind())))
+        }
+
+        fn remove(&self, _key: &AtlasKey) {}
+
+        fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch {
+            AtlasTextureLeaseEpoch::INITIAL
+        }
+
+        unsafe fn acquire_atlas_texture_leases(
+            &self,
+            textures: &[AtlasTextureInstanceId],
+        ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError> {
+            *self.lease_attempts.lock() += 1;
+            Err(AtlasTextureLeaseError::TextureUnavailable {
+                texture: *textures
+                    .first()
+                    .expect("an image lease must name one texture instance"),
+                epoch: AtlasTextureLeaseEpoch::INITIAL,
+            })
+        }
+
+        unsafe fn release_atlas_texture_leases(
+            &self,
+            _epoch: AtlasTextureLeaseEpoch,
+            _textures: &[AtlasTextureInstanceId],
+        ) {
+        }
+    }
+
+    struct InitialAtlasImageRoot {
+        image: Arc<RenderImage>,
+        _initial_presentation_subscription: Option<Subscription>,
+    }
+
+    impl InitialAtlasImageRoot {
+        fn new(
+            image: Arc<RenderImage>,
+            window: &mut Window,
+            observations: Option<Rc<RefCell<Vec<WindowInitialPresentationStatus>>>>,
+            cx: &mut Context<Self>,
+        ) -> Self {
+            let subscription = observations.map(|observations| {
+                cx.observe_window_initial_presentation(window, move |_, window, _| {
+                    observations
+                        .borrow_mut()
+                        .push(window.presentation_facts().initial_presentation);
+                })
+            });
+            Self {
+                image,
+                _initial_presentation_subscription: subscription,
+            }
+        }
+    }
+
+    impl Render for InitialAtlasImageRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            img(ImageSource::Render(self.image.clone())).size_full()
+        }
+    }
+
+    struct RendererRepaintRoot;
+
+    impl Render for RendererRepaintRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().bg(crate::white())
+        }
+    }
+
+    struct EmptyRendererRepaintRoot;
+
+    impl Render for EmptyRendererRepaintRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full()
+        }
+    }
+
+    struct CachedListenerChild {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for CachedListenerChild {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .id("atlas-frame-rejection-listener")
+                .size_full()
+                .on_mouse_down(MouseButton::Left, |_, _, _| {})
+        }
+    }
+
+    #[derive(Clone)]
+    enum CandidateAtlasPrimitive {
+        Image(Arc<RenderImage>),
+        Monochrome(AtlasTile),
+    }
+
+    struct AtlasFrameRejectionRoot {
+        cached_child: Entity<CachedListenerChild>,
+        enabled: Rc<Cell<bool>>,
+        primitive: CandidateAtlasPrimitive,
+        commits: Rc<Cell<usize>>,
+        publication: PrepaintPublicationId,
+        publication_callbacks: Rc<RefCell<Vec<(bool, u64, u64)>>>,
+    }
+
+    impl Render for AtlasFrameRejectionRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let enabled = self.enabled.get();
+            let primitive = self.primitive.clone();
+            let commits = self.commits.clone();
+            let publication = self.publication;
+            let publication_commits = self.publication_callbacks.clone();
+            let publication_discards = self.publication_callbacks.clone();
+            div()
+                .relative()
+                .w(px(128.0))
+                .h(px(96.0))
+                .child(
+                    AnyView::from(self.cached_child.clone())
+                        .cached(StyleRefinement::default().size_full()),
+                )
+                .child(
+                    canvas(
+                        move |_, window, _| {
+                            window.record_prepaint_commit(move |_, _| {
+                                commits.set(commits.get() + 1);
+                            });
+                            window.record_prepaint_window_transaction(
+                                publication,
+                                move |fence, window, _| {
+                                    assert!(fence.is_satisfied_by(window));
+                                    publication_commits.borrow_mut().push((
+                                        true,
+                                        fence.generation(),
+                                        window.rendered_frame_revision(),
+                                    ));
+                                },
+                                move |fence, window, _| {
+                                    assert!(fence.is_satisfied_by(window));
+                                    publication_discards.borrow_mut().push((
+                                        false,
+                                        fence.generation(),
+                                        window.rendered_frame_revision(),
+                                    ));
+                                },
+                            );
+                        },
+                        move |bounds, _, window, _| {
+                            window.paint_quad(fill(bounds, red()));
+                            if !enabled {
+                                return;
+                            }
+                            match primitive {
+                                CandidateAtlasPrimitive::Image(image) => window
+                                    .paint_image(bounds, Corners::default(), image, 0, false)
+                                    .expect(
+                                        "test image paint should remain fallible only by asset",
+                                    ),
+                                CandidateAtlasPrimitive::Monochrome(tile) => {
+                                    let bounds = window.device_local_bounds(bounds);
+                                    window.insert_scene_primitive(MonochromeSprite {
+                                        order: 0,
+                                        pad: 0,
+                                        bounds,
+                                        clip: Default::default(),
+                                        color: red(),
+                                        tile,
+                                        transform: PrimitiveTransform::IDENTITY,
+                                    });
+                                }
+                            }
+                        },
+                    )
+                    .absolute()
+                    .left(px(0.0))
+                    .top(px(0.0))
+                    .w(px(16.0))
+                    .h(px(16.0)),
+                )
+        }
+    }
+
+    fn assert_fresh_atlas_failure_rejects_candidate(
+        primitive: CandidateAtlasPrimitive,
+        accessibility_active: bool,
+        assert_recovered: impl Fn(&Window),
+    ) {
+        let expected_texture = match &primitive {
+            CandidateAtlasPrimitive::Image(_) => {
+                RejectOnceAtlas::tile(AtlasTextureKind::Polychrome).texture_instance()
+            }
+            CandidateAtlasPrimitive::Monochrome(tile) => tile.texture_instance(),
+        };
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(RejectOnceAtlas::new());
+        let enabled = Rc::new(Cell::new(false));
+        let cached_renders = Rc::new(Cell::new(0));
+        let commits = Rc::new(Cell::new(0));
+        let publication_callbacks = Rc::new(RefCell::new(Vec::new()));
+        let (root, cx) = test_app.add_window_view({
+            let enabled = enabled.clone();
+            let cached_renders = cached_renders.clone();
+            let commits = commits.clone();
+            let publication_callbacks = publication_callbacks.clone();
+            move |_, cx| AtlasFrameRejectionRoot {
+                cached_child: cx.new(|_| CachedListenerChild {
+                    renders: cached_renders,
+                }),
+                enabled,
+                primitive,
+                commits,
+                publication: PrepaintPublicationId::new(),
+                publication_callbacks,
+            }
+        });
+        cx.update({
+            let atlas = atlas.clone();
+            move |window, _| {
+                window.sprite_atlas = atlas;
+                if accessibility_active {
+                    window.set_accessibility_active_for_test(true);
+                }
+            }
+        });
+        cx.simulate_resize(size(px(128.0), px(96.0)));
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        let (
+            committed_generation,
+            committed_scene_len,
+            committed_listener_count,
+            committed_image_diagnostics,
+            committed_a11y_revision,
+        ) = cx.update(|window, _| {
+            (
+                window.rendered_frame.generation,
+                window.rendered_frame.scene.len(),
+                window
+                    .rendered_frame
+                    .mouse_listeners
+                    .iter()
+                    .filter(|listener| listener.value.is_some())
+                    .count(),
+                window.rendered_frame.image_paint_diagnostics.len(),
+                window.a11y.published_revision_for_test(),
+            )
+        });
+        let committed_renders = cached_renders.get();
+        let committed_commits = commits.get();
+        let committed_publication_callbacks = publication_callbacks.borrow().clone();
+        assert!(!committed_publication_callbacks.is_empty());
+        assert!(
+            committed_publication_callbacks
+                .iter()
+                .all(|(committed, fence, rendered)| *committed && fence == rendered),
+            "every baseline callback should carry its exact accepted rendered generation"
+        );
+        assert_eq!(
+            committed_publication_callbacks.last(),
+            Some(&(true, committed_generation, committed_generation)),
+            "the latest baseline publication should describe the committed frame"
+        );
+        enabled.set(true);
+
+        cx.update(|window, cx| {
+            window.mark_view_dirty(root.entity_id());
+            atlas.fail_next_lease();
+            window.draw(cx).clear();
+            assert_eq!(window.rendered_frame.generation, committed_generation);
+            assert_eq!(window.rendered_frame.scene.len(), committed_scene_len);
+            assert_eq!(
+                window.rendered_frame.image_paint_diagnostics.len(),
+                committed_image_diagnostics,
+                "a rejected image candidate must not publish success diagnostics"
+            );
+            assert_eq!(
+                window
+                    .rendered_frame
+                    .mouse_listeners
+                    .iter()
+                    .filter(|listener| listener.value.is_some())
+                    .count(),
+                committed_listener_count,
+                "candidate rollback must restore cached committed listeners"
+            );
+            assert_eq!(
+                window.a11y.published_revision_for_test(),
+                committed_a11y_revision,
+                "a rejected candidate must not replace published accessibility authority"
+            );
+            assert!(window.refresh_pending_for_test());
+            assert_eq!(
+                window.last_atlas_frame_rejection,
+                Some(AtlasFrameRejection {
+                    generation: committed_generation + 1,
+                    error: AtlasTextureLeaseError::TextureUnavailable {
+                        texture: expected_texture,
+                        epoch: AtlasTextureLeaseEpoch::INITIAL,
+                    },
+                })
+            );
+            if !accessibility_active {
+                assert_eq!(cached_renders.get(), committed_renders);
+            }
+            assert_eq!(commits.get(), committed_commits);
+            assert_eq!(
+                publication_callbacks.borrow().as_slice(),
+                committed_publication_callbacks.as_slice(),
+                "an atlas-rejected candidate must emit no fence and run no publication callback"
+            );
+            assert_eq!(atlas.lease_attempts(), 1);
+
+            window.draw(cx).clear();
+            assert_eq!(atlas.lease_attempts(), 2);
+            assert_eq!(window.rendered_frame.generation, committed_generation + 1);
+            if accessibility_active {
+                assert_eq!(
+                    window.a11y.published_revision_for_test(),
+                    Some(
+                        committed_a11y_revision
+                            .expect("the baseline accessibility frame must be published")
+                            .wrapping_add(1)
+                    ),
+                    "the recovery frame must publish exactly one accessibility candidate"
+                );
+            }
+            assert_recovered(window);
+        });
+        assert!(cached_renders.get() > committed_renders);
+        assert_eq!(commits.get(), committed_commits + 1);
+        let recovered_publication_callbacks = publication_callbacks.borrow();
+        assert_eq!(
+            recovered_publication_callbacks.len(),
+            committed_publication_callbacks.len() + 1,
+            "the accepted recovery frame should append exactly one fence"
+        );
+        assert_eq!(
+            &recovered_publication_callbacks[..committed_publication_callbacks.len()],
+            committed_publication_callbacks.as_slice(),
+            "recovery must preserve the entire pre-rejection publication history"
+        );
+        assert_eq!(
+            recovered_publication_callbacks.last(),
+            Some(&(true, committed_generation + 1, committed_generation + 1,)),
+            "only the accepted recovery frame may append a post-rejection fence"
+        );
+    }
+
+    #[test]
+    fn fresh_image_lease_failure_rejects_the_candidate_until_repaint_recovers() {
+        let image = Arc::new(RenderImage::new(smallvec::smallvec![Frame::new(
+            ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0xff])),
+        )]));
+        assert_fresh_atlas_failure_rejects_candidate(
+            CandidateAtlasPrimitive::Image(image),
+            false,
+            |window| {
+                assert_eq!(window.rendered_frame.scene.polychrome_sprites.len(), 1);
+                assert_eq!(window.rendered_frame.image_paint_diagnostics.len(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn fresh_monochrome_lease_failure_rejects_the_candidate_until_repaint_recovers() {
+        assert_fresh_atlas_failure_rejects_candidate(
+            CandidateAtlasPrimitive::Monochrome(RejectOnceAtlas::tile(
+                AtlasTextureKind::Monochrome,
+            )),
+            true,
+            |window| assert_eq!(window.rendered_frame.scene.monochrome_sprites.len(), 1),
+        );
+    }
+
+    #[test]
+    fn retained_visual_replay_is_retryable_after_atlas_rejected_candidate() {
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(RejectOnceAtlas::new());
+        let source_id = RetainedVisualSourceId::new("atlas-retry-retained-visual");
+        let replay_outcomes = Rc::new(RefCell::new(Vec::new()));
+        let prior_receipt_matches_candidate = Rc::new(RefCell::new(Vec::new()));
+        let (root, cx) = test_app.add_window_view({
+            let atlas = atlas.clone();
+            let source_id = source_id.clone();
+            let replay_outcomes = replay_outcomes.clone();
+            let prior_receipt_matches_candidate = prior_receipt_matches_candidate.clone();
+            move |window, _| {
+                window.sprite_atlas = atlas.clone();
+                RetainedReplayAtlasRoot {
+                    mode: RetainedReplayAtlasMode::Source,
+                    source_id,
+                    source_tile: RejectOnceAtlas::tile(AtlasTextureKind::Monochrome),
+                    candidate_tile: RejectOnceAtlas::tile(AtlasTextureKind::Polychrome),
+                    replay_outcomes,
+                    prior_receipt_matches_candidate,
+                }
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        let (ticket, committed_generation) = cx.update(|window, _| {
+            (
+                retained_visual::lease_committed(window, &source_id)
+                    .expect("the committed source should be leasable"),
+                window.rendered_frame.generation,
+            )
+        });
+        atlas.fail_next_lease();
+        root.update(cx, |root, cx| {
+            root.mode = RetainedReplayAtlasMode::Replay(ticket);
+            cx.notify();
+        });
+
+        cx.update(|window, cx| {
+            assert_eq!(
+                window.rendered_frame.generation, committed_generation,
+                "the atlas failure must reject the candidate after retained replay succeeds"
+            );
+
+            window.draw(cx).clear();
+            assert_eq!(
+                window.rendered_frame.generation,
+                committed_generation + 1,
+                "the next candidate must be able to replay the same ticket and commit"
+            );
+        });
+
+        let outcomes = replay_outcomes.borrow();
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes[0].is_ok());
+        assert!(
+            outcomes[1].is_ok(),
+            "a rejected attempt must not permanently consume replay identity: {:?}",
+            outcomes[1]
+        );
+        assert_eq!(
+            outcomes[0]
+                .as_ref()
+                .expect("the rejected candidate replay should have succeeded")
+                .replay_frame_generation(),
+            committed_generation + 1
+        );
+        assert_eq!(
+            outcomes[1]
+                .as_ref()
+                .expect("the recovery candidate replay should succeed")
+                .replay_frame_generation(),
+            committed_generation + 1,
+            "frame generation may repeat, but candidate attempt identity must not"
+        );
+        assert_ne!(
+            outcomes[0]
+                .as_ref()
+                .expect("the rejected candidate replay should have succeeded"),
+            outcomes[1]
+                .as_ref()
+                .expect("the recovery candidate replay should succeed"),
+            "same-generation replay receipts must retain exact candidate-attempt identity"
+        );
+        assert_eq!(
+            prior_receipt_matches_candidate.borrow().as_slice(),
+            &[false],
+            "a receipt leaked from the rejected attempt must not validate in the retry"
+        );
+    }
+
+    #[test]
+    fn cached_retained_replay_reserves_identity_before_direct_sibling_replay() {
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(RejectOnceAtlas::new());
+        let source_id = RetainedVisualSourceId::new("cached-retained-replay-identity");
+        let cached_renders = Rc::new(Cell::new(0));
+        let cached_outcomes = Rc::new(RefCell::new(Vec::new()));
+        let direct_outcomes = Rc::new(RefCell::new(Vec::new()));
+        let (root, cx) = test_app.add_window_view({
+            let atlas = atlas.clone();
+            let source_id = source_id.clone();
+            let direct_outcomes = direct_outcomes.clone();
+            move |window, _| {
+                window.sprite_atlas = atlas;
+                CachedRetainedReplayRoot {
+                    source_id,
+                    source_tile: RejectOnceAtlas::tile(AtlasTextureKind::Monochrome),
+                    cached_child: None,
+                    direct_ticket: None,
+                    direct_outcomes,
+                }
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        let ticket = cx.update(|window, _| {
+            retained_visual::lease_committed(window, &source_id)
+                .expect("the committed cached source should be leasable")
+        });
+        root.update(cx, |root, cx| {
+            root.cached_child = Some(cx.new(|_| CachedRetainedReplayChild {
+                ticket,
+                renders: cached_renders.clone(),
+                outcomes: cached_outcomes.clone(),
+            }));
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(cached_renders.get(), 1);
+        assert!(
+            cached_outcomes.borrow().first().is_some_and(Result::is_ok),
+            "the initial cached child replay should commit"
+        );
+
+        cx.update(|window, cx| {
+            root.update(cx, |root, cx| {
+                root.direct_ticket = Some(ticket);
+                cx.notify();
+            });
+            window.draw(cx).clear();
+        });
+
+        assert_eq!(
+            cached_renders.get(),
+            1,
+            "the unchanged child must replay its paint journal"
+        );
+        assert_eq!(
+            direct_outcomes.borrow().as_slice(),
+            &[Err(RetainedVisualInvalidation::DuplicateReplay)],
+            "cached replay must reserve the ticket before a direct sibling can replay it"
+        );
+    }
+
+    #[test]
+    fn atlas_rejected_candidate_reports_rejected_focus_completion_exactly_once() {
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(RejectOnceAtlas::new());
+        let remaining_requests = Rc::new(Cell::new(0));
+        let next_request_id = Rc::new(Cell::new(0));
+        let outcomes = Rc::new(RefCell::new(Vec::new()));
+        let subscriptions = Rc::new(RefCell::new(Vec::new()));
+        let (root, cx) = test_app.add_window_view({
+            let atlas = atlas.clone();
+            let remaining_requests = remaining_requests.clone();
+            let next_request_id = next_request_id.clone();
+            let outcomes = outcomes.clone();
+            let subscriptions = subscriptions.clone();
+            move |window, cx| {
+                window.sprite_atlas = atlas;
+                CandidateFocusCompletionRoot {
+                    focus: cx.focus_handle(),
+                    tile: RejectOnceAtlas::tile(AtlasTextureKind::Monochrome),
+                    remaining_requests,
+                    next_request_id,
+                    outcomes,
+                    subscriptions,
+                }
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        let committed_generation = cx.update(|window, _| window.rendered_frame.generation);
+        remaining_requests.set(2);
+        atlas.fail_next_lease();
+        root.update(cx, |_, cx| cx.notify());
+
+        cx.update(|window, cx| {
+            assert_eq!(window.rendered_frame.generation, committed_generation);
+            window.draw(cx).clear();
+            assert_eq!(window.rendered_frame.generation, committed_generation + 1);
+        });
+        test_app.run_until_parked();
+
+        assert_eq!(
+            outcomes.borrow().as_slice(),
+            &[
+                (1, FocusClaimOutcome::Rejected),
+                (2, FocusClaimOutcome::Committed),
+            ],
+            "the rejected attempt and accepted retry must each settle exactly once"
+        );
+        assert_eq!(subscriptions.borrow().len(), 2);
+    }
+
+    #[test]
+    fn rejected_first_image_candidate_stays_hidden_until_fresh_repaint_is_presented() {
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(RejectOnceAtlas::new());
+        atlas.fail_next_lease();
+        let image = Arc::new(RenderImage::new(smallvec::smallvec![Frame::new(
+            ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0xff])),
+        )]));
+        let command_observed = Rc::new(Cell::new(false));
+        let retained_platform_window = Rc::new(RefCell::new(None));
+        let app = Rc::downgrade(&test_app.app);
+
+        let handle: AnyWindowHandle = test_app
+            .update(|cx| {
+                cx.open_window(WindowOptions::default(), {
+                    let atlas = atlas.clone();
+                    let image = image.clone();
+                    let command_observed = command_observed.clone();
+                    let retained_platform_window = retained_platform_window.clone();
+                    let app = app.clone();
+                    move |window, cx| {
+                        window.sprite_atlas = atlas;
+                        let platform_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        retained_platform_window
+                            .borrow_mut()
+                            .replace(platform_window.clone());
+                        platform_window.set_platform_command_callback(
+                            move |command, platform_window| {
+                                assert_eq!(
+                                    command,
+                                    PlatformWindowCommand::CompleteInitialPresentation {
+                                        activate: true,
+                                    }
+                                );
+                                let app = app
+                                    .upgrade()
+                                    .expect("the App must outlive initial presentation");
+                                let mut app_borrow = app.try_borrow_mut().expect(
+                                    "initial presentation must run after the App borrow is released",
+                                );
+                                let facts = app_borrow
+                                    .update_window(platform_window.handle(), |_, window, _| {
+                                        window.presentation_facts()
+                                    })
+                                    .expect("the recovered window must remain registered");
+                                drop(app_borrow);
+                                let generation = facts
+                                    .frame_accepted_generation
+                                    .expect("the fresh candidate must be accepted");
+                                assert!(generation > 0);
+                                assert_eq!(
+                                    facts.initial_presentation,
+                                    WindowInitialPresentationStatus::Pending,
+                                    "completion must remain pending until the platform accepts the command"
+                                );
+                                assert_eq!(
+                                    facts.present_submitted_generation,
+                                    Some(generation),
+                                    "the completion command must follow the accepted generation"
+                                );
+                                assert_eq!(
+                                    facts.non_empty_presented_generation,
+                                    Some(generation),
+                                    "the completion command must follow a non-empty presentation"
+                                );
+                                assert_eq!(
+                                    platform_window.draw_count(),
+                                    1,
+                                    "generation zero must never be submitted while recovery is pending"
+                                );
+                                command_observed.set(true);
+                                PlatformWindowCommandOutcome::Accepted
+                            },
+                        );
+                        cx.new(|cx| InitialAtlasImageRoot::new(image, window, None, cx))
+                    }
+                })
+            })
+            .expect("a recoverable first candidate must not fail synchronous window creation")
+            .into();
+        test_app.run_until_parked();
+
+        let platform_window = retained_platform_window
+            .borrow()
+            .clone()
+            .expect("the test must retain its platform window");
+        assert!(command_observed.get());
+        assert!(test_app.windows().contains(&handle));
+        assert_eq!(
+            platform_window.platform_command_history(),
+            [PlatformWindowCommand::CompleteInitialPresentation { activate: true }]
+        );
+        assert_eq!(
+            platform_window.initial_presentation_state(),
+            (true, true, 1)
+        );
+        assert_eq!(
+            test_app
+                .update_window(handle, |_, window, _| {
+                    window.presentation_facts().initial_presentation
+                })
+                .expect("the recovered window must remain registered"),
+            WindowInitialPresentationStatus::Completed
+        );
+    }
+
+    #[test]
+    fn persistent_first_image_lease_failure_rejects_and_closes_the_hidden_window() {
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(AlwaysRejectAtlas::new());
+        let image = Arc::new(RenderImage::new(smallvec::smallvec![Frame::new(
+            ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0xff])),
+        )]));
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let retained_platform_window = Rc::new(RefCell::new(None));
+
+        let handle: AnyWindowHandle = test_app
+            .update(|cx| {
+                cx.open_window(WindowOptions::default(), {
+                    let atlas = atlas.clone();
+                    let image = image.clone();
+                    let observations = observations.clone();
+                    let retained_platform_window = retained_platform_window.clone();
+                    move |window, cx| {
+                        window.sprite_atlas = atlas;
+                        retained_platform_window.borrow_mut().replace(
+                            window
+                                .platform_window
+                                .as_test()
+                                .expect("the test backend must provide a TestWindow")
+                                .clone(),
+                        );
+                        cx.new(|cx| {
+                            InitialAtlasImageRoot::new(image, window, Some(observations), cx)
+                        })
+                    }
+                })
+            })
+            .expect("resource rejection must settle after the window commits")
+            .into();
+        test_app.run_until_parked();
+
+        let platform_window = retained_platform_window
+            .borrow()
+            .clone()
+            .expect("the test must retain its platform window");
+        assert!(!test_app.windows().contains(&handle));
+        assert_eq!(
+            observations.borrow().as_slice(),
+            [WindowInitialPresentationStatus::Rejected],
+            "the terminal retry budget must settle observers exactly once"
+        );
+        assert_eq!(
+            atlas.lease_attempts(),
+            usize::from(FRESH_INITIAL_PRESENTATION_ATTEMPT_LIMIT) + 1,
+            "the initial candidate plus the bounded retry budget must be attempted"
+        );
+        assert!(platform_window.platform_command_history().is_empty());
+        assert_eq!(platform_window.draw_count(), 0);
+        assert_eq!(
+            platform_window.initial_presentation_state(),
+            (false, false, 0)
+        );
+    }
+
+    #[test]
+    fn cached_view_repaints_instead_of_inheriting_a_failed_atlas_lease() {
+        let mut test_app = TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let image = Arc::new(RenderImage::new(smallvec::smallvec![Frame::new(
+            ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0xff])),
+        )]));
+        let (_root, cx) = test_app.add_window_view({
+            let renders = renders.clone();
+            move |_, cx| CachedImageRoot {
+                child: cx.new(|_| CachedImageChild { image, renders }),
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(renders.get(), 1);
+        cx.update(|window, _| {
+            assert!(
+                !window.rendered_frame.atlas_texture_lease_entries.is_empty(),
+                "the image paint should own a frame atlas lease"
+            );
+            for entry in &mut window.rendered_frame.atlas_texture_lease_entries {
+                let (texture, epoch) = {
+                    let lease = entry
+                        .as_ref()
+                        .expect("the freshly painted image should hold a live atlas lease");
+                    (
+                        *lease
+                            .texture_instances()
+                            .first()
+                            .expect("the image lease should retain one texture instance"),
+                        lease.epoch(),
+                    )
+                };
+                *entry = Err(AtlasTextureLeaseError::TextureUnavailable { texture, epoch });
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(
+            renders.get(),
+            2,
+            "a failed cached lease must force a fresh image paint"
+        );
+        assert!(cx.update(|window, _| {
+            window
+                .rendered_frame
+                .atlas_texture_lease_entries
+                .iter()
+                .all(Result::is_ok)
+        }));
+    }
+
+    #[test]
+    fn cached_paint_journals_one_atlas_lease_per_texture_instance() {
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(RejectOnceAtlas::new());
+        let tile = RejectOnceAtlas::tile(AtlasTextureKind::Monochrome);
+        let (_root, cx) = test_app.add_window_view({
+            let atlas = atlas.clone();
+            move |window, cx| {
+                window.sprite_atlas = atlas;
+                RepeatedAtlasPrimitiveRoot {
+                    child: cx.new(|_| RepeatedAtlasPrimitiveChild {
+                        tile,
+                        primitive_count: 512,
+                    }),
+                }
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(
+            cx.update(|window, _| window.rendered_frame.atlas_texture_lease_entries.len()),
+            1,
+            "one cached paint scope must journal each atlas texture instance only once"
+        );
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(
+            cx.update(|window, _| window.rendered_frame.atlas_texture_lease_entries.len()),
+            1,
+            "cached replay must preserve unique atlas dependencies"
+        );
+    }
+
+    #[test]
+    fn renderer_resource_invalidation_forces_a_new_generation_before_deferred_retry() {
+        let mut test_app = TestAppContext::single();
+        let (_root, cx) = test_app.add_window_view(|_, _| RendererRepaintRoot);
+        let platform_window = cx.update(|window, _| {
+            window
+                .platform_window
+                .as_test()
+                .expect("the test backend must provide a TestWindow")
+                .clone()
+        });
+
+        cx.update(|window, cx| {
+            platform_window.set_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+            window.refresh();
+            window.native_frame_requested(
+                RequestFrameOptions {
+                    force_render: true,
+                    require_presentation: true,
+                },
+                cx,
+            );
+            let invalidated_generation = window
+                .presentation_facts()
+                .latest_present_attempt
+                .expect("the invalidated scene must be observable")
+                .generation;
+            assert_eq!(
+                window
+                    .presentation_facts()
+                    .latest_present_attempt
+                    .expect("the invalidated scene must be observable")
+                    .outcome,
+                PlatformWindowPresentOutcome::RepaintRequired
+            );
+            assert!(window.renderer_repaint_is_pending());
+            let draw_count_after_invalidation = platform_window.draw_count();
+
+            window.active.set(false);
+            window.last_frame_time.set(Some(Instant::now()));
+            platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
+            window.native_frame_requested(
+                RequestFrameOptions {
+                    force_render: false,
+                    require_presentation: true,
+                },
+                cx,
+            );
+            let fresh_generation = window
+                .presentation_facts()
+                .frame_accepted_generation
+                .expect("the recovery frame must be accepted");
+            assert!(fresh_generation > invalidated_generation);
+            assert_eq!(
+                platform_window.draw_count(),
+                draw_count_after_invalidation + 1,
+                "the invalidated scene must not be handed to the renderer again"
+            );
+            assert_eq!(
+                window
+                    .presentation_facts()
+                    .latest_present_attempt
+                    .expect("the fresh present attempt must be observable")
+                    .outcome,
+                PlatformWindowPresentOutcome::Deferred
+            );
+            assert!(!window.renderer_repaint_is_pending());
+
+            let draw_count_after_fresh_attempt = platform_window.draw_count();
+            window.last_frame_time.set(None);
+            platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+            window.native_frame_requested(
+                RequestFrameOptions {
+                    force_render: false,
+                    require_presentation: true,
+                },
+                cx,
+            );
+            assert_eq!(
+                window.presentation_facts().frame_accepted_generation,
+                Some(fresh_generation),
+                "ordinary Deferred must remain retryable with the same fresh scene"
+            );
+            assert_eq!(
+                platform_window.draw_count(),
+                draw_count_after_fresh_attempt + 1
+            );
+            assert_eq!(
+                window
+                    .presentation_facts()
+                    .latest_present_attempt
+                    .expect("the retried presentation must be observable")
+                    .outcome,
+                PlatformWindowPresentOutcome::Submitted
+            );
+        });
+    }
+
+    #[test]
+    fn repaint_required_first_present_stays_hidden_until_a_fresh_scene_submits() {
+        let mut test_app = TestAppContext::single();
+        let retained_platform_window = Rc::new(RefCell::new(None));
+
+        let handle: AnyWindowHandle = test_app
+            .update(|cx| {
+                cx.open_window(WindowOptions::default(), {
+                    let retained_platform_window = retained_platform_window.clone();
+                    move |window, cx| {
+                        let platform_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        platform_window.defer_frame_requests_for_test();
+                        platform_window
+                            .set_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+                        retained_platform_window
+                            .borrow_mut()
+                            .replace(platform_window);
+                        cx.new(|_| RendererRepaintRoot)
+                    }
+                })
+            })
+            .expect("renderer resource invalidation must not roll back window creation")
+            .into();
+        let platform_window = retained_platform_window
+            .borrow()
+            .clone()
+            .expect("the test must retain its platform window");
+        let invalidated_generation = test_app
+            .update_window(handle, |_, window, _| {
+                let facts = window.presentation_facts();
+                assert!(!facts.native_visible);
+                assert_eq!(
+                    facts.initial_presentation,
+                    WindowInitialPresentationStatus::Pending
+                );
+                assert_eq!(
+                    facts
+                        .latest_present_attempt
+                        .expect("the initial present attempt must be observable")
+                        .outcome,
+                    PlatformWindowPresentOutcome::RepaintRequired
+                );
+                facts
+                    .frame_accepted_generation
+                    .expect("the initial scene must have been accepted")
+            })
+            .expect("the hidden window must remain registered");
+        assert_eq!(platform_window.draw_count(), 1);
+        assert!(platform_window.platform_command_history().is_empty());
+
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        assert!(platform_window.release_deferred_frame_request_for_test());
+        test_app.run_until_parked();
+
+        let facts = test_app
+            .update_window(handle, |_, window, _| window.presentation_facts())
+            .expect("the recovered window must remain registered");
+        assert!(facts.native_visible);
+        assert!(
+            facts
+                .frame_accepted_generation
+                .is_some_and(|generation| generation > invalidated_generation)
+        );
+        assert_eq!(
+            facts.initial_presentation,
+            WindowInitialPresentationStatus::Completed
+        );
+        assert_eq!(platform_window.draw_count(), 2);
+    }
+
+    #[test]
+    fn deferred_fresh_initial_scene_retries_without_advancing_generation() {
+        let mut test_app = TestAppContext::single();
+        let retained_platform_window = Rc::new(RefCell::new(None));
+
+        let handle: AnyWindowHandle = test_app
+            .update(|cx| {
+                cx.open_window(WindowOptions::default(), {
+                    let retained_platform_window = retained_platform_window.clone();
+                    move |window, cx| {
+                        let platform_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        platform_window.defer_frame_requests_for_test();
+                        platform_window
+                            .set_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+                        retained_platform_window
+                            .borrow_mut()
+                            .replace(platform_window);
+                        cx.new(|_| RendererRepaintRoot)
+                    }
+                })
+            })
+            .expect("renderer resource invalidation must begin hidden recovery")
+            .into();
+        let platform_window = retained_platform_window
+            .borrow()
+            .clone()
+            .expect("the test must retain its platform window");
+        let fresh_generation = test_app
+            .update_window(handle, |_, window, _| {
+                let facts = window.presentation_facts();
+                assert!(window.fresh_initial_presentation_is_pending());
+                facts
+                    .frame_accepted_generation
+                    .expect("test flush must accept the requested fresh scene")
+            })
+            .expect("the hidden window must remain registered");
+        assert_eq!(
+            platform_window.draw_count(),
+            1,
+            "the accepted fresh scene must not reach the deferred platform request early"
+        );
+
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
+        assert!(platform_window.step_deferred_frame_request_for_test());
+        test_app.run_until_parked();
+        test_app
+            .update_window(handle, |_, window, _| {
+                let facts = window.presentation_facts();
+                assert!(!facts.native_visible);
+                assert_eq!(
+                    facts.initial_presentation,
+                    WindowInitialPresentationStatus::Pending
+                );
+                assert_eq!(
+                    facts
+                        .latest_present_attempt
+                        .expect("the fresh deferred attempt must be observable")
+                        .outcome,
+                    PlatformWindowPresentOutcome::Deferred
+                );
+                assert!(!window.fresh_initial_presentation_frame_is_required());
+                assert_eq!(
+                    facts.frame_accepted_generation,
+                    Some(fresh_generation),
+                    "a stale force-render hint must present the accepted fresh scene without replacing it"
+                );
+            })
+            .expect("the hidden window must remain registered");
+
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        assert!(platform_window.release_deferred_frame_request_for_test());
+        test_app.run_until_parked();
+        test_app
+            .update_window(handle, |_, window, _| {
+                let facts = window.presentation_facts();
+                assert_eq!(
+                    facts.present_submitted_generation,
+                    Some(fresh_generation),
+                    "the deferred retry must submit the already accepted fresh scene"
+                );
+                assert_eq!(
+                    facts.non_empty_presented_generation,
+                    Some(fresh_generation),
+                    "the exact retried scene must satisfy non-empty initial presentation"
+                );
+                assert_eq!(
+                    facts
+                        .latest_present_attempt
+                        .expect("the submitted retry must be observable")
+                        .generation,
+                    fresh_generation
+                );
+                assert!(!window.fresh_initial_presentation_is_pending());
+            })
+            .expect("the recovered window must remain registered");
+        assert_eq!(platform_window.draw_count(), 3);
+    }
+
+    #[test]
+    fn persistent_deferred_initial_scene_exhausts_same_generation_retry_budget() {
+        let mut test_app = TestAppContext::single();
+        let retained_platform_window = Rc::new(RefCell::new(None));
+
+        let handle: AnyWindowHandle = test_app
+            .update(|cx| {
+                cx.open_window(WindowOptions::default(), {
+                    let retained_platform_window = retained_platform_window.clone();
+                    move |window, cx| {
+                        let platform_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        platform_window.defer_frame_requests_for_test();
+                        platform_window
+                            .set_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+                        retained_platform_window
+                            .borrow_mut()
+                            .replace(platform_window);
+                        cx.new(|_| RendererRepaintRoot)
+                    }
+                })
+            })
+            .expect("renderer resource invalidation must begin hidden recovery")
+            .into();
+        let platform_window = retained_platform_window
+            .borrow()
+            .clone()
+            .expect("the test must retain its platform window");
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
+
+        for retry in 0..=INITIAL_PRESENTATION_RETRY_LIMIT {
+            assert!(platform_window.step_deferred_frame_request_for_test());
+            test_app.run_until_parked();
+            assert_eq!(
+                test_app.windows().contains(&handle),
+                retry < INITIAL_PRESENTATION_RETRY_LIMIT,
+                "the window must close only after the final same-generation retry"
+            );
+        }
+
+        assert!(!test_app.windows().contains(&handle));
+        assert_eq!(
+            platform_window.draw_count(),
+            usize::from(INITIAL_PRESENTATION_RETRY_LIMIT) + 2,
+            "the initial invalidation and one fresh scene precede the bounded present retries"
+        );
+        assert!(platform_window.platform_command_history().is_empty());
+    }
+
+    #[test]
+    fn persistent_empty_initial_submission_exhausts_fresh_generation_budget() {
+        let mut test_app = TestAppContext::single();
+        let retained_platform_window = Rc::new(RefCell::new(None));
+
+        let handle: AnyWindowHandle = test_app
+            .update(|cx| {
+                cx.open_window(WindowOptions::default(), {
+                    let retained_platform_window = retained_platform_window.clone();
+                    move |window, cx| {
+                        let platform_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        platform_window
+                            .set_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+                        retained_platform_window
+                            .borrow_mut()
+                            .replace(platform_window);
+                        cx.new(|_| EmptyRendererRepaintRoot)
+                    }
+                })
+            })
+            .expect("renderer resource invalidation must begin hidden recovery")
+            .into();
+        let platform_window = retained_platform_window
+            .borrow()
+            .clone()
+            .expect("the test must retain its platform window");
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+
+        test_app.run_until_parked();
+
+        assert!(!test_app.windows().contains(&handle));
+        assert_eq!(
+            platform_window.draw_count(),
+            usize::from(FRESH_INITIAL_PRESENTATION_ATTEMPT_LIMIT) + 1
+        );
+        assert!(platform_window.platform_command_history().is_empty());
+    }
+
+    #[test]
+    fn persistent_first_present_resource_invalidation_closes_the_hidden_window() {
+        let mut test_app = TestAppContext::single();
+        let retained_platform_window = Rc::new(RefCell::new(None));
+
+        let handle: AnyWindowHandle = test_app
+            .update(|cx| {
+                cx.open_window(WindowOptions::default(), {
+                    let retained_platform_window = retained_platform_window.clone();
+                    move |window, cx| {
+                        let platform_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        platform_window
+                            .set_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+                        retained_platform_window
+                            .borrow_mut()
+                            .replace(platform_window);
+                        cx.new(|_| RendererRepaintRoot)
+                    }
+                })
+            })
+            .expect("bounded recovery starts after the hidden window commits")
+            .into();
+        test_app.run_until_parked();
+
+        let platform_window = retained_platform_window
+            .borrow()
+            .clone()
+            .expect("the test must retain its platform window");
+        assert!(!test_app.windows().contains(&handle));
+        assert_eq!(
+            platform_window.draw_count(),
+            usize::from(FRESH_INITIAL_PRESENTATION_ATTEMPT_LIMIT) + 1
+        );
+        assert!(platform_window.platform_command_history().is_empty());
+        assert_eq!(
+            platform_window.initial_presentation_state(),
+            (false, false, 0)
+        );
+    }
+
+    #[test]
+    fn cached_paint_rejects_a_lease_from_an_older_renderer_epoch() {
+        let mut test_app = TestAppContext::single();
+        let (_root, cx) = test_app.add_window_view(|_, _| Empty);
+        let atlas = Arc::new(EpochAtlas::new());
+        let texture = AtlasTextureInstanceId {
+            texture_id: AtlasTextureId {
+                index: 1,
+                kind: AtlasTextureKind::Polychrome,
+            },
+            generation: 1,
+        };
+        let platform_atlas: Arc<dyn PlatformAtlas> = atlas.clone();
+        let lease = Rc::new(
+            platform_atlas
+                .retain_texture_instances(&[texture])
+                .expect("the current atlas instance should be retainable"),
+        );
+
+        cx.update(|window, _| {
+            window.rendered_frame.atlas_texture_lease_entries = vec![Ok(lease)];
+            let mut end = PaintIndex::default();
+            end.atlas_texture_lease_entries_index = 1;
+            assert!(window.can_reuse_paint(&(PaintIndex::default()..end.clone())));
+
+            atlas.reset();
+            assert!(
+                !window.can_reuse_paint(&(PaintIndex::default()..end)),
+                "renderer reset must invalidate cached paint even if the slot id is unchanged"
+            );
+        });
     }
 }
 

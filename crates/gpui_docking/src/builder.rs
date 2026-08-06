@@ -785,15 +785,7 @@ fn sanitize_fraction(fraction: f32, fallback: f32) -> f32 {
 }
 
 fn center_tabs(graph: &DockGraph, space: &DockSpaceId) -> Option<DockNodeId> {
-    graph
-        .central_region(space)
-        .and_then(|central| central.node)
-        .and_then(|node| first_tabs_in_subtree(graph, node))
-        .or_else(|| {
-            graph
-                .root(space)
-                .and_then(|root| first_tabs_in_subtree(graph, root))
-        })
+    graph.recovery_target_tabs(space)
 }
 
 fn rail_tabs(
@@ -835,7 +827,7 @@ fn bottom_tabs(graph: &DockGraph, root: DockNodeId) -> Option<DockNodeId> {
     children
         .last()
         .copied()
-        .and_then(|child| first_tabs_in_subtree(graph, child))
+        .and_then(|child| graph.first_tabs_in_subtree(child))
 }
 
 fn horizontal_rail_tabs(
@@ -864,27 +856,17 @@ fn horizontal_rail_tabs(
         (PlacementBucket::Left, Some(index)) => children[..index]
             .iter()
             .rev()
-            .find_map(|child| first_tabs_in_subtree(graph, *child)),
+            .find_map(|child| graph.first_tabs_in_subtree(*child)),
         (PlacementBucket::Right, Some(index)) => children[index + 1..]
             .iter()
-            .find_map(|child| first_tabs_in_subtree(graph, *child)),
+            .find_map(|child| graph.first_tabs_in_subtree(*child)),
         (PlacementBucket::Left, None) => children
             .first()
-            .and_then(|child| first_tabs_in_subtree(graph, *child)),
+            .and_then(|child| graph.first_tabs_in_subtree(*child)),
         (PlacementBucket::Right, None) => children
             .last()
-            .and_then(|child| first_tabs_in_subtree(graph, *child)),
+            .and_then(|child| graph.first_tabs_in_subtree(*child)),
         (PlacementBucket::Center | PlacementBucket::Bottom, _) => None,
-    }
-}
-
-fn first_tabs_in_subtree(graph: &DockGraph, root: DockNodeId) -> Option<DockNodeId> {
-    match graph.node(root)? {
-        DockNode::Tabs { .. } => Some(root),
-        DockNode::Floating { child } => first_tabs_in_subtree(graph, *child),
-        DockNode::Split { children, .. } => children
-            .iter()
-            .find_map(|child| first_tabs_in_subtree(graph, *child)),
     }
 }
 

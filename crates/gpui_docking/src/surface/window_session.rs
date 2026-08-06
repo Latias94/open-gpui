@@ -48,12 +48,15 @@ impl DockSurfaceWindowSessionStatus {
         self.reason
     }
 
-    /// Returns the number of exact window tickets in the terminal snapshot.
+    /// Returns the number of exact shutdown-convergence tickets in the terminal snapshot.
+    ///
+    /// The count includes owned window terminals and non-window lifecycle dependencies such as a
+    /// provisional opening whose native window has not returned yet.
     pub const fn terminal_ticket_count(self) -> usize {
         self.terminal_ticket_count
     }
 
-    /// Returns the number of terminal window tickets that have not settled.
+    /// Returns the number of shutdown-convergence tickets that have not settled.
     pub const fn pending_terminal_ticket_count(self) -> usize {
         self.pending_terminal_ticket_count
     }
@@ -126,7 +129,7 @@ pub enum DockSurfacePrimaryWindowOpenConflict {
     NotClosed {
         /// Generation that still owns shutdown.
         generation: u64,
-        /// Number of terminal window tickets that have not settled.
+        /// Number of shutdown-convergence tickets that have not settled.
         pending_terminal_tickets: usize,
     },
 }
@@ -246,7 +249,6 @@ pub(crate) enum DockSurfaceWindowSessionBeginShutdownOutcome {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockSurfaceWindowSessionTerminalDisposition {
     ObservedClosed,
-    ConfirmedAbsentAfterAppShutdown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -294,6 +296,43 @@ pub(crate) enum DockSurfaceWindowSessionCloseDispatchRetryOutcome {
 pub(crate) enum DockSurfaceWindowSessionRuntimeEmptyOutcome {
     Marked,
     AlreadyEmpty,
+    StaleLease,
+    NotShuttingDown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum DockSurfaceWindowSessionDependencyKind {
+    LiveUndock,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct DockSurfaceWindowSessionDependencyId {
+    kind: DockSurfaceWindowSessionDependencyKind,
+    generation: u64,
+}
+
+impl DockSurfaceWindowSessionDependencyId {
+    pub(crate) const fn live_undock(generation: u64) -> Self {
+        Self {
+            kind: DockSurfaceWindowSessionDependencyKind::LiveUndock,
+            generation,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockSurfaceWindowSessionDependencyTerminalOutcome {
+    Settled,
+    AlreadyTerminal,
+    UnknownDependency,
+    StaleLease,
+    NotShuttingDown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockSurfaceWindowSessionAdoptWindowOutcome {
+    Added,
+    AlreadyTracked,
     StaleLease,
     NotShuttingDown,
 }
@@ -346,6 +385,21 @@ impl DockSurfaceWindowSessionTerminalTicket {
 }
 
 #[derive(Debug)]
+struct DockSurfaceWindowSessionDependencyTicket {
+    id: DockSurfaceWindowSessionDependencyId,
+    terminal: bool,
+}
+
+impl DockSurfaceWindowSessionDependencyTicket {
+    fn pending(id: DockSurfaceWindowSessionDependencyId) -> Self {
+        Self {
+            id,
+            terminal: false,
+        }
+    }
+}
+
+#[derive(Debug)]
 enum DockSurfaceWindowSessionState {
     Vacant,
     Opening {
@@ -359,12 +413,14 @@ enum DockSurfaceWindowSessionState {
         reason: DockSurfaceWindowSessionShutdownReason,
         runtime_empty: bool,
         terminal_tickets: Vec<DockSurfaceWindowSessionTerminalTicket>,
+        dependency_tickets: Vec<DockSurfaceWindowSessionDependencyTicket>,
     },
     Closed {
         generation: u64,
         anchor: Option<WindowId>,
         reason: DockSurfaceWindowSessionReason,
         terminal_tickets: Vec<DockSurfaceWindowSessionTerminalTicket>,
+        dependency_tickets: Vec<DockSurfaceWindowSessionDependencyTicket>,
     },
 }
 
@@ -404,6 +460,7 @@ impl DockSurfaceWindowSession {
             DockSurfaceWindowSessionState::ShuttingDown {
                 lease,
                 terminal_tickets,
+                dependency_tickets,
                 ..
             } => {
                 return Err(DockSurfacePrimaryWindowOpenConflict::NotClosed {
@@ -411,7 +468,11 @@ impl DockSurfaceWindowSession {
                     pending_terminal_tickets: terminal_tickets
                         .iter()
                         .filter(|ticket| !ticket.is_terminal())
-                        .count(),
+                        .count()
+                        + dependency_tickets
+                            .iter()
+                            .filter(|ticket| !ticket.terminal)
+                            .count(),
                 });
             }
         }
@@ -562,6 +623,7 @@ impl DockSurfaceWindowSession {
             anchor: None,
             reason: DockSurfaceWindowSessionReason::OpeningRolledBack(reason),
             terminal_tickets: Vec::new(),
+            dependency_tickets: Vec::new(),
         };
         DockSurfaceWindowSessionRollbackOutcome::RolledBack
     }
@@ -571,6 +633,16 @@ impl DockSurfaceWindowSession {
         lease: DockSurfaceWindowSessionLease,
         reason: DockSurfaceWindowSessionShutdownReason,
         windows: impl IntoIterator<Item = WindowId>,
+    ) -> DockSurfaceWindowSessionBeginShutdownOutcome {
+        self.begin_shutdown_with_dependencies(lease, reason, windows, std::iter::empty())
+    }
+
+    pub(crate) fn begin_shutdown_with_dependencies(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        reason: DockSurfaceWindowSessionShutdownReason,
+        windows: impl IntoIterator<Item = WindowId>,
+        dependencies: impl IntoIterator<Item = DockSurfaceWindowSessionDependencyId>,
     ) -> DockSurfaceWindowSessionBeginShutdownOutcome {
         match &self.state {
             DockSurfaceWindowSessionState::Active { lease: current } if *current == lease => {}
@@ -601,16 +673,112 @@ impl DockSurfaceWindowSession {
         terminal_tickets.push(DockSurfaceWindowSessionTerminalTicket::pending(
             lease.anchor,
         ));
-        let terminal_ticket_count = terminal_tickets.len();
+        let mut dependency_tickets = Vec::new();
+        for dependency in dependencies {
+            if !dependency_tickets
+                .iter()
+                .any(|ticket: &DockSurfaceWindowSessionDependencyTicket| ticket.id == dependency)
+            {
+                dependency_tickets.push(DockSurfaceWindowSessionDependencyTicket::pending(
+                    dependency,
+                ));
+            }
+        }
+        let terminal_ticket_count = terminal_tickets.len() + dependency_tickets.len();
         self.state = DockSurfaceWindowSessionState::ShuttingDown {
             lease,
             reason,
             runtime_empty: false,
             terminal_tickets,
+            dependency_tickets,
         };
         DockSurfaceWindowSessionBeginShutdownOutcome::Started {
             terminal_ticket_count,
         }
+    }
+
+    pub(crate) fn adopt_shutdown_window(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        window_id: WindowId,
+    ) -> DockSurfaceWindowSessionAdoptWindowOutcome {
+        match &mut self.state {
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease: current,
+                runtime_empty,
+                terminal_tickets,
+                ..
+            } if *current == lease => {
+                if terminal_tickets
+                    .iter()
+                    .any(|ticket| ticket.window_id == window_id)
+                {
+                    return DockSurfaceWindowSessionAdoptWindowOutcome::AlreadyTracked;
+                }
+                let anchor_index = terminal_tickets
+                    .iter()
+                    .position(|ticket| ticket.window_id == lease.anchor)
+                    .unwrap_or(terminal_tickets.len());
+                terminal_tickets.insert(
+                    anchor_index,
+                    DockSurfaceWindowSessionTerminalTicket::pending(window_id),
+                );
+                *runtime_empty = false;
+                DockSurfaceWindowSessionAdoptWindowOutcome::Added
+            }
+            DockSurfaceWindowSessionState::ShuttingDown { .. } => {
+                DockSurfaceWindowSessionAdoptWindowOutcome::StaleLease
+            }
+            DockSurfaceWindowSessionState::Active { lease: current } if *current == lease => {
+                DockSurfaceWindowSessionAdoptWindowOutcome::NotShuttingDown
+            }
+            _ => DockSurfaceWindowSessionAdoptWindowOutcome::StaleLease,
+        }
+    }
+
+    pub(crate) fn settle_dependency(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        dependency: DockSurfaceWindowSessionDependencyId,
+    ) -> DockSurfaceWindowSessionDependencyTerminalOutcome {
+        match &mut self.state {
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease: current,
+                dependency_tickets,
+                ..
+            } if *current == lease => {
+                let Some(ticket) = dependency_tickets
+                    .iter_mut()
+                    .find(|ticket| ticket.id == dependency)
+                else {
+                    return DockSurfaceWindowSessionDependencyTerminalOutcome::UnknownDependency;
+                };
+                if ticket.terminal {
+                    DockSurfaceWindowSessionDependencyTerminalOutcome::AlreadyTerminal
+                } else {
+                    ticket.terminal = true;
+                    DockSurfaceWindowSessionDependencyTerminalOutcome::Settled
+                }
+            }
+            DockSurfaceWindowSessionState::ShuttingDown { .. } => {
+                DockSurfaceWindowSessionDependencyTerminalOutcome::StaleLease
+            }
+            DockSurfaceWindowSessionState::Active { lease: current } if *current == lease => {
+                DockSurfaceWindowSessionDependencyTerminalOutcome::NotShuttingDown
+            }
+            _ => DockSurfaceWindowSessionDependencyTerminalOutcome::StaleLease,
+        }
+    }
+
+    pub(crate) fn has_pending_dependencies(&self, lease: DockSurfaceWindowSessionLease) -> bool {
+        matches!(
+            &self.state,
+            DockSurfaceWindowSessionState::ShuttingDown {
+                lease: current,
+                dependency_tickets,
+                ..
+            } if *current == lease && dependency_tickets.iter().any(|ticket| !ticket.terminal)
+        )
     }
 
     pub(crate) fn mark_runtime_empty(
@@ -812,24 +980,33 @@ impl DockSurfaceWindowSession {
         &mut self,
         lease: DockSurfaceWindowSessionLease,
     ) -> DockSurfaceWindowSessionShutdownConvergenceOutcome {
-        let (reason, terminal_tickets) = match &mut self.state {
+        let (reason, terminal_tickets, dependency_tickets) = match &mut self.state {
             DockSurfaceWindowSessionState::ShuttingDown {
                 lease: current,
                 reason,
                 runtime_empty,
                 terminal_tickets,
+                dependency_tickets,
             } if *current == lease => {
                 let pending_terminal_tickets = terminal_tickets
                     .iter()
                     .filter(|ticket| !ticket.is_terminal())
-                    .count();
+                    .count()
+                    + dependency_tickets
+                        .iter()
+                        .filter(|ticket| !ticket.terminal)
+                        .count();
                 if !*runtime_empty || pending_terminal_tickets != 0 {
                     return DockSurfaceWindowSessionShutdownConvergenceOutcome::Waiting {
                         runtime_empty: *runtime_empty,
                         pending_terminal_tickets,
                     };
                 }
-                (*reason, std::mem::take(terminal_tickets))
+                (
+                    *reason,
+                    std::mem::take(terminal_tickets),
+                    std::mem::take(dependency_tickets),
+                )
             }
             DockSurfaceWindowSessionState::ShuttingDown { .. } => {
                 return DockSurfaceWindowSessionShutdownConvergenceOutcome::StaleLease;
@@ -844,6 +1021,7 @@ impl DockSurfaceWindowSession {
             anchor: Some(lease.anchor),
             reason: DockSurfaceWindowSessionReason::Shutdown(reason),
             terminal_tickets,
+            dependency_tickets,
         };
         DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed
     }
@@ -900,16 +1078,21 @@ impl DockSurfaceWindowSession {
                 reason,
                 runtime_empty,
                 terminal_tickets,
+                dependency_tickets,
             } => DockSurfaceWindowSessionStatus {
                 phase: DockSurfaceWindowSessionPhase::ShuttingDown,
                 generation: lease.generation,
                 anchor: Some(lease.anchor),
                 reason: Some(DockSurfaceWindowSessionReason::Shutdown(*reason)),
-                terminal_ticket_count: terminal_tickets.len(),
+                terminal_ticket_count: terminal_tickets.len() + dependency_tickets.len(),
                 pending_terminal_ticket_count: terminal_tickets
                     .iter()
                     .filter(|ticket| !ticket.is_terminal())
-                    .count(),
+                    .count()
+                    + dependency_tickets
+                        .iter()
+                        .filter(|ticket| !ticket.terminal)
+                        .count(),
                 runtime_empty: Some(*runtime_empty),
             },
             DockSurfaceWindowSessionState::Closed {
@@ -917,12 +1100,13 @@ impl DockSurfaceWindowSession {
                 anchor,
                 reason,
                 terminal_tickets,
+                dependency_tickets,
             } => DockSurfaceWindowSessionStatus {
                 phase: DockSurfaceWindowSessionPhase::Closed,
                 generation: *generation,
                 anchor: *anchor,
                 reason: Some(*reason),
-                terminal_ticket_count: terminal_tickets.len(),
+                terminal_ticket_count: terminal_tickets.len() + dependency_tickets.len(),
                 pending_terminal_ticket_count: 0,
                 runtime_empty: Some(true),
             },

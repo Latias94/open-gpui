@@ -1,13 +1,14 @@
 use crate::{
     A11yCallbacks, AnyWindowHandle, AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome,
-    AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds,
-    CursorStyle, DevicePixels, DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas,
-    PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback,
-    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
-    PlatformNativePointerPhysicalFrame, PlatformNativeWindowRetirementOutcome,
-    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowDispatch, PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
+    AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasTextureId, AtlasTextureInstanceId,
+    AtlasTextureLeaseEpoch, AtlasTextureLeaseError, AtlasTile, Bounds, CursorStyle, DevicePixels,
+    DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas, PlatformDisplay,
+    PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
+    PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativePointerPhysicalFrame,
+    PlatformNativeWindowRetirementOutcome, PlatformPointerCaptureReleaseOutcome,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowDispatch,
+    PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
     PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
     PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
     RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
@@ -60,6 +61,8 @@ pub(crate) struct TestWindowState {
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    defer_frame_requests: bool,
+    deferred_frame_request: Option<RequestFrameOptions>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     window_state_change_callback: Option<Box<dyn FnMut()>>,
@@ -109,6 +112,7 @@ pub(crate) struct TestWindowState {
     presentation_shutdown_prepare_count: usize,
     presentation_shutdown_quiesce_attempt_count: usize,
     presentation_shutdown_retire_count: usize,
+    native_retirement_rejections_remaining: usize,
     presentation_shutdown_blocked: bool,
     draw_count: usize,
 }
@@ -327,8 +331,11 @@ impl TestWindow {
                 presentation_shutdown_prepare_count: 0,
                 presentation_shutdown_quiesce_attempt_count: 0,
                 presentation_shutdown_retire_count: 0,
+                native_retirement_rejections_remaining: 0,
                 presentation_shutdown_blocked: false,
                 draw_count: 0,
+                defer_frame_requests: false,
+                deferred_frame_request: None,
             })),
             true,
         )
@@ -375,7 +382,7 @@ impl TestWindow {
         self.0.lock().platform_command_history.clone()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn activation_count(&self) -> usize {
         self.0.lock().activation_count
     }
@@ -401,6 +408,34 @@ impl TestWindow {
     #[cfg(test)]
     pub(crate) fn set_present_outcome(&self, outcome: PlatformWindowPresentOutcome) {
         self.0.lock().present_outcome = outcome;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn defer_frame_requests_for_test(&self) {
+        self.0.lock().defer_frame_requests = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn release_deferred_frame_request_for_test(&self) -> bool {
+        let options = {
+            let mut state = self.0.lock();
+            state.defer_frame_requests = false;
+            state.deferred_frame_request.take()
+        };
+        options.is_some_and(|options| self.simulate_frame(options))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn step_deferred_frame_request_for_test(&self) -> bool {
+        let options = {
+            let mut state = self.0.lock();
+            assert!(
+                state.defer_frame_requests,
+                "stepping one frame request requires deferred delivery"
+            );
+            state.deferred_frame_request.take()
+        };
+        options.is_some_and(|options| self.simulate_frame(options))
     }
 
     #[cfg(test)]
@@ -991,7 +1026,7 @@ impl TestWindow {
         true
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn block_presentation_shutdown(&self, blocked: bool) {
         self.0.lock().presentation_shutdown_blocked = blocked;
     }
@@ -1004,6 +1039,11 @@ impl TestWindow {
             state.presentation_shutdown_quiesce_attempt_count,
             state.presentation_shutdown_retire_count,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reject_native_retirement_attempts(&self, attempts: usize) {
+        self.0.lock().native_retirement_rejections_remaining = attempts;
     }
 
     #[cfg(test)]
@@ -1191,6 +1231,10 @@ impl PlatformWindow for TestWindow {
             .as_ref()
             .is_some_and(|current| current.same_authority(shutdown));
         if !exact || !shutdown.snapshot().quiesced() {
+            return PlatformNativeWindowRetirementOutcome::Rejected;
+        }
+        if state.native_retirement_rejections_remaining > 0 {
+            state.native_retirement_rejections_remaining -= 1;
             return PlatformNativeWindowRetirementOutcome::Rejected;
         }
         state.presentation_shutdown_retire_count += 1;
@@ -1404,6 +1448,24 @@ impl PlatformWindow for TestWindow {
     }
 
     fn request_frame(&self, options: RequestFrameOptions) {
+        let deferred = {
+            let mut state = self.0.lock();
+            if state.defer_frame_requests {
+                let pending = state.deferred_frame_request.take();
+                state.deferred_frame_request =
+                    Some(pending.map_or(options, |pending| RequestFrameOptions {
+                        require_presentation: pending.require_presentation
+                            || options.require_presentation,
+                        force_render: pending.force_render || options.force_render,
+                    }));
+                true
+            } else {
+                false
+            }
+        };
+        if deferred {
+            return;
+        }
         let _ = self.simulate_frame(options);
     }
 
@@ -1674,12 +1736,14 @@ mod window_mutation_tests {
     use super::*;
     use crate::{
         AppContext, Context, DisplayId, Empty, InteractiveElement, IntoElement, Modifiers,
-        MouseButton, MouseDownEvent, MouseMoveEvent, PlatformWindowCreationCapabilities,
-        PlatformWindowMutationCapabilities, QuitMode, Render, Styled, Subscription, TestAppContext,
-        Window, WindowActivationPolicy, WindowCreationSupport, WindowInitialPresentationOrder,
-        WindowInitialPresentationStatus, WindowKind, WindowMouseEvent, WindowMutationDispatch,
-        WindowMutationOutcome, WindowMutationSupport, WindowMutationTicket, WindowOpenFailureStage,
-        WindowOptions, WindowPlacementRequest, WindowProvisionalSession, div, point, px, size,
+        MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
+        PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, QuitMode, Render,
+        Styled, Subscription, TestAppContext, Window, WindowActivationPolicy,
+        WindowCreationSupport, WindowInitialPresentationOrder, WindowInitialPresentationStatus,
+        WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome,
+        WindowMutationSupport, WindowMutationTicket, WindowOpenFailureStage, WindowOptions,
+        WindowPlacementRequest, WindowProvisionalSemanticsTicket, WindowProvisionalSession, canvas,
+        div, point, px, size,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -1775,6 +1839,82 @@ mod window_mutation_tests {
     impl Render for PaintedRoot {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div().size_full().bg(crate::white())
+        }
+    }
+
+    struct ProvisionalSemanticsMarkerRoot {
+        authority:
+            Rc<RefCell<Option<(WindowProvisionalSession, WindowProvisionalSemanticsTicket)>>>,
+    }
+
+    impl Render for ProvisionalSemanticsMarkerRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let authority = self.authority.clone();
+            div().size_full().bg(crate::white()).child(
+                canvas(
+                    move |_, window, _| {
+                        let authority = authority.clone();
+                        window.record_prepaint_focus_stable_commit(move |frame, window, app| {
+                            let Some((session, ticket)) = authority.borrow_mut().take() else {
+                                return;
+                            };
+                            window
+                                .accept_provisional_destination_semantics_frame(
+                                    &session, &ticket, frame, app,
+                                )
+                                .expect("the exact marker should accept its candidate frame");
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+        }
+    }
+
+    struct InteractiveProvisionalRoot {
+        mouse_downs: Rc<Cell<usize>>,
+        semantics_authority:
+            Rc<RefCell<Option<(WindowProvisionalSession, WindowProvisionalSemanticsTicket)>>>,
+    }
+
+    impl Render for InteractiveProvisionalRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mouse_downs = self.mouse_downs.clone();
+            let semantics_authority = self.semantics_authority.clone();
+            div()
+                .size_full()
+                .bg(crate::white())
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    mouse_downs.set(mouse_downs.get().saturating_add(1));
+                })
+                .child(
+                    canvas(
+                        move |_, window, _| {
+                            let semantics_authority = semantics_authority.clone();
+                            window.record_prepaint_focus_stable_commit(
+                                move |frame, window, app| {
+                                    let Some((session, ticket)) =
+                                        semantics_authority.borrow_mut().take()
+                                    else {
+                                        return;
+                                    };
+                                    window
+                                        .accept_provisional_destination_semantics_frame(
+                                            &session, &ticket, frame, app,
+                                        )
+                                        .expect(
+                                            "the exact interactive marker should accept its candidate frame",
+                                        );
+                                },
+                            );
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
         }
     }
 
@@ -3315,15 +3455,21 @@ mod window_mutation_tests {
     ) {
         let session =
             WindowProvisionalSession::new(41).expect("the provisional generation should be valid");
+        let semantics_authority = Rc::new(RefCell::new(None));
         let handle: AnyWindowHandle = cx
             .update(|app| {
+                let semantics_authority = semantics_authority.clone();
                 app.open_window(
                     WindowOptions {
                         focus_on_appearing: false,
                         provisional_session: Some(session.clone()),
                         ..Default::default()
                     },
-                    |_, app| app.new(|_| PaintedRoot),
+                    |_, app| {
+                        app.new(|_| ProvisionalSemanticsMarkerRoot {
+                            authority: semantics_authority,
+                        })
+                    },
                 )
             })
             .expect("the provisional test window should open")
@@ -3379,10 +3525,53 @@ mod window_mutation_tests {
             "visibility alone must not admit provisional interaction"
         );
 
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 73, app)
+                    .expect("the revealed provisional should begin projecting its destination")
+            })
+            .expect("the provisional window should remain live");
+        assert!(
+            semantics_ticket.snapshot().minimum_frame_generation() > generation,
+            "destination semantics must commit strictly after the exact reveal frame"
+        );
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::ProjectingDestinationSemantics,
+            "beginning projection must not itself manufacture a semantics receipt"
+        );
+        assert!(!session.snapshot().accepts_interaction());
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        let semantics = semantics_ticket.snapshot();
+        assert_eq!(
+            semantics.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Committed
+        );
+        assert_eq!(semantics.window_id(), handle.window_id());
+        assert_eq!(
+            semantics.session_generation(),
+            session.snapshot().generation()
+        );
+        assert_eq!(semantics.destination_generation(), 73);
+        assert!(
+            semantics
+                .committed_frame_generation()
+                .is_some_and(|generation| generation >= semantics.minimum_frame_generation())
+        );
+        assert!(!session.snapshot().accepts_interaction());
+
         cx.update_window(handle, |_, window, app| {
             window
-                .promote_provisional_presentation(&session, app)
-                .expect("same-window promotion should open the exact gate");
+                .admit_provisional_interaction(&session, &semantics_ticket, app)
+                .expect("the committed destination receipt should open the exact gate");
         })
         .expect("the provisional window should remain live");
         assert!(session.snapshot().accepts_interaction());
@@ -3412,15 +3601,9 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
-    fn provisional_session_rejects_stale_identity_and_input_without_replay(
-        cx: &mut TestAppContext,
-    ) {
-        assert_eq!(
-            WindowProvisionalSession::new(0).expect_err("zero is not a valid authority generation"),
-            crate::WindowProvisionalSessionError::ZeroGeneration
-        );
-
-        let session = WindowProvisionalSession::new(7).expect("the generation should be valid");
+    fn provisional_destination_semantics_require_an_exact_frame_marker(cx: &mut TestAppContext) {
+        let session =
+            WindowProvisionalSession::new(42).expect("the provisional generation should be valid");
         let handle: AnyWindowHandle = cx
             .update(|app| {
                 app.open_window(
@@ -3430,6 +3613,73 @@ mod window_mutation_tests {
                         ..Default::default()
                     },
                     |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+
+        let reveal = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(&session, app)
+                    .expect("the matching session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            reveal.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+
+        let semantics = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 74, app)
+                    .expect("the revealed provisional should begin semantics projection")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+
+        assert_eq!(
+            semantics.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Pending,
+            "an ordinary non-empty frame must not stand in for a destination marker"
+        );
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+        );
+        assert!(!session.snapshot().accepts_interaction());
+    }
+
+    #[crate::test]
+    fn provisional_session_rejects_stale_identity_and_input_without_replay(
+        cx: &mut TestAppContext,
+    ) {
+        assert_eq!(
+            WindowProvisionalSession::new(0).expect_err("zero is not a valid authority generation"),
+            crate::WindowProvisionalSessionError::ZeroGeneration
+        );
+
+        let session = WindowProvisionalSession::new(7).expect("the generation should be valid");
+        let element_pointer_calls = Rc::new(Cell::new(0usize));
+        let semantics_authority = Rc::new(RefCell::new(None));
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                let element_pointer_calls = element_pointer_calls.clone();
+                let semantics_authority = semantics_authority.clone();
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    move |_, app| {
+                        app.new(move |_| InteractiveProvisionalRoot {
+                            mouse_downs: element_pointer_calls,
+                            semantics_authority,
+                        })
+                    },
                 )
             })
             .expect("the provisional test window should open")
@@ -3450,14 +3700,14 @@ mod window_mutation_tests {
         duplicate.expect_err("one provisional session must own at most one window generation");
         assert_eq!(
             session
-                .promote(other.window_id())
-                .expect_err("a stale full window id must not open the gate"),
+                .begin_destination_semantics(other.window_id(), 11, 1)
+                .expect_err("a stale full window id must not project destination semantics"),
             crate::WindowProvisionalSessionError::WindowMismatch
         );
         cx.update_window(handle, |_, window, app| {
             window
-                .promote_provisional_presentation(&session, app)
-                .expect_err("an unrevealed provisional must not open its interaction gate");
+                .begin_provisional_destination_semantics(&session, 11, app)
+                .expect_err("an unrevealed provisional must not project destination semantics");
         })
         .expect("the provisional window should remain live");
         let reveal_ticket = cx
@@ -3498,6 +3748,7 @@ mod window_mutation_tests {
         assert!(!gated.propagate);
         assert!(gated.default_prevented);
         assert_eq!(pointer_calls.get(), 0);
+        assert_eq!(element_pointer_calls.get(), 0);
         cx.update_window(handle, |_, window, _| window.activate_window())
             .expect("the provisional window should remain live");
         cx.run_until_parked();
@@ -3506,10 +3757,53 @@ mod window_mutation_tests {
             "a gated window must not enqueue native activation"
         );
 
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 11, app)
+                    .expect("the exact same window should project its destination in place")
+            })
+            .expect("the provisional window should remain live");
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<InteractiveProvisionalRoot>()
+                .expect("the interactive provisional root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        let projecting =
+            platform_window.simulate_input_result(PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(12.0), px(18.0)),
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }));
+        assert!(!projecting.propagate);
+        assert!(projecting.default_prevented);
+        assert_eq!(pointer_calls.get(), 0);
+        assert_eq!(element_pointer_calls.get(), 0);
+        cx.run_until_parked();
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Committed
+        );
+        let committed_but_gated =
+            platform_window.simulate_input_result(PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(12.0), px(18.0)),
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }));
+        assert!(!committed_but_gated.propagate);
+        assert!(committed_but_gated.default_prevented);
+        assert_eq!(pointer_calls.get(), 0);
+        assert_eq!(element_pointer_calls.get(), 0);
         cx.update_window(handle, |_, window, app| {
             window
-                .promote_provisional_presentation(&session, app)
-                .expect("the exact same window should promote in place");
+                .admit_provisional_interaction(&session, &semantics_ticket, app)
+                .expect("the exact committed destination should promote in place");
         })
         .expect("the provisional window should remain live");
         let promoted =
@@ -3521,6 +3815,11 @@ mod window_mutation_tests {
                 first_mouse: false,
             }));
         assert_eq!(pointer_calls.get(), 1);
+        assert_eq!(
+            element_pointer_calls.get(),
+            1,
+            "promotion must expose the element handlers from the committed destination frame"
+        );
         assert!(
             promoted.propagate || !promoted.default_prevented,
             "promotion admits only new input; it does not replay the gated event"
@@ -3531,6 +3830,86 @@ mod window_mutation_tests {
         assert_eq!(
             platform_window.platform_command_history(),
             [PlatformWindowCommand::Activate]
+        );
+    }
+
+    #[crate::test]
+    fn provisional_interaction_rejects_native_terminal_after_semantics_commit(
+        cx: &mut TestAppContext,
+    ) {
+        let session =
+            WindowProvisionalSession::new(83).expect("the provisional generation should be valid");
+        let semantics_authority = Rc::new(RefCell::new(None));
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                let semantics_authority = semantics_authority.clone();
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| {
+                        app.new(|_| ProvisionalSemanticsMarkerRoot {
+                            authority: semantics_authority,
+                        })
+                    },
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+        let reveal_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(&session, app)
+                    .expect("the matching bound session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            reveal_ticket.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 89, app)
+                    .expect("the revealed provisional should project its destination")
+            })
+            .expect("the provisional window should remain live");
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Committed
+        );
+
+        cx.update_window(handle, |_, window, app| {
+            assert!(platform_window.simulate_close());
+            window
+                .admit_provisional_interaction(&session, &semantics_ticket, app)
+                .expect_err("native terminal must win before queued logical removal drains");
+        })
+        .expect("the logical window should remain present during the native callback");
+        assert!(!session.snapshot().accepts_interaction());
+
+        cx.run_until_parked();
+        assert!(!cx.windows().contains(&handle));
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::Terminal
+        );
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Committed,
+            "the receipt should preserve the committed frame fact after later window loss"
         );
     }
 
@@ -4836,8 +5215,18 @@ mod accessibility_tests {
 }
 
 pub(crate) struct TestAtlasState {
+    epoch: AtlasTextureLeaseEpoch,
     next_id: u32,
+    lease_acquire_calls: usize,
+    lease_release_calls: usize,
     tiles: HashMap<AtlasKey, AtlasTile>,
+    texture_refs: HashMap<AtlasTextureInstanceId, TestAtlasTextureRefs>,
+}
+
+#[derive(Default)]
+struct TestAtlasTextureRefs {
+    live_atlas_keys: u32,
+    live_visual_leases: u32,
 }
 
 pub(crate) struct TestAtlas(Mutex<TestAtlasState>);
@@ -4845,8 +5234,12 @@ pub(crate) struct TestAtlas(Mutex<TestAtlasState>);
 impl TestAtlas {
     pub fn new() -> Self {
         TestAtlas(Mutex::new(TestAtlasState {
+            epoch: AtlasTextureLeaseEpoch::INITIAL,
             next_id: 0,
+            lease_acquire_calls: 0,
+            lease_release_calls: 0,
             tiles: HashMap::default(),
+            texture_refs: HashMap::default(),
         }))
     }
 }
@@ -4875,23 +5268,23 @@ impl PlatformAtlas for TestAtlas {
         state.next_id += 1;
         let tile_id = state.next_id;
 
-        state.tiles.insert(
-            key.clone(),
-            crate::AtlasTile {
-                texture_id: AtlasTextureId {
-                    index: texture_id,
-                    kind: key.texture_kind(),
-                },
-                tile_id: TileId(tile_id),
-                padding: 0,
-                bounds: crate::Bounds {
-                    origin: Point::default(),
-                    size,
-                },
+        let tile = crate::AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind: key.texture_kind(),
             },
-        );
+            tile_id: TileId(tile_id),
+            padding: 0,
+            bounds: crate::Bounds {
+                origin: Point::default(),
+                size,
+            },
+            texture_generation: texture_id,
+            texture_generation_padding: 0,
+        };
+        state.insert_tile(key.clone(), tile);
 
-        Ok(Some(state.tiles[key]))
+        Ok(Some(tile))
     }
 
     fn get_or_insert_with_diagnostics<'a>(
@@ -4943,8 +5336,10 @@ impl PlatformAtlas for TestAtlas {
                 origin: Point::default(),
                 size,
             },
+            texture_generation: texture_id,
+            texture_generation_padding: 0,
         };
-        state.tiles.insert(key.clone(), tile);
+        state.insert_tile(key.clone(), tile);
 
         Ok(AtlasAccess {
             tile: Some(tile),
@@ -4959,20 +5354,264 @@ impl PlatformAtlas for TestAtlas {
 
     fn remove(&self, key: &AtlasKey) {
         let mut state = self.0.lock();
-        state.tiles.remove(key);
+        state.remove_tile(key);
     }
 
     fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
         let mut state = self.0.lock();
-        let removed = state.tiles.remove(key);
-        AtlasRemoveDiagnostic::new(
-            key,
-            if removed.is_some() {
-                AtlasRemoveOutcome::RemoveHit
+        let removed = state.remove_tile(key);
+        let outcome = removed.map_or(AtlasRemoveOutcome::RemoveNoop, |tile| {
+            if state.texture_refs.contains_key(&tile.texture_instance()) {
+                AtlasRemoveOutcome::TextureRetained
             } else {
-                AtlasRemoveOutcome::RemoveNoop
+                AtlasRemoveOutcome::TextureFreed
+            }
+        });
+        AtlasRemoveDiagnostic::new(key, outcome, removed.map(|tile| tile.texture_id))
+    }
+
+    fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch {
+        self.0.lock().epoch
+    }
+
+    unsafe fn acquire_atlas_texture_leases(
+        &self,
+        textures: &[AtlasTextureInstanceId],
+    ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError> {
+        debug_assert!(
+            textures
+                .iter()
+                .enumerate()
+                .all(|(index, texture)| !textures[..index].contains(texture)),
+            "atlas texture lease acquisition requires deduplicated texture instances"
+        );
+        let mut state = self.0.lock();
+        state.lease_acquire_calls += 1;
+        let epoch = state.epoch;
+        for texture in textures.iter().copied() {
+            let Some(texture_refs) = state.texture_refs.get(&texture) else {
+                return Err(AtlasTextureLeaseError::TextureUnavailable { texture, epoch });
+            };
+            if texture_refs.live_visual_leases == u32::MAX {
+                return Err(AtlasTextureLeaseError::LeaseCountOverflow { texture, epoch });
+            }
+        }
+        for texture in textures.iter().copied() {
+            if let Some(texture_refs) = state.texture_refs.get_mut(&texture) {
+                texture_refs.live_visual_leases += 1;
+            }
+        }
+        Ok(epoch)
+    }
+
+    unsafe fn release_atlas_texture_leases(
+        &self,
+        epoch: AtlasTextureLeaseEpoch,
+        textures: &[AtlasTextureInstanceId],
+    ) {
+        debug_assert!(
+            textures
+                .iter()
+                .enumerate()
+                .all(|(index, texture)| !textures[..index].contains(texture)),
+            "atlas texture lease release requires deduplicated texture instances"
+        );
+        let mut state = self.0.lock();
+        state.lease_release_calls += 1;
+        if state.epoch != epoch {
+            return;
+        }
+        for texture in textures.iter().copied() {
+            state.release_visual_lease(texture);
+        }
+    }
+}
+
+impl TestAtlasState {
+    fn insert_tile(&mut self, key: AtlasKey, tile: AtlasTile) {
+        self.texture_refs.insert(
+            tile.texture_instance(),
+            TestAtlasTextureRefs {
+                live_atlas_keys: 1,
+                live_visual_leases: 0,
             },
-            removed.map(|tile| tile.texture_id),
-        )
+        );
+        self.tiles.insert(key, tile);
+    }
+
+    fn remove_tile(&mut self, key: &AtlasKey) -> Option<AtlasTile> {
+        let tile = self.tiles.remove(key)?;
+        let remove_refs = self
+            .texture_refs
+            .get_mut(&tile.texture_instance())
+            .is_some_and(|texture_refs| {
+                if texture_refs.live_atlas_keys == 0 {
+                    debug_assert!(false, "test atlas key count underflowed");
+                } else {
+                    texture_refs.live_atlas_keys -= 1;
+                }
+                texture_refs.live_atlas_keys == 0 && texture_refs.live_visual_leases == 0
+            });
+        if remove_refs {
+            self.texture_refs.remove(&tile.texture_instance());
+        }
+        Some(tile)
+    }
+
+    fn release_visual_lease(&mut self, texture: AtlasTextureInstanceId) {
+        let remove_refs = self
+            .texture_refs
+            .get_mut(&texture)
+            .is_some_and(|texture_refs| {
+                if texture_refs.live_visual_leases == 0 {
+                    debug_assert!(false, "test atlas visual lease count underflowed");
+                } else {
+                    texture_refs.live_visual_leases -= 1;
+                }
+                texture_refs.live_atlas_keys == 0 && texture_refs.live_visual_leases == 0
+            });
+        if remove_refs {
+            self.texture_refs.remove(&texture);
+        }
+    }
+}
+
+#[cfg(test)]
+mod atlas_texture_lease_tests {
+    use super::*;
+    use crate::{ImageId, RenderImageParams};
+    use std::borrow::Cow;
+
+    fn insert_image(atlas: &TestAtlas, image_id: usize) -> anyhow::Result<(AtlasKey, AtlasTile)> {
+        let key = AtlasKey::Image(RenderImageParams {
+            image_id: ImageId(image_id),
+            frame_index: 0,
+        });
+        let mut build = || {
+            Ok(Some((
+                Size {
+                    width: DevicePixels(1),
+                    height: DevicePixels(1),
+                },
+                Cow::Borrowed(&[0_u8, 0, 0, 255][..]),
+            )))
+        };
+        let tile = atlas
+            .get_or_insert_with(&key, &mut build)?
+            .expect("test image should allocate an atlas tile");
+        Ok((key, tile))
+    }
+
+    #[test]
+    fn texture_lease_deduplicates_and_delays_texture_retirement() -> anyhow::Result<()> {
+        let atlas = Arc::new(TestAtlas::new());
+        let (key, tile) = insert_image(&atlas, 1)?;
+        let texture = tile.texture_instance();
+        let platform_atlas: Arc<dyn PlatformAtlas> = atlas.clone();
+
+        let lease = platform_atlas
+            .retain_texture_instances(&[texture, texture])
+            .expect("resident texture should be retainable");
+        assert_eq!(lease.texture_instances(), &[texture]);
+
+        atlas.remove(&key);
+        {
+            let state = atlas.0.lock();
+            let refs = state
+                .texture_refs
+                .get(&texture)
+                .expect("leased texture must remain resident after key removal");
+            assert_eq!(refs.live_atlas_keys, 0);
+            assert_eq!(refs.live_visual_leases, 1);
+        }
+
+        drop(lease);
+        assert!(!atlas.0.lock().texture_refs.contains_key(&texture));
+        Ok(())
+    }
+
+    #[test]
+    fn empty_texture_lease_has_no_unsafe_acquire_or_release_obligation() {
+        let atlas = Arc::new(TestAtlas::new());
+        let platform_atlas: Arc<dyn PlatformAtlas> = atlas.clone();
+
+        let lease = platform_atlas
+            .retain_texture_instances(&[])
+            .expect("an empty texture set should produce an inert lease");
+        assert!(lease.texture_instances().is_empty());
+        drop(lease);
+
+        let state = atlas.0.lock();
+        assert_eq!(state.lease_acquire_calls, 0);
+        assert_eq!(state.lease_release_calls, 0);
+    }
+
+    #[test]
+    fn texture_lease_acquisition_is_atomic_when_one_texture_is_unavailable() -> anyhow::Result<()> {
+        let atlas = Arc::new(TestAtlas::new());
+        let (_, tile) = insert_image(&atlas, 2)?;
+        let texture = tile.texture_instance();
+        let unavailable = AtlasTextureInstanceId {
+            texture_id: AtlasTextureId {
+                index: tile.texture_id.index + 100,
+                kind: tile.texture_id.kind,
+            },
+            generation: texture.generation + 100,
+        };
+        let platform_atlas: Arc<dyn PlatformAtlas> = atlas.clone();
+
+        assert!(matches!(
+            platform_atlas.retain_texture_instances(&[texture, unavailable]),
+            Err(AtlasTextureLeaseError::TextureUnavailable { texture: rejected, .. })
+                if rejected == unavailable
+        ));
+        assert_eq!(atlas.0.lock().texture_refs[&texture].live_visual_leases, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn texture_lease_reports_epoch_invalidation_after_renderer_reset() -> anyhow::Result<()> {
+        let atlas = Arc::new(TestAtlas::new());
+        let (_, tile) = insert_image(&atlas, 3)?;
+        let texture = tile.texture_instance();
+        let platform_atlas: Arc<dyn PlatformAtlas> = atlas.clone();
+        let lease = platform_atlas
+            .retain_texture_instances(&[texture])
+            .expect("resident texture should be retainable");
+        let expected_epoch = lease.epoch();
+        let replacement = AtlasTextureInstanceId {
+            texture_id: tile.texture_id,
+            generation: texture.generation + 1,
+        };
+
+        let actual_epoch = {
+            let mut state = atlas.0.lock();
+            state.epoch = state.epoch.next();
+            state.texture_refs.clear();
+            state.tiles.clear();
+            state.texture_refs.insert(
+                replacement,
+                TestAtlasTextureRefs {
+                    live_atlas_keys: 1,
+                    live_visual_leases: 7,
+                },
+            );
+            state.epoch
+        };
+
+        assert_eq!(
+            lease.validate(),
+            Err(crate::AtlasTextureLeaseInvalidation {
+                expected_epoch,
+                actual_epoch,
+            })
+        );
+        drop(lease);
+        assert_eq!(
+            atlas.0.lock().texture_refs[&replacement].live_visual_leases,
+            7,
+            "dropping an old-epoch lease must not mutate a replacement in the same slot"
+        );
+        Ok(())
     }
 }

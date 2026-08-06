@@ -3,6 +3,7 @@ use crate::DockViewportActivationTransaction;
 use crate::surface::{
     DockSurfaceActivationOutcome, DockSurfaceChangeCategory, DockSurfaceOwner,
     DockSurfaceTransactionId,
+    live_undock::DockLiveUndockOpeningKey,
     window_session::{DockSurfaceWindowSessionLease, DockSurfaceWindowSessionOpeningToken},
     with_detached_root_transaction,
 };
@@ -44,7 +45,8 @@ use crate::{
     },
     viewport_registry::DockViewportRegistrationKey,
     viewport_runtime::{
-        DockViewportClaimedTearOffTarget, DockViewportPreparedTearOffBegin,
+        DockViewportClaimedTearOffTarget, DockViewportCommittedLiveUndockPromotion,
+        DockViewportPreparedLiveUndockPromotion, DockViewportPreparedTearOffBegin,
         DockViewportPreparedTearOffDrop,
     },
     viewport_window_lifecycle::DockViewportReusableWindow,
@@ -67,6 +69,7 @@ use std::cell::{Ref, RefMut};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -74,6 +77,11 @@ use std::{
 mod close_ops;
 mod route_ops;
 mod scene_ops;
+
+pub(crate) use route_ops::{
+    DockViewportLockedDropRoute, DockViewportPreflightedLiveUndockHostDrop,
+    DockViewportPreparedLiveUndockHostDrop,
+};
 
 /// Cloneable application handle for the shared viewport runtime.
 ///
@@ -98,6 +106,9 @@ pub struct DockViewportRuntimeHandle {
     surface_owner: Rc<RefCell<Option<WeakEntity<DockSurfaceOwner>>>>,
     #[cfg(test)]
     window_close_apply_test_hook: DockViewportWindowCloseApplyTestHook,
+    #[cfg(test)]
+    live_undock_logical_close_selection_test_hook:
+        DockViewportLiveUndockLogicalCloseSelectionTestHook,
 }
 
 static NEXT_DOCK_VIEWPORT_RUNTIME_IDENTITY: AtomicU64 = AtomicU64::new(1);
@@ -120,7 +131,7 @@ impl DockViewportRuntimeIdentity {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DockViewportManagedSurface {
     owner: Entity<DockSurfaceOwner>,
     lease: DockSurfaceWindowSessionLease,
@@ -140,6 +151,25 @@ impl std::fmt::Debug for DockViewportWindowCloseApplyTestHook {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DockViewportWindowCloseApplyTestHook")
+            .field("installed", &self.0.borrow().is_some())
+            .finish()
+    }
+}
+
+#[cfg(test)]
+type DockViewportLiveUndockLogicalCloseSelectionCallback = Box<dyn FnOnce(&mut App)>;
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct DockViewportLiveUndockLogicalCloseSelectionTestHook(
+    Rc<RefCell<Option<DockViewportLiveUndockLogicalCloseSelectionCallback>>>,
+);
+
+#[cfg(test)]
+impl std::fmt::Debug for DockViewportLiveUndockLogicalCloseSelectionTestHook {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DockViewportLiveUndockLogicalCloseSelectionTestHook")
             .field("installed", &self.0.borrow().is_some())
             .finish()
     }
@@ -704,6 +734,26 @@ impl DockViewportRuntimeHandle {
             .runtime
             .borrow_mut()
             .commit_surface_shutdown(reservation);
+        self.publish_frozen_surface_retirement(effects, cx)
+    }
+
+    pub(crate) fn retire_frozen_surface_after_capture_failure(
+        &self,
+        reservation: DockViewportSurfaceShutdownReservation,
+        cx: &mut App,
+    ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
+        let effects = self
+            .runtime
+            .borrow_mut()
+            .retire_frozen_surface_after_capture_failure(reservation);
+        self.publish_frozen_surface_retirement(effects, cx)
+    }
+
+    fn publish_frozen_surface_retirement(
+        &self,
+        effects: crate::DockViewportSurfaceShutdownEffects,
+        cx: &mut App,
+    ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
         let (lease, windows, cleanup_update) = effects.into_parts();
         let Some(work_context) = cleanup_update.work_context() else {
             debug_assert!(cleanup_update.change_categories().is_empty());
@@ -733,18 +783,135 @@ impl DockViewportRuntimeHandle {
         &self,
         lease: DockSurfaceWindowSessionLease,
         window_id: WindowId,
+        cx: &mut App,
     ) -> bool {
-        self.runtime
+        let update = self
+            .runtime
             .borrow_mut()
-            .settle_surface_window_terminal(lease, window_id)
+            .settle_surface_window_terminal(lease, window_id);
+        refresh_runtime_update(update, cx)
     }
 
     pub(crate) fn surface_generation_empty(&self, lease: DockSurfaceWindowSessionLease) -> bool {
         self.runtime.borrow().surface_generation_empty(lease)
     }
 
+    pub(crate) fn register_provisional_window(
+        &self,
+        window: AnyWindowHandle,
+        opening: DockLiveUndockOpeningKey,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .register_provisional_window(window, opening)
+    }
+
+    pub(crate) fn prepare_live_undock_provisional_promotion(
+        &self,
+        target_space: &DockSpaceId,
+        window: AnyWindowHandle,
+        opening: DockLiveUndockOpeningKey,
+        context: DockViewportRuntimeWorkContext,
+        window_facts: DockViewportWindowFacts,
+    ) -> Option<DockViewportPreparedLiveUndockPromotion> {
+        self.runtime
+            .borrow_mut()
+            .prepare_live_undock_provisional_promotion(
+                target_space,
+                window,
+                opening,
+                context,
+                window_facts,
+            )
+    }
+
+    pub(crate) fn can_commit_live_undock_provisional_promotion(
+        &self,
+        prepared: &DockViewportPreparedLiveUndockPromotion,
+    ) -> bool {
+        self.runtime
+            .borrow()
+            .can_commit_live_undock_provisional_promotion(prepared)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reject_next_live_undock_promotion_commit_for_test(&self) {
+        self.runtime
+            .borrow()
+            .reject_next_live_undock_promotion_commit_for_test();
+    }
+
+    pub(crate) fn commit_live_undock_provisional_promotion(
+        &self,
+        prepared: DockViewportPreparedLiveUndockPromotion,
+    ) -> DockViewportCommittedLiveUndockPromotion {
+        self.runtime
+            .borrow_mut()
+            .commit_live_undock_provisional_promotion(prepared)
+    }
+
+    pub(crate) fn publish_live_undock_promotion_commit(
+        &self,
+        mut committed: DockViewportCommittedLiveUndockPromotion,
+        graph_changed: bool,
+        cx: &mut App,
+    ) -> DockViewportRegistrationKey {
+        let context = committed
+            .runtime_update
+            .work_context()
+            .expect("prepared live-undock promotion must retain its exact work context");
+        committed
+            .runtime_update
+            .mark_graph_commit(graph_changed, context);
+        refresh_runtime_update_with_commit(self, committed.runtime_update, cx);
+        committed.registration
+    }
+
+    pub(crate) fn adopt_live_undock_committed_window_lifecycle(
+        &self,
+        registration: &DockViewportRegistrationKey,
+        window: AnyWindowHandle,
+        cx: &mut App,
+    ) -> bool {
+        if registration.window_id() != window.window_id()
+            || !self.is_current_registration(registration)
+        {
+            return false;
+        }
+        self.ensure_window_closed_observer(cx);
+        if install_should_close_hook(self.clone(), window, cx).is_err() {
+            return false;
+        }
+        self.is_current_registration(registration)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reject_next_provisional_registration_for_test(&self) {
+        self.runtime
+            .borrow_mut()
+            .reject_next_provisional_registration_for_test();
+    }
+
+    pub(crate) fn adopt_provisional_window_during_shutdown(
+        &self,
+        window: AnyWindowHandle,
+        opening: DockLiveUndockOpeningKey,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .adopt_provisional_window_during_shutdown(window, opening)
+    }
+
     pub(crate) fn admits_work_context(&self, context: DockViewportRuntimeWorkContext) -> bool {
         self.runtime.borrow().admits_work_context(context)
+    }
+
+    pub(crate) fn apply_committed_window_effects(
+        &self,
+        effects: DockViewportWindowEffects,
+        cx: &mut App,
+    ) {
+        apply_viewport_window_effects(&self.runtime, effects, cx);
     }
 
     pub(crate) fn begin_primary_anchor_open_attempt(
@@ -797,6 +964,9 @@ impl DockViewportRuntimeHandle {
             surface_owner: Rc::new(RefCell::new(None)),
             #[cfg(test)]
             window_close_apply_test_hook: DockViewportWindowCloseApplyTestHook::default(),
+            #[cfg(test)]
+            live_undock_logical_close_selection_test_hook:
+                DockViewportLiveUndockLogicalCloseSelectionTestHook::default(),
         }
     }
 
@@ -826,6 +996,34 @@ impl DockViewportRuntimeHandle {
     }
 
     #[cfg(test)]
+    pub(crate) fn install_live_undock_logical_close_selection_hook_for_test(
+        &self,
+        hook: impl FnOnce(&mut App) + 'static,
+    ) {
+        let mut installed = self
+            .live_undock_logical_close_selection_test_hook
+            .0
+            .borrow_mut();
+        assert!(
+            installed.is_none(),
+            "dock live-undock logical-close selection test hook is already installed"
+        );
+        *installed = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(super) fn run_live_undock_logical_close_selection_hook_for_test(&self, cx: &mut App) {
+        let hook = self
+            .live_undock_logical_close_selection_test_hook
+            .0
+            .borrow_mut()
+            .take();
+        if let Some(hook) = hook {
+            hook(cx);
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn downgrade_runtime_for_test(&self) -> std::rc::Weak<RefCell<DockViewportRuntime>> {
         Rc::downgrade(&self.runtime)
     }
@@ -844,6 +1042,10 @@ impl DockViewportRuntimeHandle {
             .borrow()
             .as_ref()
             .and_then(WeakEntity::upgrade)
+    }
+
+    pub(crate) fn surface_owner_entity(&self) -> Option<Entity<DockSurfaceOwner>> {
+        self.surface_owner()
     }
 
     fn exact_managed_surface(&self, cx: &App) -> Result<Option<DockViewportManagedSurface>> {
@@ -901,6 +1103,27 @@ impl DockViewportRuntimeHandle {
             )
             .into()),
         }
+    }
+
+    fn register_managed_surface_retirement_dependency(
+        &self,
+        managed_surface: Option<&DockViewportManagedSurface>,
+        window: AnyWindowHandle,
+        cx: &App,
+    ) -> Result<()> {
+        let Some(surface) = managed_surface else {
+            return Ok(());
+        };
+        cx.register_native_window_retirement_dependencies(
+            surface.lease.anchor(),
+            [window.window_id()],
+        )
+        .map_err(|error| {
+            std::io::Error::other(format!(
+                "managed viewport native retirement dependency was rejected: {error:?}"
+            ))
+        })?;
+        Ok(())
     }
 
     pub(crate) fn install_surface_commit_sink(
@@ -1864,6 +2087,7 @@ impl DockViewportRuntimeHandle {
         let controller = self.runtime.borrow().controller_entity();
         let host_space = space.clone();
         let host_runtime = self.clone();
+        let managed_surface_for_builder = managed_surface.clone();
         let open_attempt_runtime = host_runtime.clone();
         let open_attempt_slot = Rc::new(Cell::new(None));
         let open_attempt_slot_for_builder = open_attempt_slot.clone();
@@ -1873,7 +2097,7 @@ impl DockViewportRuntimeHandle {
                 .borrow_mut()
                 .begin_window_open_attempt(window.window_handle(), lineage);
             open_attempt_slot_for_builder.set(open_attempt);
-            cx.new(move |cx| match managed_surface {
+            cx.new(move |cx| match managed_surface_for_builder {
                 Some(surface) => DockHost::from_managed_surface_owner(
                     controller,
                     host_space,
@@ -1906,6 +2130,14 @@ impl DockViewportRuntimeHandle {
         };
 
         if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
+            let _ = self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(error);
+        }
+        if let Err(error) = self.register_managed_surface_retirement_dependency(
+            managed_surface.as_ref(),
+            window,
+            cx,
+        ) {
             let _ = self.retire_window_open_attempt_for_close(open_attempt, window, cx);
             return Err(error);
         }
@@ -1996,6 +2228,7 @@ impl DockViewportRuntimeHandle {
 
         let controller = self.runtime.borrow().controller_entity();
         let host_runtime = self.clone();
+        let managed_surface_for_builder = managed_surface.clone();
         let open_attempt_runtime = host_runtime.clone();
         let open_attempt_slot = Rc::new(Cell::new(None));
         let open_attempt_slot_for_builder = open_attempt_slot.clone();
@@ -2005,7 +2238,7 @@ impl DockViewportRuntimeHandle {
                 .borrow_mut()
                 .begin_window_open_attempt(window.window_handle(), lineage);
             open_attempt_slot_for_builder.set(open_attempt);
-            cx.new(move |cx| match managed_surface {
+            cx.new(move |cx| match managed_surface_for_builder {
                 Some(surface) => DockHost::from_managed_surface_owner(
                     controller,
                     space,
@@ -2041,8 +2274,148 @@ impl DockViewportRuntimeHandle {
             self.retire_window_open_attempt_for_close(open_attempt, window, cx);
             return Err(error);
         }
+        if let Err(error) = self.register_managed_surface_retirement_dependency(
+            managed_surface.as_ref(),
+            window,
+            cx,
+        ) {
+            self.retire_window_open_attempt_for_close(open_attempt, window, cx);
+            return Err(error);
+        }
 
         Ok((window, open_attempt))
+    }
+
+    pub(crate) fn open_triggered_live_undock_provisional_viewport(
+        &self,
+        space: DockSpaceId,
+        options: WindowOptions,
+        request: &crate::surface::live_undock::DockLiveUndockOpenRequest,
+        cx: &mut App,
+    ) -> Result<open_gpui::WindowHandle<DockHost>> {
+        let managed_surface = match self.live_undock_managed_surface(cx) {
+            Ok(surface) if surface.lease == request.key().lease() => surface,
+            Ok(surface) => {
+                crate::surface::finish_live_undock_open_failure(&surface.owner, request.key(), cx);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "triggered live-undock request no longer matches the active DockSurface lease",
+                )
+                .into());
+            }
+            Err(error) => {
+                if let Some(owner) = self.surface_owner() {
+                    crate::surface::finish_live_undock_open_failure(&owner, request.key(), cx);
+                }
+                return Err(error);
+            }
+        };
+        self.open_live_undock_provisional_request(&managed_surface, space, options, request, cx)
+    }
+
+    fn live_undock_managed_surface(&self, cx: &App) -> Result<DockViewportManagedSurface> {
+        self.ensure_platform_viewports_allowed(cx)?;
+        self.ensure_platform_viewport_windows_supported(cx)?;
+        let creation = cx.window_capabilities().creation;
+        if !creation.provisional_presentation.is_supported() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "the backend does not support generation-bound provisional presentation",
+            )
+            .into());
+        }
+        if !creation.focus_on_appearing.is_supported() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "the backend cannot guarantee non-activating provisional creation",
+            )
+            .into());
+        }
+        self.exact_managed_surface(cx)?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "live undock requires an exact facade-managed DockSurface lease",
+            )
+            .into()
+        })
+    }
+
+    fn open_live_undock_provisional_request(
+        &self,
+        managed_surface: &DockViewportManagedSurface,
+        space: DockSpaceId,
+        mut options: WindowOptions,
+        request: &crate::surface::live_undock::DockLiveUndockOpenRequest,
+        cx: &mut App,
+    ) -> Result<open_gpui::WindowHandle<DockHost>> {
+        let opening = request.key();
+        options.show = true;
+        options.focus_on_appearing = false;
+        options.provisional_session = Some(request.provisional_session().clone());
+
+        let controller = self.runtime.borrow().controller_entity();
+        let host_runtime = self.clone();
+        let owner = managed_surface.owner.clone();
+        let open_result = catch_unwind(AssertUnwindSafe(|| {
+            cx.open_window(options, move |_, cx| {
+                cx.new(move |cx| {
+                    DockHost::from_provisional_surface_owner(
+                        controller,
+                        space,
+                        host_runtime,
+                        &owner,
+                        opening,
+                        cx,
+                    )
+                })
+            })
+        }));
+        let opened = match open_result {
+            Ok(Ok(opened)) => opened,
+            Ok(Err(error)) => {
+                crate::surface::finish_live_undock_open_failure(
+                    &managed_surface.owner,
+                    opening,
+                    cx,
+                );
+                return Err(error);
+            }
+            Err(payload) => {
+                crate::surface::finish_live_undock_open_failure(
+                    &managed_surface.owner,
+                    opening,
+                    cx,
+                );
+                resume_unwind(payload);
+            }
+        };
+        let window: AnyWindowHandle = opened.into();
+        let retirement_dependency =
+            self.register_managed_surface_retirement_dependency(Some(managed_surface), window, cx);
+        let outcome = crate::surface::finish_live_undock_open_return(
+            &managed_surface.owner,
+            opening,
+            window,
+            retirement_dependency.is_ok(),
+            cx,
+        );
+        if let Err(error) = retirement_dependency {
+            return Err(error);
+        }
+        match outcome {
+            crate::surface::live_undock::DockLiveUndockOpenReturnOutcome::Admit { lease }
+                if lease == managed_surface.lease =>
+            {
+                Ok(opened)
+            }
+            outcome => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                format!(
+                    "live-undock provisional window lost its exact surface authority: {outcome:?}"
+                ),
+            )
+            .into()),
+        }
     }
 
     /// Opens a controller-backed viewport window and completes a tear-off transaction.

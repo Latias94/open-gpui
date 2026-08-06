@@ -138,6 +138,7 @@ mod host_viewport_drop;
 mod ids;
 mod interaction;
 mod layout;
+mod locked_drop_identity;
 pub mod model;
 mod native_captured_drag;
 mod op;
@@ -318,8 +319,9 @@ pub use surface::{
     DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
     DockSurfacePanelSnapshot, DockSurfacePrimaryWindowOpenConflict,
     DockSurfacePrimaryWindowOpenOutcome, DockSurfacePrimaryWindowOpened,
-    DockSurfacePrimaryWindowUnavailable, DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome,
-    DockSurfaceViewportCloseStatus, DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
+    DockSurfacePrimaryWindowUnavailable, DockSurfaceSnapshot, DockSurfaceTransition,
+    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
+    DockSurfaceViewportFlagWarning, DockSurfaceViewportInputStatus,
     DockSurfaceViewportLifecycleReadiness, DockSurfaceViewportOpenOutcome,
     DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
     DockSurfaceViewportPlatformCapabilities, DockSurfaceViewportPlatformReadiness,
@@ -381,7 +383,10 @@ pub(crate) use viewport_routed_preview::*;
 pub(crate) use viewport_runtime::*;
 pub(crate) use viewport_runtime_drop_resolution::*;
 pub(crate) use viewport_runtime_effects::*;
-pub(crate) use viewport_runtime_handle::{DockViewportRuntimeHandle, DockViewportRuntimeIdentity};
+pub(crate) use viewport_runtime_handle::{
+    DockViewportLockedDropRoute, DockViewportPreflightedLiveUndockHostDrop,
+    DockViewportPreparedLiveUndockHostDrop, DockViewportRuntimeHandle, DockViewportRuntimeIdentity,
+};
 pub(crate) use viewport_runtime_lineage::*;
 pub(crate) use viewport_runtime_status::*;
 pub(crate) use viewport_target_context::*;

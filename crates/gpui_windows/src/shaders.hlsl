@@ -98,6 +98,8 @@ struct AtlasTile {
     uint tile_id;
     uint padding;
     AtlasBounds bounds;
+    uint texture_generation;
+    uint texture_generation_padding;
 };
 
 struct PrimitiveTransform {

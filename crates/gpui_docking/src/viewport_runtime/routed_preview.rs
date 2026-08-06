@@ -199,7 +199,7 @@ impl DockViewportRuntime {
         (true, update)
     }
 
-    fn captured_native_source_foreign_surface_is_current(
+    fn captured_native_source_is_current(
         &self,
         request: &crate::DockViewportDropRouteRequest,
         owner: &DockViewportRoutedPreviewOwner,
@@ -215,6 +215,15 @@ impl DockViewportRuntime {
             && self.payload_drag.matches_session(Some(session))
             && session.accepts_payload(payload)
             && request.source_space() == &payload.source_space
+    }
+
+    fn captured_native_source_foreign_surface_is_current(
+        &self,
+        request: &crate::DockViewportDropRouteRequest,
+        owner: &DockViewportRoutedPreviewOwner,
+        payload: &DockDragPayload,
+    ) -> bool {
+        self.captured_native_source_is_current(request, owner, payload)
             && matches!(
                 request.captured_native_route(),
                 Some(DockCapturedNativeDropRoute::ForbiddenTarget(_))
@@ -288,6 +297,30 @@ impl DockViewportRuntime {
         }
         let resolution = DockViewportResolvedDropRoute::foreign_surface_rejection(request);
         self.status.record_route(request, resolution.route(), None);
+        self.status
+            .record_drop_result(&Err(crate::DockActionApplyError::DropTargetUnavailable));
+        true
+    }
+
+    pub(crate) fn record_captured_native_unavailable_terminal(
+        &mut self,
+        request: &crate::DockViewportDropRouteRequest,
+        owner: &DockViewportRoutedPreviewOwner,
+        payload: &DockDragPayload,
+    ) -> bool {
+        if !self.captured_native_source_is_current(request, owner, payload)
+            || !matches!(
+                request.captured_native_route(),
+                Some(DockCapturedNativeDropRoute::Unavailable)
+            )
+        {
+            return false;
+        }
+        self.status.record_route(
+            request,
+            &DockViewportDropRoute::Unavailable,
+            Some(crate::DockViewportDropRouteUnavailableReason::NoViewportRouteSelection),
+        );
         self.status
             .record_drop_result(&Err(crate::DockActionApplyError::DropTargetUnavailable));
         true

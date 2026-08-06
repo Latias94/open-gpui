@@ -440,7 +440,6 @@ pub struct X11WindowState {
     mapped: bool,
     active: bool,
     hovered: bool,
-    pub(crate) force_render_after_recovery: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -1188,7 +1187,6 @@ impl X11WindowState {
                 input_handler: PlatformInputHandlerSlot::default(),
                 active: false,
                 hovered: false,
-                force_render_after_recovery: false,
                 fullscreen: false,
                 maximized_vertical: false,
                 maximized_horizontal: false,
@@ -2089,24 +2087,16 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            match inner.renderer.recover(&raw_window) {
-                Ok(()) => {}
+            return match inner.renderer.recover(&raw_window) {
+                Ok(()) => PlatformWindowPresentOutcome::RepaintRequired,
                 Err(err) => {
                     log::warn!("GPU recovery failed, will retry on next frame: {err}");
+                    PlatformWindowPresentOutcome::Deferred
                 }
-            }
-
-            inner.force_render_after_recovery = true;
-            return PlatformWindowPresentOutcome::Deferred;
+            };
         }
 
-        let outcome = inner.renderer.draw(scene);
-
-        if inner.renderer.needs_redraw() {
-            inner.force_render_after_recovery = true;
-        }
-
-        outcome
+        inner.renderer.draw(scene)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

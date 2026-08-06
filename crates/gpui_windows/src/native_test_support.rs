@@ -4,33 +4,42 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Context, Empty, IntoElement,
     NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryGeneration,
     NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind, NativePlatformCommandKind,
-    PlatformInput, PointerCancelEvent, PointerCancelReason, QuitMode, Render, Styled, Window,
-    WindowActivationPolicy, WindowBounds, WindowId, WindowKind, WindowMouseEvent,
-    WindowMutationDispatch, WindowMutationOutcome, WindowOptions, WindowProvisionalRevealOutcome,
-    WindowProvisionalRevealZOrder, WindowProvisionalSession, div, point, px, size, white,
+    ParentElement, PlatformInput, PlatformWindowPresentOutcome, PointerCancelEvent,
+    PointerCancelReason, QuitMode, Render, Styled, Window, WindowActivationPolicy, WindowBounds,
+    WindowId, WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome,
+    WindowOptions, WindowProvisionalRevealOutcome, WindowProvisionalRevealZOrder,
+    WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
+    canvas, div, point, px, size, white,
 };
 use std::{
     cell::{Cell, RefCell},
+    mem::size_of,
     rc::Rc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use windows::Win32::{
-    Foundation::{HWND, LPARAM, RECT, WPARAM},
-    Graphics::Gdi::{RDW_INVALIDATE, RedrawWindow},
+    Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
+    Graphics::Gdi::{ClientToScreen, RDW_INVALIDATE, RedrawWindow},
     System::SystemServices::MK_LBUTTON,
     UI::{
         Controls::WM_MOUSELEAVE,
         Input::KeyboardAndMouse::{
-            GetActiveWindow, GetCapture, IsWindowEnabled, ReleaseCapture, SetActiveWindow,
+            GetActiveWindow, GetAsyncKeyState, GetCapture, INPUT, INPUT_0, INPUT_MOUSE,
+            IsWindowEnabled, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+            MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, ReleaseCapture, SendInput,
+            SetActiveWindow, VK_LBUTTON,
         },
         WindowsAndMessaging::{
             CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT, GW_OWNER,
-            GWL_EXSTYLE, GetForegroundWindow, GetWindow, GetWindowRect, HTTRANSPARENT,
-            HWND_MESSAGE, IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT,
-            MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED,
-            SendMessageW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_KEYDOWN,
-            WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE,
-            WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
+            GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageExtraInfo,
+            GetSystemMetrics, GetWindow, GetWindowRect, HTTRANSPARENT, HWND_MESSAGE, IsWindow,
+            IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE,
+            PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN,
+            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SendMessageW, SetCursorPos,
+            SetForegroundWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE,
+            WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+            WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            WS_EX_NOACTIVATE,
         },
     },
 };
@@ -38,6 +47,8 @@ use windows::core::w;
 
 const MAX_MESSAGE_PUMP_ATTEMPTS: usize = 512;
 const MAX_STALE_QUIT_MESSAGES: usize = 16;
+const NATIVE_INTERACTIVE_INPUT_CANARY: usize = 0x4f47_5049;
+const NATIVE_INTERACTIVE_INPUT_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn native_input_delivery_count(app: &mut open_gpui::App, propagate: bool) -> usize {
     app.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
@@ -60,6 +71,7 @@ struct DispatchedMessage {
     hwnd: HWND,
     message: u32,
     result: isize,
+    extra_info: isize,
 }
 
 #[derive(Default)]
@@ -80,6 +92,12 @@ impl MessageTrace {
             .rev()
             .find(|record| record.hwnd == hwnd && record.message == message)
             .map(|record| record.result)
+    }
+
+    fn contains_extra_info(&self, hwnd: HWND, message: u32, extra_info: isize) -> bool {
+        self.dispatched.iter().any(|record| {
+            record.hwnd == hwnd && record.message == message && record.extra_info == extra_info
+        })
     }
 
     fn message_ids(&self) -> Vec<u32> {
@@ -113,12 +131,14 @@ fn dispatch_one_message(trace: &mut MessageTrace) -> bool {
     );
 
     if translate_accelerator(&message).is_none() {
+        let extra_info = unsafe { GetMessageExtraInfo() }.0;
         _ = unsafe { TranslateMessage(&message) };
         let result = unsafe { DispatchMessageW(&message) };
         trace.dispatched.push(DispatchedMessage {
             hwnd: message.hwnd,
             message: message.message,
             result: result.0,
+            extra_info,
         });
     }
 
@@ -168,6 +188,28 @@ fn pump_messages_until_with_delay(
     );
 }
 
+fn pump_system_input_until(
+    description: &str,
+    mut converged: impl FnMut(&MessageTrace) -> bool,
+) -> MessageTrace {
+    let deadline = Instant::now() + NATIVE_INTERACTIVE_INPUT_TIMEOUT;
+    let mut trace = MessageTrace::default();
+    loop {
+        if converged(&trace) {
+            return trace;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{description} did not converge within {NATIVE_INTERACTIVE_INPUT_TIMEOUT:?}; dispatched={:x?}",
+                trace.message_ids()
+            );
+        }
+        if !dispatch_one_message(&mut trace) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
 fn pump_messages_until_idle(description: &str) -> MessageTrace {
     let mut trace = MessageTrace::default();
     for _ in 0..MAX_MESSAGE_PUMP_ATTEMPTS {
@@ -215,11 +257,209 @@ fn screen_point_lparam(x: i32, y: i32) -> LPARAM {
     LPARAM(((((y as u32) & 0xffff) << 16) | ((x as u32) & 0xffff)) as isize)
 }
 
+struct NativeInteractiveCursorGuard {
+    original_position: POINT,
+    original_foreground: HWND,
+    capture_owner: Option<HWND>,
+    injected_primary_down: bool,
+}
+
+impl NativeInteractiveCursorGuard {
+    fn capture() -> Self {
+        let mut original_position = POINT::default();
+        unsafe { GetCursorPos(&mut original_position) }
+            .expect("interactive native runner must expose the system cursor");
+        Self {
+            original_position,
+            original_foreground: unsafe { GetForegroundWindow() },
+            capture_owner: None,
+            injected_primary_down: false,
+        }
+    }
+
+    fn track_capture_owner(&mut self, hwnd: HWND) {
+        self.capture_owner = Some(hwnd);
+    }
+
+    fn mark_primary_button_down(&mut self) {
+        self.injected_primary_down = true;
+    }
+
+    fn mark_primary_button_up(&mut self) {
+        self.injected_primary_down = false;
+    }
+}
+
+impl Drop for NativeInteractiveCursorGuard {
+    fn drop(&mut self) {
+        if self.injected_primary_down {
+            let _ = inject_primary_button_up_best_effort();
+        }
+        if self.capture_owner == Some(unsafe { GetCapture() }) {
+            let _ = unsafe { ReleaseCapture() };
+        }
+        let _ = unsafe { SetCursorPos(self.original_position.x, self.original_position.y) };
+        if self.original_foreground != HWND::default()
+            && unsafe { IsWindow(Some(self.original_foreground)).as_bool() }
+        {
+            let _ = unsafe { SetForegroundWindow(self.original_foreground) };
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VirtualScreenBounds {
+    left: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+}
+
+impl VirtualScreenBounds {
+    fn current() -> Self {
+        let bounds = Self {
+            left: unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) },
+            top: unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) },
+            width: unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
+            height: unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
+        };
+        assert!(
+            bounds.width > 1 && bounds.height > 1,
+            "interactive native runner must expose a non-empty virtual desktop; bounds={bounds:?}"
+        );
+        bounds
+    }
+
+    fn contains(self, point: POINT) -> bool {
+        let right = i64::from(self.left) + i64::from(self.width);
+        let bottom = i64::from(self.top) + i64::from(self.height);
+        i64::from(point.x) >= i64::from(self.left)
+            && i64::from(point.x) < right
+            && i64::from(point.y) >= i64::from(self.top)
+            && i64::from(point.y) < bottom
+    }
+
+    fn absolute_coordinates(self, point: POINT) -> (i32, i32) {
+        assert!(
+            self.contains(point),
+            "interactive native injection point must remain inside the virtual desktop; point={point:?}, bounds={self:?}"
+        );
+        (
+            absolute_input_coordinate(point.x, self.left, self.width),
+            absolute_input_coordinate(point.y, self.top, self.height),
+        )
+    }
+}
+
+fn absolute_input_coordinate(value: i32, origin: i32, extent: i32) -> i32 {
+    debug_assert!(extent > 1);
+    let numerator = (i64::from(value) - i64::from(origin)) * 65_535;
+    (numerator / i64::from(extent - 1))
+        .try_into()
+        .expect("virtual-desktop coordinate must fit Win32 absolute input")
+}
+
+fn inject_primary_button_up_best_effort() -> bool {
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: 0,
+                dy: 0,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_LEFTUP,
+                time: 0,
+                dwExtraInfo: NATIVE_INTERACTIVE_INPUT_CANARY,
+            },
+        },
+    };
+    (unsafe { SendInput(&[input], size_of::<INPUT>() as i32) }) == 1
+}
+
+fn require_native_interactive_runner() {
+    assert!(
+        std::env::var("OPEN_GPUI_NATIVE_INTERACTIVE")
+            .ok()
+            .is_some_and(|value| value == "1"),
+        "native interactive tests require OPEN_GPUI_NATIVE_INTERACTIVE=1 on the open-gpui-windows-native-interactive-ephemeral runner"
+    );
+}
+
+fn inject_system_pointer(
+    point: POINT,
+    flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
+) {
+    let (dx, dy) = VirtualScreenBounds::current().absolute_coordinates(point);
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | flags,
+                time: 0,
+                dwExtraInfo: NATIVE_INTERACTIVE_INPUT_CANARY,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
+    assert_eq!(
+        sent, 1,
+        "native interactive runner rejected system pointer injection; this commonly means the desktop, integrity level, or UIPI boundary is incompatible"
+    );
+}
+
+fn client_center_in_screen_coordinates(hwnd: HWND) -> POINT {
+    let mut client_bounds = RECT::default();
+    unsafe { GetClientRect(hwnd, &mut client_bounds) }
+        .expect("interactive native sentinel must query its client bounds");
+    let mut point = POINT {
+        x: client_bounds.left + (client_bounds.right - client_bounds.left) / 2,
+        y: client_bounds.top + (client_bounds.bottom - client_bounds.top) / 2,
+    };
+    assert!(
+        unsafe { ClientToScreen(hwnd, &mut point).as_bool() },
+        "interactive native sentinel must convert client coordinates to screen coordinates"
+    );
+    point
+}
+
 struct PaintedRoot;
 
 impl Render for PaintedRoot {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div().size_full().bg(white())
+    }
+}
+
+struct ProvisionalSemanticsMarkerRoot {
+    authority: Rc<RefCell<Option<(WindowProvisionalSession, WindowProvisionalSemanticsTicket)>>>,
+}
+
+impl Render for ProvisionalSemanticsMarkerRoot {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let authority = self.authority.clone();
+        div().size_full().bg(white()).child(
+            canvas(
+                move |_, window, _| {
+                    let authority = authority.clone();
+                    window.record_prepaint_focus_stable_commit(move |frame, window, app| {
+                        let Some((session, ticket)) = authority.borrow().clone() else {
+                            return;
+                        };
+                        window
+                            .accept_provisional_destination_semantics_frame(
+                                &session, &ticket, frame, app,
+                            )
+                            .expect("the exact native marker should accept its candidate frame");
+                    });
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
     }
 }
 
@@ -1237,6 +1477,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let session = WindowProvisionalSession::new(73)
         .expect("the native provisional generation should be valid");
+    let semantics_authority = Rc::new(RefCell::new(None));
     let foreground_before = unsafe { GetForegroundWindow() };
     let window = app
         .update_for_test(|cx| {
@@ -1248,7 +1489,11 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
                     provisional_session: Some(session.clone()),
                     ..WindowOptions::default()
                 },
-                |_, cx| cx.new(|_| PaintedRoot),
+                |_, cx| {
+                    cx.new(|_| ProvisionalSemanticsMarkerRoot {
+                        authority: semantics_authority.clone(),
+                    })
+                },
             )
         })
         .expect("native provisional window should open");
@@ -1327,12 +1572,56 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     };
     assert_eq!(gated_mouse_activate.0, MA_NOACTIVATEANDEAT as isize);
 
+    let semantics_ticket = app
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, cx| {
+                window
+                    .begin_provisional_destination_semantics(&session, 79, cx)
+                    .expect("the exact revealed HWND should project its destination in place")
+            })
+        })
+        .expect("native provisional window should remain live during semantic projection");
+    *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+    app.update_for_test(|cx| {
+        cx.update_window(any_window, |root, _, cx| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the native provisional root should retain its marker type")
+                .update(cx, |_, root_cx| root_cx.notify());
+        })
+        .expect("native provisional marker root should remain live");
+    });
+    pump_messages_until("real provisional destination-semantics commit", || {
+        app.update_for_test(|_| {
+            semantics_ticket.snapshot().outcome() != WindowProvisionalSemanticsOutcome::Pending
+        })
+    });
+    let semantics = semantics_ticket.snapshot();
+    assert_eq!(
+        semantics.outcome(),
+        WindowProvisionalSemanticsOutcome::Committed
+    );
+    assert_eq!(semantics.window_id(), any_window.window_id());
+    assert_eq!(
+        semantics.session_generation(),
+        session.snapshot().generation()
+    );
+    assert_eq!(semantics.destination_generation(), 79);
+    assert!(
+        semantics
+            .committed_frame_generation()
+            .is_some_and(|generation| generation >= semantics.minimum_frame_generation())
+    );
+    assert!(!session.snapshot().accepts_interaction());
+    let committed_but_gated_hit =
+        unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
+    assert_eq!(committed_but_gated_hit.0, HTTRANSPARENT as isize);
+
     app.update_for_test(|cx| {
         any_window
             .update(cx, |_, window, cx| {
                 window
-                    .promote_provisional_presentation(&session, cx)
-                    .expect("the exact revealed HWND should promote in place");
+                    .admit_provisional_interaction(&session, &semantics_ticket, cx)
+                    .expect("the exact committed destination should promote in place");
             })
             .expect("native provisional window should remain live during promotion")
     });
@@ -2247,6 +2536,186 @@ fn borrowed_renderer_rejects_quiescence_without_destroying_the_real_hwnd() {
     pump_messages_until("borrowed-renderer test logical teardown", || {
         !is_registered(&platform, hwnd)
     });
+}
+
+#[test]
+#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture() {
+    require_native_interactive_runner();
+    discard_stale_quit_messages();
+    assert_eq!(
+        unsafe { GetCapture() },
+        HWND::default(),
+        "interactive native runner must start without an unrelated capture owner"
+    );
+    if unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) } as u16 & 0x8000 != 0 {
+        let _ = inject_primary_button_up_best_effort();
+        panic!(
+            "interactive native runner started with the primary pointer button pressed; a best-effort LEFTUP was injected before failing the contaminated runner"
+        );
+    }
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(360.0), px(240.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| PaintedRoot),
+            )
+        })
+        .expect("interactive native sentinel window should open and submit a rendered frame");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("interactive native sentinel must register an HWND")
+        .as_raw();
+    let mut cursor_guard = NativeInteractiveCursorGuard::capture();
+    cursor_guard.track_capture_owner(hwnd);
+
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let _mouse_interceptor = app
+        .update_for_test(|cx| {
+            window.update(cx, |_, window, _| {
+                window.intercept_window_mouse_events({
+                    let observed = observed.clone();
+                    move |event, _, _| {
+                        let label = match event {
+                            WindowMouseEvent::Move(_) => Some("move"),
+                            WindowMouseEvent::Down(_) => Some("down"),
+                            WindowMouseEvent::Up(_) => Some("up"),
+                            _ => None,
+                        };
+                        if let Some(label) = label {
+                            observed.borrow_mut().push(label);
+                        }
+                    }
+                })
+            })
+        })
+        .expect("interactive native sentinel should install a mouse interceptor");
+    pump_messages_until("interactive native sentinel non-empty presentation", || {
+        if unsafe { !IsWindowVisible(hwnd).as_bool() } {
+            return false;
+        }
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| {
+                    let facts = window.presentation_facts();
+                    facts.non_empty_presented_generation.is_some()
+                        && facts.latest_present_attempt.is_some_and(|attempt| {
+                            attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                                && attempt.contained_valid_primitives
+                                && Some(attempt.generation) == facts.non_empty_presented_generation
+                        })
+                })
+                .unwrap_or(false)
+        })
+    });
+
+    assert!(
+        unsafe { SetForegroundWindow(hwnd).as_bool() },
+        "interactive native runner could not foreground the sentinel HWND"
+    );
+    pump_messages_until("interactive native sentinel foreground", || unsafe {
+        GetForegroundWindow() == hwnd
+    });
+
+    let injection_point = client_center_in_screen_coordinates(hwnd);
+    let move_before = observed
+        .borrow()
+        .iter()
+        .filter(|label| **label == "move")
+        .count();
+    inject_system_pointer(injection_point, MOUSEEVENTF_MOVE);
+    pump_system_input_until("system-injected pointer move", |trace| {
+        trace.contains_extra_info(hwnd, WM_MOUSEMOVE, NATIVE_INTERACTIVE_INPUT_CANARY as isize)
+            && observed
+                .borrow()
+                .iter()
+                .filter(|label| **label == "move")
+                .count()
+                > move_before
+    });
+    let mut observed_cursor = POINT::default();
+    unsafe { GetCursorPos(&mut observed_cursor) }
+        .expect("interactive native runner must report the injected cursor position");
+    assert!(
+        observed_cursor.x.abs_diff(injection_point.x) <= 1
+            && observed_cursor.y.abs_diff(injection_point.y) <= 1,
+        "system cursor did not reach the injected screen coordinate; expected={injection_point:?}, observed={observed_cursor:?}"
+    );
+
+    let down_before = observed
+        .borrow()
+        .iter()
+        .filter(|label| **label == "down")
+        .count();
+    cursor_guard.mark_primary_button_down();
+    inject_system_pointer(injection_point, MOUSEEVENTF_LEFTDOWN);
+    pump_system_input_until("system-injected pointer down and capture", |trace| {
+        trace.contains_extra_info(
+            hwnd,
+            WM_LBUTTONDOWN,
+            NATIVE_INTERACTIVE_INPUT_CANARY as isize,
+        ) && observed
+            .borrow()
+            .iter()
+            .filter(|label| **label == "down")
+            .count()
+            > down_before
+            && unsafe { GetCapture() == hwnd }
+    });
+    assert_eq!(
+        unsafe { GetCapture() },
+        hwnd,
+        "system pointer down must acquire native capture for the sentinel HWND"
+    );
+
+    let up_before = observed
+        .borrow()
+        .iter()
+        .filter(|label| **label == "up")
+        .count();
+    inject_system_pointer(injection_point, MOUSEEVENTF_LEFTUP);
+    cursor_guard.mark_primary_button_up();
+    pump_system_input_until("system-injected pointer up and capture release", |trace| {
+        trace.contains_extra_info(hwnd, WM_LBUTTONUP, NATIVE_INTERACTIVE_INPUT_CANARY as isize)
+            && observed
+                .borrow()
+                .iter()
+                .filter(|label| **label == "up")
+                .count()
+                > up_before
+            && unsafe { GetCapture() != hwnd }
+    });
+    assert_ne!(
+        unsafe { GetCapture() },
+        hwnd,
+        "system pointer up must release native capture"
+    );
+    drop(cursor_guard);
+
+    app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("interactive native sentinel window should close");
+    pump_messages_until("interactive native sentinel teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
+}
+
+#[test]
+fn absolute_system_input_coordinates_cover_negative_virtual_desktop_endpoints() {
+    assert_eq!(absolute_input_coordinate(-1920, -1920, 3840), 0);
+    assert_eq!(absolute_input_coordinate(1919, -1920, 3840), 65_535);
+    assert_eq!(absolute_input_coordinate(-1, -1920, 3840), 32_758);
 }
 
 #[test]

@@ -1,5 +1,7 @@
 //! Focus-scope registration, arbitration, and restoration.
 
+use open_gpui::AcceptedFrameFence;
+
 use super::*;
 
 impl WindowOverlayRuntime {
@@ -318,6 +320,39 @@ impl WindowOverlayRuntime {
             }
             FocusTransition::Deactivate { scope, restore } => {
                 focus_runtime.deactivate_scope_with_restore(scope, restore, window, cx)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Applies a portal-anchor transition already represented by an accepted frame.
+    pub(super) fn apply_focus_transition_after_accepted_frame(
+        &self,
+        transition: FocusTransition,
+        accepted_frame: AcceptedFrameFence,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        let focus_runtime = self.state.read(cx).focus_runtime.clone();
+        focus_runtime.validate_accepted_frame(accepted_frame, window)?;
+        match transition {
+            FocusTransition::None => Ok(()),
+            FocusTransition::Activate(scope) => {
+                focus_runtime.activate_scope(scope, window, cx)?;
+                Ok(())
+            }
+            FocusTransition::Resume(scope) => {
+                focus_runtime.resume_scope(scope, window, cx)?;
+                Ok(())
+            }
+            FocusTransition::Deactivate { scope, restore } => {
+                focus_runtime.deactivate_scope_with_restore_after_accepted_frame(
+                    scope,
+                    restore,
+                    accepted_frame,
+                    window,
+                    cx,
+                )?;
                 Ok(())
             }
         }
@@ -810,6 +845,28 @@ impl WindowOverlayRuntimeState {
             .iter()
             .filter(|layer_id| restore_owner != Some(*layer_id))
             .filter_map(|layer_id| self.entries.get(layer_id)?.scope_id.clone())
+            .collect()
+    }
+
+    /// Returns focus scopes that may be cancelled while an owner-release subtree is retired.
+    ///
+    /// A scope that is already inactive may have a restore claim queued by an earlier committed
+    /// transition (for example, a portal-anchor unlink). Owner release must wait for that claim to
+    /// settle rather than cancelling the restoration it is supposed to preserve.
+    pub(super) fn subtree_focus_claim_cancellations_for_owner_release(
+        &self,
+        layer_ids: &[OverlayLayerId],
+        restore_owner: Option<&OverlayLayerId>,
+    ) -> Vec<FocusScopeId> {
+        layer_ids
+            .iter()
+            .filter(|layer_id| restore_owner != Some(*layer_id))
+            .filter_map(|layer_id| {
+                let entry = self.entries.get(layer_id)?;
+                (entry.focus_active)
+                    .then(|| entry.scope_id.clone())
+                    .flatten()
+            })
             .collect()
     }
 

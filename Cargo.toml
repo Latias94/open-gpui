@@ -176,6 +176,7 @@ thiserror = "2.0.12"
 tokio = "1"
 tokio-util = { version = "0.7.18", features = ["compat"] }
 tracing = "0.1.40"
+trybuild = "1.0"
 unicase = "2.6"
 unicode-segmentation = "1.10"
 url = "2.2"

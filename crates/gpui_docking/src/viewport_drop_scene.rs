@@ -53,6 +53,10 @@ impl DockViewportHostSceneFrame {
     pub(crate) fn registration_key(&self) -> &DockViewportRegistrationKey {
         &self.registration_key
     }
+
+    pub(crate) const fn generation(&self) -> u64 {
+        self.generation
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,7 +335,10 @@ impl DockViewportHostSceneRegistry {
             .get(&snapshot.space)
             .is_none_or(|existing| !existing.same_content_as(&snapshot));
         if changed {
-            self.next_generation = self.next_generation.wrapping_add(1);
+            self.next_generation = self
+                .next_generation
+                .checked_add(1)
+                .expect("dock viewport host-scene generation exhausted");
             snapshot.generation = self.next_generation;
         } else if let Some(existing) = self.scenes.get(&snapshot.space) {
             snapshot.generation = existing.generation;

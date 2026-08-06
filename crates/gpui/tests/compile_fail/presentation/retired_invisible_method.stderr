@@ -1,0 +1,5 @@
+error[E0599]: no method named `invisible` found for struct `open_gpui::Div` in the current scope
+ --> tests/compile_fail/presentation/retired_invisible_method.rs:5:19
+  |
+5 |     let _ = div().invisible();
+  |                   ^^^^^^^^^ method not found in `open_gpui::Div`

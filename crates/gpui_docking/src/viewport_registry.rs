@@ -38,6 +38,19 @@ pub(crate) struct DockViewportRegistrationKey {
     lineage: DockViewportRuntimeLineage,
 }
 
+#[derive(Debug)]
+pub(crate) struct DockViewportPreparedVacantRegistration {
+    registration: DockViewportRegistrationKey,
+    window: AnyWindowHandle,
+    registry_mutation_generation: u64,
+}
+
+impl DockViewportPreparedVacantRegistration {
+    pub(crate) fn registration(&self) -> &DockViewportRegistrationKey {
+        &self.registration
+    }
+}
+
 impl DockViewportRegistrationKey {
     fn new(
         space: DockSpaceId,
@@ -717,6 +730,7 @@ pub(crate) struct DockViewportRegistry {
     viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
     windows: HashMap<WindowId, DockSpaceId>,
     last_registration_generation_by_space: BTreeMap<DockSpaceId, u64>,
+    mutation_generation: u64,
 }
 
 impl Default for DockViewportRegistry {
@@ -725,11 +739,91 @@ impl Default for DockViewportRegistry {
             viewports: BTreeMap::new(),
             windows: HashMap::new(),
             last_registration_generation_by_space: BTreeMap::new(),
+            mutation_generation: 0,
         }
     }
 }
 
 impl DockViewportRegistry {
+    fn advance_mutation_generation(&mut self) -> u64 {
+        self.mutation_generation = self
+            .mutation_generation
+            .checked_add(1)
+            .expect("dock viewport registry mutation generation space exhausted");
+        self.mutation_generation
+    }
+
+    pub(crate) fn prepare_vacant_registration(
+        &mut self,
+        space: DockSpaceId,
+        window: AnyWindowHandle,
+        lineage: DockViewportRuntimeLineage,
+    ) -> Option<DockViewportPreparedVacantRegistration> {
+        let window_id = window.window_id();
+        if self.viewports.contains_key(&space) || self.windows.contains_key(&window_id) {
+            return None;
+        }
+        let registration_generation = self
+            .last_registration_generation_by_space
+            .get(&space)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)?;
+        self.last_registration_generation_by_space
+            .insert(space.clone(), registration_generation);
+        let registry_mutation_generation = self.advance_mutation_generation();
+        Some(DockViewportPreparedVacantRegistration {
+            registration: DockViewportRegistrationKey::new(
+                space,
+                window_id,
+                registration_generation,
+                lineage,
+            ),
+            window,
+            registry_mutation_generation,
+        })
+    }
+
+    pub(crate) fn can_commit_vacant_registration(
+        &self,
+        prepared: &DockViewportPreparedVacantRegistration,
+    ) -> bool {
+        self.mutation_generation == prepared.registry_mutation_generation
+            && self
+                .last_registration_generation_by_space
+                .get(prepared.registration.space())
+                .copied()
+                == Some(prepared.registration.generation)
+            && !self.viewports.contains_key(prepared.registration.space())
+            && !self
+                .windows
+                .contains_key(&prepared.registration.window_id())
+            && prepared.window.window_id() == prepared.registration.window_id()
+    }
+
+    pub(crate) fn commit_vacant_registration(
+        &mut self,
+        prepared: DockViewportPreparedVacantRegistration,
+    ) -> DockViewportRegistrationKey {
+        assert!(
+            self.can_commit_vacant_registration(&prepared),
+            "prepared vacant viewport registration must remain exact until commit"
+        );
+        let registration = prepared.registration;
+        self.windows
+            .insert(registration.window_id(), registration.space().clone());
+        self.viewports.insert(
+            registration.space().clone(),
+            DockViewportSnapshot::with_registration_generation(
+                prepared.window,
+                registration.generation,
+                registration.lineage,
+            ),
+        );
+        self.advance_mutation_generation();
+        registration
+    }
+
     #[cfg(test)]
     pub(crate) fn register(
         &mut self,
@@ -779,7 +873,11 @@ impl DockViewportRegistry {
                 .get(&window_id)
                 .is_none_or(|registered_space| registered_space == &space)
         {
+            let index_changed = self.windows.get(&window_id) != Some(&space);
             self.windows.insert(window_id, space);
+            if index_changed {
+                self.advance_mutation_generation();
+            }
             return Ok(Vec::new());
         }
 
@@ -814,12 +912,14 @@ impl DockViewportRegistry {
                 lineage,
             ),
         );
+        self.advance_mutation_generation();
         Ok(replaced)
     }
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
         let snapshot = self.viewports.remove(space)?;
         self.windows.remove(&snapshot.window.window_id());
+        self.advance_mutation_generation();
         Some(snapshot)
     }
 
@@ -828,6 +928,7 @@ impl DockViewportRegistry {
         window_id: WindowId,
     ) -> Option<(DockSpaceId, DockViewportSnapshot)> {
         let space = self.windows.remove(&window_id)?;
+        self.advance_mutation_generation();
         if !self
             .viewports
             .get(&space)
@@ -904,6 +1005,7 @@ impl DockViewportRegistry {
         space: DockSpaceId,
     ) {
         self.windows.insert(window_id, space);
+        self.advance_mutation_generation();
     }
 }
 
@@ -957,6 +1059,78 @@ mod tests {
         assert_ne!(replacement, first);
         assert!(!registry.is_current_registration(&first));
         assert!(registry.is_current_registration(&replacement));
+    }
+
+    #[test]
+    fn vacant_registration_commit_preserves_unrelated_viewport_state() {
+        let mut registry = DockViewportRegistry::default();
+        let unrelated = space("unrelated");
+        let target = space("target");
+        let unrelated_window = handle(1);
+        let target_window = handle(2);
+        registry.register(unrelated.clone(), unrelated_window);
+
+        let prepared = registry
+            .prepare_vacant_registration(
+                target.clone(),
+                target_window,
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("a vacant target should reserve one exact registration");
+        let unrelated_snapshot = registry
+            .snapshot_mut(&unrelated)
+            .expect("the unrelated viewport should remain registered");
+        unrelated_snapshot.display_id = Some(DisplayId::new(17));
+        unrelated_snapshot.input_mask = DockViewportInputMask::NoInputPassThrough;
+        unrelated_snapshot.platform_requests = DockViewportPlatformRequests {
+            close_requested: true,
+            resize_requested: true,
+        };
+
+        assert!(registry.can_commit_vacant_registration(&prepared));
+        let registration = registry.commit_vacant_registration(prepared);
+
+        assert_eq!(registration.space(), &target);
+        assert_eq!(registration.window_id(), target_window.window_id());
+        let unrelated_snapshot = registry
+            .snapshot(&unrelated)
+            .expect("committing the target must preserve unrelated state");
+        assert_eq!(unrelated_snapshot.display_id, Some(DisplayId::new(17)));
+        assert_eq!(
+            unrelated_snapshot.input_mask,
+            DockViewportInputMask::NoInputPassThrough
+        );
+        assert_eq!(
+            unrelated_snapshot.platform_requests,
+            DockViewportPlatformRequests {
+                close_requested: true,
+                resize_requested: true,
+            }
+        );
+    }
+
+    #[test]
+    fn vacant_registration_rejects_target_aba_without_reusing_generation() {
+        let mut registry = DockViewportRegistry::default();
+        let target = space("target");
+        let window = handle(1);
+        let stale = registry
+            .prepare_vacant_registration(
+                target.clone(),
+                window,
+                DockViewportRuntimeLineage::Unmanaged,
+            )
+            .expect("a vacant target should reserve one exact registration");
+        let stale_generation = stale.registration().generation;
+
+        registry.register(target.clone(), window);
+        registry.unregister_space(&target);
+
+        assert!(!registry.can_commit_vacant_registration(&stale));
+        let replacement = registry
+            .prepare_vacant_registration(target, window, DockViewportRuntimeLineage::Unmanaged)
+            .expect("the vacated target should admit a fresh reservation");
+        assert!(replacement.registration().generation > stale_generation);
     }
 
     #[test]

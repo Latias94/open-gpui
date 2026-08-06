@@ -1,0 +1,4 @@
+# Native Windows backend and its release-gating interactive runner.
+/.github/CODEOWNERS @Latias94
+/crates/gpui_windows/ @Latias94
+/.github/workflows/native-windows-interactive.yml @Latias94

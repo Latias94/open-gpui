@@ -1,6 +1,197 @@
 use super::*;
 
-use crate::{SubtreePresentation, SubtreePresentationExt};
+use crate::{SubtreePresentation, SubtreePresentationExt, point};
+
+fn assert_no_accessibility_actions(node: &Node) {
+    assert!(
+        crate::window::a11y::ACCESSKIT_ACTIONS
+            .iter()
+            .all(|action| !node.supports_action(*action)),
+        "the semantic-only node must not publish inferred accessibility actions"
+    );
+}
+
+struct AccessibilityFocusProbeView {
+    focus: FocusHandle,
+    accessibility_focused: bool,
+}
+
+impl Render for AccessibilityFocusProbeView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let node = div()
+            .id("semantic-only-focus-node")
+            .absolute()
+            .left(px(40.0))
+            .top(px(30.0))
+            .w(px(80.0))
+            .h(px(24.0))
+            .role(Role::Group)
+            .aria_label("Semantic-only focus node")
+            .aria_actions([]);
+        let node = if self.accessibility_focused {
+            node.track_accessibility_focus(&self.focus)
+        } else {
+            node
+        };
+
+        div()
+            .id("semantic-only-focus-probe")
+            .relative()
+            .size_full()
+            .child(node)
+    }
+}
+
+#[open_gpui::test]
+fn semantic_only_accessibility_node_is_unfocused_without_association(cx: &mut TestAppContext) {
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), |_, cx| {
+        AccessibilityFocusProbeView {
+            focus: cx.focus_handle(),
+            accessibility_focused: false,
+        }
+    });
+    let view = typed_window.root(cx).unwrap();
+    let window = typed_window.into();
+
+    assert!(cx.activate_accessibility(window));
+    let update = cx.latest_accessibility_tree_update(window).unwrap();
+    let (node_id, node) = node_with_label(&update, "Semantic-only focus node");
+    assert_eq!(node.role(), Role::Group);
+    assert_eq!(node.label(), Some("Semantic-only focus node"));
+    assert_eq!(
+        node.bounds(),
+        Some(accesskit::Rect {
+            x0: 80.0,
+            y0: 60.0,
+            x1: 240.0,
+            y1: 108.0,
+        })
+    );
+    assert_no_accessibility_actions(node);
+    assert_ne!(update.focus, node_id);
+
+    let focus_id = cx.read(|cx| view.read(cx).focus.id);
+    let facts = cx
+        .update_window(window, |_, window, _| {
+            (
+                window.a11y.published_focus_id(node_id),
+                window.rendered_frame.hitboxes.len(),
+                window
+                    .rendered_frame
+                    .hit_test(point(px(80.0), px(42.0)))
+                    .ids
+                    .is_empty(),
+                window
+                    .rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id),
+                window.rendered_frame.tab_stops.next(None),
+                window.rendered_frame.mouse_listeners.len(),
+                window.rendered_frame.input_handlers.len(),
+            )
+        })
+        .unwrap();
+    assert_eq!(facts.0, None);
+    assert_eq!(facts.1, 0, "semantic-only focus must not create a hitbox");
+    assert!(
+        facts.2,
+        "the semantic-only bounds must not be mouse-targetable"
+    );
+    assert!(
+        facts.3.is_none(),
+        "semantic-only focus must not enter the keyboard dispatch tree"
+    );
+    assert!(
+        facts.4.is_none(),
+        "semantic-only focus must not enter tab order"
+    );
+    assert_eq!(
+        facts.5, 0,
+        "semantic-only focus must not register mouse listeners"
+    );
+    assert_eq!(
+        facts.6, 0,
+        "semantic-only focus must not register input handlers"
+    );
+}
+
+#[open_gpui::test]
+fn semantic_only_accessibility_focus_declares_tree_focus_without_interaction_channels(
+    cx: &mut TestAppContext,
+) {
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), |_, cx| {
+        AccessibilityFocusProbeView {
+            focus: cx.focus_handle(),
+            accessibility_focused: true,
+        }
+    });
+    let view = typed_window.root(cx).unwrap();
+    let window = typed_window.into();
+
+    assert!(cx.activate_accessibility(window));
+    let update = cx.latest_accessibility_tree_update(window).unwrap();
+    let (node_id, node) = node_with_label(&update, "Semantic-only focus node");
+    assert_eq!(node.role(), Role::Group);
+    assert_eq!(node.label(), Some("Semantic-only focus node"));
+    assert_eq!(
+        node.bounds(),
+        Some(accesskit::Rect {
+            x0: 80.0,
+            y0: 60.0,
+            x1: 240.0,
+            y1: 108.0,
+        })
+    );
+    assert_no_accessibility_actions(node);
+    assert_eq!(update.focus, node_id);
+
+    let focus_id = cx.read(|cx| view.read(cx).focus.id);
+    let facts = cx
+        .update_window(window, |_, window, _| {
+            (
+                window.a11y.published_focus_id(node_id),
+                window.rendered_frame.hitboxes.len(),
+                window
+                    .rendered_frame
+                    .hit_test(point(px(80.0), px(42.0)))
+                    .ids
+                    .is_empty(),
+                window
+                    .rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id),
+                window.rendered_frame.tab_stops.next(None),
+                window.rendered_frame.mouse_listeners.len(),
+                window.rendered_frame.input_handlers.len(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        facts.0, None,
+        "an actionless tree-focus node must stay out of the published action-routing map"
+    );
+    assert_eq!(facts.1, 0, "semantic-only focus must not create a hitbox");
+    assert!(
+        facts.2,
+        "the semantic-only node must not be mouse-targetable"
+    );
+    assert!(
+        facts.3.is_none(),
+        "semantic-only focus must not enter the keyboard dispatch tree"
+    );
+    assert!(
+        facts.4.is_none(),
+        "the semantic-only association must not add a tab stop"
+    );
+    assert_eq!(
+        facts.5, 0,
+        "semantic-only focus must not register mouse listeners"
+    );
+    assert_eq!(
+        facts.6, 0,
+        "semantic-only focus must not register input handlers"
+    );
+}
 
 struct HardHiddenModalAccessibilityProbeView {
     hidden: bool,

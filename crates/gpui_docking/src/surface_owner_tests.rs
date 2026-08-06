@@ -1,12 +1,14 @@
 use crate::{
     DockPanelPlacement, DockSurface, DockSurfaceChangeCategory, DockSurfaceChangeEvent,
     DockSurfacePanelError, DockSurfaceSnapshot,
+    surface::{with_detached_root_transaction, with_root_transaction},
 };
 use open_gpui::{
     App, AppContext as _, Bounds, IntoElement, Render, Subscription, Window, div, point, px, size,
 };
 use std::{
     cell::{Cell, RefCell},
+    panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     time::Duration,
 };
@@ -150,6 +152,100 @@ fn change_event_callback_can_start_a_new_root_transaction(cx: &mut open_gpui::Te
     assert_eq!(revisions.borrow().as_slice(), &[1, 2]);
     assert_eq!(cx.read(|cx| surface.revision(cx)), 2);
     drop(subscription);
+}
+
+#[open_gpui::test]
+fn attached_root_transaction_abort_after_panic_admits_the_next_commit(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let surface = cx.update(test_surface);
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|cx| {
+            with_root_transaction(surface.owner(), cx, |owner, transaction, _| {
+                owner.record_change(transaction, DockSurfaceChangeCategory::Selection);
+                panic!("injected attached root transaction panic");
+            });
+        });
+    }));
+    assert!(panic.is_err());
+    assert_eq!(cx.read(|cx| surface.revision(cx)), 0);
+
+    let revision = cx.update(|cx| {
+        assert!(
+            surface
+                .select_panel("terminal", cx)
+                .expect("the next root transaction should remain admissible")
+                .changed()
+        );
+        surface.revision(cx)
+    });
+    assert_eq!(revision, 1);
+}
+
+#[open_gpui::test]
+fn detached_root_transaction_abort_after_apply_panic_admits_the_next_commit(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let surface = cx.update(test_surface);
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|cx| {
+            with_detached_root_transaction(surface.owner(), cx, |transaction, cx| {
+                cx.update_entity(surface.owner(), |owner, _| {
+                    owner.record_change(transaction, DockSurfaceChangeCategory::Layout);
+                });
+                panic!("injected detached workspace apply panic");
+            });
+        });
+    }));
+    assert!(panic.is_err());
+    assert_eq!(cx.read(|cx| surface.revision(cx)), 0);
+
+    let revision = cx.update(|cx| {
+        assert!(
+            surface
+                .select_panel("terminal", cx)
+                .expect("the next root transaction should remain admissible")
+                .changed()
+        );
+        surface.revision(cx)
+    });
+    assert_eq!(revision, 1);
+}
+
+#[open_gpui::test]
+fn change_subscriber_panic_does_not_poison_the_next_root_transaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let surface = cx.update(test_surface);
+    let subscription = cx.update(|cx| {
+        surface.subscribe_changes(cx, |_event, _| {
+            panic!("injected change subscriber panic");
+        })
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|cx| {
+            surface
+                .select_panel("terminal", cx)
+                .expect("the first root transaction should commit before delivery");
+        });
+    }));
+    assert!(panic.is_err());
+    assert_eq!(cx.read(|cx| surface.revision(cx)), 1);
+
+    drop(subscription);
+    let revision = cx.update(|cx| {
+        assert!(
+            surface
+                .select_panel("inspector", cx)
+                .expect("the next root transaction should remain admissible")
+                .changed()
+        );
+        surface.revision(cx)
+    });
+    assert_eq!(revision, 2);
 }
 
 #[open_gpui::test]

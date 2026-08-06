@@ -680,9 +680,20 @@ fn portal_anchor_unlink_supersedes_an_older_controlled_close_reason(
             let opening_generation = runtime
                 .portal_anchor_generation(&binding, window, cx)
                 .expect("controlled portal layer should expose its generation");
-            runtime
-                .mark_portal_anchor_unlinked(&binding, opening_generation, window, cx)
-                .expect("portal unlink should force the layer hidden");
+            let plan = runtime
+                .state
+                .update(cx, |state, _| {
+                    state.mark_portal_anchor_unlinked_plan(binding.lease(), opening_generation)
+                })
+                .expect("portal unlink should produce a close plan")
+                .expect("the linked generation should require a close dispatch");
+            assert!(plan.cancel_focus_claims.is_empty());
+            assert!(
+                plan.dispatches
+                    .iter()
+                    .all(|dispatch| matches!(&dispatch.focus_transition, FocusTransition::None))
+            );
+            runtime.run_open_change_dispatches(plan.dispatches, window, cx, |_, _| {});
 
             let hidden = runtime
                 .snapshot(window, cx)
@@ -692,9 +703,16 @@ fn portal_anchor_unlink_supersedes_an_older_controlled_close_reason(
                 .find(|layer| layer.id().as_str() == "controlled-portal-reason")
                 .cloned()
                 .expect("controlled portal layer should remain registered");
-            runtime
-                .mark_portal_anchor_unlinked(&binding, hidden.generation(), window, cx)
-                .expect("repeated portal unlink should be an exact no-op");
+            let repeated = runtime
+                .state
+                .update(cx, |state, _| {
+                    state.mark_portal_anchor_unlinked_plan(binding.lease(), hidden.generation())
+                })
+                .expect("repeated portal unlink should remain valid");
+            assert!(
+                repeated.is_none(),
+                "repeated portal unlink must be an exact no-op"
+            );
             hidden
         })
         .expect("controlled portal window should remain open");

@@ -1,4 +1,98 @@
 use super::*;
+use image::{Frame, ImageBuffer, Rgba};
+use open_gpui::{
+    AtlasKey, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureLeaseEpoch,
+    AtlasTextureLeaseError, AtlasTile, DevicePixels, ImageSource, PlatformAtlas, Point,
+    RenderImage, Size, TileId, img, size,
+};
+use std::borrow::Cow;
+use std::sync::{Arc, Mutex};
+
+struct RejectNextActivationAtlas {
+    fail_next_lease: Mutex<bool>,
+    next_texture_index: Mutex<u32>,
+}
+
+impl RejectNextActivationAtlas {
+    fn new() -> Self {
+        Self {
+            fail_next_lease: Mutex::new(false),
+            next_texture_index: Mutex::new(0),
+        }
+    }
+
+    fn fail_next_lease(&self) {
+        *self
+            .fail_next_lease
+            .lock()
+            .expect("activation test atlas lock should remain available") = true;
+    }
+
+    fn tile(key: &AtlasKey, index: u32) -> AtlasTile {
+        AtlasTile {
+            texture_id: AtlasTextureId {
+                index,
+                kind: key.texture_kind(),
+            },
+            tile_id: TileId(1),
+            padding: 0,
+            bounds: open_gpui::Bounds::new(
+                Point::default(),
+                size(DevicePixels(1), DevicePixels(1)),
+            ),
+            texture_generation: 1,
+            texture_generation_padding: 0,
+        }
+    }
+}
+
+impl PlatformAtlas for RejectNextActivationAtlas {
+    fn get_or_insert_with<'a>(
+        &self,
+        key: &AtlasKey,
+        _build: &mut dyn FnMut() -> open_gpui::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> open_gpui::Result<Option<AtlasTile>> {
+        let mut next_texture_index = self
+            .next_texture_index
+            .lock()
+            .expect("activation test atlas index lock should remain available");
+        *next_texture_index += 1;
+        Ok(Some(Self::tile(key, *next_texture_index)))
+    }
+
+    fn remove(&self, _key: &AtlasKey) {}
+
+    fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch {
+        AtlasTextureLeaseEpoch::INITIAL
+    }
+
+    unsafe fn acquire_atlas_texture_leases(
+        &self,
+        textures: &[AtlasTextureInstanceId],
+    ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError> {
+        let mut fail_next = self
+            .fail_next_lease
+            .lock()
+            .expect("activation test atlas lock should remain available");
+        if *fail_next {
+            *fail_next = false;
+            return Err(AtlasTextureLeaseError::TextureUnavailable {
+                texture: *textures
+                    .first()
+                    .expect("an activation test atlas lease must name a texture"),
+                epoch: AtlasTextureLeaseEpoch::INITIAL,
+            });
+        }
+        Ok(AtlasTextureLeaseEpoch::INITIAL)
+    }
+
+    unsafe fn release_atlas_texture_leases(
+        &self,
+        _epoch: AtlasTextureLeaseEpoch,
+        _textures: &[AtlasTextureInstanceId],
+    ) {
+    }
+}
 
 #[open_gpui::test]
 fn button_routes_pointer_keyboard_and_accessibility_through_one_typed_activation(
@@ -362,6 +456,559 @@ fn pointer_activation_survives_same_gate_owner_rerender(cx: &mut open_gpui::Test
         activations.borrow().as_slice(),
         &[ActivationSource::Pointer]
     );
+}
+
+#[open_gpui::test]
+fn activation_handle_publishes_only_from_accepted_frames(cx: &mut open_gpui::TestAppContext) {
+    #[derive(Clone, Copy)]
+    enum Control {
+        First,
+        Second,
+        Absent,
+    }
+
+    struct Probe {
+        control: Control,
+        handle: ActivationHandle,
+        first_activations: Rc<Cell<usize>>,
+        second_activations: Rc<Cell<usize>>,
+        first_image: Arc<RenderImage>,
+        second_image: Arc<RenderImage>,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let first_activations = self.first_activations.clone();
+            let second_activations = self.second_activations.clone();
+            let image = match self.control {
+                Control::First => self.first_image.clone(),
+                Control::Second | Control::Absent => self.second_image.clone(),
+            };
+            div()
+                .child(
+                    img(ImageSource::Render(image))
+                        .w(open_gpui::px(1.0))
+                        .h(open_gpui::px(1.0)),
+                )
+                .when(matches!(self.control, Control::First), |this| {
+                    this.child(
+                        Button::new("accepted-frame-first-button", "First")
+                            .activation_handle(&self.handle)
+                            .on_activate(move |_, _, _| {
+                                first_activations.set(first_activations.get() + 1)
+                            }),
+                    )
+                })
+                .when(matches!(self.control, Control::Second), |this| {
+                    this.child(
+                        Button::new("accepted-frame-second-button", "Second")
+                            .activation_handle(&self.handle)
+                            .on_activate(move |_, _, _| {
+                                second_activations.set(second_activations.get() + 1)
+                            }),
+                    )
+                })
+        }
+    }
+
+    let atlas = Arc::new(RejectNextActivationAtlas::new());
+    let handle = ActivationHandle::new();
+    let first_activations = Rc::new(Cell::new(0));
+    let second_activations = Rc::new(Cell::new(0));
+    let first_image = Arc::new(RenderImage::new([Frame::new(ImageBuffer::from_pixel(
+        1,
+        1,
+        Rgba([0, 0, 0, 0xff]),
+    ))]));
+    let second_image = Arc::new(RenderImage::new([Frame::new(ImageBuffer::from_pixel(
+        1,
+        1,
+        Rgba([0xff, 0, 0, 0xff]),
+    ))]));
+    let (view, cx) = cx.add_window_view({
+        let atlas = atlas.clone();
+        let handle = handle.clone();
+        let first_activations = first_activations.clone();
+        let second_activations = second_activations.clone();
+        let first_image = first_image.clone();
+        let second_image = second_image.clone();
+        move |window, _| {
+            window.set_sprite_atlas_for_test(atlas);
+            Probe {
+                control: Control::First,
+                handle,
+                first_activations,
+                second_activations,
+                first_image,
+                second_image,
+            }
+        }
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let committed_generation = cx.update(|window, _| window.rendered_frame_revision());
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched
+        );
+    });
+    assert_eq!(first_activations.get(), 1);
+    assert_eq!(second_activations.get(), 0);
+
+    cx.update(|window, cx| {
+        atlas.fail_next_lease();
+        view.update(cx, |view, cx| {
+            view.control = Control::Second;
+            cx.notify();
+        });
+        window.draw(cx).clear();
+        assert_eq!(
+            window.rendered_frame_revision(),
+            committed_generation,
+            "the fresh image lease must reject the second candidate"
+        );
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched,
+            "the rejected candidate must preserve the still-visible first control"
+        );
+        assert_eq!(
+            (first_activations.get(), second_activations.get()),
+            (2, 0),
+            "the rejected candidate must not publish the second dispatcher"
+        );
+
+        window.draw(cx).clear();
+        assert_eq!(window.rendered_frame_revision(), committed_generation + 1);
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched
+        );
+    });
+    assert_eq!(first_activations.get(), 2);
+    assert_eq!(second_activations.get(), 1);
+
+    view.update(cx, |view, cx| {
+        view.control = Control::Absent;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Unavailable,
+            "accepted absence must clear only the exact committed publication"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn atlas_rejected_candidate_preserves_armed_pointer_runtime(cx: &mut open_gpui::TestAppContext) {
+    struct Probe {
+        disabled: bool,
+        use_second_image: bool,
+        activations: Rc<RefCell<Vec<ActivationSource>>>,
+        first_image: Arc<RenderImage>,
+        second_image: Arc<RenderImage>,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let image = if self.use_second_image {
+                self.second_image.clone()
+            } else {
+                self.first_image.clone()
+            };
+            div()
+                .child(
+                    img(ImageSource::Render(image))
+                        .w(open_gpui::px(1.0))
+                        .h(open_gpui::px(1.0)),
+                )
+                .child(
+                    Button::new("atlas-rejected-armed-button", "Armed")
+                        .disabled(self.disabled)
+                        .on_activate(move |activation, _, _| {
+                            activations.borrow_mut().push(activation.source())
+                        }),
+                )
+        }
+    }
+
+    let atlas = Arc::new(RejectNextActivationAtlas::new());
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let first_image = Arc::new(RenderImage::new([Frame::new(ImageBuffer::from_pixel(
+        1,
+        1,
+        Rgba([0, 0, 0, 0xff]),
+    ))]));
+    let second_image = Arc::new(RenderImage::new([Frame::new(ImageBuffer::from_pixel(
+        1,
+        1,
+        Rgba([0xff, 0, 0, 0xff]),
+    ))]));
+    let (view, cx) = cx.add_window_view({
+        let atlas = atlas.clone();
+        let activations = activations.clone();
+        let first_image = first_image.clone();
+        let second_image = second_image.clone();
+        move |window, _| {
+            window.set_sprite_atlas_for_test(atlas);
+            Probe {
+                disabled: false,
+                use_second_image: false,
+                activations,
+                first_image,
+                second_image,
+            }
+        }
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("the accepted button should publish accessibility state");
+    let button_node = node_with_label(&update, "Armed");
+    assert!(
+        cx.dispatch_accessibility_action(action_request(accesskit::Action::Focus, button_node,))
+    );
+    let bounds = cx
+        .debug_bounds("button:atlas-rejected-armed-button:root")
+        .expect("the accepted button should expose stable bounds");
+    cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::none());
+    let committed_generation = cx.update(|window, _| window.rendered_frame_revision());
+
+    cx.update(|window, cx| {
+        atlas.fail_next_lease();
+        view.update(cx, |view, cx| {
+            view.disabled = true;
+            view.use_second_image = true;
+            cx.notify();
+        });
+        window.draw(cx).clear();
+        assert_eq!(
+            window.rendered_frame_revision(),
+            committed_generation,
+            "the disabled candidate must be rejected before it can replace the armed control"
+        );
+        let mouse_up = window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position: bounds.center(),
+                modifiers: Modifiers::none(),
+                click_count: 1,
+            }),
+            cx,
+        );
+        assert!(!mouse_up.propagate);
+    });
+
+    assert_eq!(
+        activations.borrow().as_slice(),
+        &[ActivationSource::Pointer],
+        "candidate-only gate changes must not cancel interactions owned by the visible frame"
+    );
+}
+
+#[open_gpui::test]
+fn activation_handle_publication_survives_cached_journal_replay(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct CachedButton {
+        handle: ActivationHandle,
+        activations: Rc<Cell<usize>>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for CachedButton {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let activations = self.activations.clone();
+            Button::new("cached-activation-button", "Cached")
+                .activation_handle(&self.handle)
+                .on_activate(move |_, _, _| activations.set(activations.get() + 1))
+        }
+    }
+
+    struct Root {
+        child: Entity<CachedButton>,
+        show_child: bool,
+        parent_revision: usize,
+    }
+
+    impl Render for Root {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let _ = self.parent_revision;
+            div().when(self.show_child, |this| {
+                this.child(
+                    AnyView::from(self.child.clone()).cached(
+                        StyleRefinement::default()
+                            .w(open_gpui::px(120.0))
+                            .h(open_gpui::px(32.0)),
+                    ),
+                )
+            })
+        }
+    }
+
+    let handle = ActivationHandle::new();
+    let activations = Rc::new(Cell::new(0));
+    let renders = Rc::new(Cell::new(0));
+    let (root, cx) = cx.add_window_view({
+        let handle = handle.clone();
+        let activations = activations.clone();
+        let renders = renders.clone();
+        move |_, cx| Root {
+            child: cx.new(|_| CachedButton {
+                handle,
+                activations,
+                renders,
+            }),
+            show_child: true,
+            parent_revision: 0,
+        }
+    });
+
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(renders.get(), 1);
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched
+        );
+    });
+    assert_eq!(activations.get(), 1);
+
+    root.update(cx, |root, cx| {
+        root.parent_revision += 1;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(
+        renders.get(),
+        1,
+        "an unchanged cached child must replay its accepted publication journal"
+    );
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched,
+            "journal replay must retain the accepted dispatcher publication"
+        );
+    });
+    assert_eq!(activations.get(), 2);
+
+    root.update(cx, |root, cx| {
+        root.show_child = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Unavailable,
+            "an accepted frame without the cached child must discard its publication"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn reused_activation_handle_keeps_the_last_interactive_publication(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct Probe {
+        handle: ActivationHandle,
+        second_interactive: bool,
+        first_activations: Rc<Cell<usize>>,
+        second_activations: Rc<Cell<usize>>,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let first_activations = self.first_activations.clone();
+            let second_activations = self.second_activations.clone();
+            div()
+                .child(
+                    Button::new("duplicate-handle-first", "First")
+                        .activation_handle(&self.handle)
+                        .on_activate(move |_, _, _| {
+                            first_activations.set(first_activations.get() + 1)
+                        }),
+                )
+                .child(
+                    Button::new("duplicate-handle-second", "Second")
+                        .activation_handle(&self.handle)
+                        .on_activate(move |_, _, _| {
+                            second_activations.set(second_activations.get() + 1)
+                        })
+                        .with_subtree_presentation(if self.second_interactive {
+                            SubtreePresentation::Visible
+                        } else {
+                            SubtreePresentation::Inert
+                        }),
+                )
+        }
+    }
+
+    let handle = ActivationHandle::new();
+    let first_activations = Rc::new(Cell::new(0));
+    let second_activations = Rc::new(Cell::new(0));
+    let (view, cx) = cx.add_window_view({
+        let handle = handle.clone();
+        let first_activations = first_activations.clone();
+        let second_activations = second_activations.clone();
+        move |_, _| Probe {
+            handle,
+            second_interactive: false,
+            first_activations,
+            second_activations,
+        }
+    });
+
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched,
+            "an inert later publication must not clear the earlier interactive control"
+        );
+    });
+    assert_eq!((first_activations.get(), second_activations.get()), (1, 0));
+
+    view.update(cx, |view, cx| {
+        view.second_interactive = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert_eq!(
+            handle.request(window, cx),
+            ActivationRequestResult::Dispatched,
+            "the later interactive publication should become the accepted winner"
+        );
+    });
+    assert_eq!((first_activations.get(), second_activations.get()), (1, 1));
+}
+
+#[open_gpui::test]
+fn accepted_handle_replacement_is_visible_to_focus_stable_callbacks(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    #[derive(Clone, Copy)]
+    enum HandleSelection {
+        First,
+        Second,
+        None,
+    }
+
+    struct Probe {
+        selection: HandleSelection,
+        observation_stage: Rc<Cell<usize>>,
+        first_handle: ActivationHandle,
+        second_handle: ActivationHandle,
+        observations: Rc<RefCell<Vec<(usize, ActivationRequestResult, ActivationRequestResult)>>>,
+        activations: Rc<Cell<usize>>,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let button = Button::new("accepted-handle-replacement", "Replace")
+                .on_activate(move |_, _, _| activations.set(activations.get() + 1));
+            let button = match self.selection {
+                HandleSelection::First => button.activation_handle(&self.first_handle),
+                HandleSelection::Second => button.activation_handle(&self.second_handle),
+                HandleSelection::None => button,
+            };
+            let observation_stage = self.observation_stage.clone();
+            let first_handle = self.first_handle.clone();
+            let second_handle = self.second_handle.clone();
+            let observations = self.observations.clone();
+            div().child(button).child(
+                open_gpui::canvas(
+                    move |_, window, _| {
+                        let observation_stage = observation_stage.clone();
+                        let first_handle = first_handle.clone();
+                        let second_handle = second_handle.clone();
+                        let observations = observations.clone();
+                        window.record_prepaint_focus_stable_commit(move |_, window, cx| {
+                            let stage = observation_stage.get();
+                            if stage == 0 {
+                                return;
+                            }
+                            observations.borrow_mut().push((
+                                stage,
+                                first_handle.request(window, cx),
+                                second_handle.request(window, cx),
+                            ));
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .w(open_gpui::px(1.0))
+                .h(open_gpui::px(1.0)),
+            )
+        }
+    }
+
+    let observation_stage = Rc::new(Cell::new(0));
+    let first_handle = ActivationHandle::new();
+    let second_handle = ActivationHandle::new();
+    let observations = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(Cell::new(0));
+    let (view, cx) = cx.add_window_view({
+        let observation_stage = observation_stage.clone();
+        let first_handle = first_handle.clone();
+        let second_handle = second_handle.clone();
+        let observations = observations.clone();
+        let activations = activations.clone();
+        move |_, _| Probe {
+            selection: HandleSelection::First,
+            observation_stage,
+            first_handle,
+            second_handle,
+            observations,
+            activations,
+        }
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    observation_stage.set(1);
+    view.update(cx, |view, cx| {
+        view.selection = HandleSelection::Second;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        observations.borrow().as_slice(),
+        &[((
+            1,
+            ActivationRequestResult::Unavailable,
+            ActivationRequestResult::Dispatched,
+        ))],
+        "frame-stable callbacks must see the replacement handle and not the retired dispatcher"
+    );
+    assert_eq!(activations.get(), 1);
+
+    observation_stage.set(2);
+    view.update(cx, |view, cx| {
+        view.selection = HandleSelection::None;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        observations.borrow().last().copied(),
+        Some((
+            2,
+            ActivationRequestResult::Unavailable,
+            ActivationRequestResult::Unavailable,
+        )),
+        "accepted removal must be visible before focus-stable callbacks run"
+    );
+    assert_eq!(activations.get(), 1);
 }
 
 #[open_gpui::test]

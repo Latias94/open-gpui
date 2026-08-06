@@ -25,6 +25,10 @@ impl DockPanelRenderRegistration {
         self.view.resolve_view(cx)
     }
 
+    pub(crate) fn resolved_view(&self) -> Option<AnyView> {
+        self.view.resolved_view()
+    }
+
     pub(crate) fn focus_handle(&self, cx: &mut App) -> Option<FocusHandle> {
         self.view.focus_handle(cx)
     }
@@ -176,6 +180,10 @@ impl DockPanelRegistry {
     ) -> Option<DockPanelRenderRegistration> {
         self.catalog.descriptor(item)?;
         self.views.view(item).map(DockPanelRenderRegistration::new)
+    }
+
+    pub(crate) fn resolved_render_view(&self, item: &DockItemId) -> Option<AnyView> {
+        self.render_registration(item)?.resolved_view()
     }
 
     /// Returns true when a dock item has registered metadata.

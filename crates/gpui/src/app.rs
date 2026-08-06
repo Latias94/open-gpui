@@ -136,6 +136,36 @@ pub enum WindowOpenFailureStage {
     CommitRejected,
 }
 
+/// Failure to register an exact native-window retirement dependency.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeWindowRetirementDependencyError {
+    /// The anchor is neither a current native window nor an owned retirement.
+    UnknownAnchor {
+        /// The retirement anchor that has no native lifetime authority.
+        anchor: WindowId,
+    },
+    /// A dependency is neither current, retiring, nor already terminal.
+    UnknownDependency {
+        /// The retirement anchor receiving the dependency.
+        anchor: WindowId,
+        /// The dependency that has no native lifetime authority.
+        dependency: WindowId,
+    },
+    /// The anchor already entered native retirement, so its dependency set is immutable.
+    AnchorAlreadyRetiring {
+        /// The retirement anchor whose native owner is already queued or retained.
+        anchor: WindowId,
+    },
+    /// Adding the dependency would create a cycle and permanently retain native owners.
+    Cycle {
+        /// The retirement anchor receiving the dependency.
+        anchor: WindowId,
+        /// The dependency that can already reach the anchor.
+        dependency: WindowId,
+    },
+}
+
 /// Typed failure from one synchronous GPUI window-open transaction.
 #[derive(Debug, thiserror::Error)]
 #[error("window open failed during {stage:?}: {source}")]
@@ -742,6 +772,7 @@ pub struct App {
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     pub(crate) current_window_by_entity: FxHashMap<EntityId, WindowId>,
+    pub(crate) view_presentation_windows: crate::view_presentation_window::Registry,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_renderer: Option<crate::InspectorRenderer>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -845,7 +876,9 @@ impl App {
                 current_update_generation: 0,
                 active_drag: None,
                 active_native_captured_drag: None,
-                next_native_captured_drag_generation: 0,
+                // Zero is reserved so every exported generation can cross into non-zero identity
+                // domains without a lossy compatibility mapping.
+                next_native_captured_drag_generation: 1,
                 background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -872,6 +905,7 @@ impl App {
                 tracked_entities: FxHashMap::default(),
                 window_invalidators_by_entity: FxHashMap::default(),
                 current_window_by_entity: FxHashMap::default(),
+                view_presentation_windows: Default::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
@@ -1173,12 +1207,24 @@ impl App {
     }
 
     pub(crate) fn finish_update(&mut self) {
-        if !self.flushing_effects && self.pending_updates == 1 {
+        let shutdown_fence_owns_effect_flush = self
+            .this
+            .upgrade()
+            .is_some_and(|app| app.shutdown_fence_owns_effect_flush());
+        if !shutdown_fence_owns_effect_flush && !self.flushing_effects && self.pending_updates == 1
+        {
             self.flushing_effects = true;
             self.flush_effects();
             self.flushing_effects = false;
         }
         self.pending_updates -= 1;
+    }
+
+    fn abandon_pending_effects_after_shutdown_failure(&mut self) {
+        self.pending_effects.clear();
+        self.pending_notifications.clear();
+        self.pending_global_notifications.clear();
+        self.event_arena.clear();
     }
 
     /// Arrange a callback to be invoked when the given entity calls `notify` on its respective context.
@@ -1232,8 +1278,10 @@ impl App {
                 .entry(*entity)
                 .or_default()
                 .insert(window_handle.id, invalidator.clone());
-            self.current_window_by_entity
-                .insert(*entity, window_handle.id);
+            if !self.view_presentation_windows.governs(*entity) {
+                self.current_window_by_entity
+                    .insert(*entity, window_handle.id);
+            }
         }
         tracked_entities.clear();
         tracked_entities.extend(entities.iter().copied());
@@ -1505,6 +1553,9 @@ impl App {
                             anyhow!("window closed during its initial draw"),
                         ));
                     }
+                    // A resource-invalid first candidate keeps the native window hidden and
+                    // retains its completion command. The committed window will actively retry a
+                    // fresh frame instead of turning the recoverable draw into an open failure.
                     let initial_presentation = rollback.window_mut().prepare_initial_presentation();
                     clear.clear();
                     reservation
@@ -1904,7 +1955,10 @@ impl App {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
                 self.window_invalidators_by_entity.remove(&entity_id);
-                self.current_window_by_entity.remove(&entity_id);
+                for released_entity_id in self.view_presentation_windows.entity_released(entity_id)
+                {
+                    self.current_window_by_entity.remove(&released_entity_id);
+                }
                 for release_callback in self.release_listeners.remove(&entity_id) {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         release_callback(entity.as_mut(), self);
@@ -1997,7 +2051,9 @@ impl App {
         // Seed the entity's current window from its creation context so
         // `with_window` resolves correctly before the entity has ever been
         // rendered.
-        if let Some(id) = window {
+        if let Some(id) = window
+            && !self.view_presentation_windows.governs(entity.entity_id())
+        {
             self.current_window_by_entity.insert(entity.entity_id(), id);
         }
 
@@ -2025,12 +2081,18 @@ impl App {
         entity_id: EntityId,
         f: impl FnOnce(&mut Window, &mut App) -> R,
     ) -> Option<R> {
-        let window_id = *self.current_window_by_entity.get(&entity_id)?;
+        let window_id = self
+            .view_presentation_windows
+            .resolved_window(entity_id)
+            .or_else(|| self.current_window_by_entity.get(&entity_id).copied())?;
         self.update_window_id(window_id, |_, window, cx| f(window, cx))
             .ok()
     }
 
     fn ensure_window(&mut self, entity_id: EntityId, window: WindowId) {
+        if self.view_presentation_windows.governs(entity_id) {
+            return;
+        }
         self.current_window_by_entity
             .entry(entity_id)
             .or_insert(window);
@@ -2168,6 +2230,140 @@ impl App {
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
+    }
+
+    /// Schedules lifecycle-critical work before an active shutdown clears the window registry.
+    ///
+    /// Outside shutdown this behaves like [`Self::defer`], while retaining the callback in
+    /// `AppCell` until that deferred slot runs. If shutdown starts first, the callback moves into
+    /// the exact shutdown generation instead of remaining vulnerable to ordinary effect
+    /// abandonment.
+    #[doc(hidden)]
+    pub fn defer_shutdown_critical_before_window_registry_clear(
+        &mut self,
+        callback: impl FnOnce(&mut App) + 'static,
+    ) {
+        let callback = Box::new(callback);
+        let Some(cell) = self.this.upgrade() else {
+            self.defer(move |cx| callback(cx));
+            return;
+        };
+        match cell.enqueue_shutdown_critical(
+            cell::NativeShutdownCriticalPhase::BeforeWindowRegistryClear,
+            callback,
+        ) {
+            Ok(()) => {}
+            Err(cell::NativeShutdownCriticalEnqueueError::Inactive(callback)) => {
+                let ticket = cell.protect_pre_shutdown_critical(callback);
+                let weak_cell = self.this.clone();
+                self.defer(move |cx| {
+                    let Some(cell) = weak_cell.upgrade() else {
+                        return;
+                    };
+                    if let Some(callback) = cell.take_pre_shutdown_critical(ticket) {
+                        callback(cx);
+                    }
+                });
+            }
+            Err(cell::NativeShutdownCriticalEnqueueError::PhasePassed(_)) => {
+                panic!("pre-registry-clear shutdown work was scheduled after registry clear")
+            }
+        }
+    }
+
+    /// Defers lifecycle-critical work before registry clear, or runs it in the current App turn
+    /// when that shutdown phase has already passed.
+    ///
+    /// Use this only for idempotent state-machine pumps that may be awakened by late native
+    /// terminal events or timers. Ordinary shutdown participants should use
+    /// [`Self::defer_shutdown_critical_before_window_registry_clear`] so phase misuse remains a
+    /// hard failure.
+    #[doc(hidden)]
+    pub fn defer_shutdown_critical_before_window_registry_clear_or_run_now(
+        &mut self,
+        callback: impl FnOnce(&mut App) + 'static,
+    ) {
+        let callback = Box::new(callback);
+        let Some(cell) = self.this.upgrade() else {
+            self.defer(move |cx| callback(cx));
+            return;
+        };
+        match cell.enqueue_shutdown_critical(
+            cell::NativeShutdownCriticalPhase::BeforeWindowRegistryClear,
+            callback,
+        ) {
+            Ok(()) => {}
+            Err(cell::NativeShutdownCriticalEnqueueError::Inactive(callback)) => {
+                let ticket = cell.protect_pre_shutdown_critical(callback);
+                let weak_cell = self.this.clone();
+                self.defer(move |cx| {
+                    let Some(cell) = weak_cell.upgrade() else {
+                        return;
+                    };
+                    if let Some(callback) = cell.take_pre_shutdown_critical(ticket) {
+                        callback(cx);
+                    }
+                });
+            }
+            Err(cell::NativeShutdownCriticalEnqueueError::PhasePassed(callback)) => callback(self),
+        }
+    }
+
+    /// Schedules lifecycle-critical work after the active shutdown clears the window registry.
+    ///
+    /// This is an exact-generation shutdown participant rather than an ordinary deferred effect.
+    /// It must only be called while shutdown is active.
+    #[doc(hidden)]
+    pub fn defer_shutdown_critical_after_window_registry_clear(
+        &mut self,
+        callback: impl FnOnce(&mut App) + 'static,
+    ) {
+        let callback = Box::new(callback);
+        let Some(cell) = self.this.upgrade() else {
+            panic!("post-registry-clear shutdown work requires a live AppCell")
+        };
+        match cell.enqueue_shutdown_critical(
+            cell::NativeShutdownCriticalPhase::AfterWindowRegistryClear,
+            callback,
+        ) {
+            Ok(()) => {}
+            Err(cell::NativeShutdownCriticalEnqueueError::Inactive(_)) => {
+                panic!("post-registry-clear shutdown work requires an active shutdown generation")
+            }
+            Err(cell::NativeShutdownCriticalEnqueueError::PhasePassed(_)) => {
+                unreachable!("post-registry-clear work remains admissible until shutdown completes")
+            }
+        }
+    }
+
+    /// Requires every dependent native window to reach terminal before retiring `anchor`.
+    ///
+    /// Dependencies are exact full [`WindowId`] values and must be registered before the anchor
+    /// is logically removed. Native ownership remains in `AppCell`; callers only declare the
+    /// ordering relationship.
+    #[doc(hidden)]
+    pub fn register_native_window_retirement_dependencies(
+        &self,
+        anchor: WindowId,
+        dependencies: impl IntoIterator<Item = WindowId>,
+    ) -> std::result::Result<(), NativeWindowRetirementDependencyError> {
+        self.this
+            .upgrade()
+            .expect("native retirement dependencies require a live AppCell")
+            .register_native_window_retirement_dependencies(anchor, dependencies)
+    }
+
+    /// Cancels the native-retirement ordering group owned by `anchor`.
+    ///
+    /// This is reserved for an anchor whose direct logical or native disappearance has already
+    /// invalidated a previously declared dependent-first close protocol. If the anchor retirement
+    /// is already waiting on that group, its retained platform owner becomes dispatchable.
+    #[doc(hidden)]
+    pub fn cancel_native_window_retirement_dependencies(&self, anchor: WindowId) -> bool {
+        self.this
+            .upgrade()
+            .expect("native retirement dependencies require a live AppCell")
+            .cancel_native_window_retirement_dependencies(anchor)
     }
 
     /// Accessor for the application's asset source, which is provided when constructing the `App`.

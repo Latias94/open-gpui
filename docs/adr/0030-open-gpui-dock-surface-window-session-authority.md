@@ -54,16 +54,18 @@ activation, mutation, opening, tear-off, and provisional work, bypasses per-view
 `MergeBack` policy, dispatches dependent closes outside all owner/runtime/entity borrows, and
 explicitly removes the still-live anchor last. Dispatching an exact close is an idempotent intent;
 neither a failed handle update nor logical GPUI registry removal proves native destruction. The
-ticket remains pending until the platform publishes the exact generation's `Closed` event. Only
-the post-registry-clear App-shutdown path may confirm that a native window is absent. `Closed`
-requires the exact anchor to be terminal or confirmed absent, every snapshotted terminal ticket to
-settle, and the current-generation runtime registry to be empty. Retired runtime ownership remains
-present until that same terminal fact settles it.
+ticket remains pending until the platform publishes the exact generation's native terminal event.
+App shutdown may clear the logical registry first, but every detached platform owner then remains
+inside GPUI's native-retirement coordinator until renderer quiescence and native terminal are both
+acknowledged. `Closed` requires the exact anchor and every snapshotted terminal ticket to settle
+from those native terminal facts, and the current-generation runtime registry to be empty. Retired
+runtime ownership remains present until that same terminal fact settles it.
 
 Direct native anchor destruction enters the same convergence path and freezes dependent work
 regardless of logical-close observer order. App shutdown has an explicit pre-clear freeze/snapshot
-path and a post-clear confirmed-absent path; it does not wait for close observers that registry
-clearing does not emit. Reopen remains rejected while even one exact native terminal is delayed.
+path, transfers cleared windows into GPUI's native-retirement coordinator, and converges from its
+terminal callbacks rather than ordinary logical close observers. Reopen remains rejected while
+even one exact native terminal is delayed.
 Delayed callbacks validate their old lineage and cannot affect a reopened generation. Managed
 viewports are peer top-level windows by default. Dock never derives native `transient_for`
 ownership from the surface anchor or the window that requested an open; callers may opt into an

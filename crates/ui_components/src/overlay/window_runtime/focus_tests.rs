@@ -1,6 +1,6 @@
 use super::*;
 
-use open_gpui::{Context, Render, Styled, VisualContext as _, div};
+use open_gpui::{AppContext as _, Context, Render, Styled, VisualContext as _, div};
 
 struct FocusTargetReservationProbe {
     runtime: WindowOverlayRuntime,
@@ -100,4 +100,123 @@ fn failed_target_sync_releases_window_reservations_before_retry(
             vec![&FocusTargetId::new("first"), &FocusTargetId::new("second")]
         );
     });
+}
+
+#[open_gpui::test]
+fn stale_same_id_component_replacement_cancels_the_old_restore_claim(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = cx.add_empty_window();
+    let (runtime, old_owner, replacement_owner, replacement) = cx.update(|window, cx| {
+        let runtime = WindowOverlayRuntime::for_window(window, cx);
+        let old_owner = cx.new(|_| ());
+        let replacement_owner = cx.new(|_| ());
+        let old_trigger = cx.focus_handle();
+        let old = runtime
+            .register_layer_for_entity_with_trigger_focus(
+                OverlayLayerRegistration::new(
+                    "same-id-restore-replacement",
+                    OverlayLayerPolicy::new(
+                        OverlayLayerKind::NonModalDismissible,
+                        OverlayPresence::open(),
+                    ),
+                    OverlayOwnership::Uncontrolled,
+                )
+                .focus_restore_condition(OverlayFocusRestoreCondition::Always)
+                .uncontrolled_commit(|_, _, _| {}),
+                old_trigger,
+                &old_owner,
+                window,
+                cx,
+            )
+            .expect("the original component authority should register");
+        let frame_revision = window.rendered_frame_revision();
+        runtime
+            .state
+            .update(cx, |state, _| {
+                state.record_component_bind(old.lease(), frame_revision)
+            })
+            .expect("the original component bind should be current");
+        let (scope, focus_runtime) = {
+            let state = runtime.state.read(cx);
+            (
+                state.entries[old.lease().layer_id()]
+                    .scope_id
+                    .clone()
+                    .expect("the passive layer should own a focus scope"),
+                state.focus_runtime.clone(),
+            )
+        };
+
+        runtime
+            .apply_focus_transition(
+                FocusTransition::Deactivate {
+                    scope: scope.clone(),
+                    restore: true,
+                },
+                window,
+                cx,
+            )
+            .expect("ordinary close should queue the old restore claim");
+        assert!(
+            focus_runtime
+                .has_pending_claim_for_scope(&scope, window, cx)
+                .expect("the focus runtime should belong to this window"),
+            "the replacement test must begin with an unsettled old restore claim"
+        );
+
+        assert!(
+            runtime
+                .replace_stale_component_subtree(
+                    old.lease().layer_id(),
+                    frame_revision.wrapping_add(1),
+                    replacement_owner.entity_id(),
+                    window,
+                    cx,
+                )
+                .expect("same-ID replacement should retire the stale subtree")
+        );
+        assert!(
+            !focus_runtime
+                .has_pending_claim_for_scope(&scope, window, cx)
+                .expect("the focus runtime should remain window-bound"),
+            "replacement authority must cancel the stale restore before registering the new scope"
+        );
+
+        let replacement = runtime
+            .register_layer_for_entity(
+                OverlayLayerRegistration::new(
+                    "same-id-restore-replacement",
+                    OverlayLayerPolicy::new(
+                        OverlayLayerKind::NonModalDismissible,
+                        OverlayPresence::open(),
+                    ),
+                    OverlayOwnership::Uncontrolled,
+                )
+                .focus_restore_condition(OverlayFocusRestoreCondition::Always)
+                .uncontrolled_commit(|_, _, _| {}),
+                &replacement_owner,
+                window,
+                cx,
+            )
+            .expect("the replacement authority should reuse the stable ID");
+        assert_ne!(old.lease().token, replacement.lease().token);
+
+        (runtime, old_owner, replacement_owner, replacement)
+    });
+
+    drop(old_owner);
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert_eq!(
+            runtime
+                .component_binding_status(&replacement, window, cx)
+                .expect("the replacement binding should remain queryable"),
+            OverlayLayerLeaseStatus::Registered {
+                phase: OverlayLayerPhase::Open,
+            },
+            "the stale owner release must not retire the same-ID replacement"
+        );
+    });
+    drop(replacement_owner);
 }

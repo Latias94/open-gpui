@@ -8,10 +8,12 @@ use crate::{
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
     render::DockViewportHostSceneCandidateSlot,
+    surface::live_payload_carrier::tabs_retained_source_id,
 };
 use open_gpui::{
     AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, px,
+    retained_visual,
 };
 use open_gpui_ui_core::AccessibleAction;
 
@@ -32,6 +34,7 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        debug_assert!(!session.is_provisional_shell());
         if items.is_empty() {
             return self.render_missing_node(node, session);
         }
@@ -59,6 +62,8 @@ impl DockHost {
         if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(node) {
             stack_payload = stack_payload.with_preview_tabs(preview_titles);
         }
+        let suppress_stack_drag_source =
+            self.native_drag_transport_suppresses_payload(&stack_payload);
         let tab_count = items.len();
         let stack_drag_visual_style = session.visual_style().drag.clone();
         let anchor_entity = entity.clone();
@@ -218,8 +223,9 @@ impl DockHost {
                         cx,
                     );
                 },
-            ))
-            .on_drag(stack_payload, move |payload, geometry, window, cx| {
+            ));
+        if !suppress_stack_drag_source {
+            tab_bar = tab_bar.on_drag(stack_payload, move |payload, geometry, window, cx| {
                 let source_drag_visual_style = stack_drag_visual_style.clone();
                 let frozen_drag_visual_style = stack_drag_entity.update(cx, |host, cx| {
                     if !host
@@ -259,6 +265,7 @@ impl DockHost {
                 let drag_title = stack_drag_title.clone();
                 cx.new(move |_| DockDragVisual::new(drag_title, frozen_drag_visual_style))
             });
+        }
         tab_bar = tab_bar_a11y.apply_to(tab_bar);
 
         for (index, item) in items.into_iter().enumerate() {
@@ -281,6 +288,7 @@ impl DockHost {
                 item.clone(),
                 title.clone(),
             );
+            let suppress_drag_source = self.native_drag_transport_suppresses_payload(&payload);
             let drag_entity = entity.clone();
             let focus_entity = entity.clone();
             let target_index = index;
@@ -378,8 +386,9 @@ impl DockHost {
                             cx,
                         );
                     },
-                ))
-                .on_drag(payload, move |payload, geometry, window, cx| {
+                ));
+            if !suppress_drag_source {
+                tab = tab.on_drag(payload, move |payload, geometry, window, cx| {
                     let frozen_drag_visual_style = drag_entity.update(cx, |host, cx| {
                         if !host.accepts_window_callback(
                             window_binding,
@@ -425,6 +434,7 @@ impl DockHost {
                     let drag_title = drag_visual_title.clone();
                     cx.new(move |_| DockDragVisual::new(drag_title, frozen_drag_visual_style))
                 });
+            }
             tab = tab_a11y.apply_to(tab);
             // Tab labels are a deliberate render-measured exception: final hit bounds depend on
             // intrinsic title and close-button layout, not the presentation scene's equal slots.
@@ -491,7 +501,19 @@ impl DockHost {
         tabs = tabs
             .child(tab_bar)
             .child(self.render_panel(&selected_item, session, window, cx));
-        tabs.into_any_element()
+        let Some(binding) = self.current_window_binding() else {
+            return tabs.into_any_element();
+        };
+        retained_visual::source(
+            tabs_retained_source_id(
+                cx.entity().entity_id(),
+                binding.generation(),
+                session.space(),
+                node,
+            ),
+            tabs,
+        )
+        .into_any_element()
     }
 
     fn render_panel(
@@ -503,7 +525,24 @@ impl DockHost {
     ) -> AnyElement {
         let resolution = session.panel_for_render(item, cx);
         match resolution {
+            DockHostPanelRenderResolution::Registered(panel_view)
+                if matches!(
+                    session.kind(),
+                    crate::host_render_session::DockHostPresentationKind::LivePayloadProjection
+                        | crate::host_render_session::DockHostPresentationKind::PayloadRecoveryProjection
+                ) =>
+            {
+                let panel_view = self.present_panel_view(panel_view, window, cx);
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(panel_view)
+                    .into_any_element()
+            }
             DockHostPanelRenderResolution::Registered(panel_view) => {
+                let panel_view = self.present_panel_view(panel_view, window, cx);
                 let focus_handle = self.ensure_panel_focus_tracker(item, window, cx);
                 let selector = self.record_debug_selector(
                     DockDebugRegion::Panel { item: item.clone() },

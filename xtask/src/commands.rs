@@ -27,7 +27,7 @@ enum XtaskCommand {
     Verify,
     /// Verify MSRV, duplicate dependencies, and cargo audit.
     DependencyHealth,
-    /// Run the native wgpu renderer smoke test.
+    /// Run the complete native WGPU package test suite.
     RendererSmoke,
     /// Verify changelog, release notes, README versions, and breaking inventory.
     VerifyReleaseDocs(ForwardArgs),
@@ -44,7 +44,7 @@ enum XtaskCommand {
     /// Scan UI component contract drift.
     ScanUiContract,
     /// Build and run the stable browser smoke test.
-    WebSmoke,
+    WebSmoke(WebSmokeArgs),
     /// Inspect, diagnose, diff, and stream DevTools artifacts.
     Devtools(DevtoolsArgs),
 }
@@ -53,6 +53,13 @@ enum XtaskCommand {
 struct ForwardArgs {
     #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
     args: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+struct WebSmokeArgs {
+    /// Allow a local diagnostic run to skip when WebGPU is unavailable.
+    #[arg(long)]
+    allow_unavailable: bool,
 }
 
 pub fn run_from_env() -> ExitCode {
@@ -81,7 +88,7 @@ pub fn run_from_env() -> ExitCode {
         XtaskCommand::ScanImportBoundary => scan_import_boundary(root),
         XtaskCommand::ScanPublicApi(args) => scan_public_api(root, &args.args),
         XtaskCommand::ScanUiContract => scan_ui_contract(root),
-        XtaskCommand::WebSmoke => web_smoke(root),
+        XtaskCommand::WebSmoke(args) => web_smoke(root, args.allow_unavailable),
         XtaskCommand::Devtools(args) => devtools(root, args),
     };
 
@@ -262,6 +269,17 @@ fn verify_plan(host: VerifyHost) -> Vec<VerifyStep> {
             "nextest",
             "run",
             "-p",
+            "open-gpui",
+            "--all-features",
+            "--test",
+            "presentation_surface",
+            "--locked",
+            "--no-fail-fast",
+        ])),
+        VerifyStep::Command(VerifyCommand::cargo([
+            "nextest",
+            "run",
+            "-p",
             "open-gpui-ui-core",
             "--locked",
         ])),
@@ -323,7 +341,7 @@ fn renderer_smoke(root: &Path) -> Result<(), ()> {
             "--features",
             "font-kit",
             "--locked",
-            "renderer_smoke_creates_core_pipelines",
+            "--no-fail-fast",
         ],
     )
 }
@@ -387,6 +405,22 @@ mod tests {
     }
 
     #[test]
+    fn web_smoke_requires_an_explicit_unavailable_skip() {
+        let default = XtaskCli::try_parse_from(["xtask", "web-smoke"]).unwrap();
+        let XtaskCommand::WebSmoke(default) = default.command else {
+            panic!("web-smoke should parse as its own command");
+        };
+        assert!(!default.allow_unavailable);
+
+        let local =
+            XtaskCli::try_parse_from(["xtask", "web-smoke", "--allow-unavailable"]).unwrap();
+        let XtaskCommand::WebSmoke(local) = local.command else {
+            panic!("web-smoke should parse as its own command");
+        };
+        assert!(local.allow_unavailable);
+    }
+
+    #[test]
     fn verify_plan_covers_u11_targets_features_and_process_scoped_environment() {
         let windows_plan = verify_plan(VerifyHost::Windows);
         let windows_commands = cargo_commands(&windows_plan);
@@ -434,6 +468,17 @@ mod tests {
                     "--locked",
                 ][..],
                 &["nextest", "run", "-p", "open-gpui", "--locked"][..],
+                &[
+                    "nextest",
+                    "run",
+                    "-p",
+                    "open-gpui",
+                    "--all-features",
+                    "--test",
+                    "presentation_surface",
+                    "--locked",
+                    "--no-fail-fast",
+                ][..],
                 &["nextest", "run", "-p", "open-gpui-ui-core", "--locked"][..],
                 &[
                     "nextest",

@@ -1,9 +1,9 @@
 use crate::{
-    DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockVisualStyle, DockWorkspace, geometry::DockDropGuideMetrics,
+    DockFloatingContainer, DockGraph, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId,
+    DockVisualStyle, DockWorkspace, geometry::DockDropGuideMetrics, host::DockHostOptions,
     panel_registry::DockPanelRenderRegistration,
 };
-use open_gpui::{AnyView, Context, Pixels};
+use open_gpui::{AnyView, Context, EntityId, Pixels};
 use open_gpui_motion::MotionPreference;
 use std::{collections::HashMap, ops::Deref, rc::Rc};
 
@@ -18,12 +18,21 @@ pub(crate) enum DockFloatingChromeTarget {
     AmbiguousSplit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockHostPresentationKind {
+    Workspace,
+    ProvisionalShell,
+    LivePayloadProjection,
+    PayloadRecoveryProjection,
+}
+
 /// Read-only docking state captured for one GPUI render pass.
 ///
 /// Render code reads this session instead of repeatedly reaching through `DockHost` into the
 /// workspace or controller. UI event callbacks still commit through the live owner when they fire.
 #[derive(Debug, Clone)]
 pub(crate) struct DockHostPresentationSession {
+    kind: DockHostPresentationKind,
     space: DockSpaceId,
     selector_prefix: String,
     root: Option<DockNodeId>,
@@ -45,11 +54,55 @@ pub(crate) struct DockHostPresentationSession {
 
 impl DockHostPresentationSession {
     fn new(space: DockSpaceId, workspace: &DockWorkspace) -> Self {
-        let central = workspace.graph().central_region(&space);
+        Self::from_graph(space, workspace.graph(), workspace)
+    }
+
+    pub(crate) fn from_graph(
+        space: DockSpaceId,
+        graph: &DockGraph,
+        workspace: &DockWorkspace,
+    ) -> Self {
+        Self::from_graph_with_kind(space, graph, workspace, DockHostPresentationKind::Workspace)
+    }
+
+    pub(crate) fn live_payload_projection(
+        space: DockSpaceId,
+        graph: &DockGraph,
+        workspace: &DockWorkspace,
+    ) -> Self {
+        Self::from_graph_with_kind(
+            space,
+            graph,
+            workspace,
+            DockHostPresentationKind::LivePayloadProjection,
+        )
+    }
+
+    pub(crate) fn payload_recovery_projection(
+        space: DockSpaceId,
+        graph: &DockGraph,
+        workspace: &DockWorkspace,
+    ) -> Self {
+        Self::from_graph_with_kind(
+            space,
+            graph,
+            workspace,
+            DockHostPresentationKind::PayloadRecoveryProjection,
+        )
+    }
+
+    fn from_graph_with_kind(
+        space: DockSpaceId,
+        graph: &DockGraph,
+        workspace: &DockWorkspace,
+        kind: DockHostPresentationKind,
+    ) -> Self {
+        let central = graph.central_region(&space);
         let mut session = Self {
+            kind,
             selector_prefix: format!("dock:{space}"),
-            root: workspace.graph().root(&space),
-            floating_containers: workspace.graph().floating_containers(&space).to_vec(),
+            root: graph.root(&space),
+            floating_containers: graph.floating_containers(&space).to_vec(),
             visible_panel_items: Vec::new(),
             nodes: HashMap::new(),
             panels: HashMap::new(),
@@ -69,31 +122,68 @@ impl DockHostPresentationSession {
         };
 
         if let Some(root) = session.root {
-            session.collect_subtree(workspace, root);
+            session.collect_subtree(graph, workspace, root);
         }
         for container in session.floating_containers.clone() {
-            session.collect_subtree(workspace, container.node);
+            session.collect_subtree(graph, workspace, container.node);
         }
 
         session
     }
 
-    fn collect_subtree(&mut self, workspace: &DockWorkspace, node_id: DockNodeId) {
-        let Some(node) = workspace.graph().node(node_id).cloned() else {
+    fn provisional_shell(space: DockSpaceId) -> Self {
+        let options = DockHostOptions::default();
+        Self {
+            kind: DockHostPresentationKind::ProvisionalShell,
+            selector_prefix: format!("dock:{space}:provisional"),
+            root: None,
+            floating_containers: Vec::new(),
+            visible_panel_items: Vec::new(),
+            nodes: HashMap::new(),
+            panels: HashMap::new(),
+            panel_titles: HashMap::new(),
+            panel_closable: HashMap::new(),
+            central_node: None,
+            central_keep_alive_when_empty: false,
+            central_passthrough_when_empty: false,
+            empty_message: options.empty_message,
+            missing_panel_prefix: options.missing_panel_prefix,
+            splitter_handle_size: options.splitter_handle_size,
+            drop_guide_metrics: options.drop_guide_metrics,
+            motion_preference: options.motion_preference,
+            space,
+        }
+    }
+
+    pub(crate) const fn kind(&self) -> DockHostPresentationKind {
+        self.kind
+    }
+
+    pub(crate) const fn is_provisional_shell(&self) -> bool {
+        matches!(self.kind, DockHostPresentationKind::ProvisionalShell)
+    }
+
+    fn collect_subtree(
+        &mut self,
+        graph: &DockGraph,
+        workspace: &DockWorkspace,
+        node_id: DockNodeId,
+    ) {
+        let Some(node) = graph.node(node_id).cloned() else {
             return;
         };
 
         match &node {
             DockNode::Split { children, .. } => {
                 for child in children {
-                    self.collect_subtree(workspace, *child);
+                    self.collect_subtree(graph, workspace, *child);
                 }
             }
             DockNode::Tabs { items, selected } => {
                 self.collect_tab_stack(workspace, items, selected)
             }
             DockNode::Floating { child } => {
-                self.collect_subtree(workspace, *child);
+                self.collect_subtree(graph, workspace, *child);
             }
         }
 
@@ -214,6 +304,15 @@ impl DockHostPresentationSession {
 
     pub(crate) fn visible_panel_items(&self) -> &[DockItemId] {
         &self.visible_panel_items
+    }
+
+    pub(crate) fn resolved_visible_panel_entity_ids(&self) -> Vec<EntityId> {
+        self.visible_panel_items
+            .iter()
+            .filter_map(|item| self.panels.get(item))
+            .filter_map(DockPanelRenderRegistration::resolved_view)
+            .map(|view| view.entity_id())
+            .collect()
     }
 
     pub(crate) fn empty_message(&self) -> &str {
@@ -349,7 +448,13 @@ impl Deref for DockHostRenderSession {
 
 impl DockHost {
     pub(crate) fn presentation_session(&self, cx: &Context<Self>) -> DockHostPresentationSession {
+        if let Some(presentation) = self.live_presentation_session() {
+            return presentation.clone();
+        }
         let space = self.space().clone();
+        if self.is_provisional_viewport() {
+            return DockHostPresentationSession::provisional_shell(space);
+        }
         self.with_workspace(cx, |workspace| {
             DockHostPresentationSession::new(space, workspace)
         })

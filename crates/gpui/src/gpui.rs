@@ -51,7 +51,11 @@ pub mod test;
 mod text_system;
 mod util;
 mod view;
+#[doc(hidden)]
+pub mod view_presentation_window;
 mod window;
+#[doc(hidden)]
+pub use window::retained_visual;
 mod window_platform_mutation;
 
 #[cfg(any(test, feature = "test-support"))]

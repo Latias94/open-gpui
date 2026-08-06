@@ -329,7 +329,7 @@ fn record_portal_anchor_eligibility(
     let commit_binding = binding.clone();
     window.record_prepaint_window_transaction(
         publication,
-        move |_, window, cx| {
+        move |accepted_frame, window, cx| {
             if linked {
                 let _ = commit_runtime.mark_portal_anchor_linked(
                     &commit_binding,
@@ -338,16 +338,23 @@ fn record_portal_anchor_eligibility(
                     cx,
                 );
             } else {
-                let _ = commit_runtime.mark_portal_anchor_unlinked(
+                let _ = commit_runtime.mark_portal_anchor_unlinked_after_accepted_frame(
                     &commit_binding,
                     expected_generation,
+                    accepted_frame,
                     window,
                     cx,
                 );
             }
         },
-        move |_, window, cx| {
-            let _ = runtime.mark_portal_anchor_unlinked(&binding, expected_generation, window, cx);
+        move |accepted_frame, window, cx| {
+            let _ = runtime.mark_portal_anchor_unlinked_after_accepted_frame(
+                &binding,
+                expected_generation,
+                accepted_frame,
+                window,
+                cx,
+            );
         },
     );
 }

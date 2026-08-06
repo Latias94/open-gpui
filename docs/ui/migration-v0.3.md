@@ -303,8 +303,8 @@ setting, or file writer. See
 ## Dock Surface Window Sessions
 
 Facade-managed native Dock windows now belong to one exact-generation surface session. Rename
-`DockSurfaceViewportSession` to `DockSurfaceViewports`, replace `viewport_session()` with
-`viewports()`, and stop treating `open_primary_window` as a bare GPUI window-open result:
+the `DockSurfaceViewportSession` facade type to `DockSurfaceViewports`, keep using the existing
+`viewports()` accessor, and stop treating `open_primary_window` as a bare GPUI window-open result:
 
 ```rust
 use open_gpui_docking::prelude::{
@@ -345,7 +345,9 @@ close another `DockSurface`, an unmanaged low-level runtime, or an unrelated app
 GPUI's last-window policy remains the application-exit authority. Reopening a surface is rejected
 until the previous exact generation reaches `Closed`. Do not treat a close dispatch or disappearance
 from GPUI's logical window registry as native completion. Ordinary teardown settles from the exact
-platform `Closed` callback; only App shutdown may confirm missing terminals after registry clear.
+platform native-terminal callback. App shutdown may clear the logical registry first, but GPUI
+retains every detached platform owner and Dock remains `ShuttingDown` until those exact native
+terminals arrive.
 
 An embedded `surface.host_view(cx)` remains outside this managed lifecycle and never invents an
 anchor or registers managed route and activation authority. It is a rendering path for content in
@@ -481,6 +483,16 @@ generation-bound observation through `on_window_mutation_observation`. Use
 The former parallel resize, pointer-input, minimize, zoom, and fullscreen backend methods were
 deleted rather than retained as bypasses.
 
+Return `PlatformWindowPresentOutcome::Deferred` only when retrying the same scene can still
+succeed. Return `RepaintRequired` after renderer-local resource identity changes, including an
+atlas reset or successful device recovery. GPUI then invalidates that exact scene generation and
+keeps a fresh-paint request authoritative across inactive and thermal throttling; the backend must
+not maintain a competing one-shot redraw flag. A hidden initial window remains gated while this
+bounded recovery runs and closes if no newer non-empty submitted generation can be produced.
+Fresh-generation attempts and same-generation `Deferred` retries have independent finite budgets
+during this pre-visibility recovery; ordinary visible-window deferred presentation keeps its
+existing retry semantics.
+
 Dock status now records requests and dispatches separately from terminal observations, and each
 observation preserves its typed request plus committed facts. Only committed Window facts can
 create an observed viewport-placement revision. Terminal rejected, adjusted, unsupported, or
@@ -506,10 +518,27 @@ For custom platform backends:
 - Continue storing and invoking the `PlatformWindow` callbacks supplied by GPUI. Do not call back
   into `App` through a backend-specific side channel.
 - Implement `command_dispatcher()` with a weak reference to native window state. Dispatch only
-  `PlatformWindowCommand::{CompleteInitialPresentation, Activate, ShowWindowMenu,
-  StartWindowMove, StartWindowResize}` and return `PlatformWindowCommandOutcome::Rejected`
-  without side effects after that native state is gone. Return `Accepted` only when the backend
-  accepted the requested operation.
+  `PlatformWindowCommand::{CompleteInitialPresentation, RevealDeferredInitialPresentation,
+  Activate, ShowWindowMenu, StartWindowMove, StartWindowResize}` and return
+  `PlatformWindowCommandOutcome::Rejected` without side effects after that native state is gone.
+  Return `Accepted` only when the backend accepted the requested operation. A provisional reveal
+  must validate the exact session and presentation generations, retain the same native window,
+  avoid activation, preserve native hit transparency, and call
+  `WindowProvisionalSession::record_native_reveal` with observed visibility, foreground, hit-test,
+  identity, and z-order facts before reporting acceptance.
+- If the backend can own native pointer capture, construct the dispatcher with
+  `PlatformWindowCommandDispatcher::new_with_pointer_capture_release`. Its preparer may only
+  snapshot the exact native owner for the supplied release generation; the retained operation
+  performs release after the `App` borrow is gone. Report `Released` only after capture is absent,
+  `NativeWindowTerminal` only for the exact terminal native window, and otherwise `Rejected` so
+  GPUI retains the same snapshot and retries. Backends that never own native capture may use
+  `PlatformWindowCommandDispatcher::new`.
+- Implement the mandatory `PlatformWindow::prepare_presentation_shutdown` seam. Preparation must
+  only capture backend-owned state. Its retained operation runs after the `App` borrow is gone,
+  drains renderer and surface work for the exact ticket, calls
+  `WindowPresentationShutdownTicket::acknowledge_quiesced`, and only then returns
+  `PlatformPresentationShutdownOutcome::Quiesced`. Keep `retire_native_window` rejected until
+  quiescence is proven; a fallible native destroy remains retryable while GPUI retains the owner.
 - Keep `map_window` synchronous and unable to pump `on_input`. A backend may keep the native target
   hidden, or perform only a backend-proven non-activating map/commit whose callbacks cannot enter
   the hybrid input path. Any show, focus, or activation work that can pump input belongs to
@@ -555,6 +584,111 @@ The observable ordering rules are intentionally strict:
 
 The component-side constraints are also recorded in the
 [Open GPUI Component Contract](component-contract.md#native-window-callback-boundary).
+
+## Platform Atlas Texture Lease Contract
+
+`PlatformAtlas` no longer supplies compatibility defaults for renderer texture leasing. Every
+platform backend must implement `atlas_texture_lease_epoch`, `acquire_atlas_texture_leases`, and
+`release_atlas_texture_leases`. An implementation that previously omitted these methods compiled,
+but every retained visual referencing atlas textures failed to obtain a lease and was repainted
+without its glyph, icon, emoji, or image sprites.
+
+Use one renderer-local lifetime epoch and one exact instance generation per reusable texture slot:
+
+- Keep `atlas_texture_lease_epoch()` stable for the current renderer and advance it whenever a
+  reset invalidates all prior texture instances.
+- Treat each `AtlasTextureInstanceId` as the complete slot-plus-generation identity. Reusing the
+  same numeric slot must mint a new instance generation.
+- Validate the entire deduplicated input set before incrementing any lease count. Return
+  `AtlasTextureLeaseError::TextureUnavailable` or `LeaseCountOverflow` without partially retaining
+  earlier entries.
+- On successful acquisition, return the epoch observed under the same atlas lock. Keep every exact
+  instance resident until the matching release consumes that lease.
+- Release only the same deduplicated instance set and epoch. A release from an obsolete epoch must
+  not mutate the replacement atlas lifetime.
+
+The methods remain an unsafe backend seam because GPUI transfers one exact release obligation into
+the non-cloneable visual lease. Backends must not expose another path that can forge, duplicate, or
+prematurely consume that obligation. A compile error for an incomplete backend is intentional and
+safer than a successful build that renders blank text or images.
+
+`AtlasTile` also changes its public `repr(C)` layout. Update every Rust structure literal and every
+host/shader mirror together. The generation identifies the current occupant of a reusable texture
+slot; the explicit padding is ABI-owned and must remain zero:
+
+```rust
+let tile = AtlasTile {
+    texture_id,
+    tile_id,
+    padding,
+    bounds,
+    texture_generation: slot_generation,
+    texture_generation_padding: 0,
+};
+```
+
+This is an ABI break, not only a Rust source break. The old 32-byte record is replaced by the
+following 40-byte, 4-byte-aligned host layout:
+
+| Field | Byte offset | Byte size | External representation |
+|---|---:|---:|---|
+| `texture_id.index` | 0 | 4 | unsigned 32-bit slot |
+| `texture_id.kind` | 4 | 4 | unsigned 32-bit `AtlasTextureKind` discriminant |
+| `tile_id` | 8 | 4 | unsigned 32-bit tile id |
+| `padding` | 12 | 4 | unsigned 32-bit content padding |
+| `bounds` | 16 | 16 | four signed 32-bit values: origin x/y, width, height |
+| `texture_generation` | 32 | 4 | non-zero unsigned 32-bit slot generation |
+| `texture_generation_padding` | 36 | 4 | zero |
+
+Recompile every downstream Rust, C, Metal, and WGSL consumer; do not reinterpret persisted or
+cached 32-byte records as the new type. External Rust backends should assert `size_of`, `align_of`,
+and `offset_of!` for their own `#[repr(C)]` mirror. Shader mirrors must apply their language's
+layout rules while preserving the byte offsets and 40-byte array stride above.
+
+Increment `slot_generation` before publishing a replacement occupant under the same
+`AtlasTextureId`. Do not derive it from `tile_id`, leave it at a permanent constant, or omit the two
+fields from a C, Metal, or other renderer-side mirror. `AtlasTile::texture_instance()` is the
+canonical slot-plus-generation identity used by leasing and scene validation.
+
+## Native Point-Hit Stack Contract
+
+`PlatformWindowHit` adds `ProvisionalPassThrough`, so exhaustive matches in platform backends and
+native integrations must handle the new variant. The variant is legal only for an exact gated
+provisional window and carries its non-zero immutable session generation plus same-observation
+coverage and client geometry.
+
+Custom `Platform::window_hit_stack_at` implementations must return entries in native front-to-back
+order using this grammar:
+
+```text
+ProvisionalPassThrough* (RegisteredApplication | OpaqueBarrier)
+```
+
+An empty available observation means the backend positively verified open desktop space. Missing
+windows, incomplete enumeration, stale generation identity, a point outside any reported coverage,
+or any ordering ambiguity must return `PlatformWindowHitStack::Unavailable` instead. The trait's
+default implementation already returns `Unavailable`, so backends that do not support classified
+point-hit stacks may keep that fail-closed behavior.
+
+Update consumers as follows:
+
+```rust
+match hit {
+    PlatformWindowHit::ProvisionalPassThrough { .. } => {
+        // Continue only after validating the exact provisional session.
+    }
+    PlatformWindowHit::RegisteredApplication { .. } => {
+        // This is the terminal application target.
+    }
+    PlatformWindowHit::OpaqueBarrier { .. } => {
+        // Stop routing at ordinary, foreign, or unknown native coverage.
+    }
+}
+```
+
+Use `PlatformWindowHitObservation::try_new` or `PlatformWindowHitStack::try_available` rather than
+constructing unchecked observations. They reject malformed coverage, zero provisional generations,
+non-prefix pass-through entries, and non-empty observations without exactly one terminal entry.
 
 ## Deterministic Collection Typeahead
 
@@ -621,9 +755,18 @@ affected subtree transaction; it never clamps or substitutes identity.
 
 Retained geometry or other state published outside the frame journal must use a stable
 `PrepaintPublicationId` with `Window::record_prepaint_window_transaction`. GPUI commits it only
-after a valid paint and invokes its discard callback when the frame is invalid or the publication
-is absent from the next completed frame. Reuse the ID across renders of one logical producer; do
-not publish directly from prepaint or preserve last-known state after unmount or rollback.
+after the valid candidate has become the accepted rendered frame and invokes its discard callback
+when that accepted frame contains an invalid publication or omits the previous one. A candidate
+rejected before the frame swap preserves the previous publication and runs neither callback. Reuse
+the ID across renders of one logical producer; do not publish directly from render/prepaint or
+preserve last-known state after an accepted unmount or rollback.
+
+The transaction callbacks now receive an `AcceptedFrameFence` instead of a bare frame revision.
+Use `fence.generation()` when diagnostics need the accepted generation, and
+`fence.is_satisfied_by(window)` when an internal lifecycle must distinguish work already represented
+by the rendered frame from ordinary event-driven work that must wait for a future accepted frame.
+The fence is window-bound and cannot be constructed by applications. A rejected candidate produces
+no fence, so consumers must not synthesize an equivalent from `Window::rendered_frame_revision()`.
 
 For a top-left-relative pixel origin, use the checked
 `SubtreeTransformOrigin::try_pixels(offset)` constructor. The origin type has no unchecked pixel
@@ -1642,7 +1785,8 @@ let registration = OverlayLayerRegistration::new(
     policy,
     OverlayOwnership::Controlled,
 );
-let binding = runtime.register_layer_for_entity(registration, &owner, window, cx)?;
+let binding = runtime.register_layer(registration, window, cx)?;
+runtime.bind_layer_to_entity_release(&binding, &owner, window, cx)?;
 ```
 
 Build `registration` from a stable, instance-qualified layer ID, an `OverlayLayerPolicy`, and
@@ -1656,8 +1800,9 @@ The runtime validates both logical ownership and the current GPUI render tree. A
 is outside its declared scope, unavailable, stale, unmounted, or owned by an inactive nested scope
 is ignored. Initial focus requested before conditional content mounts is retried after the next
 completed frame. Use `rebind_layer` and `rebind_focus_target` when stable identities gain current
-policy or handles, and use the matching unregister methods only for explicit manual lifetime. The
-preferred `register_layer_for_entity` path binds subtree cleanup to owner release.
+policy or handles, and use the matching unregister methods only for explicit manual lifetime. For
+entity-owned layers, call `register_layer` and then `bind_layer_to_entity_release` so subtree
+cleanup follows owner release.
 
 Official component adapters also handle a new entity mounting with the same stable component ID
 before the old owner's deferred release cleanup has settled. When the old owner is gone or stale for

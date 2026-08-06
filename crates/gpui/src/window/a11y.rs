@@ -553,6 +553,18 @@ impl A11y {
         update
     }
 
+    pub(crate) fn discard_candidate_frame(&mut self) {
+        self.candidate_focus_ids.clear();
+        self.candidate_node_geometry.clear();
+        self.candidate_action_listeners.clear();
+        self.staged_announcement_nodes.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn published_revision_for_test(&self) -> Option<u64> {
+        self.published.as_ref().map(|published| published.revision)
+    }
+
     /// Replace action routing with the exact tree and frame state delivered to the platform.
     pub(crate) fn publish(&mut self, update: &TreeUpdate, activation_generation: u64) {
         let mut published = self.published.take().unwrap_or_default();

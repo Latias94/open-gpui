@@ -81,6 +81,10 @@ impl DockPanelViewHandle {
         self.inner.resolve_view(cx)
     }
 
+    pub(crate) fn resolved_view(&self) -> Option<AnyView> {
+        self.inner.resolved_view()
+    }
+
     pub(crate) fn focus_handle(&self, cx: &mut App) -> Option<FocusHandle> {
         self.inner.focus_handle(cx)
     }
@@ -105,6 +109,13 @@ impl DockPanelViewStore {
 }
 
 impl DockPanelViewLifecycle {
+    fn resolved_view(&self) -> Option<AnyView> {
+        match &self.source {
+            DockPanelViewSource::View(view) => Some(view.clone()),
+            DockPanelViewSource::Lazy { view, .. } => view.get().cloned(),
+        }
+    }
+
     fn resolve_view(&self, cx: &mut App) -> AnyView {
         match &self.source {
             DockPanelViewSource::View(view) => view.clone(),

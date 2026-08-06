@@ -1,23 +1,37 @@
 use crate::{
     DockCapturedNativeDropRoute, DockCapturedNativeHostTarget, DockHost, DockHostWindowBinding,
     DockSpaceId, DockViewportDropRouteRequest, DockViewportHostGeometry,
-    DockViewportRoutedPreviewOwner, DockViewportRuntimeHandle, DockViewportRuntimeIdentity,
-    DockViewportRuntimeWorkContext,
+    DockViewportLockedDropRoute, DockViewportRoutedPreviewOwner, DockViewportRuntimeHandle,
+    DockViewportRuntimeIdentity, DockViewportRuntimeWorkContext,
     drag::DockDragPayload,
     interaction::DockRuntimeDragSession,
+    presentation_scene::DockPresentationScene,
+    surface::live_undock::{
+        DockLiveUndockCancelReason, DockLiveUndockDragGeneration, DockLiveUndockFact,
+        DockLiveUndockHostTarget, DockLiveUndockIdentity, DockLiveUndockPhysicalBounds,
+        DockLiveUndockPhysicalPoint, DockLiveUndockPlacementGeneration, DockLiveUndockReleaseLock,
+        DockLiveUndockRouteFeedback, DockLiveUndockSourceFocusSnapshot,
+        DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
+    },
+    surface::live_undock_runtime::{
+        DockLiveUndockExecutionSeed, DockLiveUndockHostReleaseAuthority,
+        DockLiveUndockReleaseAdoption, DockPayloadDragFinalizer,
+        settle_payload_drag_finalizer_claim,
+    },
     viewport_drop_scene::{DockViewportHostSceneDraft, DockViewportHostSceneFrame},
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, DragStartGeometry, Global, NativeCapturedDragEvent,
     NativeCapturedDragGeneration, NativeCapturedDragPhase, NativeCapturedDragReleaseBarrier,
-    NativeIngressSequence, Pixels, PlatformWindowHit, PlatformWindowHitStack, Point,
+    NativeCapturedDragReleaseTerminal, NativeIngressSequence, Pixels,
+    PlatformNativeDragStartSnapshot, PlatformWindowHit, PlatformWindowHitStack, Point,
     PointerCancelReason, PreparedNativeCapturedDragConsumer, Subscription, WeakEntity, Window,
     WindowId,
 };
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     rc::Rc,
     sync::Arc,
@@ -27,6 +41,7 @@ struct DockNativeCapturedDragRouter {
     state: Rc<RefCell<DockNativeCapturedDragState>>,
     _drag_subscription: Subscription,
     _window_closed_subscription: Subscription,
+    _window_native_terminal_subscription: Subscription,
 }
 
 impl Global for DockNativeCapturedDragRouter {}
@@ -35,8 +50,12 @@ impl Global for DockNativeCapturedDragRouter {}
 struct DockNativeCapturedDragState {
     next_epoch: u64,
     active: Option<DockNativeCapturedDragRoute>,
+    locked_releases: HashMap<u64, Arc<DockNativeCapturedReleaseReservation>>,
     retired_pending:
         HashMap<DockNativeCapturedDragRetiredKey, DockNativeCapturedDragRetiredPending>,
+    // A failed barrier remains unsafe until its surface claims the failure or the exact source
+    // window reaches native terminal state.
+    failed_releases: HashSet<DockNativeCapturedDragRetiredKey>,
     scenes: HashMap<WindowId, Vec<DockNativeCapturedHostScene>>,
     #[cfg(test)]
     panic_next: Option<DockNativeCapturedDragTestPanic>,
@@ -54,7 +73,14 @@ struct DockNativeCapturedDragRetiredKey {
 // release barrier settles so a later surface shutdown can claim its cleanup continuation.
 struct DockNativeCapturedDragRetiredPending {
     barrier: NativeCapturedDragReleaseBarrier,
-    route: Option<DockNativeCapturedDragRoute>,
+    cleanup: Option<DockNativeCapturedRouteCleanup>,
+}
+
+struct DockNativeCapturedRouteCleanup {
+    route: DockNativeCapturedDragRoute,
+    first_panic: Option<Box<dyn Any + Send>>,
+    locked_drop: Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>>,
+    live_undock_release_adopted: bool,
 }
 
 impl DockNativeCapturedDragRetiredKey {
@@ -93,7 +119,73 @@ pub(crate) struct DockNativeCapturedDragRouteReceipt {
     epoch: u64,
     generation: NativeCapturedDragGeneration,
     runtime_identity: DockViewportRuntimeIdentity,
+    source_binding: DockHostWindowBinding,
     session: DockRuntimeDragSession,
+    transport: DockNativeCapturedDragTransportLease,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockNativeCapturedDragTransportKey {
+    epoch: u64,
+    generation: NativeCapturedDragGeneration,
+    runtime_identity: DockViewportRuntimeIdentity,
+    source_binding: DockHostWindowBinding,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DockNativeCapturedDragTransportLease {
+    key: DockNativeCapturedDragTransportKey,
+    active: Rc<Cell<bool>>,
+}
+
+impl DockNativeCapturedDragTransportLease {
+    fn new(key: DockNativeCapturedDragTransportKey) -> Self {
+        Self {
+            key,
+            active: Rc::new(Cell::new(true)),
+        }
+    }
+
+    pub(crate) const fn key(&self) -> DockNativeCapturedDragTransportKey {
+        self.key
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.get()
+    }
+
+    pub(crate) fn retire(&self) {
+        self.active.set(false);
+    }
+}
+
+impl DockNativeCapturedDragTransportKey {
+    pub(crate) const fn runtime_identity(self) -> DockViewportRuntimeIdentity {
+        self.runtime_identity
+    }
+
+    pub(crate) const fn source_binding(self) -> DockHostWindowBinding {
+        self.source_binding
+    }
+
+    pub(crate) const fn source_window(self) -> WindowId {
+        self.source_binding.window_id()
+    }
+}
+
+impl DockNativeCapturedDragRouteReceipt {
+    pub(crate) const fn transport_key(&self) -> DockNativeCapturedDragTransportKey {
+        DockNativeCapturedDragTransportKey {
+            epoch: self.epoch,
+            generation: self.generation,
+            runtime_identity: self.runtime_identity,
+            source_binding: self.source_binding,
+        }
+    }
+
+    pub(crate) fn transport_lease(&self) -> DockNativeCapturedDragTransportLease {
+        self.transport.clone()
+    }
 }
 
 #[derive(Clone)]
@@ -106,16 +198,22 @@ struct DockNativeCapturedDragRoute {
     session: DockRuntimeDragSession,
     payload: DockDragPayload,
     source_window: WindowId,
+    source_window_handle: AnyWindowHandle,
     source_feedback_window_position: Point<Pixels>,
     source_host: WeakEntity<DockHost>,
     source_binding: DockHostWindowBinding,
+    source_focus: Option<DockLiveUndockSourceFocusSnapshot>,
+    transport: DockNativeCapturedDragTransportLease,
+    native_drag_start_snapshot: Option<PlatformNativeDragStartSnapshot>,
+    live_undock_source_scene: Option<DockNativeCapturedHostScene>,
+    live_undock_identity: Rc<Cell<Option<DockLiveUndockIdentity>>>,
+    payload_finalizer: DockPayloadDragFinalizer,
     start_consumer: PreparedNativeCapturedDragConsumer,
     foreign_previews: Rc<RefCell<DockNativeCapturedForeignPreviewState>>,
     latest_sequence: Rc<Cell<Option<NativeIngressSequence>>>,
     latest_event: Rc<RefCell<Option<NativeCapturedDragEvent>>>,
     preview_refresh_scheduled: Rc<Cell<bool>>,
     published_scene_frames: Rc<RefCell<Vec<DockNativeCapturedScenePublication>>>,
-    terminal: bool,
 }
 
 #[derive(Clone)]
@@ -139,6 +237,7 @@ impl DockNativeCapturedScenePublication {
                 .scene
                 .routing_scene
                 .has_same_native_routing_content(&scene.routing_scene)
+            && self.scene.presentation_scene == scene.presentation_scene
     }
 }
 
@@ -154,11 +253,13 @@ pub(crate) struct DockNativeCapturedHostScene {
     frame: DockViewportHostSceneFrame,
     geometry: DockViewportHostGeometry,
     routing_scene: DockViewportHostSceneDraft,
+    presentation_scene: DockPresentationScene,
 }
 
 #[derive(Clone)]
 struct DockNativeCapturedHostTarget {
     scene: DockNativeCapturedHostScene,
+    window_position: Point<Pixels>,
     host_position: Point<Pixels>,
 }
 
@@ -176,6 +277,23 @@ struct DockNativeCapturedForeignPreview {
 struct DockNativeCapturedForeignPreviewState {
     current: Option<DockNativeCapturedForeignPreview>,
     pending_cleanup: Vec<DockNativeCapturedForeignPreview>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockNativeCapturedSurfaceReleaseOutcome {
+    Released,
+    Failed,
+}
+
+impl DockNativeCapturedSurfaceReleaseOutcome {
+    fn from_native_terminal(terminal: NativeCapturedDragReleaseTerminal) -> Self {
+        match terminal {
+            NativeCapturedDragReleaseTerminal::Released
+            | NativeCapturedDragReleaseTerminal::NativeWindowTerminal
+            | NativeCapturedDragReleaseTerminal::NotRequired => Self::Released,
+            NativeCapturedDragReleaseTerminal::Failed => Self::Failed,
+        }
+    }
 }
 
 impl DockNativeCapturedForeignPreview {
@@ -197,15 +315,105 @@ impl DockNativeCapturedForeignPreview {
 enum DockNativeCapturedTarget {
     Host(DockNativeCapturedHostTarget),
     ForeignSurfaceTarget(DockNativeCapturedHostTarget),
-    Desktop,
+    Desktop(DockNativeCapturedDesktopRoute),
     Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockNativeCapturedDesktopRoute {
+    OpenSpace,
+    OpaqueBarrier,
 }
 
 struct DockNativeCapturedReleaseReservation {
     route_epoch: u64,
     generation: NativeCapturedDragGeneration,
-    target: DockNativeCapturedTarget,
+    sequence: NativeIngressSequence,
+    source_window: WindowId,
+    runtime_identity: DockViewportRuntimeIdentity,
+    work_context: DockViewportRuntimeWorkContext,
+    session: DockRuntimeDragSession,
+    payload: DockDragPayload,
+    route: RefCell<Option<DockNativeCapturedDragRoute>>,
+    target: RefCell<DockNativeCapturedTarget>,
+    locked_drop: RefCell<Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>>>,
+    live_undock_release_adopted: Cell<bool>,
     resolution_panic: RefCell<Option<Box<dyn Any + Send>>>,
+}
+
+impl DockNativeCapturedReleaseReservation {
+    fn matches_route(
+        &self,
+        route: &DockNativeCapturedDragRoute,
+        event: &NativeCapturedDragEvent,
+    ) -> bool {
+        self.route_epoch == route.epoch
+            && self.generation == route.generation
+            && self.generation == event.generation()
+            && self.sequence == event.sequence()
+            && self.source_window == route.source_window
+            && self.source_window == event.source_window()
+            && self.runtime_identity == route.runtime_identity
+            && self.work_context == route.work_context
+            && self.session == route.session
+            && self.payload == route.payload
+            && event.payload::<DockDragPayload>() == Some(&self.payload)
+    }
+
+    fn target(&self) -> DockNativeCapturedTarget {
+        self.target.borrow().clone()
+    }
+
+    fn take_resolution_panic(&self) -> Option<Box<dyn Any + Send>> {
+        self.resolution_panic.borrow_mut().take()
+    }
+}
+
+fn claim_locked_release_route(
+    state: &Rc<RefCell<DockNativeCapturedDragState>>,
+    reservation: &Arc<DockNativeCapturedReleaseReservation>,
+) -> Option<DockNativeCapturedRouteCleanup> {
+    let route = reservation.route.borrow_mut().take()?;
+    let mut state = state.borrow_mut();
+    if state
+        .locked_releases
+        .get(&reservation.route_epoch)
+        .is_some_and(|current| Arc::ptr_eq(current, reservation))
+    {
+        state.locked_releases.remove(&reservation.route_epoch);
+    }
+    drop(state);
+    Some(DockNativeCapturedRouteCleanup {
+        route,
+        first_panic: reservation.take_resolution_panic(),
+        locked_drop: reservation.locked_drop.borrow_mut().take(),
+        live_undock_release_adopted: reservation.live_undock_release_adopted.get(),
+    })
+}
+
+fn claim_locked_release_routes(
+    state: &Rc<RefCell<DockNativeCapturedDragState>>,
+    mut matches: impl FnMut(&DockNativeCapturedDragRoute) -> bool,
+) -> Vec<DockNativeCapturedRouteCleanup> {
+    let reservations = state
+        .borrow()
+        .locked_releases
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    reservations
+        .into_iter()
+        .filter_map(|reservation| {
+            let is_match = reservation
+                .route
+                .borrow()
+                .as_ref()
+                .is_some_and(&mut matches);
+            is_match
+                .then(|| claim_locked_release_route(state, &reservation))
+                .flatten()
+        })
+        .collect()
 }
 
 pub(crate) fn ensure_native_captured_drag_router(cx: &mut App) {
@@ -234,10 +442,18 @@ pub(crate) fn ensure_native_captured_drag_router(cx: &mut App) {
         };
         handle_native_captured_window_closed(&state, window_id, cx);
     });
+    let callback_state = Rc::downgrade(&state);
+    let window_native_terminal_subscription = cx.on_window_native_terminal(move |_, window_id| {
+        let Some(state) = callback_state.upgrade() else {
+            return;
+        };
+        clear_failed_native_captured_releases_for_source_window(&state, window_id);
+    });
     cx.set_global(DockNativeCapturedDragRouter {
         state,
         _drag_subscription: drag_subscription,
         _window_closed_subscription: window_closed_subscription,
+        _window_native_terminal_subscription: window_native_terminal_subscription,
     });
 }
 
@@ -249,46 +465,56 @@ fn handle_native_captured_window_closed(
     let (source_route, target_preview, routed_previews) = {
         let mut state = state.borrow_mut();
         state.scenes.remove(&window_id);
+        match state.active.as_ref() {
+            None => (None, None, Vec::new()),
+            Some(active) => {
+                let routed_previews = active
+                    .published_scene_frames
+                    .borrow()
+                    .iter()
+                    .filter_map(|publication| {
+                        (publication.scene.window_id == window_id
+                            && publication.scene.runtime_identity == active.runtime_identity
+                            && active.latest_event.borrow().as_ref().is_some_and(|event| {
+                                native_event_may_target_scene(active, event, &publication.scene)
+                            }))
+                        .then(|| (active.runtime.clone(), publication.scene.frame.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                active
+                    .published_scene_frames
+                    .borrow_mut()
+                    .retain(|publication| publication.scene.window_id != window_id);
 
-        let Some(active) = state.active.as_ref() else {
-            return;
-        };
-        let routed_previews = active
-            .published_scene_frames
-            .borrow()
-            .iter()
-            .filter_map(|publication| {
-                (publication.scene.window_id == window_id
-                    && publication.scene.runtime_identity == active.runtime_identity
-                    && active.latest_event.borrow().as_ref().is_some_and(|event| {
-                        native_event_may_target_scene(event, &publication.scene)
-                    }))
-                .then(|| (active.runtime.clone(), publication.scene.frame.clone()))
-            })
-            .collect::<Vec<_>>();
-        active
-            .published_scene_frames
-            .borrow_mut()
-            .retain(|publication| publication.scene.window_id != window_id);
-
-        if active.source_window == window_id {
-            (state.active.take(), None, Vec::new())
-        } else {
-            let target_preview = active
-                .foreign_previews
-                .borrow()
-                .current
-                .as_ref()
-                .filter(|preview| preview.window_id == window_id)
-                .cloned()
-                .map(|preview| (active.clone(), preview));
-            (None, target_preview, routed_previews)
+                if active.source_window == window_id {
+                    (state.active.take(), None, Vec::new())
+                } else {
+                    let target_preview = active
+                        .foreign_previews
+                        .borrow()
+                        .current
+                        .as_ref()
+                        .filter(|preview| preview.window_id == window_id)
+                        .cloned()
+                        .map(|preview| (active.clone(), preview));
+                    (None, target_preview, routed_previews)
+                }
+            }
         }
     };
 
+    let locked_source_routes =
+        claim_locked_release_routes(state, |route| route.source_window == window_id);
     if let Some(source_route) = source_route {
-        schedule_route_retirement(state, source_route, cx);
-        return;
+        schedule_route_retirement_with_reason(
+            state,
+            source_route,
+            PointerCancelReason::WindowClosed,
+            cx,
+        );
+    }
+    for cleanup in locked_source_routes {
+        schedule_route_cleanup_with_reason(state, cleanup, PointerCancelReason::WindowClosed, cx);
     }
     for (runtime, frame) in routed_previews {
         cx.defer(move |cx| {
@@ -298,6 +524,16 @@ fn handle_native_captured_window_closed(
     if let Some((target_route, target_preview)) = target_preview {
         cx.defer(move |cx| clear_foreign_preview_if_matches(&target_route, &target_preview, cx));
     }
+}
+
+fn clear_failed_native_captured_releases_for_source_window(
+    state: &Rc<RefCell<DockNativeCapturedDragState>>,
+    window_id: WindowId,
+) {
+    state
+        .borrow_mut()
+        .failed_releases
+        .retain(|key| key.source_window != window_id);
 }
 
 fn router_state(cx: &App) -> Option<Rc<RefCell<DockNativeCapturedDragState>>> {
@@ -320,6 +556,45 @@ pub(crate) fn has_active_native_captured_drag_route_for_test(cx: &App) -> bool {
     router_state(cx).is_some_and(|state| state.borrow().active.is_some())
 }
 
+#[cfg(test)]
+pub(crate) fn active_live_undock_route_facts_for_test(
+    cx: &App,
+) -> Option<(bool, bool, bool, bool, bool)> {
+    let state = router_state(cx)?;
+    let state = state.borrow();
+    let route = state.active.as_ref()?;
+    Some((
+        route.native_drag_start_snapshot.is_some(),
+        route.live_undock_source_scene.is_some(),
+        route
+            .runtime
+            .active_payload_drag_tear_off_geometry(Some(&route.session))
+            .is_some(),
+        route
+            .latest_event
+            .borrow()
+            .as_ref()
+            .and_then(NativeCapturedDragEvent::physical_frame)
+            .is_some(),
+        route.live_undock_identity.get().is_some(),
+    ))
+}
+
+#[cfg(test)]
+pub(crate) fn has_failed_native_captured_release_for_surface_for_test(
+    runtime_identity: DockViewportRuntimeIdentity,
+    lease: crate::surface::window_session::DockSurfaceWindowSessionLease,
+    cx: &App,
+) -> bool {
+    router_state(cx).is_some_and(|state| {
+        state
+            .borrow()
+            .failed_releases
+            .iter()
+            .any(|key| key.belongs_to_surface(runtime_identity, lease))
+    })
+}
+
 pub(crate) fn owns_native_captured_drag_source(
     runtime_identity: DockViewportRuntimeIdentity,
     session: Option<&DockRuntimeDragSession>,
@@ -333,16 +608,24 @@ pub(crate) fn owns_native_captured_drag_source(
         return false;
     };
     router_state(cx).is_some_and(|state| {
-        state.borrow().active.as_ref().is_some_and(|active| {
-            active.start_consumer.is_active()
-                && !active.terminal
-                && active.runtime_identity == runtime_identity
-                && &active.session == session
-                && &active.payload == payload
-                && active.source_window == source_window
-                && active.source_host == *source_host
-                && source_binding.is_some_and(|binding| active.source_binding == binding)
-        })
+        let state = state.borrow();
+        let owns_source = |route: &DockNativeCapturedDragRoute| {
+            route.start_consumer.is_active()
+                && route.runtime_identity == runtime_identity
+                && &route.session == session
+                && &route.payload == payload
+                && route.source_window == source_window
+                && route.source_host == *source_host
+                && source_binding.is_some_and(|binding| route.source_binding == binding)
+        };
+        state.active.as_ref().is_some_and(&owns_source)
+            || state.locked_releases.values().any(|reservation| {
+                reservation
+                    .route
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(&owns_source)
+            })
     })
 }
 
@@ -367,12 +650,14 @@ pub(crate) fn begin_native_captured_drag_route(
     work_context: DockViewportRuntimeWorkContext,
     session: DockRuntimeDragSession,
     payload: DockDragPayload,
-    source_window: WindowId,
+    source_window_handle: AnyWindowHandle,
     source_host: WeakEntity<DockHost>,
     source_binding: DockHostWindowBinding,
+    source_focus: Option<DockLiveUndockSourceFocusSnapshot>,
     drag_start: &DragStartGeometry,
     cx: &mut App,
 ) -> DockNativeCapturedDragRouteReceipt {
+    let source_window = source_window_handle.window_id();
     assert!(
         session.accepts_payload(&payload),
         "native captured-drag route payload must match its runtime session"
@@ -387,6 +672,11 @@ pub(crate) fn begin_native_captured_drag_route(
     let runtime_identity = runtime.identity();
     let start_consumer = drag_start.prepare_native_captured_drag_consumer();
     let generation = start_consumer.generation();
+    assert_eq!(
+        drag_start.pointer_capture_handle().window_id(),
+        source_window,
+        "native captured-drag route must retain its source window's pointer owner"
+    );
     debug_assert_eq!(generation, drag_start.native_captured_drag_generation());
     let epoch = {
         let mut state = state.borrow_mut();
@@ -403,7 +693,28 @@ pub(crate) fn begin_native_captured_drag_route(
         .flatten()
         .cloned()
         .map(|scene| DockNativeCapturedScenePublication { scene })
-        .collect();
+        .collect::<Vec<_>>();
+    let live_undock_source_scene = published_scene_frames
+        .iter()
+        .find(|publication| {
+            let scene = &publication.scene;
+            scene.window_id == source_window
+                && scene.host == source_host
+                && scene.host_binding == source_binding
+                && scene.runtime_identity == runtime_identity
+                && scene.work_context == work_context
+                && scene.space == payload.source_space
+                && scene
+                    .frame
+                    .matches_viewport(&payload.source_space, source_window)
+        })
+        .map(|publication| publication.scene.clone());
+    let transport = DockNativeCapturedDragTransportLease::new(DockNativeCapturedDragTransportKey {
+        epoch,
+        generation,
+        runtime_identity,
+        source_binding,
+    });
     let route = DockNativeCapturedDragRoute {
         epoch,
         generation,
@@ -413,9 +724,16 @@ pub(crate) fn begin_native_captured_drag_route(
         session: session.clone(),
         payload,
         source_window,
+        source_window_handle,
         source_feedback_window_position: drag_start.window_position(),
         source_host,
         source_binding,
+        source_focus,
+        transport: transport.clone(),
+        native_drag_start_snapshot: drag_start.native_drag_start_snapshot(),
+        live_undock_source_scene,
+        live_undock_identity: Rc::new(Cell::new(None)),
+        payload_finalizer: DockPayloadDragFinalizer::new(),
         start_consumer,
         foreign_previews: Rc::new(RefCell::new(
             DockNativeCapturedForeignPreviewState::default(),
@@ -424,7 +742,6 @@ pub(crate) fn begin_native_captured_drag_route(
         latest_event: Rc::new(RefCell::new(None)),
         preview_refresh_scheduled: Rc::new(Cell::new(false)),
         published_scene_frames: Rc::new(RefCell::new(published_scene_frames)),
-        terminal: false,
     };
     let displaced = state.borrow_mut().active.replace(route);
     let install = catch_unwind(AssertUnwindSafe(|| {
@@ -463,7 +780,9 @@ pub(crate) fn begin_native_captured_drag_route(
         epoch,
         generation,
         runtime_identity,
+        source_binding,
         session,
+        transport,
     }
 }
 
@@ -512,7 +831,7 @@ pub(crate) fn publish_native_captured_host_scene(scene: DockNativeCapturedHostSc
             current.host_binding != scene.host_binding || current.host != scene.host
         });
         scenes.push(scene.clone());
-        state.active.as_ref().and_then(|active| {
+        state.active.as_mut().and_then(|active| {
             let scene_changed = {
                 let mut published = active.published_scene_frames.borrow_mut();
                 if let Some(current) = published
@@ -539,12 +858,14 @@ pub(crate) fn publish_native_captured_host_scene(scene: DockNativeCapturedHostSc
             let event = active.latest_event.borrow();
             let targets_scene = event
                 .as_ref()
-                .is_some_and(|event| native_event_may_target_scene(event, &scene));
+                .is_some_and(|event| native_event_may_target_scene(active, event, &scene));
             let supports_source_route = scene_supports_source_route(&scene, active);
+            if supports_source_route && active.live_undock_identity.get().is_none() {
+                active.live_undock_source_scene = Some(scene.clone());
+            }
             let should_refresh = scene_changed
                 && (targets_scene || supports_source_route)
                 && active.start_consumer.is_active()
-                && !active.terminal
                 && !active.preview_refresh_scheduled.replace(true);
             if should_refresh {
                 Some(active.epoch)
@@ -607,7 +928,11 @@ pub(crate) fn clear_native_captured_host_scene(
                         .any(|scene| scene_supports_source_route(scene, route))
                 })
         });
-        let retire_source_route = removed_source_scene && !replacement_supports_source_route;
+        let retire_source_route = removed_source_scene
+            && !replacement_supports_source_route
+            && active
+                .as_ref()
+                .is_some_and(|route| route.live_undock_identity.get().is_none());
         if let Some(active) = active.as_ref() {
             active
                 .published_scene_frames
@@ -639,9 +964,9 @@ pub(crate) fn clear_native_captured_host_scene(
                 .iter()
                 .filter_map(|scene| {
                     (scene.runtime_identity == active.runtime_identity
-                        && latest_event
-                            .as_ref()
-                            .is_some_and(|event| native_event_may_target_scene(event, scene)))
+                        && latest_event.as_ref().is_some_and(|event| {
+                            native_event_may_target_scene(active, event, scene)
+                        }))
                     .then(|| (active.runtime.clone(), scene.frame.clone()))
                 })
                 .collect()
@@ -712,15 +1037,22 @@ pub(crate) fn cancel_native_captured_drag_route(
 pub(crate) fn cancel_native_captured_drag_route_for_surface(
     runtime_identity: DockViewportRuntimeIdentity,
     lease: crate::surface::window_session::DockSurfaceWindowSessionLease,
-    on_native_capture_terminal: impl FnOnce(&mut Option<Box<dyn Any + Send + 'static>>, &mut App)
-    + 'static,
+    on_native_capture_terminal: impl FnOnce(
+        DockNativeCapturedSurfaceReleaseOutcome,
+        &mut Option<Box<dyn Any + Send + 'static>>,
+        &mut App,
+    ) + 'static,
     cx: &mut App,
 ) {
     let Some(state) = router_state(cx) else {
-        cx.defer(move |cx| on_native_capture_terminal(&mut None, cx));
+        defer_native_captured_surface_terminal(
+            DockNativeCapturedSurfaceReleaseOutcome::Released,
+            Box::new(on_native_capture_terminal),
+            cx,
+        );
         return;
     };
-    let (active, retired_pending) = {
+    let (active, retired_pending, release_failed) = {
         let mut state = state.borrow_mut();
         let matches = state.active.as_ref().is_some_and(|active| {
             active.runtime_identity == runtime_identity
@@ -735,65 +1067,151 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
                 key.belongs_to_surface(runtime_identity, lease).then_some((
                     *key,
                     pending.barrier,
-                    pending.route.take(),
+                    pending.cleanup.take(),
                 ))
             })
             .collect::<Vec<_>>();
-        (active, retired_pending)
+        let failed_release_keys = state
+            .failed_releases
+            .iter()
+            .filter(|key| key.belongs_to_surface(runtime_identity, lease))
+            .copied()
+            .collect::<Vec<_>>();
+        let release_failed = !failed_release_keys.is_empty();
+        for key in failed_release_keys {
+            state.failed_releases.remove(&key);
+        }
+        (active, retired_pending, release_failed)
     };
-    let pending_count = usize::from(active.is_some()) + retired_pending.len();
+    let locked = claim_locked_release_routes(&state, |route| {
+        route.runtime_identity == runtime_identity
+            && route.work_context.lineage() == crate::DockViewportRuntimeLineage::Surface(lease)
+    });
+    let pending_count = usize::from(active.is_some()) + locked.len() + retired_pending.len();
     if pending_count == 0 {
-        cx.defer(move |cx| on_native_capture_terminal(&mut None, cx));
+        defer_native_captured_surface_terminal(
+            if release_failed {
+                DockNativeCapturedSurfaceReleaseOutcome::Failed
+            } else {
+                DockNativeCapturedSurfaceReleaseOutcome::Released
+            },
+            Box::new(on_native_capture_terminal),
+            cx,
+        );
         return;
     }
 
     let completion = Rc::new(RefCell::new(DockNativeCapturedSurfaceCancellation {
         remaining: pending_count,
         on_native_capture_terminal: Some(Box::new(on_native_capture_terminal)),
+        release_failed,
         first_panic: None,
     }));
     if let Some(route) = active {
-        attach_active_surface_route_release(&state, route, completion.clone(), cx);
+        attach_active_surface_route_release(
+            &state,
+            DockNativeCapturedRouteCleanup {
+                route,
+                first_panic: None,
+                locked_drop: None,
+                live_undock_release_adopted: false,
+            },
+            completion.clone(),
+            cx,
+        );
     }
-    for (key, barrier, route) in retired_pending {
-        attach_retired_surface_route_release(&state, key, barrier, route, completion.clone(), cx);
+    for cleanup in locked {
+        attach_active_surface_route_release(&state, cleanup, completion.clone(), cx);
+    }
+    for (key, barrier, cleanup) in retired_pending {
+        attach_retired_surface_route_release(&state, key, barrier, cleanup, completion.clone(), cx);
     }
 }
 
-type DockNativeCapturedSurfaceTerminal =
-    Box<dyn FnOnce(&mut Option<Box<dyn Any + Send + 'static>>, &mut App)>;
+type DockNativeCapturedSurfaceTerminal = Box<
+    dyn FnOnce(
+        DockNativeCapturedSurfaceReleaseOutcome,
+        &mut Option<Box<dyn Any + Send + 'static>>,
+        &mut App,
+    ),
+>;
 
 struct DockNativeCapturedSurfaceCancellation {
     remaining: usize,
     on_native_capture_terminal: Option<DockNativeCapturedSurfaceTerminal>,
+    release_failed: bool,
     first_panic: Option<Box<dyn Any + Send + 'static>>,
+}
+
+fn defer_native_captured_surface_terminal(
+    release_outcome: DockNativeCapturedSurfaceReleaseOutcome,
+    on_native_capture_terminal: DockNativeCapturedSurfaceTerminal,
+    cx: &mut App,
+) {
+    cx.defer_shutdown_critical_before_window_registry_clear(move |cx| {
+        invoke_native_captured_surface_terminal(
+            on_native_capture_terminal,
+            release_outcome,
+            None,
+            cx,
+        );
+    });
+}
+
+fn invoke_native_captured_surface_terminal(
+    on_native_capture_terminal: DockNativeCapturedSurfaceTerminal,
+    release_outcome: DockNativeCapturedSurfaceReleaseOutcome,
+    mut first_panic: Option<Box<dyn Any + Send + 'static>>,
+    cx: &mut App,
+) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+        on_native_capture_terminal(release_outcome, &mut first_panic, cx)
+    })) {
+        if first_panic.is_none() {
+            first_panic = Some(payload);
+        } else {
+            log::error!(
+                "suppressed a DockSurface capture-terminal panic after an earlier shutdown panic"
+            );
+        }
+    }
+    if let Some(payload) = first_panic {
+        resume_unwind(payload);
+    }
 }
 
 fn attach_active_surface_route_release(
     state: &Rc<RefCell<DockNativeCapturedDragState>>,
-    route: DockNativeCapturedDragRoute,
+    cleanup: DockNativeCapturedRouteCleanup,
     completion: Rc<RefCell<DockNativeCapturedSurfaceCancellation>>,
     cx: &mut App,
 ) {
-    let key = DockNativeCapturedDragRetiredKey::for_route(&route)
+    retire_route_transport_proxy(&cleanup.route);
+    cancel_live_undock_route(&cleanup.route, PointerCancelReason::WindowClosed, cx);
+    let key = DockNativeCapturedDragRetiredKey::for_route(&cleanup.route)
         .expect("a surface shutdown route must carry its exact surface lease");
-    let pending_route = Rc::new(RefCell::new(Some(route)));
-    let terminal_route = pending_route.clone();
+    let pending_cleanup = Rc::new(RefCell::new(Some(cleanup)));
+    let terminal_cleanup = pending_cleanup.clone();
     let terminal_state = Rc::downgrade(state);
     let terminal_completion = completion.clone();
     let barrier = cx.cancel_native_captured_drag_with_release_barrier(
         key.source_window,
         key.drag_generation,
         PointerCancelReason::WindowClosed,
-        move |barrier, _, cx| {
+        move |barrier, terminal, cx| {
             if let Some(state) = terminal_state.upgrade() {
                 let _ = clear_retired_pending_if_matches(&state, key, barrier);
             }
-            let route = terminal_route
+            let cleanup = terminal_cleanup
                 .borrow_mut()
                 .take()
                 .expect("one captured route release must settle exactly once");
-            finish_surface_route_cancellation(Some(route), terminal_completion, cx);
+            finish_surface_route_cancellation(
+                Some(cleanup),
+                DockNativeCapturedSurfaceReleaseOutcome::from_native_terminal(terminal),
+                terminal_completion,
+                cx,
+            );
         },
     );
     if let Some(barrier) = barrier {
@@ -801,38 +1219,51 @@ fn attach_active_surface_route_release(
         return;
     }
 
-    let route = pending_route
+    let cleanup = pending_cleanup
         .borrow_mut()
         .take()
         .expect("an unreserved captured route must remain available for cleanup");
-    cx.defer(move |cx| finish_surface_route_cancellation(Some(route), completion, cx));
+    cx.defer_shutdown_critical_before_window_registry_clear(move |cx| {
+        finish_surface_route_cancellation(
+            Some(cleanup),
+            DockNativeCapturedSurfaceReleaseOutcome::Released,
+            completion,
+            cx,
+        )
+    });
 }
 
 fn attach_retired_surface_route_release(
     state: &Rc<RefCell<DockNativeCapturedDragState>>,
     key: DockNativeCapturedDragRetiredKey,
     expected_barrier: NativeCapturedDragReleaseBarrier,
-    route: Option<DockNativeCapturedDragRoute>,
+    cleanup: Option<DockNativeCapturedRouteCleanup>,
     completion: Rc<RefCell<DockNativeCapturedSurfaceCancellation>>,
     cx: &mut App,
 ) {
-    let pending_route = Rc::new(RefCell::new(Some(route)));
-    let terminal_route = pending_route.clone();
+    let pending_cleanup = Rc::new(RefCell::new(Some(cleanup)));
+    let terminal_cleanup = pending_cleanup.clone();
     let terminal_state = Rc::downgrade(state);
     let terminal_completion = completion.clone();
     let barrier = cx.cancel_native_captured_drag_with_release_barrier(
         key.source_window,
         key.drag_generation,
         PointerCancelReason::WindowClosed,
-        move |barrier, _, cx| {
+        move |barrier, terminal, cx| {
             if let Some(state) = terminal_state.upgrade() {
                 let _ = clear_retired_pending_if_matches(&state, key, barrier);
+                state.borrow_mut().failed_releases.remove(&key);
             }
-            let route = terminal_route
+            let cleanup = terminal_cleanup
                 .borrow_mut()
                 .take()
                 .expect("one retired capture release must settle exactly once");
-            finish_surface_route_cancellation(route, terminal_completion, cx);
+            finish_surface_route_cancellation(
+                cleanup,
+                DockNativeCapturedSurfaceReleaseOutcome::from_native_terminal(terminal),
+                terminal_completion,
+                cx,
+            );
         },
     );
     if let Some(barrier) = barrier {
@@ -844,19 +1275,27 @@ fn attach_retired_surface_route_release(
     }
 
     let _ = clear_retired_pending_if_matches(state, key, expected_barrier);
-    let route = pending_route
+    let cleanup = pending_cleanup
         .borrow_mut()
         .take()
         .expect("an already-terminal retired capture must remain available for cleanup");
-    cx.defer(move |cx| finish_surface_route_cancellation(route, completion, cx));
+    cx.defer_shutdown_critical_before_window_registry_clear(move |cx| {
+        finish_surface_route_cancellation(
+            cleanup,
+            DockNativeCapturedSurfaceReleaseOutcome::Failed,
+            completion,
+            cx,
+        )
+    });
 }
 
 fn finish_surface_route_cancellation(
-    route: Option<DockNativeCapturedDragRoute>,
+    cleanup: Option<DockNativeCapturedRouteCleanup>,
+    release_outcome: DockNativeCapturedSurfaceReleaseOutcome,
     completion: Rc<RefCell<DockNativeCapturedSurfaceCancellation>>,
     cx: &mut App,
 ) {
-    let route_panic = route.and_then(|route| retire_route_cleanup(route, cx));
+    let route_panic = cleanup.and_then(|cleanup| finish_route_cleanup(cleanup, cx));
     let terminal = {
         let mut completion = completion.borrow_mut();
         if completion.first_panic.is_none() {
@@ -866,6 +1305,8 @@ fn finish_surface_route_cancellation(
                 "suppressed a Dock route-retirement panic while awaiting surface capture terminals"
             );
         }
+        completion.release_failed |=
+            release_outcome == DockNativeCapturedSurfaceReleaseOutcome::Failed;
         completion.remaining = completion
             .remaining
             .checked_sub(1)
@@ -876,27 +1317,24 @@ fn finish_surface_route_cancellation(
                     .on_native_capture_terminal
                     .take()
                     .expect("surface capture-terminal continuation must run exactly once"),
+                if completion.release_failed {
+                    DockNativeCapturedSurfaceReleaseOutcome::Failed
+                } else {
+                    DockNativeCapturedSurfaceReleaseOutcome::Released
+                },
                 completion.first_panic.take(),
             )
         })
     };
-    let Some((on_native_capture_terminal, mut first_panic)) = terminal else {
+    let Some((on_native_capture_terminal, release_outcome, first_panic)) = terminal else {
         return;
     };
-    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
-        on_native_capture_terminal(&mut first_panic, cx)
-    })) {
-        if first_panic.is_none() {
-            first_panic = Some(payload);
-        } else {
-            log::error!(
-                "suppressed a DockSurface capture-terminal panic after route retirement panicked"
-            );
-        }
-    }
-    if let Some(payload) = first_panic {
-        resume_unwind(payload);
-    }
+    invoke_native_captured_surface_terminal(
+        on_native_capture_terminal,
+        release_outcome,
+        first_panic,
+        cx,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -909,6 +1347,7 @@ pub(crate) fn native_captured_host_scene(
     space: DockSpaceId,
     frame: DockViewportHostSceneFrame,
     routing_scene: DockViewportHostSceneDraft,
+    presentation_scene: DockPresentationScene,
 ) -> DockNativeCapturedHostScene {
     let geometry = routing_scene.host_geometry.clone();
     DockNativeCapturedHostScene {
@@ -922,6 +1361,7 @@ pub(crate) fn native_captured_host_scene(
         frame,
         geometry,
         routing_scene,
+        presentation_scene,
     }
 }
 
@@ -937,30 +1377,54 @@ fn lock_native_captured_release(
     let Some(state) = state.upgrade() else {
         return Arc::new(());
     };
-    let route = {
-        let state = state.borrow();
-        state
+    let (route, reservation) = {
+        let mut state = state.borrow_mut();
+        let matches = state.active.as_ref().is_some_and(|active| {
+            active.start_consumer.is_active()
+                && active.generation == event.generation()
+                && active.source_window == event.source_window()
+                && active.session.accepts_payload(&active.payload)
+                && event.payload::<DockDragPayload>() == Some(&active.payload)
+                && active
+                    .latest_sequence
+                    .get()
+                    .is_none_or(|sequence| sequence < event.sequence())
+        });
+        if !matches {
+            return Arc::new(());
+        }
+        let route = state
             .active
-            .as_ref()
-            .filter(|active| {
-                active.start_consumer.is_active()
-                    && !active.terminal
-                    && active.generation == event.generation()
-                    && active.source_window == event.source_window()
-                    && active.session.accepts_payload(&active.payload)
-                    && event.payload::<DockDragPayload>() == Some(&active.payload)
-                    && active
-                        .latest_sequence
-                        .get()
-                        .is_none_or(|sequence| sequence < event.sequence())
-            })
-            .cloned()
-    };
-    let Some(route) = route else {
-        return Arc::new(());
+            .take()
+            .expect("validated release route must remain active");
+        route.latest_sequence.set(Some(event.sequence()));
+        let route_snapshot = route.clone();
+        let reservation = Arc::new(DockNativeCapturedReleaseReservation {
+            route_epoch: route.epoch,
+            generation: route.generation,
+            sequence: event.sequence(),
+            source_window: route.source_window,
+            runtime_identity: route.runtime_identity,
+            work_context: route.work_context,
+            session: route.session.clone(),
+            payload: route.payload.clone(),
+            route: RefCell::new(Some(route)),
+            target: RefCell::new(DockNativeCapturedTarget::Unavailable),
+            locked_drop: RefCell::new(None),
+            live_undock_release_adopted: Cell::new(false),
+            resolution_panic: RefCell::new(None),
+        });
+        let replaced = state
+            .locked_releases
+            .insert(route_snapshot.epoch, reservation.clone());
+        debug_assert!(
+            replaced.is_none(),
+            "one Dock route epoch must own at most one locked release"
+        );
+        (route_snapshot, reservation)
     };
     let resolution = catch_unwind(AssertUnwindSafe(|| {
-        if route.runtime.admits_work_context(route.work_context)
+        let target = if route.runtime.admits_work_context(route.work_context)
             && route.runtime.active_payload_drag_session(&route.payload)
                 == Some(route.session.clone())
         {
@@ -973,18 +1437,52 @@ fn lock_native_captured_release(
             )
         } else {
             DockNativeCapturedTarget::Unavailable
-        }
+        };
+        let mut locked_drop =
+            lock_native_captured_drop(&route, event, &target, source_window.window_handle(), cx);
+        let live_undock_release_adopted =
+            lock_live_undock_release(&route, event, &target, &mut locked_drop, cx);
+        (target, locked_drop, live_undock_release_adopted)
     }));
-    let (target, resolution_panic) = match resolution {
-        Ok(target) => (target, None),
-        Err(payload) => (DockNativeCapturedTarget::Unavailable, Some(payload)),
+    match resolution {
+        Ok((target, locked_drop, live_undock_release_adopted)) => {
+            reservation.target.replace(target);
+            reservation.locked_drop.replace(locked_drop);
+            reservation
+                .live_undock_release_adopted
+                .set(live_undock_release_adopted);
+        }
+        Err(payload) => {
+            reservation.resolution_panic.replace(Some(payload));
+            reservation
+                .target
+                .replace(DockNativeCapturedTarget::Unavailable);
+        }
     };
-    Arc::new(DockNativeCapturedReleaseReservation {
-        route_epoch: route.epoch,
-        generation: route.generation,
-        target,
-        resolution_panic: RefCell::new(resolution_panic),
-    })
+    reservation
+}
+
+fn lock_native_captured_drop(
+    route: &DockNativeCapturedDragRoute,
+    event: &NativeCapturedDragEvent,
+    target: &DockNativeCapturedTarget,
+    source_window: AnyWindowHandle,
+    cx: &mut App,
+) -> Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>> {
+    let captured_route = match target {
+        DockNativeCapturedTarget::Host(target) => captured_host_target(route, event, target)
+            .map(DockCapturedNativeDropRoute::Host)
+            .unwrap_or(DockCapturedNativeDropRoute::Unavailable),
+        DockNativeCapturedTarget::Desktop(_) => DockCapturedNativeDropRoute::Desktop,
+        DockNativeCapturedTarget::ForeignSurfaceTarget(_)
+        | DockNativeCapturedTarget::Unavailable => return None,
+    };
+    let request = native_route_request(route, event, captured_route, cx);
+    Some(
+        route
+            .runtime
+            .lock_payload_drop_from_screen(&request, source_window, cx),
+    )
 }
 
 fn consume_native_captured_drag_event(
@@ -993,48 +1491,97 @@ fn consume_native_captured_drag_event(
     cx: &mut App,
 ) {
     let terminal = !matches!(event.phase(), NativeCapturedDragPhase::Moved);
-    let route = {
-        let mut state = state.borrow_mut();
-        let Some(active) = state.active.as_ref() else {
-            return;
-        };
-        if !active.start_consumer.is_active() {
-            return;
-        }
-        if active.terminal
-            || active.generation != event.generation()
-            || active.source_window != event.source_window()
-            || !active.session.accepts_payload(&active.payload)
-            || event.payload::<DockDragPayload>() != Some(&active.payload)
-            || active
-                .latest_sequence
-                .get()
-                .is_some_and(|sequence| sequence >= event.sequence())
-        {
-            return;
-        }
-        if terminal {
-            let mut active = state
-                .active
-                .take()
-                .expect("validated terminal Dock route must remain active");
-            active.latest_sequence.set(Some(event.sequence()));
-            active.terminal = true;
-            active
+    let (route, mut terminal_cleanup) =
+        if matches!(event.phase(), NativeCapturedDragPhase::Released) {
+            let reservation = {
+                let locked = event.route_lock::<DockNativeCapturedReleaseReservation>();
+                let Some(locked) = locked else {
+                    return;
+                };
+                if locked.generation != event.generation()
+                    || locked.sequence != event.sequence()
+                    || locked.source_window != event.source_window()
+                    || event.payload::<DockDragPayload>() != Some(&locked.payload)
+                {
+                    return;
+                }
+                state
+                    .borrow()
+                    .locked_releases
+                    .get(&locked.route_epoch)
+                    .filter(|reservation| std::ptr::eq(reservation.as_ref(), locked))
+                    .cloned()
+            };
+            let Some(reservation) = reservation else {
+                return;
+            };
+            let Some(cleanup) = claim_locked_release_route(state, &reservation) else {
+                return;
+            };
+            if !reservation.matches_route(&cleanup.route, &event) {
+                schedule_route_cleanup(cleanup, cx);
+                return;
+            }
+            (cleanup.route.clone(), Some(cleanup))
         } else {
-            let active = state
-                .active
-                .as_mut()
-                .expect("validated moving Dock route must remain active");
-            active.latest_sequence.set(Some(event.sequence()));
-            active.latest_event.replace(Some(event.clone()));
-            active.clone()
-        }
-    };
+            let mut state = state.borrow_mut();
+            let Some(active) = state.active.as_ref() else {
+                return;
+            };
+            if !active.start_consumer.is_active() {
+                return;
+            }
+            if active.generation != event.generation()
+                || active.source_window != event.source_window()
+                || !active.session.accepts_payload(&active.payload)
+                || event.payload::<DockDragPayload>() != Some(&active.payload)
+                || active
+                    .latest_sequence
+                    .get()
+                    .is_some_and(|sequence| sequence >= event.sequence())
+            {
+                return;
+            }
+            if terminal {
+                let active = state
+                    .active
+                    .take()
+                    .expect("validated terminal Dock route must remain active");
+                active.latest_sequence.set(Some(event.sequence()));
+                let route = active.clone();
+                (
+                    route,
+                    Some(DockNativeCapturedRouteCleanup {
+                        route: active,
+                        first_panic: None,
+                        locked_drop: None,
+                        live_undock_release_adopted: false,
+                    }),
+                )
+            } else {
+                let active = state
+                    .active
+                    .as_mut()
+                    .expect("validated moving Dock route must remain active");
+                active.latest_sequence.set(Some(event.sequence()));
+                active.latest_event.replace(Some(event.clone()));
+                (active.clone(), None)
+            }
+        };
+
+    let mut resolution_panic = terminal_cleanup
+        .as_mut()
+        .and_then(|cleanup| cleanup.first_panic.take());
+    let mut locked_drop = terminal_cleanup
+        .as_mut()
+        .and_then(|cleanup| cleanup.locked_drop.take());
+    let live_undock_release_adopted = terminal_cleanup
+        .as_ref()
+        .is_some_and(|cleanup| cleanup.live_undock_release_adopted);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        if matches!(event.phase(), NativeCapturedDragPhase::Released) {
-            resume_locked_native_captured_release_panic(&route, &event);
+        if let Some(payload) = resolution_panic.take() {
+            resume_unwind(payload);
         }
         let work_context_admitted = route.runtime.admits_work_context(route.work_context);
         let session_current = route.runtime.active_payload_drag_session(&route.payload)
@@ -1045,26 +1592,46 @@ fn consume_native_captured_drag_event(
 
         if !terminal {
             let target = resolve_native_captured_target(state, &route, &event, cx);
-            update_native_captured_preview(state, &route, &event, target, cx);
+            update_native_captured_preview(state, &route, &event, target.clone(), cx);
+            update_live_undock_move(&route, &event, &target, cx);
             return true;
         }
 
         match event.phase() {
             NativeCapturedDragPhase::Released => {
-                let target = locked_native_captured_release_target(state, &route, &event, cx);
-                commit_native_captured_release(&route, &event, target, cx);
+                if !live_undock_release_adopted {
+                    let target = locked_native_captured_release_target(state, &route, &event, cx);
+                    commit_native_captured_release(&route, &event, target, locked_drop.take(), cx);
+                }
             }
-            NativeCapturedDragPhase::Cancelled(_) => {}
+            NativeCapturedDragPhase::Cancelled(reason) => {
+                cancel_live_undock_route(&route, reason, cx);
+            }
             NativeCapturedDragPhase::Moved => unreachable!("moving route was handled above"),
         }
         true
     }));
 
     if terminal {
-        let cleanup_panic = retire_route_cleanup(route, cx);
-        if let Err(payload) = result {
-            resume_unwind(payload);
-        }
+        let mut cleanup = terminal_cleanup
+            .take()
+            .expect("one terminal Dock route must retain its cleanup authority");
+        let cleanup_panic = match result {
+            Ok(true) => finish_route_cleanup(cleanup, cx),
+            Ok(false) => finish_route_cleanup_with_cancel(
+                cleanup,
+                terminal_live_undock_cancel_reason(event.phase()),
+                cx,
+            ),
+            Err(payload) => {
+                cleanup.first_panic = Some(payload);
+                finish_route_cleanup_with_cancel(
+                    cleanup,
+                    terminal_live_undock_cancel_reason(event.phase()),
+                    cx,
+                )
+            }
+        };
         if let Some(payload) = cleanup_panic {
             resume_unwind(payload);
         }
@@ -1090,122 +1657,226 @@ fn locked_native_captured_release_target(
     let Some(reservation) = event.route_lock::<DockNativeCapturedReleaseReservation>() else {
         return DockNativeCapturedTarget::Unavailable;
     };
-    if reservation.route_epoch != route.epoch || reservation.generation != route.generation {
+    if !reservation.matches_route(route, event) {
         return DockNativeCapturedTarget::Unavailable;
     }
-    match &reservation.target {
+    match reservation.target() {
         DockNativeCapturedTarget::Host(target) => {
-            current_locked_native_captured_host_target(state, event, target, cx)
+            current_locked_native_captured_host_target(state, route, event, &target, cx)
                 .map(DockNativeCapturedTarget::Host)
                 .unwrap_or(DockNativeCapturedTarget::Unavailable)
         }
         DockNativeCapturedTarget::ForeignSurfaceTarget(target) => {
-            current_locked_native_captured_host_target(state, event, target, cx)
+            current_locked_native_captured_host_target(state, route, event, &target, cx)
                 .map(DockNativeCapturedTarget::ForeignSurfaceTarget)
                 .unwrap_or(DockNativeCapturedTarget::Unavailable)
         }
-        DockNativeCapturedTarget::Desktop => DockNativeCapturedTarget::Desktop,
+        DockNativeCapturedTarget::Desktop(desktop) => DockNativeCapturedTarget::Desktop(desktop),
         DockNativeCapturedTarget::Unavailable => DockNativeCapturedTarget::Unavailable,
-    }
-}
-
-fn resume_locked_native_captured_release_panic(
-    route: &DockNativeCapturedDragRoute,
-    event: &NativeCapturedDragEvent,
-) {
-    let Some(reservation) = event.route_lock::<DockNativeCapturedReleaseReservation>() else {
-        return;
-    };
-    if reservation.route_epoch != route.epoch || reservation.generation != route.generation {
-        return;
-    }
-    if let Some(payload) = reservation.resolution_panic.borrow_mut().take() {
-        resume_unwind(payload);
     }
 }
 
 fn current_locked_native_captured_host_target(
     state: &Rc<RefCell<DockNativeCapturedDragState>>,
+    route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
     target: &DockNativeCapturedHostTarget,
     cx: &mut App,
 ) -> Option<DockNativeCapturedHostTarget> {
-    let scene = state
+    let scenes = state
         .borrow()
         .scenes
         .get(&target.scene.window_id)
-        .and_then(|scenes| {
-            scenes
-                .iter()
-                .find(|scene| {
-                    scene.host == target.scene.host
-                        && scene.host_binding == target.scene.host_binding
-                        && scene.runtime_identity == target.scene.runtime_identity
-                        && scene.work_context == target.scene.work_context
-                        && scene.space == target.scene.space
-                        && scene.frame.registration_key() == target.scene.frame.registration_key()
-                        && scene
-                            .routing_scene
-                            .has_same_native_routing_content(&target.scene.routing_scene)
-                })
-                .cloned()
-        })?;
-    let target_window = event.window_hit_stack().first_registered_window()?;
+        .cloned()?;
+    let target_window = native_captured_registered_window(route, event)?;
     if target_window.window_id() != target.scene.window_id {
         return None;
     }
-    if cx.update_window(target_window, |_, _, _| ()).is_err() {
+    let current = cx
+        .update_window(target_window, |_, window, cx| {
+            select_frontmost_host_scene(scenes, target.window_position, window, cx)
+        })
+        .ok()
+        .flatten()?;
+    if !same_locked_native_captured_host_candidate(&current.scene, &target.scene) {
         return None;
     }
-    if !scene
+    if !current
+        .scene
         .runtime
-        .is_current_viewport_host_scene_frame(&scene.frame)
+        .is_current_viewport_host_scene_frame(&current.scene.frame)
     {
         return None;
     }
-    let host = scene.host.upgrade()?;
+    let host = current.scene.host.upgrade()?;
     let accepted = host.update(cx, |host, host_cx| {
         host.accepts_viewport_scene_candidate(
-            scene.host_binding,
-            Some(scene.frame.registration_key()),
-            scene.work_context,
-            scene.window_id,
+            current.scene.host_binding,
+            Some(current.scene.frame.registration_key()),
+            current.scene.work_context,
+            current.scene.window_id,
             host_cx,
-        ) && host.viewport_runtime().identity() == scene.runtime_identity
+        ) && host.viewport_runtime().identity() == current.scene.runtime_identity
     });
     if !accepted {
         return None;
     }
-    Some(DockNativeCapturedHostTarget {
-        scene,
-        host_position: target.host_position,
-    })
+    Some(current)
+}
+
+fn same_locked_native_captured_host_candidate(
+    current: &DockNativeCapturedHostScene,
+    locked: &DockNativeCapturedHostScene,
+) -> bool {
+    current.host == locked.host
+        && current.host_binding == locked.host_binding
+        && current.runtime_identity == locked.runtime_identity
+        && current.work_context == locked.work_context
+        && current.space == locked.space
+        && current.frame.registration_key() == locked.frame.registration_key()
+        && current
+            .routing_scene
+            .has_same_native_routing_content(&locked.routing_scene)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DockNativeCapturedWindowHit {
+    OpenDesktop,
+    OpaqueBarrier,
+    RegisteredApplication {
+        window: AnyWindowHandle,
+        window_position: Point<Pixels>,
+    },
+    Unavailable,
+}
+
+fn classify_native_captured_window_hit(
+    stack: &PlatformWindowHitStack,
+    global_position: Point<open_gpui::DevicePixels>,
+    mut admits_provisional: impl FnMut(AnyWindowHandle, u64) -> bool,
+) -> DockNativeCapturedWindowHit {
+    let observation = match stack {
+        PlatformWindowHitStack::Available(observation)
+            if observation.sampled_point() == global_position =>
+        {
+            observation
+        }
+        PlatformWindowHitStack::Available(_) | PlatformWindowHitStack::Unavailable => {
+            return DockNativeCapturedWindowHit::Unavailable;
+        }
+    };
+    let Some((terminal, prefix)) = observation.hits().split_last() else {
+        return DockNativeCapturedWindowHit::OpenDesktop;
+    };
+    if !prefix.iter().all(|hit| {
+        matches!(
+            *hit,
+            PlatformWindowHit::ProvisionalPassThrough {
+                window,
+                session_generation,
+                coverage,
+                ..
+            } if coverage.contains(global_position)
+                && admits_provisional(window, session_generation)
+        )
+    }) {
+        return DockNativeCapturedWindowHit::Unavailable;
+    }
+    match *terminal {
+        PlatformWindowHit::OpaqueBarrier { coverage } => {
+            if coverage.contains(global_position) {
+                DockNativeCapturedWindowHit::OpaqueBarrier
+            } else {
+                DockNativeCapturedWindowHit::Unavailable
+            }
+        }
+        PlatformWindowHit::RegisteredApplication {
+            window,
+            coverage,
+            geometry,
+        } => {
+            if !coverage.contains(global_position) {
+                return DockNativeCapturedWindowHit::Unavailable;
+            }
+            if !geometry.contains_global(global_position) {
+                return DockNativeCapturedWindowHit::OpaqueBarrier;
+            }
+            geometry.global_to_local(global_position).map_or(
+                DockNativeCapturedWindowHit::Unavailable,
+                |window_position| DockNativeCapturedWindowHit::RegisteredApplication {
+                    window,
+                    window_position,
+                },
+            )
+        }
+        PlatformWindowHit::ProvisionalPassThrough { .. } => {
+            DockNativeCapturedWindowHit::Unavailable
+        }
+    }
+}
+
+fn route_admits_provisional_pass_through(
+    route: &DockNativeCapturedDragRoute,
+    window: AnyWindowHandle,
+    session_generation: u64,
+) -> bool {
+    let crate::DockViewportRuntimeLineage::Surface(lease) = route.work_context.lineage() else {
+        return false;
+    };
+    route.runtime.admits_work_context(route.work_context)
+        && route
+            .runtime
+            .windows_for_surface(lease)
+            .into_iter()
+            .any(|(role, owned_window)| {
+                owned_window == window
+                    && matches!(
+                        role,
+                        crate::DockViewportWindowRole::ProvisionalViewport(opening)
+                            if opening.lease() == lease
+                                && opening.generation() == session_generation
+                    )
+            })
+}
+
+fn native_captured_window_hit(
+    route: &DockNativeCapturedDragRoute,
+    event: &NativeCapturedDragEvent,
+) -> DockNativeCapturedWindowHit {
+    let Some(physical_frame) = event.physical_frame() else {
+        return DockNativeCapturedWindowHit::Unavailable;
+    };
+    classify_native_captured_window_hit(
+        event.window_hit_stack(),
+        physical_frame.global_position(),
+        |window, session_generation| {
+            route_admits_provisional_pass_through(route, window, session_generation)
+        },
+    )
+}
+
+fn native_captured_registered_window(
+    route: &DockNativeCapturedDragRoute,
+    event: &NativeCapturedDragEvent,
+) -> Option<AnyWindowHandle> {
+    match native_captured_window_hit(route, event) {
+        DockNativeCapturedWindowHit::RegisteredApplication { window, .. } => Some(window),
+        DockNativeCapturedWindowHit::OpenDesktop
+        | DockNativeCapturedWindowHit::OpaqueBarrier
+        | DockNativeCapturedWindowHit::Unavailable => None,
+    }
 }
 
 fn native_event_may_target_scene(
+    route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
     scene: &DockNativeCapturedHostScene,
 ) -> bool {
-    let Some(physical_frame) = event.physical_frame() else {
-        return false;
-    };
-    let PlatformWindowHitStack::Available(observation) = event.window_hit_stack() else {
-        return false;
-    };
-    let global_position = physical_frame.global_position();
-    observation.sampled_point() == global_position
-        && observation.hits().first().is_some_and(|hit| {
-            matches!(
-                hit,
-                PlatformWindowHit::RegisteredApplication {
-                    window,
-                    coverage,
-                    geometry,
-                } if window.window_id() == scene.window_id
-                    && coverage.contains(global_position)
-                    && geometry.contains_global(global_position)
-            )
-        })
+    matches!(
+        native_captured_window_hit(route, event),
+        DockNativeCapturedWindowHit::RegisteredApplication { window, .. }
+            if window.window_id() == scene.window_id
+    )
 }
 
 fn refresh_native_captured_preview_after_scene_commit(
@@ -1219,7 +1890,7 @@ fn refresh_native_captured_preview_after_scene_commit(
             return;
         };
         active.preview_refresh_scheduled.set(false);
-        if active.terminal || !active.start_consumer.is_active() {
+        if !active.start_consumer.is_active() {
             return;
         }
         let event = active.latest_event.borrow().clone();
@@ -1236,7 +1907,8 @@ fn refresh_native_captured_preview_after_scene_commit(
             return false;
         }
         let target = resolve_native_captured_target(state, &route, &event, cx);
-        update_native_captured_preview(state, &route, &event, target, cx);
+        update_native_captured_preview(state, &route, &event, target.clone(), cx);
+        update_live_undock_move(&route, &event, &target, cx);
         true
     }));
     match result {
@@ -1267,47 +1939,21 @@ fn resolve_native_captured_target_with_source_window(
 ) -> DockNativeCapturedTarget {
     #[cfg(test)]
     panic_native_captured_drag_if_requested(state, DockNativeCapturedDragTestPanic::ResolveTarget);
-    let Some(physical_frame) = event.physical_frame() else {
-        return DockNativeCapturedTarget::Unavailable;
-    };
-    let global_position = physical_frame.global_position();
-    let observation = match event.window_hit_stack() {
-        PlatformWindowHitStack::Unavailable => {
-            return DockNativeCapturedTarget::Unavailable;
+    let (target_window, target_window_position) = match native_captured_window_hit(route, event) {
+        DockNativeCapturedWindowHit::OpenDesktop => {
+            return DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpenSpace);
         }
-        PlatformWindowHitStack::Available(observation)
-            if observation.sampled_point() == global_position =>
-        {
-            observation
+        DockNativeCapturedWindowHit::OpaqueBarrier => {
+            return DockNativeCapturedTarget::Desktop(
+                DockNativeCapturedDesktopRoute::OpaqueBarrier,
+            );
         }
-        PlatformWindowHitStack::Available(_) => return DockNativeCapturedTarget::Unavailable,
-    };
-    let Some(frontmost) = observation.hits().first() else {
-        return DockNativeCapturedTarget::Desktop;
-    };
-    let (target_window, target_window_position) = match *frontmost {
-        PlatformWindowHit::OpaqueBarrier { coverage } => {
-            return if coverage.contains(global_position) {
-                DockNativeCapturedTarget::Desktop
-            } else {
-                DockNativeCapturedTarget::Unavailable
-            };
-        }
-        PlatformWindowHit::RegisteredApplication {
+        DockNativeCapturedWindowHit::RegisteredApplication {
             window,
-            coverage,
-            geometry,
-        } => {
-            if !coverage.contains(global_position) {
-                return DockNativeCapturedTarget::Unavailable;
-            }
-            if !geometry.contains_global(global_position) {
-                return DockNativeCapturedTarget::Desktop;
-            }
-            let Some(position) = geometry.global_to_local(global_position) else {
-                return DockNativeCapturedTarget::Unavailable;
-            };
-            (window, position)
+            window_position,
+        } => (window, window_position),
+        DockNativeCapturedWindowHit::Unavailable => {
+            return DockNativeCapturedTarget::Unavailable;
         }
     };
 
@@ -1318,7 +1964,7 @@ fn resolve_native_captured_target_with_source_window(
         .cloned()
         .unwrap_or_default();
     if scenes.is_empty() {
-        return DockNativeCapturedTarget::Desktop;
+        return DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpaqueBarrier);
     }
     let selection = if source_window
         .as_ref()
@@ -1334,7 +1980,11 @@ fn resolve_native_captured_target_with_source_window(
     };
     let target = match selection {
         Some(Some(target)) => target,
-        Some(None) => return DockNativeCapturedTarget::Desktop,
+        Some(None) => {
+            return DockNativeCapturedTarget::Desktop(
+                DockNativeCapturedDesktopRoute::OpaqueBarrier,
+            );
+        }
         None => return DockNativeCapturedTarget::Unavailable,
     };
     classify_host_target(route, target)
@@ -1386,6 +2036,7 @@ fn select_frontmost_host_scene(
                 rank,
                 DockNativeCapturedHostTarget {
                     scene,
+                    window_position,
                     host_position,
                 },
             ))
@@ -1406,17 +2057,11 @@ fn native_route_request(
     let tear_off_geometry = route
         .runtime
         .active_payload_drag_tear_off_geometry(Some(&route.session));
-    let suggested_window_bounds = tear_off_geometry.and_then(|geometry| {
-        event.physical_frame().and_then(|physical_frame| {
-            crate::viewport_runtime::suggested_tear_off_window_bounds_from_native_frame(
-                physical_frame,
-                geometry,
-            )
-        })
-    });
+    let suggested_window_bounds = suggested_live_undock_window_bounds(route, event);
     DockViewportDropRouteRequest::from_captured_native_route(
         &route.payload,
         route.session.clone(),
+        route.source_window_handle,
         tear_off_geometry,
         suggested_window_bounds,
         source_local_position,
@@ -1425,6 +2070,315 @@ fn native_route_request(
         event.sequence(),
         cx,
     )
+}
+
+fn suggested_live_undock_window_bounds(
+    route: &DockNativeCapturedDragRoute,
+    event: &NativeCapturedDragEvent,
+) -> Option<open_gpui::WindowBounds> {
+    route
+        .runtime
+        .active_payload_drag_tear_off_geometry(Some(&route.session))
+        .and_then(|geometry| {
+            event.physical_frame().and_then(|physical_frame| {
+                crate::viewport_runtime::suggested_tear_off_window_bounds_from_native_frame(
+                    physical_frame,
+                    geometry,
+                )
+            })
+        })
+}
+
+fn desired_live_undock_physical_bounds(
+    route: &DockNativeCapturedDragRoute,
+    event: &NativeCapturedDragEvent,
+) -> Option<DockLiveUndockPhysicalBounds> {
+    let physical_frame = event.physical_frame()?;
+    let logical = suggested_live_undock_window_bounds(route, event)?.get_bounds();
+    let physical = logical.to_device_pixels(physical_frame.source_geometry().scale_factor());
+    DockLiveUndockPhysicalBounds::new(
+        DockLiveUndockPhysicalPoint::new(physical.origin.x.0, physical.origin.y.0),
+        u32::try_from(physical.size.width.0).ok()?,
+        u32::try_from(physical.size.height.0).ok()?,
+    )
+}
+
+fn live_undock_route_feedback(target: &DockNativeCapturedTarget) -> DockLiveUndockRouteFeedback {
+    match target {
+        DockNativeCapturedTarget::Host(target) => DockLiveUndockRouteFeedback::Host(
+            DockLiveUndockHostTarget::new(target.scene.window_id, target.scene.frame.generation()),
+        ),
+        DockNativeCapturedTarget::ForeignSurfaceTarget(target) => {
+            DockLiveUndockRouteFeedback::ForeignSurface {
+                window_id: target.scene.window_id,
+            }
+        }
+        DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpenSpace) => {
+            DockLiveUndockRouteFeedback::Desktop
+        }
+        DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpaqueBarrier) => {
+            DockLiveUndockRouteFeedback::OpaqueBarrier
+        }
+        DockNativeCapturedTarget::Unavailable => DockLiveUndockRouteFeedback::Unavailable,
+    }
+}
+
+fn live_undock_trigger_for_move(
+    drag_start: Option<PlatformNativeDragStartSnapshot>,
+    current: Option<Point<open_gpui::DevicePixels>>,
+    drag_generation: DockLiveUndockDragGeneration,
+    source: DockLiveUndockSourceSnapshot,
+    route: DockLiveUndockRouteFeedback,
+) -> Option<DockLiveUndockTrigger> {
+    let drag_start = drag_start?;
+    let current = current?;
+    if !drag_start
+        .hysteresis()
+        .is_exceeded(drag_start.pointer_frame().global_position(), current)
+    {
+        return None;
+    }
+    DockLiveUndockTrigger::new(drag_generation, source, route)
+}
+
+fn live_undock_drag_generation(
+    generation: NativeCapturedDragGeneration,
+) -> DockLiveUndockDragGeneration {
+    DockLiveUndockDragGeneration::new(generation.ordinal())
+        .expect("GPUI native captured-drag generations are non-zero")
+}
+
+fn submit_live_undock_fact(
+    route: &DockNativeCapturedDragRoute,
+    fact: DockLiveUndockFact,
+    event: Option<&NativeCapturedDragEvent>,
+    cx: &mut App,
+) -> bool {
+    let crate::DockViewportRuntimeLineage::Surface(route_lease) = route.work_context.lineage()
+    else {
+        return false;
+    };
+    let Some(owner) = route.runtime.surface_owner_entity() else {
+        return false;
+    };
+    let runtime = cx.read_entity(&owner, |owner, _| owner.live_undock_runtime());
+    match fact {
+        DockLiveUndockFact::Trigger { lease, trigger } => {
+            if lease != route_lease {
+                return false;
+            }
+            let Some(scene) = route.live_undock_source_scene.as_ref() else {
+                return false;
+            };
+            if scene.window_id != route.source_window
+                || scene.host != route.source_host
+                || scene.host_binding != route.source_binding
+                || scene.runtime_identity != route.runtime_identity
+                || scene.work_context != route.work_context
+                || scene.space != route.payload.source_space
+                || scene.frame.generation() != trigger.source().scene_generation()
+            {
+                return false;
+            }
+            let seed = DockLiveUndockExecutionSeed::new(
+                route.runtime.clone(),
+                route.work_context,
+                route.session.clone(),
+                route.payload.clone(),
+                route.source_window_handle,
+                route.source_host.clone(),
+                route.source_binding,
+                route.transport.clone(),
+                route.source_focus.clone(),
+                scene.frame.clone(),
+                scene.presentation_scene.clone(),
+                event.and_then(|event| suggested_live_undock_window_bounds(route, event)),
+                route.live_undock_identity.clone(),
+                route.payload_finalizer.clone(),
+            );
+            runtime.start(lease, trigger, seed, cx)
+        }
+        fact => runtime.submit(fact, cx),
+    }
+}
+
+fn update_live_undock_move(
+    route: &DockNativeCapturedDragRoute,
+    event: &NativeCapturedDragEvent,
+    target: &DockNativeCapturedTarget,
+    cx: &mut App,
+) {
+    debug_assert_eq!(event.phase(), NativeCapturedDragPhase::Moved);
+    let feedback = live_undock_route_feedback(target);
+    if let crate::DockViewportRuntimeLineage::Surface(lease) = route.work_context.lineage()
+        && let Some(source_scene) = route.live_undock_source_scene.as_ref()
+        && let source =
+            DockLiveUndockSourceSnapshot::new(route.source_window, source_scene.frame.generation())
+        && suggested_live_undock_window_bounds(route, event).is_some()
+        && let Some(trigger) = live_undock_trigger_for_move(
+            route.native_drag_start_snapshot,
+            event.physical_frame().map(|frame| frame.global_position()),
+            live_undock_drag_generation(route.generation),
+            source,
+            feedback,
+        )
+    {
+        let _ = submit_live_undock_fact(
+            route,
+            DockLiveUndockFact::Trigger { lease, trigger },
+            Some(event),
+            cx,
+        );
+    }
+    if let Some(identity) = route.live_undock_identity.get() {
+        let _ = submit_live_undock_fact(
+            route,
+            DockLiveUndockFact::RouteObserved {
+                identity,
+                route: feedback,
+            },
+            None,
+            cx,
+        );
+    }
+}
+
+fn lock_live_undock_release(
+    route: &DockNativeCapturedDragRoute,
+    event: &NativeCapturedDragEvent,
+    target: &DockNativeCapturedTarget,
+    locked_drop: &mut Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>>,
+    cx: &mut App,
+) -> bool {
+    let Some(identity) = route.live_undock_identity.get() else {
+        return false;
+    };
+    let Some(point) = event.physical_frame().map(|frame| frame.global_position()) else {
+        cancel_live_undock_identity(route, identity, DockLiveUndockCancelReason::CaptureLost, cx);
+        return false;
+    };
+    let Some(placement_generation) =
+        DockLiveUndockPlacementGeneration::new(event.sequence().ordinal())
+    else {
+        cancel_live_undock_identity(route, identity, DockLiveUndockCancelReason::CaptureLost, cx);
+        return false;
+    };
+    let Some(desired_bounds) = desired_live_undock_physical_bounds(route, event) else {
+        cancel_live_undock_identity(route, identity, DockLiveUndockCancelReason::CaptureLost, cx);
+        return false;
+    };
+    let feedback = live_undock_route_feedback(target);
+    let _ = submit_live_undock_fact(
+        route,
+        DockLiveUndockFact::RouteObserved {
+            identity,
+            route: feedback,
+        },
+        None,
+        cx,
+    );
+    let release = DockLiveUndockReleaseLock::new(
+        DockLiveUndockPhysicalPoint::new(point.x.0, point.y.0),
+        feedback,
+        desired_bounds,
+        placement_generation,
+    );
+    let Some(owner) = route.runtime.surface_owner_entity() else {
+        return false;
+    };
+    let host_release = match target {
+        DockNativeCapturedTarget::Host(target) => {
+            let locked = match locked_drop.take() {
+                Some(Ok(locked)) => locked,
+                other => {
+                    *locked_drop = other;
+                    return false;
+                }
+            };
+            match DockLiveUndockHostReleaseAuthority::try_new(
+                locked,
+                open_gpui::WindowHandle::<DockHost>::new(target.scene.window_id),
+                target.scene.host.clone(),
+                target.scene.host_binding,
+                target.scene.space.clone(),
+                target.scene.frame.clone(),
+            ) {
+                Ok(authority) => Some(authority),
+                Err(locked) => {
+                    *locked_drop = Some(Ok(locked));
+                    return false;
+                }
+            }
+        }
+        DockNativeCapturedTarget::ForeignSurfaceTarget(_)
+        | DockNativeCapturedTarget::Desktop(_)
+        | DockNativeCapturedTarget::Unavailable => None,
+    };
+    let runtime = cx.read_entity(&owner, |owner, _| owner.live_undock_runtime());
+    match runtime.adopt_release(
+        identity,
+        release,
+        host_release,
+        &route.runtime,
+        route.work_context,
+        &route.session,
+        &route.payload,
+        &route.payload_finalizer,
+        cx,
+    ) {
+        DockLiveUndockReleaseAdoption::Adopted => true,
+        DockLiveUndockReleaseAdoption::Rejected(host_release) => {
+            if let Some(host_release) = host_release {
+                *locked_drop = Some(Ok(host_release.into_locked_drop()));
+            }
+            false
+        }
+    }
+}
+
+fn cancel_live_undock_route(
+    route: &DockNativeCapturedDragRoute,
+    reason: PointerCancelReason,
+    cx: &mut App,
+) {
+    let Some(identity) = route.live_undock_identity.get() else {
+        return;
+    };
+    cancel_live_undock_identity(route, identity, live_undock_cancel_reason(reason), cx);
+}
+
+fn live_undock_cancel_reason(reason: PointerCancelReason) -> DockLiveUndockCancelReason {
+    match reason {
+        PointerCancelReason::PlatformCaptureLost | PointerCancelReason::CaptureRevoked => {
+            DockLiveUndockCancelReason::CaptureLost
+        }
+        PointerCancelReason::WindowDeactivated => DockLiveUndockCancelReason::SourceDeactivated,
+        PointerCancelReason::WindowClosed => DockLiveUndockCancelReason::SourceClosed,
+    }
+}
+
+fn terminal_live_undock_cancel_reason(phase: NativeCapturedDragPhase) -> PointerCancelReason {
+    match phase {
+        NativeCapturedDragPhase::Released => PointerCancelReason::CaptureRevoked,
+        NativeCapturedDragPhase::Cancelled(reason) => reason,
+        NativeCapturedDragPhase::Moved => {
+            unreachable!("moving routes do not enter terminal cleanup")
+        }
+    }
+}
+
+fn cancel_live_undock_identity(
+    route: &DockNativeCapturedDragRoute,
+    identity: DockLiveUndockIdentity,
+    reason: DockLiveUndockCancelReason,
+    cx: &mut App,
+) {
+    let _ = submit_live_undock_fact(
+        route,
+        DockLiveUndockFact::Cancel { identity, reason },
+        None,
+        cx,
+    );
 }
 
 fn update_native_captured_preview(
@@ -1438,7 +2392,7 @@ fn update_native_captured_preview(
     match target {
         DockNativeCapturedTarget::Host(target) => {
             clear_foreign_preview(route, cx);
-            let Some(captured_target) = captured_host_target(event, &target) else {
+            let Some(captured_target) = captured_host_target(route, event, &target) else {
                 route.runtime.clear_routed_drop_preview(cx);
                 return;
             };
@@ -1477,7 +2431,7 @@ fn update_native_captured_preview(
             route.runtime.clear_routed_drop_preview(cx);
             update_foreign_surface_preview(state, route, event, target, cx);
         }
-        DockNativeCapturedTarget::Desktop => {
+        DockNativeCapturedTarget::Desktop(_) => {
             clear_foreign_preview(route, cx);
             let request =
                 native_route_request(route, event, DockCapturedNativeDropRoute::Desktop, cx);
@@ -1535,17 +2489,21 @@ fn commit_native_captured_release(
     route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
     target: DockNativeCapturedTarget,
+    locked_drop: Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>>,
     cx: &mut App,
 ) {
     clear_foreign_preview(route, cx);
-    let captured_route = match target {
-        DockNativeCapturedTarget::Host(target) => captured_host_target(event, &target)
-            .map(DockCapturedNativeDropRoute::Host)
-            .unwrap_or(DockCapturedNativeDropRoute::Unavailable),
-        DockNativeCapturedTarget::Desktop => DockCapturedNativeDropRoute::Desktop,
+    match target {
+        DockNativeCapturedTarget::Host(_) | DockNativeCapturedTarget::Desktop(_) => {
+            commit_locked_native_captured_drop(route, locked_drop, cx);
+        }
         DockNativeCapturedTarget::ForeignSurfaceTarget(target) => {
-            let Some(target) = captured_host_target(event, &target) else {
-                return commit_native_captured_unavailable_release(route, event, cx);
+            let Some(target) = captured_host_target(route, event, &target) else {
+                return route.runtime.record_locked_payload_drop_failure(
+                    &route.session,
+                    crate::DockActionApplyError::DropTargetUnavailable,
+                    cx,
+                );
             };
             let request = native_route_request(
                 route,
@@ -1566,26 +2524,75 @@ fn commit_native_captured_release(
             {
                 return;
             }
-            DockCapturedNativeDropRoute::Unavailable
+            route.runtime.record_locked_payload_drop_failure(
+                &route.session,
+                crate::DockActionApplyError::DropTargetUnavailable,
+                cx,
+            );
         }
-        DockNativeCapturedTarget::Unavailable => DockCapturedNativeDropRoute::Unavailable,
+        DockNativeCapturedTarget::Unavailable => {
+            let request =
+                native_route_request(route, event, DockCapturedNativeDropRoute::Unavailable, cx);
+            let owner = DockViewportRoutedPreviewOwner::captured_native(
+                route.runtime_identity,
+                event.generation(),
+                event.sequence(),
+                route.session.clone(),
+                route.latest_sequence.clone(),
+            );
+            if !route.runtime.record_captured_native_unavailable_terminal(
+                &request,
+                &owner,
+                &route.payload,
+            ) {
+                route.runtime.record_locked_payload_drop_failure(
+                    &route.session,
+                    crate::DockActionApplyError::DropTargetUnavailable,
+                    cx,
+                );
+            }
+        }
+    }
+}
+
+fn commit_locked_native_captured_drop(
+    route: &DockNativeCapturedDragRoute,
+    locked_drop: Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>>,
+    cx: &mut App,
+) {
+    let Some(locked_drop) = locked_drop else {
+        return route.runtime.record_locked_payload_drop_failure(
+            &route.session,
+            crate::DockActionApplyError::DropTargetUnavailable,
+            cx,
+        );
     };
-    let request = native_route_request(route, event, captured_route, cx);
-    if let Ok(outcome) = route.runtime.commit_payload_drop_from_screen(&request, cx) {
+    let locked = match locked_drop {
+        Ok(locked) if locked.drag_session() == &route.session => locked,
+        Ok(_) => {
+            return route.runtime.record_locked_payload_drop_failure(
+                &route.session,
+                crate::DockActionApplyError::DropDragSessionStale {
+                    session: route.session.id(),
+                },
+                cx,
+            );
+        }
+        Err(error) => {
+            return route
+                .runtime
+                .record_locked_payload_drop_failure(&route.session, error, cx);
+        }
+    };
+    if let Ok(outcome) = route
+        .runtime
+        .commit_locked_payload_drop_from_screen(locked, cx)
+    {
         let _ = crate::viewport_activation::apply_viewport_activation_transaction(
             outcome.activation_transaction(),
             cx,
         );
     }
-}
-
-fn commit_native_captured_unavailable_release(
-    route: &DockNativeCapturedDragRoute,
-    event: &NativeCapturedDragEvent,
-    cx: &mut App,
-) {
-    let request = native_route_request(route, event, DockCapturedNativeDropRoute::Unavailable, cx);
-    let _ = route.runtime.commit_payload_drop_from_screen(&request, cx);
 }
 
 fn finish_matching_route(
@@ -1614,10 +2621,16 @@ fn finish_matching_route_cleanup(
         }
         state.active.take()
     };
-    let route = route?;
-    let route =
-        retain_retired_route_release(state, route, PointerCancelReason::CaptureRevoked, cx)?;
-    retire_route_cleanup(route, cx)
+    let mut cleanup = DockNativeCapturedRouteCleanup {
+        route: route?,
+        first_panic: None,
+        locked_drop: None,
+        live_undock_release_adopted: false,
+    };
+    record_route_cleanup_cancel(&mut cleanup, PointerCancelReason::CaptureRevoked, cx);
+    let cleanup =
+        retain_retired_route_release(state, cleanup, PointerCancelReason::CaptureRevoked, cx)?;
+    finish_route_cleanup(cleanup, cx)
 }
 
 fn schedule_route_retirement(
@@ -1625,7 +2638,17 @@ fn schedule_route_retirement(
     route: DockNativeCapturedDragRoute,
     cx: &mut App,
 ) {
-    schedule_route_retirement_with_reason(state, route, PointerCancelReason::CaptureRevoked, cx);
+    schedule_route_cleanup_with_reason(
+        state,
+        DockNativeCapturedRouteCleanup {
+            route,
+            first_panic: None,
+            locked_drop: None,
+            live_undock_release_adopted: false,
+        },
+        PointerCancelReason::CaptureRevoked,
+        cx,
+    );
 }
 
 fn schedule_route_retirement_with_reason(
@@ -1634,47 +2657,75 @@ fn schedule_route_retirement_with_reason(
     reason: PointerCancelReason,
     cx: &mut App,
 ) {
-    if let Some(route) = retain_retired_route_release(state, route, reason, cx) {
-        cx.defer(move |cx| {
-            if let Some(payload) = retire_route_cleanup(route, cx) {
-                resume_unwind(payload);
-            }
-        });
+    schedule_route_cleanup_with_reason(
+        state,
+        DockNativeCapturedRouteCleanup {
+            route,
+            first_panic: None,
+            locked_drop: None,
+            live_undock_release_adopted: false,
+        },
+        reason,
+        cx,
+    );
+}
+
+fn schedule_route_cleanup(cleanup: DockNativeCapturedRouteCleanup, cx: &mut App) {
+    retire_route_transport_proxy(&cleanup.route);
+    cx.defer(move |cx| {
+        if let Some(payload) = finish_route_cleanup(cleanup, cx) {
+            resume_unwind(payload);
+        }
+    });
+}
+
+fn schedule_route_cleanup_with_reason(
+    state: &Rc<RefCell<DockNativeCapturedDragState>>,
+    mut cleanup: DockNativeCapturedRouteCleanup,
+    reason: PointerCancelReason,
+    cx: &mut App,
+) {
+    record_route_cleanup_cancel(&mut cleanup, reason, cx);
+    if let Some(cleanup) = retain_retired_route_release(state, cleanup, reason, cx) {
+        schedule_route_cleanup(cleanup, cx);
     }
 }
 
 fn retain_retired_route_release(
     state: &Rc<RefCell<DockNativeCapturedDragState>>,
-    route: DockNativeCapturedDragRoute,
+    cleanup: DockNativeCapturedRouteCleanup,
     reason: PointerCancelReason,
     cx: &mut App,
-) -> Option<DockNativeCapturedDragRoute> {
-    let Some(key) = DockNativeCapturedDragRetiredKey::for_route(&route) else {
-        return Some(route);
+) -> Option<DockNativeCapturedRouteCleanup> {
+    let Some(key) = DockNativeCapturedDragRetiredKey::for_route(&cleanup.route) else {
+        return Some(cleanup);
     };
     let terminal_state = Rc::downgrade(state);
     let Some(barrier) = cx.cancel_native_captured_drag_with_release_barrier(
         key.source_window,
         key.drag_generation,
         reason,
-        move |barrier, _, cx| {
+        move |barrier, terminal, cx| {
             let Some(state) = terminal_state.upgrade() else {
                 return;
             };
             let Some(pending) = clear_retired_pending_if_matches(&state, key, barrier) else {
                 return;
             };
-            if let Some(route) = pending.route
-                && let Some(payload) = retire_route_cleanup(route, cx)
+            if terminal == NativeCapturedDragReleaseTerminal::Failed {
+                state.borrow_mut().failed_releases.insert(key);
+            }
+            if let Some(cleanup) = pending.cleanup
+                && let Some(payload) = finish_route_cleanup(cleanup, cx)
             {
                 resume_unwind(payload);
             }
         },
     ) else {
-        return Some(route);
+        return Some(cleanup);
     };
 
-    insert_retired_pending(state, key, barrier, Some(route));
+    insert_retired_pending(state, key, barrier, Some(cleanup));
     None
 }
 
@@ -1682,12 +2733,12 @@ fn insert_retired_pending(
     state: &Rc<RefCell<DockNativeCapturedDragState>>,
     key: DockNativeCapturedDragRetiredKey,
     barrier: NativeCapturedDragReleaseBarrier,
-    route: Option<DockNativeCapturedDragRoute>,
+    cleanup: Option<DockNativeCapturedRouteCleanup>,
 ) {
     let mut state = state.borrow_mut();
     match state.retired_pending.entry(key) {
         std::collections::hash_map::Entry::Vacant(entry) => {
-            entry.insert(DockNativeCapturedDragRetiredPending { barrier, route });
+            entry.insert(DockNativeCapturedDragRetiredPending { barrier, cleanup });
         }
         std::collections::hash_map::Entry::Occupied(mut entry) => {
             debug_assert_eq!(
@@ -1695,8 +2746,8 @@ fn insert_retired_pending(
                 barrier,
                 "one retired Dock route generation must retain one exact native release barrier"
             );
-            if entry.get().barrier == barrier && entry.get().route.is_none() {
-                entry.get_mut().route = route;
+            if entry.get().barrier == barrier && entry.get().cleanup.is_none() {
+                entry.get_mut().cleanup = cleanup;
             }
         }
     }
@@ -1724,6 +2775,9 @@ fn retire_route_cleanup(
     cx: &mut App,
 ) -> Option<Box<dyn Any + Send>> {
     let mut first_panic = None;
+    run_idempotent_cleanup_stage(&mut first_panic, || {
+        retire_route_transport_proxy(&route);
+    });
     run_idempotent_cleanup_stage(&mut first_panic, || clear_foreign_preview(&route, cx));
 
     let mut route_was_active = false;
@@ -1748,11 +2802,58 @@ fn retire_route_cleanup(
         }
     });
     run_idempotent_cleanup_stage(&mut first_panic, || {
-        route
-            .runtime
-            .finish_payload_drag_with_app(&route.session, cx);
+        settle_payload_drag_finalizer_claim(
+            route.payload_finalizer.claim_route(),
+            &route.runtime,
+            route.work_context,
+            &route.session,
+            cx,
+        );
     });
     first_panic
+}
+
+fn finish_route_cleanup(
+    mut cleanup: DockNativeCapturedRouteCleanup,
+    cx: &mut App,
+) -> Option<Box<dyn Any + Send>> {
+    let cleanup_panic = retire_route_cleanup(cleanup.route, cx);
+    if cleanup.first_panic.is_none() {
+        return cleanup_panic;
+    }
+    if cleanup_panic.is_some() {
+        log::error!(
+            "suppressed a Dock route-retirement panic after an earlier locked-release panic"
+        );
+    }
+    cleanup.first_panic.take()
+}
+
+fn finish_route_cleanup_with_cancel(
+    mut cleanup: DockNativeCapturedRouteCleanup,
+    reason: PointerCancelReason,
+    cx: &mut App,
+) -> Option<Box<dyn Any + Send>> {
+    record_route_cleanup_cancel(&mut cleanup, reason, cx);
+    finish_route_cleanup(cleanup, cx)
+}
+
+fn record_route_cleanup_cancel(
+    cleanup: &mut DockNativeCapturedRouteCleanup,
+    reason: PointerCancelReason,
+    cx: &mut App,
+) {
+    let route = cleanup.route.clone();
+    run_idempotent_cleanup_stage(&mut cleanup.first_panic, || {
+        retire_route_transport_proxy(&route)
+    });
+    run_idempotent_cleanup_stage(&mut cleanup.first_panic, || {
+        cancel_live_undock_route(&route, reason, cx)
+    });
+}
+
+fn retire_route_transport_proxy(route: &DockNativeCapturedDragRoute) {
+    route.transport.retire();
 }
 
 fn run_idempotent_cleanup_stage(
@@ -1773,10 +2874,11 @@ fn run_idempotent_cleanup_stage(
 }
 
 fn captured_host_target(
+    route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
     target: &DockNativeCapturedHostTarget,
 ) -> Option<DockCapturedNativeHostTarget> {
-    let target_window = event.window_hit_stack().first_registered_window()?;
+    let target_window = native_captured_registered_window(route, event)?;
     let target_window =
         (target_window.window_id() == target.scene.window_id).then_some(target_window)?;
     Some(DockCapturedNativeHostTarget::new(
@@ -1794,7 +2896,7 @@ fn update_foreign_surface_preview(
     target: DockNativeCapturedHostTarget,
     cx: &mut App,
 ) {
-    let Some(captured_target) = captured_host_target(event, &target) else {
+    let Some(captured_target) = captured_host_target(route, event, &target) else {
         clear_foreign_preview(route, cx);
         return;
     };
@@ -1990,18 +3092,437 @@ fn flush_foreign_preview_cleanups(route: &DockNativeCapturedDragRoute, cx: &mut 
     }
 }
 
-trait PlatformWindowHitStackExt {
-    fn first_registered_window(&self) -> Option<AnyWindowHandle>;
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::surface::{
+        live_undock::{DockLiveUndockEffect, DockLiveUndockSession},
+        window_session::{DockSurfaceWindowSession, DockSurfaceWindowSessionLease},
+    };
+    use open_gpui::{
+        Bounds, DevicePixels, Empty, EntityId, PlatformNativeDragHysteresis,
+        PlatformNativePointerPhysicalFrame, PlatformWindowPhysicalCoverage,
+        PlatformWindowPhysicalGeometry, WindowHandle, point, size,
+    };
 
-impl PlatformWindowHitStackExt for PlatformWindowHitStack {
-    fn first_registered_window(&self) -> Option<AnyWindowHandle> {
-        match self {
-            Self::Available(observation) => match observation.hits().first()? {
-                PlatformWindowHit::RegisteredApplication { window, .. } => Some(*window),
-                PlatformWindowHit::OpaqueBarrier { .. } => None,
+    fn test_window(raw: u64) -> AnyWindowHandle {
+        WindowHandle::<Empty>::new(WindowId::from(raw)).into()
+    }
+
+    fn test_point() -> Point<DevicePixels> {
+        point(DevicePixels(50), DevicePixels(50))
+    }
+
+    fn test_coverage() -> PlatformWindowPhysicalCoverage {
+        PlatformWindowPhysicalCoverage::try_new(Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(100), DevicePixels(100)),
+        ))
+        .expect("test coverage should be representable")
+    }
+
+    fn test_geometry() -> PlatformWindowPhysicalGeometry {
+        PlatformWindowPhysicalGeometry::try_new(
+            Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(100), DevicePixels(100)),
+            ),
+            1.0,
+        )
+        .expect("test geometry should be representable")
+    }
+
+    fn test_stack(hits: Vec<PlatformWindowHit>) -> PlatformWindowHitStack {
+        PlatformWindowHitStack::try_available(test_point(), hits)
+            .expect("test hit stack should have one legal exact shape")
+    }
+
+    fn provisional_hit(window: AnyWindowHandle, generation: u64) -> PlatformWindowHit {
+        PlatformWindowHit::ProvisionalPassThrough {
+            window,
+            session_generation: generation,
+            coverage: test_coverage(),
+            geometry: test_geometry(),
+        }
+    }
+
+    fn registered_hit(window: AnyWindowHandle) -> PlatformWindowHit {
+        PlatformWindowHit::RegisteredApplication {
+            window,
+            coverage: test_coverage(),
+            geometry: test_geometry(),
+        }
+    }
+
+    fn active_surface_lease() -> DockSurfaceWindowSessionLease {
+        let mut session = DockSurfaceWindowSession::new(EntityId::from(71));
+        let opening = session
+            .reserve_opening()
+            .expect("test lease should reserve");
+        session
+            .commit_opening(opening, WindowId::from(72))
+            .expect("test lease should activate")
+    }
+
+    fn drag_start_snapshot() -> PlatformNativeDragStartSnapshot {
+        PlatformNativeDragStartSnapshot::new(
+            PlatformNativePointerPhysicalFrame::new(
+                point(DevicePixels(-10), DevicePixels(-20)),
+                test_geometry(),
+            ),
+            PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(6))
+                .expect("positive test hysteresis should be valid"),
+        )
+    }
+
+    fn drag_generation(value: u64) -> DockLiveUndockDragGeneration {
+        DockLiveUndockDragGeneration::new(value)
+            .expect("test live-undock generation should be non-zero")
+    }
+
+    fn source_snapshot(value: u64) -> DockLiveUndockSourceSnapshot {
+        DockLiveUndockSourceSnapshot::new(WindowId::from(73), value)
+    }
+
+    #[test]
+    fn exact_current_provisional_prefix_reaches_registered_terminal() {
+        let provisional = test_window(11);
+        let terminal = test_window(12);
+        let stack = test_stack(vec![
+            provisional_hit(provisional, 41),
+            registered_hit(terminal),
+        ]);
+
+        let resolved =
+            classify_native_captured_window_hit(&stack, test_point(), |window, generation| {
+                window == provisional && generation == 41
+            });
+
+        assert!(matches!(
+            resolved,
+            DockNativeCapturedWindowHit::RegisteredApplication { window, .. }
+                if window == terminal
+        ));
+    }
+
+    #[test]
+    fn stale_or_foreign_provisional_prefix_fails_closed() {
+        let current = test_window(21);
+        let foreign = test_window(22);
+        let terminal = test_window(23);
+        for stack in [
+            test_stack(vec![provisional_hit(current, 40), registered_hit(terminal)]),
+            test_stack(vec![provisional_hit(foreign, 41), registered_hit(terminal)]),
+        ] {
+            assert_eq!(
+                classify_native_captured_window_hit(&stack, test_point(), |window, generation| {
+                    window == current && generation == 41
+                }),
+                DockNativeCapturedWindowHit::Unavailable
+            );
+        }
+    }
+
+    #[test]
+    fn empty_exact_hit_stack_is_open_desktop() {
+        let stack = test_stack(Vec::new());
+
+        assert_eq!(
+            classify_native_captured_window_hit(&stack, test_point(), |_, _| {
+                panic!("empty desktop must not request provisional authority")
+            }),
+            DockNativeCapturedWindowHit::OpenDesktop
+        );
+    }
+
+    #[test]
+    fn opaque_terminal_remains_an_opaque_barrier() {
+        let stack = test_stack(vec![PlatformWindowHit::OpaqueBarrier {
+            coverage: test_coverage(),
+        }]);
+
+        assert_eq!(
+            classify_native_captured_window_hit(&stack, test_point(), |_, _| {
+                panic!("a terminal-only stack must not request provisional authority")
+            }),
+            DockNativeCapturedWindowHit::OpaqueBarrier
+        );
+    }
+
+    #[test]
+    fn registered_terminal_outside_its_physical_geometry_is_an_opaque_barrier() {
+        let stack = PlatformWindowHitStack::try_available(
+            test_point(),
+            vec![PlatformWindowHit::RegisteredApplication {
+                window: test_window(31),
+                coverage: test_coverage(),
+                geometry: PlatformWindowPhysicalGeometry::try_new(
+                    Bounds::new(
+                        point(DevicePixels(0), DevicePixels(0)),
+                        size(DevicePixels(25), DevicePixels(25)),
+                    ),
+                    1.0,
+                )
+                .expect("test geometry should be representable"),
+            }],
+        )
+        .expect("the registered terminal should form an exact stack");
+
+        assert_eq!(
+            classify_native_captured_window_hit(&stack, test_point(), |_, _| false),
+            DockNativeCapturedWindowHit::OpaqueBarrier
+        );
+    }
+
+    #[test]
+    fn live_undock_threshold_is_inclusive_and_accepts_either_physical_axis() {
+        let snapshot = drag_start_snapshot();
+        let source = source_snapshot(1);
+        assert!(
+            live_undock_trigger_for_move(
+                Some(snapshot),
+                Some(point(DevicePixels(-7), DevicePixels(-20))),
+                drag_generation(1),
+                source,
+                DockLiveUndockRouteFeedback::Desktop,
+            )
+            .is_none(),
+            "three physical pixels remain inside the four-pixel horizontal hysteresis"
+        );
+        assert!(
+            live_undock_trigger_for_move(
+                Some(snapshot),
+                Some(point(DevicePixels(-6), DevicePixels(-20))),
+                drag_generation(1),
+                source,
+                DockLiveUndockRouteFeedback::Desktop,
+            )
+            .is_some(),
+            "the horizontal boundary is eligible"
+        );
+        assert!(
+            live_undock_trigger_for_move(
+                Some(snapshot),
+                Some(point(DevicePixels(-10), DevicePixels(-26))),
+                drag_generation(1),
+                source,
+                DockLiveUndockRouteFeedback::OpaqueBarrier,
+            )
+            .is_some(),
+            "the vertical boundary is eligible in the negative desktop quadrant"
+        );
+    }
+
+    #[test]
+    fn ineligible_routes_remain_armed_until_an_eligible_desktop_route() {
+        let snapshot = drag_start_snapshot();
+        let current = Some(point(DevicePixels(100), DevicePixels(100)));
+        let source = source_snapshot(2);
+        for feedback in [
+            DockLiveUndockRouteFeedback::Host(DockLiveUndockHostTarget::new(WindowId::from(74), 1)),
+            DockLiveUndockRouteFeedback::ForeignSurface {
+                window_id: WindowId::from(75),
             },
-            Self::Unavailable => None,
+            DockLiveUndockRouteFeedback::Unavailable,
+        ] {
+            assert!(
+                live_undock_trigger_for_move(
+                    Some(snapshot),
+                    current,
+                    drag_generation(2),
+                    source,
+                    feedback,
+                )
+                .is_none()
+            );
+        }
+        let trigger = live_undock_trigger_for_move(
+            Some(snapshot),
+            current,
+            drag_generation(2),
+            source,
+            DockLiveUndockRouteFeedback::Desktop,
+        )
+        .expect("a later open-space observation must still trigger");
+        let lease = active_surface_lease();
+        let mut reducer = DockLiveUndockSession::new();
+        let effects = reducer.apply(DockLiveUndockFact::Trigger { lease, trigger });
+        assert!(
+            effects
+                .as_slice()
+                .iter()
+                .any(|effect| matches!(effect, DockLiveUndockEffect::OpenProvisional { .. })),
+            "the single reducer accepts the still-armed drag generation"
+        );
+    }
+
+    #[test]
+    fn open_space_and_opaque_barrier_share_trigger_eligibility_but_not_route_identity() {
+        let snapshot = drag_start_snapshot();
+        let current = Some(point(DevicePixels(100), DevicePixels(100)));
+        let source = source_snapshot(3);
+        assert_eq!(
+            live_undock_route_feedback(&DockNativeCapturedTarget::Desktop(
+                DockNativeCapturedDesktopRoute::OpenSpace,
+            )),
+            DockLiveUndockRouteFeedback::Desktop
+        );
+        assert_eq!(
+            live_undock_route_feedback(&DockNativeCapturedTarget::Desktop(
+                DockNativeCapturedDesktopRoute::OpaqueBarrier,
+            )),
+            DockLiveUndockRouteFeedback::OpaqueBarrier
+        );
+        let open = live_undock_trigger_for_move(
+            Some(snapshot),
+            current,
+            drag_generation(3),
+            source,
+            DockLiveUndockRouteFeedback::Desktop,
+        )
+        .expect("open desktop should trigger");
+        let barrier = live_undock_trigger_for_move(
+            Some(snapshot),
+            current,
+            drag_generation(3),
+            source,
+            DockLiveUndockRouteFeedback::OpaqueBarrier,
+        )
+        .expect("opaque desktop barrier should trigger");
+
+        assert_eq!(open.initial_route(), DockLiveUndockRouteFeedback::Desktop);
+        assert_eq!(
+            barrier.initial_route(),
+            DockLiveUndockRouteFeedback::OpaqueBarrier
+        );
+    }
+
+    #[test]
+    fn reducer_fences_duplicate_and_stale_live_undock_move_generations() {
+        let lease = active_surface_lease();
+        let source = source_snapshot(5);
+        let trigger = DockLiveUndockTrigger::new(
+            drag_generation(5),
+            source,
+            DockLiveUndockRouteFeedback::Desktop,
+        )
+        .expect("desktop should be eligible");
+        let mut reducer = DockLiveUndockSession::new();
+        let first = reducer.apply(DockLiveUndockFact::Trigger { lease, trigger });
+        assert!(
+            first
+                .as_slice()
+                .iter()
+                .any(|effect| matches!(effect, DockLiveUndockEffect::OpenProvisional { .. }))
+        );
+        assert!(
+            reducer
+                .apply(DockLiveUndockFact::Trigger { lease, trigger })
+                .is_empty(),
+            "a duplicate move cannot open a second provisional"
+        );
+        let stale = DockLiveUndockTrigger::new(
+            drag_generation(4),
+            source,
+            DockLiveUndockRouteFeedback::OpaqueBarrier,
+        )
+        .expect("opaque barrier should be eligible");
+        assert!(
+            reducer
+                .apply(DockLiveUndockFact::Trigger {
+                    lease,
+                    trigger: stale,
+                })
+                .is_empty(),
+            "a stale drag generation cannot replace the reducer authority"
+        );
+    }
+
+    #[test]
+    fn released_route_failure_cancels_the_exact_live_undock_generation() {
+        let lease = active_surface_lease();
+        let trigger = DockLiveUndockTrigger::new(
+            drag_generation(6),
+            source_snapshot(6),
+            DockLiveUndockRouteFeedback::Desktop,
+        )
+        .expect("desktop should be eligible");
+        let mut reducer = DockLiveUndockSession::new();
+        let identity = reducer
+            .apply(DockLiveUndockFact::Trigger { lease, trigger })
+            .into_iter()
+            .find_map(|effect| match effect {
+                DockLiveUndockEffect::OpenProvisional { identity, .. } => Some(identity),
+                _ => None,
+            })
+            .expect("the exact generation should begin one live-undock session");
+
+        let reason = live_undock_cancel_reason(terminal_live_undock_cancel_reason(
+            NativeCapturedDragPhase::Released,
+        ));
+        assert_eq!(reason, DockLiveUndockCancelReason::CaptureLost);
+        let effects = reducer.apply(DockLiveUndockFact::Cancel { identity, reason });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::PublishTerminal {
+                identity: current,
+                result: crate::surface::live_undock::DockLiveUndockTerminalResult::Restored(
+                    crate::surface::live_undock::DockLiveUndockRestoreReason::Cancelled(
+                        DockLiveUndockCancelReason::CaptureLost
+                    )
+                ),
+            } if *current == identity
+        )));
+        assert_eq!(
+            reducer.phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Retiring
+        );
+        reducer.apply(DockLiveUndockFact::OpeningFailed { identity });
+        assert_eq!(
+            reducer.phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+    }
+
+    #[test]
+    fn recorded_resolution_panic_does_not_skip_the_cancel_cleanup_stage() {
+        let mut first_panic: Option<Box<dyn Any + Send>> = Some(Box::new("resolution panic"));
+        let cancel_attempts = Cell::new(0);
+
+        assert!(!run_idempotent_cleanup_stage(&mut first_panic, || {
+            cancel_attempts.set(cancel_attempts.get() + 1);
+            panic!("cancel cleanup panic");
+        }));
+
+        assert_eq!(cancel_attempts.get(), 2);
+        assert_eq!(
+            first_panic
+                .as_ref()
+                .and_then(|payload| payload.downcast_ref::<&'static str>())
+                .copied(),
+            Some("resolution panic"),
+            "the locked-release failure remains the panic reported after cleanup"
+        );
+    }
+
+    #[test]
+    fn failed_native_release_does_not_authorize_surface_dependent_effects() {
+        assert_eq!(
+            DockNativeCapturedSurfaceReleaseOutcome::from_native_terminal(
+                NativeCapturedDragReleaseTerminal::Failed,
+            ),
+            DockNativeCapturedSurfaceReleaseOutcome::Failed,
+        );
+        for terminal in [
+            NativeCapturedDragReleaseTerminal::Released,
+            NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
+            NativeCapturedDragReleaseTerminal::NotRequired,
+        ] {
+            assert_eq!(
+                DockNativeCapturedSurfaceReleaseOutcome::from_native_terminal(terminal),
+                DockNativeCapturedSurfaceReleaseOutcome::Released,
+            );
         }
     }
 }

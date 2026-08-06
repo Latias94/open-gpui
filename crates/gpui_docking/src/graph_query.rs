@@ -58,6 +58,30 @@ impl DockGraph {
         out
     }
 
+    /// Resolves the stable tab stack used by lifecycle recovery in one dock space.
+    ///
+    /// The central region wins when it has content; otherwise recovery falls back to the first
+    /// root tab stack in stable tree order. Floating containers never become the recovery target.
+    pub(crate) fn recovery_target_tabs(&self, space: &DockSpaceId) -> Option<DockNodeId> {
+        self.central_region(space)
+            .and_then(|central| central.node)
+            .and_then(|node| self.first_tabs_in_subtree(node))
+            .or_else(|| {
+                self.root(space)
+                    .and_then(|root| self.first_tabs_in_subtree(root))
+            })
+    }
+
+    pub(crate) fn first_tabs_in_subtree(&self, root: DockNodeId) -> Option<DockNodeId> {
+        match self.node(root)? {
+            DockNode::Tabs { .. } => Some(root),
+            DockNode::Floating { child } => self.first_tabs_in_subtree(*child),
+            DockNode::Split { children, .. } => children
+                .iter()
+                .find_map(|child| self.first_tabs_in_subtree(*child)),
+        }
+    }
+
     /// Returns true when an item is reachable from any dock space.
     pub fn contains_item(&self, item: &DockItemId) -> bool {
         self.spaces()

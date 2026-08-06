@@ -259,7 +259,6 @@ pub struct WaylandWindowState {
     active: bool,
     hovered: bool,
     cursor_style: CursorStyle,
-    pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
     has_presented_frame: bool,
     in_progress_configure: Option<InProgressConfigure>,
@@ -676,7 +675,6 @@ impl WaylandWindowState {
             active: false,
             hovered: false,
             cursor_style: CursorStyle::Arrow,
-            force_render_after_recovery: false,
             renderer_presented: false,
             has_presented_frame: false,
             in_progress_window_controls: None,
@@ -707,7 +705,6 @@ impl WaylandWindowState {
     }
 
     fn clear_presentation_bookkeeping(&mut self) {
-        self.force_render_after_recovery = false;
         self.renderer_presented = false;
         self.resize_throttle = false;
     }
@@ -944,15 +941,13 @@ impl WaylandWindowStatePtr {
 
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
-        let force_render = state.force_render_after_recovery;
-        state.force_render_after_recovery = false;
         drop(state);
 
         let callback = self.callbacks.borrow_mut().request_frame.take();
         if let Some(mut callback) = callback {
             // Native callbacks may re-enter GPUI, so keep callback-table borrows outside the call.
             callback(RequestFrameOptions {
-                force_render,
+                force_render: false,
                 ..Default::default()
             });
             let mut callbacks = self.callbacks.borrow_mut();
@@ -1811,25 +1806,19 @@ impl PlatformWindow for WaylandWindow {
                     .display_ptr()
                     .cast::<std::ffi::c_void>(),
             };
-            match state.renderer.recover(&raw_window) {
-                Ok(()) => {}
+            return match state.renderer.recover(&raw_window) {
+                Ok(()) => PlatformWindowPresentOutcome::RepaintRequired,
                 Err(err) => {
                     log::warn!("GPU recovery failed, will retry on next frame: {err}");
+                    PlatformWindowPresentOutcome::Deferred
                 }
-            }
-
-            state.force_render_after_recovery = true;
-            return PlatformWindowPresentOutcome::Deferred;
+            };
         }
 
         let outcome = state.renderer.draw(scene);
         state.renderer_presented = outcome == PlatformWindowPresentOutcome::Submitted;
         if state.renderer_presented {
             state.has_presented_frame = true;
-        }
-
-        if state.renderer.needs_redraw() {
-            state.force_render_after_recovery = true;
         }
 
         outcome

@@ -2252,6 +2252,9 @@ fn main() {
     });
 }
 
+#[cfg(all(test, target_os = "windows"))]
+mod native_interactive_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

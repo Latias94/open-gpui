@@ -115,6 +115,83 @@ pub struct PlatformNativePointerPhysicalFrame {
     source_geometry: PlatformWindowPhysicalGeometry,
 }
 
+/// One checked native drag hysteresis observation in physical device pixels.
+///
+/// The horizontal and vertical values are the minimum per-axis displacement from the native
+/// drag start that the platform considers sufficient to leave the system drag rectangle.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlatformNativeDragHysteresis {
+    horizontal: DevicePixels,
+    vertical: DevicePixels,
+}
+
+impl PlatformNativeDragHysteresis {
+    /// Creates a native drag hysteresis observation when both axes are positive.
+    #[doc(hidden)]
+    pub fn try_new(horizontal: DevicePixels, vertical: DevicePixels) -> Option<Self> {
+        if horizontal.0 <= 0 || vertical.0 <= 0 {
+            return None;
+        }
+        Some(Self {
+            horizontal,
+            vertical,
+        })
+    }
+
+    /// Returns the horizontal displacement threshold in physical device pixels.
+    pub fn horizontal(self) -> DevicePixels {
+        self.horizontal
+    }
+
+    /// Returns the vertical displacement threshold in physical device pixels.
+    pub fn vertical(self) -> DevicePixels {
+        self.vertical
+    }
+
+    /// Returns whether the current physical point has reached either native drag threshold.
+    pub fn is_exceeded(self, start: Point<DevicePixels>, current: Point<DevicePixels>) -> bool {
+        let horizontal = (i64::from(current.x.0) - i64::from(start.x.0)).abs();
+        let vertical = (i64::from(current.y.0) - i64::from(start.y.0)).abs();
+        horizontal >= i64::from(self.horizontal.0) || vertical >= i64::from(self.vertical.0)
+    }
+}
+
+/// The immutable native physical facts captured at the start of a GPUI pointer drag.
+///
+/// Both observations belong to the same drag-start transaction. Consumers must retain this value
+/// instead of resampling platform settings, source geometry, or DPI later in the drag.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlatformNativeDragStartSnapshot {
+    pointer_frame: PlatformNativePointerPhysicalFrame,
+    hysteresis: PlatformNativeDragHysteresis,
+}
+
+impl PlatformNativeDragStartSnapshot {
+    /// Binds one callback-scoped physical pointer frame to one native hysteresis observation.
+    #[doc(hidden)]
+    pub fn new(
+        pointer_frame: PlatformNativePointerPhysicalFrame,
+        hysteresis: PlatformNativeDragHysteresis,
+    ) -> Self {
+        Self {
+            pointer_frame,
+            hysteresis,
+        }
+    }
+
+    /// Returns the physical pointer frame captured for this drag start.
+    pub fn pointer_frame(self) -> PlatformNativePointerPhysicalFrame {
+        self.pointer_frame
+    }
+
+    /// Returns the native hysteresis captured for this drag start.
+    pub fn hysteresis(self) -> PlatformNativeDragHysteresis {
+        self.hysteresis
+    }
+}
+
 impl PlatformNativePointerPhysicalFrame {
     /// Creates a callback-scoped physical pointer observation.
     #[doc(hidden)]
@@ -273,10 +350,22 @@ fn checked_global_device_to_logical_coordinate(
 
 /// One classified native top-level window covering a sampled physical desktop point.
 ///
-/// Native handles remain backend-private. Registered application windows retain their complete
-/// GPUI handle, while every other covering top-level is an opaque routing barrier.
+/// Native handles remain backend-private. Exact provisional application windows form a typed
+/// pass-through prefix, registered application windows terminate routing with their complete GPUI
+/// handle, and every other covering top-level is an opaque routing barrier.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlatformWindowHit {
+    /// One exact gated provisional application window that native hit testing passes through.
+    ProvisionalPassThrough {
+        /// The complete GPUI handle matched to the exact native window generation.
+        window: AnyWindowHandle,
+        /// The immutable provisional-session generation observed for this exact window.
+        session_generation: u64,
+        /// The native top-level bounds that cover the sampled physical point.
+        coverage: PlatformWindowPhysicalCoverage,
+        /// The provisional client geometry sampled as part of the same observation.
+        geometry: PlatformWindowPhysicalGeometry,
+    },
     /// A currently registered application window and its same-observation native geometry.
     RegisteredApplication {
         /// The complete GPUI handle matched to the exact native window generation.
@@ -297,10 +386,33 @@ impl PlatformWindowHit {
     /// Returns the checked top-level coverage for this entry.
     pub fn coverage(self) -> PlatformWindowPhysicalCoverage {
         match self {
-            Self::RegisteredApplication { coverage, .. } | Self::OpaqueBarrier { coverage } => {
-                coverage
-            }
+            Self::ProvisionalPassThrough { coverage, .. }
+            | Self::RegisteredApplication { coverage, .. }
+            | Self::OpaqueBarrier { coverage } => coverage,
         }
+    }
+
+    /// Returns whether this entry is one exact provisional pass-through fact.
+    pub const fn is_provisional_pass_through(self) -> bool {
+        matches!(self, Self::ProvisionalPassThrough { .. })
+    }
+
+    /// Returns whether this entry terminates native hit routing.
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::RegisteredApplication { .. } | Self::OpaqueBarrier { .. }
+        )
+    }
+
+    fn has_valid_authority_generation(self) -> bool {
+        !matches!(
+            self,
+            Self::ProvisionalPassThrough {
+                session_generation: 0,
+                ..
+            }
+        )
     }
 }
 
@@ -312,14 +424,23 @@ pub struct PlatformWindowHitObservation {
 }
 
 impl PlatformWindowHitObservation {
-    /// Creates an observation when every entry covers the sampled point.
+    /// Creates a complete observation through the first terminal hit.
+    ///
+    /// A non-empty observation contains zero or more exact provisional pass-through entries and
+    /// exactly one terminal entry at the end. An empty observation explicitly represents verified
+    /// open desktop space.
     pub fn try_new(
         sampled_point: Point<DevicePixels>,
         hits: Vec<PlatformWindowHit>,
     ) -> Option<Self> {
-        if hits
-            .iter()
-            .any(|hit| !hit.coverage().contains(sampled_point))
+        if hits.iter().any(|hit| {
+            !hit.coverage().contains(sampled_point) || !hit.has_valid_authority_generation()
+        }) {
+            return None;
+        }
+        if let Some((terminal, prefix)) = hits.split_last()
+            && (!terminal.is_terminal()
+                || !prefix.iter().all(|hit| hit.is_provisional_pass_through()))
         {
             return None;
         }
@@ -368,6 +489,113 @@ impl PlatformWindowHitStack {
             Self::Available(observation) => Some(observation),
             Self::Unavailable => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod platform_window_hit_observation_tests {
+    use super::*;
+
+    fn test_window(raw: u64) -> AnyWindowHandle {
+        AnyWindowHandle::from(crate::WindowHandle::<crate::Empty>::new(WindowId::from(
+            raw,
+        )))
+    }
+
+    fn coverage() -> PlatformWindowPhysicalCoverage {
+        PlatformWindowPhysicalCoverage::try_new(Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(100), DevicePixels(100)),
+        ))
+        .expect("test coverage should be representable")
+    }
+
+    fn geometry() -> PlatformWindowPhysicalGeometry {
+        PlatformWindowPhysicalGeometry::try_new(
+            Bounds::new(
+                point(DevicePixels(5), DevicePixels(5)),
+                size(DevicePixels(90), DevicePixels(90)),
+            ),
+            1.0,
+        )
+        .expect("test geometry should be representable")
+    }
+
+    fn provisional(window: AnyWindowHandle, session_generation: u64) -> PlatformWindowHit {
+        PlatformWindowHit::ProvisionalPassThrough {
+            window,
+            session_generation,
+            coverage: coverage(),
+            geometry: geometry(),
+        }
+    }
+
+    #[test]
+    fn hit_observation_accepts_exact_pass_through_prefix_and_one_terminal() {
+        let sampled_point = point(DevicePixels(50), DevicePixels(50));
+        let terminal = test_window(3);
+        let hits = vec![
+            provisional(test_window(1), 11),
+            provisional(test_window(2), 12),
+            PlatformWindowHit::RegisteredApplication {
+                window: terminal,
+                coverage: coverage(),
+                geometry: geometry(),
+            },
+        ];
+
+        let observation = PlatformWindowHitObservation::try_new(sampled_point, hits.clone())
+            .expect("an exact pass-through prefix followed by one terminal should be valid");
+        assert_eq!(observation.hits(), hits);
+        assert!(
+            PlatformWindowHitObservation::try_new(sampled_point, Vec::new()).is_some(),
+            "an empty observation explicitly represents verified open desktop space"
+        );
+    }
+
+    #[test]
+    fn hit_observation_rejects_unterminated_or_post_terminal_entries() {
+        let sampled_point = point(DevicePixels(50), DevicePixels(50));
+        let pass_through = provisional(test_window(1), 11);
+        let terminal = PlatformWindowHit::OpaqueBarrier {
+            coverage: coverage(),
+        };
+
+        assert!(PlatformWindowHitObservation::try_new(sampled_point, vec![pass_through]).is_none());
+        assert!(
+            PlatformWindowHitObservation::try_new(
+                sampled_point,
+                vec![terminal, provisional(test_window(2), 12)],
+            )
+            .is_none()
+        );
+        assert!(
+            PlatformWindowHitObservation::try_new(sampled_point, vec![terminal, terminal])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn hit_observation_rejects_zero_generation_and_non_covering_entries() {
+        let sampled_point = point(DevicePixels(50), DevicePixels(50));
+        let terminal = PlatformWindowHit::OpaqueBarrier {
+            coverage: coverage(),
+        };
+
+        assert!(
+            PlatformWindowHitObservation::try_new(
+                sampled_point,
+                vec![provisional(test_window(1), 0), terminal],
+            )
+            .is_none()
+        );
+        assert!(
+            PlatformWindowHitObservation::try_new(
+                point(DevicePixels(101), DevicePixels(50)),
+                vec![terminal],
+            )
+            .is_none()
+        );
     }
 }
 
@@ -772,6 +1000,10 @@ pub enum WindowProvisionalSessionPhase {
     Unbound,
     /// The exact window is bound but remains non-interactive.
     Gated,
+    /// The destination tree is being projected while native and framework input remain gated.
+    ProjectingDestinationSemantics,
+    /// The exact destination tree committed, but interaction remains gated.
+    DestinationSemanticsCommitted,
     /// The exact window was promoted in place and may accept interaction.
     Promoted,
     /// Presentation and interaction are terminal for this generation.
@@ -808,6 +1040,16 @@ impl WindowProvisionalSessionSnapshot {
         matches!(self.phase, WindowProvisionalSessionPhase::Promoted)
     }
 
+    /// Returns whether candidate frames may project the destination's interactive tree.
+    pub const fn projects_destination_semantics(self) -> bool {
+        matches!(
+            self.phase,
+            WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+                | WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+                | WindowProvisionalSessionPhase::Promoted
+        )
+    }
+
     /// Returns whether the window must remain natively hit-transparent.
     pub const fn requires_native_hit_transparency(self) -> bool {
         !matches!(self.phase, WindowProvisionalSessionPhase::Promoted)
@@ -821,6 +1063,9 @@ pub enum WindowProvisionalSessionError {
     /// The session generation must be non-zero.
     #[error("provisional window-session generation must be non-zero")]
     ZeroGeneration,
+    /// A destination semantics generation must be non-zero.
+    #[error("provisional destination-semantics generation must be non-zero")]
+    ZeroDestinationSemanticsGeneration,
     /// A different full window id already owns the session.
     #[error("provisional window session is bound to a different window")]
     WindowMismatch,
@@ -838,6 +1083,7 @@ struct WindowProvisionalSessionState {
     phase: WindowProvisionalSessionPhase,
     opening_claimed: bool,
     reveal_ticket: Option<WindowProvisionalRevealTicket>,
+    destination_semantics_ticket: Option<WindowProvisionalSemanticsTicket>,
 }
 
 pub(crate) struct WindowProvisionalOpeningClaim {
@@ -1018,6 +1264,139 @@ pub struct WindowProvisionalRevealTicket {
     state: Arc<ParkingMutex<WindowProvisionalRevealState>>,
 }
 
+/// Terminal status of one exact destination-semantics projection.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowProvisionalSemanticsOutcome {
+    /// The interactive destination tree has not committed yet.
+    Pending,
+    /// The exact destination tree committed in one accepted frame.
+    Committed,
+    /// The window became terminal before the destination tree committed.
+    WindowTerminal,
+}
+
+/// Immutable evidence for one exact destination-semantics projection.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowProvisionalSemanticsSnapshot {
+    window_id: WindowId,
+    session_generation: u64,
+    destination_generation: u64,
+    minimum_frame_generation: u64,
+    committed_frame_generation: Option<u64>,
+    outcome: WindowProvisionalSemanticsOutcome,
+}
+
+impl WindowProvisionalSemanticsSnapshot {
+    /// Returns the exact committed full window id.
+    pub const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
+    /// Returns the owning provisional-session generation.
+    pub const fn session_generation(self) -> u64 {
+        self.session_generation
+    }
+
+    /// Returns the caller-owned destination promotion generation.
+    pub const fn destination_generation(self) -> u64 {
+        self.destination_generation
+    }
+
+    /// Returns the first frame eligible to carry the destination tree.
+    pub const fn minimum_frame_generation(self) -> u64 {
+        self.minimum_frame_generation
+    }
+
+    /// Returns the accepted frame that committed the destination tree.
+    pub const fn committed_frame_generation(self) -> Option<u64> {
+        self.committed_frame_generation
+    }
+
+    /// Returns the current terminal or pending outcome.
+    pub const fn outcome(self) -> WindowProvisionalSemanticsOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug)]
+struct WindowProvisionalSemanticsState {
+    committed_frame_generation: Option<u64>,
+    outcome: WindowProvisionalSemanticsOutcome,
+}
+
+/// A cloneable exact-generation destination-semantics receipt.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct WindowProvisionalSemanticsTicket {
+    window_id: WindowId,
+    session_generation: u64,
+    destination_generation: u64,
+    minimum_frame_generation: u64,
+    state: Arc<ParkingMutex<WindowProvisionalSemanticsState>>,
+}
+
+impl WindowProvisionalSemanticsTicket {
+    fn new(
+        window_id: WindowId,
+        session_generation: u64,
+        destination_generation: u64,
+        minimum_frame_generation: u64,
+    ) -> Self {
+        Self {
+            window_id,
+            session_generation,
+            destination_generation,
+            minimum_frame_generation,
+            state: Arc::new(ParkingMutex::new(WindowProvisionalSemanticsState {
+                committed_frame_generation: None,
+                outcome: WindowProvisionalSemanticsOutcome::Pending,
+            })),
+        }
+    }
+
+    /// Returns immutable evidence that survives the target window.
+    pub fn snapshot(&self) -> WindowProvisionalSemanticsSnapshot {
+        let state = self.state.lock();
+        WindowProvisionalSemanticsSnapshot {
+            window_id: self.window_id,
+            session_generation: self.session_generation,
+            destination_generation: self.destination_generation,
+            minimum_frame_generation: self.minimum_frame_generation,
+            committed_frame_generation: state.committed_frame_generation,
+            outcome: state.outcome,
+        }
+    }
+
+    fn commit_frame(&self, frame_generation: u64) -> bool {
+        let mut state = self.state.lock();
+        if state.outcome != WindowProvisionalSemanticsOutcome::Pending
+            || state.committed_frame_generation.is_some()
+            || frame_generation < self.minimum_frame_generation
+        {
+            return false;
+        }
+        state.committed_frame_generation = Some(frame_generation);
+        state.outcome = WindowProvisionalSemanticsOutcome::Committed;
+        true
+    }
+
+    fn settle_window_terminal(&self) {
+        let mut state = self.state.lock();
+        if state.outcome == WindowProvisionalSemanticsOutcome::Pending {
+            state.outcome = WindowProvisionalSemanticsOutcome::WindowTerminal;
+        }
+    }
+
+    fn same_authority(&self, other: &Self) -> bool {
+        self.window_id == other.window_id
+            && self.session_generation == other.session_generation
+            && self.destination_generation == other.destination_generation
+            && Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
 impl WindowProvisionalRevealTicket {
     pub(crate) fn new(
         window_id: WindowId,
@@ -1107,6 +1486,7 @@ impl WindowProvisionalSession {
                 phase: WindowProvisionalSessionPhase::Unbound,
                 opening_claimed: false,
                 reveal_ticket: None,
+                destination_semantics_ticket: None,
             })),
         })
     }
@@ -1200,22 +1580,97 @@ impl WindowProvisionalSession {
         }
     }
 
-    /// Promotes the exact bound window in place and admits interaction.
-    pub(crate) fn promote(&self, window_id: WindowId) -> Result<(), WindowProvisionalSessionError> {
-        let mut state = self.state.lock();
-        match (state.window_id, state.phase) {
-            (Some(current), WindowProvisionalSessionPhase::Gated) if current == window_id => {
-                state.phase = WindowProvisionalSessionPhase::Promoted;
-                Ok(())
-            }
-            (Some(current), WindowProvisionalSessionPhase::Promoted) if current == window_id => {
-                Ok(())
-            }
-            (Some(current), _) if current != window_id => {
-                Err(WindowProvisionalSessionError::WindowMismatch)
-            }
-            _ => Err(WindowProvisionalSessionError::InvalidPhase),
+    pub(crate) fn begin_destination_semantics(
+        &self,
+        window_id: WindowId,
+        destination_generation: u64,
+        minimum_frame_generation: u64,
+    ) -> Result<WindowProvisionalSemanticsTicket, WindowProvisionalSessionError> {
+        if destination_generation == 0 {
+            return Err(WindowProvisionalSessionError::ZeroDestinationSemanticsGeneration);
         }
+        let mut state = self.state.lock();
+        if state.window_id != Some(window_id) {
+            return Err(WindowProvisionalSessionError::WindowMismatch);
+        }
+        if state.phase != WindowProvisionalSessionPhase::Gated
+            || state.destination_semantics_ticket.is_some()
+            || state.reveal_ticket.as_ref().is_none_or(|ticket| {
+                let snapshot = ticket.snapshot();
+                snapshot.outcome() != WindowProvisionalRevealOutcome::Revealed
+                    || snapshot
+                        .native_facts()
+                        .is_none_or(|facts| !facts.accepts_reveal())
+            })
+        {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        let ticket = WindowProvisionalSemanticsTicket::new(
+            window_id,
+            self.generation,
+            destination_generation,
+            minimum_frame_generation,
+        );
+        state.destination_semantics_ticket = Some(ticket.clone());
+        state.phase = WindowProvisionalSessionPhase::ProjectingDestinationSemantics;
+        Ok(ticket)
+    }
+
+    pub(crate) fn commit_destination_semantics(
+        &self,
+        window_id: WindowId,
+        exact_ticket: &WindowProvisionalSemanticsTicket,
+        frame_generation: u64,
+    ) -> Result<(), WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        if state.window_id != Some(window_id) {
+            return Err(WindowProvisionalSessionError::WindowMismatch);
+        }
+        if state.phase != WindowProvisionalSessionPhase::ProjectingDestinationSemantics {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        let ticket = state
+            .destination_semantics_ticket
+            .as_ref()
+            .ok_or(WindowProvisionalSessionError::InvalidPhase)?;
+        if !ticket.same_authority(exact_ticket) {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        if !ticket.commit_frame(frame_generation) {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        state.phase = WindowProvisionalSessionPhase::DestinationSemanticsCommitted;
+        Ok(())
+    }
+
+    pub(crate) fn admit_interaction(
+        &self,
+        window_id: WindowId,
+        ticket: &WindowProvisionalSemanticsTicket,
+    ) -> Result<(), WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        if state.window_id != Some(window_id) {
+            return Err(WindowProvisionalSessionError::WindowMismatch);
+        }
+        if state.phase == WindowProvisionalSessionPhase::Promoted
+            && state
+                .destination_semantics_ticket
+                .as_ref()
+                .is_some_and(|current| current.same_authority(ticket))
+        {
+            return Ok(());
+        }
+        if state.phase != WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+            || state
+                .destination_semantics_ticket
+                .as_ref()
+                .is_none_or(|current| !current.same_authority(ticket))
+            || ticket.snapshot().outcome() != WindowProvisionalSemanticsOutcome::Committed
+        {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        state.phase = WindowProvisionalSessionPhase::Promoted;
+        Ok(())
     }
 
     /// Makes presentation and interaction terminal for the exact bound window.
@@ -1229,6 +1684,9 @@ impl WindowProvisionalSession {
                 Err(WindowProvisionalSessionError::WindowMismatch)
             }
             Some(_) => {
+                if let Some(ticket) = state.destination_semantics_ticket.as_ref() {
+                    ticket.settle_window_terminal();
+                }
                 state.phase = WindowProvisionalSessionPhase::Terminal;
                 Ok(())
             }
@@ -1506,6 +1964,14 @@ pub trait Platform: 'static {
         PlatformWindowCapabilities::default()
     }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
+        None
+    }
+    /// Returns one checked native drag hysteresis observation for a new drag transaction.
+    ///
+    /// Callers must retain the result for the entire drag instead of resampling it after the drag
+    /// has started.
+    #[doc(hidden)]
+    fn native_drag_hysteresis(&self) -> Option<PlatformNativeDragHysteresis> {
         None
     }
 
@@ -2906,7 +3372,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     /// Submits one frame to the platform renderer.
     ///
-    /// A deferred or rejected submission must not be reported as presented by GPUI.
+    /// Any non-[`PlatformWindowPresentOutcome::Submitted`] outcome must not be reported as
+    /// presented by GPUI.
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome;
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
@@ -2993,6 +3460,11 @@ pub enum PlatformWindowPresentOutcome {
     Submitted,
     /// The native surface is temporarily unable to accept a frame.
     Deferred,
+    /// Renderer-local resources referenced by this scene are no longer valid.
+    ///
+    /// Unlike [`Self::Deferred`], retrying the same scene can never succeed. GPUI must produce and
+    /// hand a newer accepted frame to the renderer before ordinary presentation retries may resume.
+    RepaintRequired,
     /// The renderer or native surface rejected the frame.
     Rejected,
 }
@@ -3395,6 +3867,147 @@ impl AtlasRemoveDiagnostic {
     }
 }
 
+/// Identifies one renderer-local atlas lifetime.
+///
+/// Texture identifiers may be reused after an atlas reset. Retained paint must therefore bind
+/// both the texture identifiers and the epoch in which they were acquired.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct AtlasTextureLeaseEpoch(u64);
+
+impl AtlasTextureLeaseEpoch {
+    /// The first epoch assigned to a newly-created atlas.
+    pub const INITIAL: Self = Self(1);
+
+    /// Returns the next atlas lifetime.
+    pub fn next(self) -> Self {
+        Self(
+            self.0
+                .checked_add(1)
+                .expect("atlas texture lease epoch exhausted"),
+        )
+    }
+
+    /// Returns the raw epoch value for diagnostics.
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl Default for AtlasTextureLeaseEpoch {
+    fn default() -> Self {
+        Self::INITIAL
+    }
+}
+
+/// Describes why an atlas could not retain every texture referenced by a visual lease.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AtlasTextureLeaseError {
+    /// A referenced texture was no longer resident when the lease was acquired.
+    TextureUnavailable {
+        /// The unavailable renderer-local texture instance.
+        texture: AtlasTextureInstanceId,
+        /// The atlas epoch observed during acquisition.
+        epoch: AtlasTextureLeaseEpoch,
+    },
+    /// The per-texture lease counter could not represent another live lease.
+    LeaseCountOverflow {
+        /// The renderer-local texture instance whose lease count overflowed.
+        texture: AtlasTextureInstanceId,
+        /// The atlas epoch observed during acquisition.
+        epoch: AtlasTextureLeaseEpoch,
+    },
+}
+
+impl fmt::Display for AtlasTextureLeaseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TextureUnavailable { texture, epoch } => write!(
+                f,
+                "atlas texture instance {texture:?} is unavailable in epoch {}",
+                epoch.get()
+            ),
+            Self::LeaseCountOverflow { texture, epoch } => write!(
+                f,
+                "atlas texture instance {texture:?} exceeded its lease count in epoch {}",
+                epoch.get()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AtlasTextureLeaseError {}
+
+/// Indicates that a previously acquired texture lease can no longer be replayed.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AtlasTextureLeaseInvalidation {
+    /// The atlas lifetime in which the retained visual was captured.
+    pub expected_epoch: AtlasTextureLeaseEpoch,
+    /// The atlas lifetime currently installed in the renderer.
+    pub actual_epoch: AtlasTextureLeaseEpoch,
+}
+
+/// Keeps renderer-local atlas textures resident for a window-local retained visual.
+///
+/// This lease does not make texture identifiers portable between renderers or windows. Device
+/// loss and explicit atlas resets invalidate the lease by advancing the atlas epoch.
+#[doc(hidden)]
+pub struct AtlasTextureLease {
+    atlas: Arc<dyn PlatformAtlas>,
+    epoch: AtlasTextureLeaseEpoch,
+    texture_instances: Box<[AtlasTextureInstanceId]>,
+}
+
+impl AtlasTextureLease {
+    /// Returns the atlas lifetime in which the lease was acquired.
+    pub fn epoch(&self) -> AtlasTextureLeaseEpoch {
+        self.epoch
+    }
+
+    /// Returns the deduplicated renderer-local texture instances held by this lease.
+    pub fn texture_instances(&self) -> &[AtlasTextureInstanceId] {
+        &self.texture_instances
+    }
+
+    /// Rejects replay after a renderer reset instead of exposing stale texture identifiers.
+    pub fn validate(&self) -> std::result::Result<(), AtlasTextureLeaseInvalidation> {
+        let actual_epoch = self.atlas.atlas_texture_lease_epoch();
+        if actual_epoch == self.epoch {
+            Ok(())
+        } else {
+            Err(AtlasTextureLeaseInvalidation {
+                expected_epoch: self.epoch,
+                actual_epoch,
+            })
+        }
+    }
+}
+
+impl Debug for AtlasTextureLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AtlasTextureLease")
+            .field("epoch", &self.epoch)
+            .field("texture_instances", &self.texture_instances)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for AtlasTextureLease {
+    fn drop(&mut self) {
+        if self.texture_instances.is_empty() {
+            return;
+        }
+        // SAFETY: `retain_texture_instances` acquired this exact deduplicated set once, stores it
+        // in this non-cloneable lease, and `Drop` is the only path that releases it.
+        unsafe {
+            self.atlas
+                .release_atlas_texture_leases(self.epoch, &self.texture_instances);
+        }
+    }
+}
+
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
     fn get_or_insert_with<'a>(
@@ -3430,6 +4043,67 @@ pub trait PlatformAtlas {
     fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
         self.remove(key);
         AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::Unknown, None)
+    }
+
+    /// Returns the current renderer-local texture lifetime.
+    #[doc(hidden)]
+    fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch;
+
+    /// Atomically retains every supplied texture in the current atlas lifetime.
+    ///
+    /// # Safety
+    ///
+    /// `textures` must be deduplicated. Every successful acquisition must be released at most once
+    /// with the returned epoch and the same texture instances. Callers must not expose a path that
+    /// can forge that matching release.
+    #[doc(hidden)]
+    unsafe fn acquire_atlas_texture_leases(
+        &self,
+        textures: &[AtlasTextureInstanceId],
+    ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError>;
+
+    /// Releases textures previously acquired in the supplied atlas lifetime.
+    ///
+    /// # Safety
+    ///
+    /// The epoch and deduplicated texture instances must name one live, successful acquisition
+    /// from [`PlatformAtlas::acquire_atlas_texture_leases`]. That acquisition must not have been
+    /// released already, and this call consumes its only release obligation.
+    #[doc(hidden)]
+    unsafe fn release_atlas_texture_leases(
+        &self,
+        epoch: AtlasTextureLeaseEpoch,
+        textures: &[AtlasTextureInstanceId],
+    );
+}
+
+impl dyn PlatformAtlas {
+    /// Retains each renderer-local texture exactly once until the returned lease is dropped.
+    #[doc(hidden)]
+    pub fn retain_texture_instances(
+        self: Arc<Self>,
+        textures: &[AtlasTextureInstanceId],
+    ) -> std::result::Result<AtlasTextureLease, AtlasTextureLeaseError> {
+        let mut unique_instances = Vec::with_capacity(textures.len());
+        let mut seen = std::collections::HashSet::with_capacity(textures.len());
+        for texture in textures.iter().copied() {
+            if seen.insert(texture) {
+                unique_instances.push(texture);
+            }
+        }
+
+        let epoch = if unique_instances.is_empty() {
+            self.atlas_texture_lease_epoch()
+        } else {
+            // SAFETY: this method deduplicates the instances and transfers the unique matching
+            // release obligation into the non-cloneable `AtlasTextureLease` returned below.
+            unsafe { self.acquire_atlas_texture_leases(&unique_instances)? }
+        };
+        Ok(AtlasTextureLease {
+            atlas: self,
+            epoch,
+            texture_instances: unique_instances.into_boxed_slice(),
+        })
     }
 }
 
@@ -3481,6 +4155,142 @@ pub struct AtlasTile {
     pub padding: u32,
     /// The bounds of this tile within the texture.
     pub bounds: Bounds<DevicePixels>,
+    /// The renderer-local texture instance generation observed when this tile was allocated.
+    pub texture_generation: u32,
+    /// Explicit shader-ABI padding. Must remain zero.
+    pub texture_generation_padding: u32,
+}
+
+impl AtlasTile {
+    /// Returns the exact renderer-local texture instance that owns this tile.
+    pub const fn texture_instance(self) -> AtlasTextureInstanceId {
+        AtlasTextureInstanceId {
+            texture_id: self.texture_id,
+            generation: self.texture_generation,
+        }
+    }
+}
+
+#[cfg(test)]
+mod atlas_tile_abi_tests {
+    use super::{AtlasTextureId, AtlasTextureKind, AtlasTile, TileId};
+    use crate::{Bounds, DevicePixels, Point, Size};
+    use std::mem::{align_of, size_of};
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[repr(C)]
+    struct ExternalAtlasTextureId {
+        slot: u32,
+        kind: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[repr(C)]
+    struct ExternalAtlasBounds {
+        origin_x: i32,
+        origin_y: i32,
+        width: i32,
+        height: i32,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[repr(C)]
+    struct ExternalAtlasTile {
+        texture_id: ExternalAtlasTextureId,
+        tile_id: u32,
+        padding: u32,
+        bounds: ExternalAtlasBounds,
+        texture_generation: u32,
+        texture_generation_padding: u32,
+    }
+
+    #[test]
+    fn atlas_tile_repr_c_layout_matches_external_backend_mirror() {
+        assert_eq!(size_of::<AtlasTextureKind>(), 4);
+        assert_eq!(size_of::<AtlasTextureId>(), 8);
+        assert_eq!(align_of::<AtlasTextureId>(), 4);
+        assert_eq!(std::mem::offset_of!(AtlasTextureId, index), 0);
+        assert_eq!(std::mem::offset_of!(AtlasTextureId, kind), 4);
+
+        assert_eq!(size_of::<AtlasTile>(), 40);
+        assert_eq!(align_of::<AtlasTile>(), 4);
+        assert_eq!(std::mem::offset_of!(AtlasTile, texture_id), 0);
+        assert_eq!(std::mem::offset_of!(AtlasTile, tile_id), 8);
+        assert_eq!(std::mem::offset_of!(AtlasTile, padding), 12);
+        assert_eq!(std::mem::offset_of!(AtlasTile, bounds), 16);
+        assert_eq!(std::mem::offset_of!(AtlasTile, texture_generation), 32);
+        assert_eq!(
+            std::mem::offset_of!(AtlasTile, texture_generation_padding),
+            36
+        );
+
+        assert_eq!(size_of::<ExternalAtlasTile>(), size_of::<AtlasTile>());
+        assert_eq!(align_of::<ExternalAtlasTile>(), align_of::<AtlasTile>());
+        assert_eq!(std::mem::offset_of!(ExternalAtlasTile, texture_id), 0);
+        assert_eq!(std::mem::offset_of!(ExternalAtlasTile, tile_id), 8);
+        assert_eq!(std::mem::offset_of!(ExternalAtlasTile, padding), 12);
+        assert_eq!(std::mem::offset_of!(ExternalAtlasTile, bounds), 16);
+        assert_eq!(
+            std::mem::offset_of!(ExternalAtlasTile, texture_generation),
+            32
+        );
+        assert_eq!(
+            std::mem::offset_of!(ExternalAtlasTile, texture_generation_padding),
+            36
+        );
+    }
+
+    #[test]
+    fn external_backend_literal_preserves_slot_generation_and_zero_padding() {
+        let external_tile = ExternalAtlasTile {
+            texture_id: ExternalAtlasTextureId {
+                slot: 17,
+                kind: AtlasTextureKind::Polychrome as u32,
+            },
+            tile_id: 23,
+            padding: 2,
+            bounds: ExternalAtlasBounds {
+                origin_x: 31,
+                origin_y: 37,
+                width: 41,
+                height: 43,
+            },
+            texture_generation: 47,
+            texture_generation_padding: 0,
+        };
+
+        // SAFETY: both types are `repr(C)` with corresponding fixed-width fields. The destination
+        // newtypes are transparent or single-field `repr(C)` wrappers over the mirror primitives,
+        // and `kind` contains a valid `AtlasTextureKind` discriminant. The transmute itself also
+        // statically requires equal total size.
+        let tile: AtlasTile = unsafe { std::mem::transmute(external_tile) };
+
+        assert_eq!(
+            tile,
+            AtlasTile {
+                texture_id: AtlasTextureId {
+                    index: 17,
+                    kind: AtlasTextureKind::Polychrome,
+                },
+                tile_id: TileId(23),
+                padding: 2,
+                bounds: Bounds {
+                    origin: Point {
+                        x: DevicePixels(31),
+                        y: DevicePixels(37),
+                    },
+                    size: Size {
+                        width: DevicePixels(41),
+                        height: DevicePixels(43),
+                    },
+                },
+                texture_generation: 47,
+                texture_generation_padding: 0,
+            }
+        );
+        assert_eq!(tile.texture_instance().texture_id.index, 17);
+        assert_eq!(tile.texture_instance().generation, 47);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3492,6 +4302,20 @@ pub struct AtlasTextureId {
     pub index: u32,
     /// The kind of content stored in this texture.
     pub kind: AtlasTextureKind,
+}
+
+/// Identifies one concrete occupant of a renderer-local atlas texture slot.
+///
+/// [`AtlasTextureId`] names the reusable slot consumed by shaders. `generation` distinguishes
+/// different texture instances that occupy that slot during the atlas object's lifetime, including
+/// across renderer-reset epochs.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AtlasTextureInstanceId {
+    /// The reusable renderer-local atlas slot.
+    pub texture_id: AtlasTextureId,
+    /// The non-zero instance generation assigned when the slot was populated.
+    pub generation: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -14,8 +14,9 @@ use uuid::Uuid;
 
 use open_gpui::{
     AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
-    AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels,
-    DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
+    AtlasRemoveOutcome, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureLeaseEpoch,
+    AtlasTextureLeaseError, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
     PlatformWindow, PlatformWindowCommand, PlatformWindowCommandDispatcher,
     PlatformWindowCommandOutcome, PlatformWindowPresentOutcome, Point,
@@ -325,8 +326,16 @@ struct HeadlessAtlas(Mutex<HeadlessAtlasState>);
 
 #[derive(Default)]
 struct HeadlessAtlasState {
+    epoch: AtlasTextureLeaseEpoch,
     next_id: u32,
     tiles: HashMap<AtlasKey, AtlasTile>,
+    texture_refs: HashMap<AtlasTextureInstanceId, HeadlessAtlasTextureRefs>,
+}
+
+#[derive(Default)]
+struct HeadlessAtlasTextureRefs {
+    live_atlas_keys: u32,
+    live_visual_leases: u32,
 }
 
 impl PlatformAtlas for HeadlessAtlas {
@@ -364,8 +373,10 @@ impl PlatformAtlas for HeadlessAtlas {
                 origin: Point::default(),
                 size,
             },
+            texture_generation: texture_id,
+            texture_generation_padding: 0,
         };
-        state.tiles.insert(key.clone(), tile);
+        state.insert_tile(key.clone(), tile);
         Ok(Some(tile))
     }
 
@@ -419,8 +430,10 @@ impl PlatformAtlas for HeadlessAtlas {
                 origin: Point::default(),
                 size,
             },
+            texture_generation: texture_id,
+            texture_generation_padding: 0,
         };
-        state.tiles.insert(key.clone(), tile);
+        state.insert_tile(key.clone(), tile);
         Ok(AtlasAccess {
             tile: Some(tile),
             diagnostic: AtlasAccessDiagnostic::new(
@@ -433,19 +446,122 @@ impl PlatformAtlas for HeadlessAtlas {
     }
 
     fn remove(&self, key: &AtlasKey) {
-        self.0.lock().tiles.remove(key);
+        self.0.lock().remove_tile(key);
     }
 
     fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
-        let removed = self.0.lock().tiles.remove(key);
-        AtlasRemoveDiagnostic::new(
-            key,
-            if removed.is_some() {
-                AtlasRemoveOutcome::RemoveHit
+        let mut state = self.0.lock();
+        let removed = state.remove_tile(key);
+        let outcome = removed.map_or(AtlasRemoveOutcome::RemoveNoop, |tile| {
+            if state.texture_refs.contains_key(&tile.texture_instance()) {
+                AtlasRemoveOutcome::TextureRetained
             } else {
-                AtlasRemoveOutcome::RemoveNoop
+                AtlasRemoveOutcome::TextureFreed
+            }
+        });
+        AtlasRemoveDiagnostic::new(key, outcome, removed.map(|tile| tile.texture_id))
+    }
+
+    fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch {
+        self.0.lock().epoch
+    }
+
+    unsafe fn acquire_atlas_texture_leases(
+        &self,
+        textures: &[AtlasTextureInstanceId],
+    ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError> {
+        debug_assert!(
+            textures
+                .iter()
+                .enumerate()
+                .all(|(index, texture)| !textures[..index].contains(texture)),
+            "atlas texture lease acquisition requires deduplicated texture instances"
+        );
+        let mut state = self.0.lock();
+        let epoch = state.epoch;
+        for texture in textures.iter().copied() {
+            let Some(texture_refs) = state.texture_refs.get(&texture) else {
+                return Err(AtlasTextureLeaseError::TextureUnavailable { texture, epoch });
+            };
+            if texture_refs.live_visual_leases == u32::MAX {
+                return Err(AtlasTextureLeaseError::LeaseCountOverflow { texture, epoch });
+            }
+        }
+        for texture in textures.iter().copied() {
+            if let Some(texture_refs) = state.texture_refs.get_mut(&texture) {
+                texture_refs.live_visual_leases += 1;
+            }
+        }
+        Ok(epoch)
+    }
+
+    unsafe fn release_atlas_texture_leases(
+        &self,
+        epoch: AtlasTextureLeaseEpoch,
+        textures: &[AtlasTextureInstanceId],
+    ) {
+        debug_assert!(
+            textures
+                .iter()
+                .enumerate()
+                .all(|(index, texture)| !textures[..index].contains(texture)),
+            "atlas texture lease release requires deduplicated texture instances"
+        );
+        let mut state = self.0.lock();
+        if state.epoch != epoch {
+            return;
+        }
+        for texture in textures.iter().copied() {
+            state.release_visual_lease(texture);
+        }
+    }
+}
+
+impl HeadlessAtlasState {
+    fn insert_tile(&mut self, key: AtlasKey, tile: AtlasTile) {
+        self.texture_refs.insert(
+            tile.texture_instance(),
+            HeadlessAtlasTextureRefs {
+                live_atlas_keys: 1,
+                live_visual_leases: 0,
             },
-            removed.map(|tile| tile.texture_id),
-        )
+        );
+        self.tiles.insert(key, tile);
+    }
+
+    fn remove_tile(&mut self, key: &AtlasKey) -> Option<AtlasTile> {
+        let tile = self.tiles.remove(key)?;
+        let remove_refs = self
+            .texture_refs
+            .get_mut(&tile.texture_instance())
+            .is_some_and(|texture_refs| {
+                if texture_refs.live_atlas_keys == 0 {
+                    debug_assert!(false, "headless atlas key count underflowed");
+                } else {
+                    texture_refs.live_atlas_keys -= 1;
+                }
+                texture_refs.live_atlas_keys == 0 && texture_refs.live_visual_leases == 0
+            });
+        if remove_refs {
+            self.texture_refs.remove(&tile.texture_instance());
+        }
+        Some(tile)
+    }
+
+    fn release_visual_lease(&mut self, texture: AtlasTextureInstanceId) {
+        let remove_refs = self
+            .texture_refs
+            .get_mut(&texture)
+            .is_some_and(|texture_refs| {
+                if texture_refs.live_visual_leases == 0 {
+                    debug_assert!(false, "headless atlas visual lease count underflowed");
+                } else {
+                    texture_refs.live_visual_leases -= 1;
+                }
+                texture_refs.live_atlas_keys == 0 && texture_refs.live_visual_leases == 0
+            });
+        if remove_refs {
+            self.texture_refs.remove(&texture);
+        }
     }
 }

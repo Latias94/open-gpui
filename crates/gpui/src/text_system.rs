@@ -638,6 +638,10 @@ impl WindowTextSystem {
         self.line_layout_cache.finish_frame()
     }
 
+    pub(crate) fn abort_frame(&self) {
+        self.line_layout_cache.abort_frame()
+    }
+
     /// Layout the given line of text, at the given font_size.
     /// Subsets of the line can be styled independently with the `runs` parameter.
     /// Generally, you should prefer to use [`Self::shape_line`] instead, which

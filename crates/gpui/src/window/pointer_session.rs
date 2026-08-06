@@ -406,6 +406,7 @@ impl Window {
             button,
             reason,
             Some(native_release),
+            true,
             cx,
         );
     }
@@ -458,6 +459,25 @@ impl Window {
         reason: PointerCancelReason,
         cx: &mut App,
     ) {
+        self.queue_pointer_session_cancellation_with_refresh(owner, reason, true, cx);
+    }
+
+    pub(super) fn queue_candidate_pointer_session_cancellation(
+        &mut self,
+        owner: PointerCaptureHandle,
+        reason: PointerCancelReason,
+        cx: &mut App,
+    ) {
+        self.queue_pointer_session_cancellation_with_refresh(owner, reason, false, cx);
+    }
+
+    fn queue_pointer_session_cancellation_with_refresh(
+        &mut self,
+        owner: PointerCaptureHandle,
+        reason: PointerCancelReason,
+        refresh_after_drag_removal: bool,
+        cx: &mut App,
+    ) {
         let button = self
             .captured_pointer
             .filter(|captured| captured.handle == owner)
@@ -478,6 +498,7 @@ impl Window {
             button,
             reason,
             native_release,
+            refresh_after_drag_removal,
             cx,
         );
     }
@@ -488,6 +509,7 @@ impl Window {
         button: MouseButton,
         reason: PointerCancelReason,
         native_release: Option<crate::NativePointerCaptureReleaseToken>,
+        refresh_after_drag_removal: bool,
         cx: &mut App,
     ) {
         let target = owner.and_then(|owner| {
@@ -506,7 +528,9 @@ impl Window {
         }) {
             cx.active_drag = None;
             cx.retire_native_captured_drag_authority();
-            self.refresh();
+            if refresh_after_drag_removal {
+                self.refresh();
+            }
         }
         let button_remains_owned = self
             .captured_pointer

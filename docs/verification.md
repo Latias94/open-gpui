@@ -89,7 +89,7 @@ These are stable, single-threaded wasm gates. The Linux matrix also runs the sta
 cargo run -p xtask -- web-smoke
 ```
 
-`xtask web-smoke` builds `crates/gpui_web/examples/smoke_web` with Trunk, serves the generated files with cross-origin isolation headers, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, DOM/canvas initialization, focus/input delivery, a single-window shell interaction, the explicit unsupported platform-viewport capability on web, and a `DockSurface` viewport readiness/open probe that returns typed `backend_unsupported` without creating a window or runtime registration. The smoke intentionally avoids the nightly shared-memory example so CI proves the default stable browser path.
+`xtask web-smoke` builds `crates/gpui_web/examples/smoke_web` with Trunk, serves the generated files with cross-origin isolation headers, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, DOM/canvas initialization, focus/input delivery, a single-window shell interaction, the explicit unsupported platform-viewport capability on web, and a `DockSurface` viewport readiness/open probe that returns typed `backend_unsupported` without creating a window or runtime registration. The command fails when WebGPU is unavailable, so CI cannot pass without executing those behavior assertions. A developer diagnosing a machine without WebGPU may opt into `cargo run -p xtask -- web-smoke --allow-unavailable`; that explicit local skip is not a verification result. The smoke intentionally avoids the nightly shared-memory example so CI proves the default stable browser path.
 
 Nightly shared-memory/atomics checks for `hello_web` remain optional verification, not CI requirements.
 
@@ -1345,7 +1345,7 @@ $env:CARGO_BUILD_JOBS = '1'
 cargo fmt --all -- --check
 cargo nextest run --locked -p open-gpui --lib transform --no-fail-fast
 cargo nextest run --locked -p open-gpui --lib measured tooltip --no-fail-fast
-cargo nextest run --locked -p open-gpui --test presentation_surface --no-fail-fast
+cargo nextest run --locked -p open-gpui --all-features --test presentation_surface --no-fail-fast
 cargo nextest run --locked -p open-gpui-motion --no-fail-fast
 cargo nextest run --locked -p open-gpui-ui-components motion_adapter --no-fail-fast
 cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery presentation --no-fail-fast
@@ -1397,7 +1397,10 @@ The GPUI runtime tests assert the exact `Visible`/`Inert`/`Hidden` channel matri
 dominance, custom-element fail-closed behavior, same-frame focus/capture/IME and final AccessKit
 cleanup, one terminal pointer cancellation, and no stale replay on restoration. Deferred, cache,
 portal, and nested-transform tests must toggle only the ancestor presentation where possible so a
-child notification cannot hide a stale-journal defect.
+child notification cannot hide a stale-journal defect. Every desktop CI host runs the
+all-features `presentation_surface` target. Its compiler-checked negative fixtures reject the
+retired `Visibility` export, style fields, and fluent methods through the final public export graph;
+they do not infer Rust visibility or re-export semantics from source text.
 
 The Gallery Presentation flow keeps equivalent content and layout metrics while switching all
 three states at identity and transformed geometry. It exercises real controls, scrolling,
@@ -1407,8 +1410,9 @@ labels or an outer fixed-size wrapper alone are not layout evidence. `presentati
 Serde/schema `StyleRefinement::visibility` field, `Visibility::{Visible, Hidden}`,
 `visibility_style_methods!` and its generated `.visible()` / `.invisible()` (`fn visible` /
 `fn invisible`) methods, `a11y_hidden`, `aria_hidden`, and compatibility aliases for the retired
-surface. Review must separately confirm that no second ancestor presentation authority exists
-outside `SubtreePresentation`.
+surface. `scan-ui-contract` retains only exact internal residue tokens and does not duplicate the
+compiler's public-surface authority. Review must separately confirm that no second ancestor
+presentation authority exists outside `SubtreePresentation`.
 
 ## Committed Live Region And Announcement Gate
 
@@ -1785,15 +1789,16 @@ dispatches:
   `cargo nextest run -p open-gpui-macos --features font-kit --locked --no-fail-fast`.
 - All three platforms run `cargo check -p open-gpui-wgpu --features font-kit --locked`.
 
-Run the native renderer smoke explicitly with:
+Run the complete native WGPU package test suite explicitly with:
 
 ```sh
 cargo run -p xtask -- renderer-smoke
 ```
 
-That command runs the focused `open-gpui-wgpu` smoke test that requests a real native `wgpu` adapter and
-device, creates the renderer bind group layouts, and builds the core render pipelines. It is not
-part of the default `verify` gate because it depends on local GPU, driver, and session availability.
+That command runs every `open-gpui-wgpu` package test with the `font-kit` feature, including the
+real-adapter renderer pipeline smoke and the atlas, lease, shutdown, and renderer contract tests.
+Windows CI owns this complete package gate. It is not part of the default `verify` command because
+the real-adapter case depends on GPU, driver, and interactive-session availability.
 
 Run the docking smoke surface explicitly after changing `open-gpui-docking`:
 
@@ -1869,6 +1874,77 @@ retry succeeds. Automated owners include
 `shutdown_uses_native_window_terminal_after_capture_release_retries_are_saturated`,
 `stale_framework_release_cannot_target_a_newer_native_capture`, and
 `failed_destroy_during_platform_window_retirement_retries_without_losing_owner`.
+
+## Windows Native Interactive Runner Gate
+
+Claims about system-routed cross-HWND pointer input, actual Win32 capture ownership, or a live
+provisional viewport require the self-hosted runner label
+`open-gpui-windows-native-interactive-ephemeral`. The runner is owned by the Windows backend CODEOWNER in
+`.github/CODEOWNERS`; runner outage or missing capacity is an infrastructure failure that blocks
+the gate. Do not skip the job, move it to `windows-latest`, or replace system input with
+`SendMessageW` / `PostMessageW`. Escalate an unavailable or incapable runner through a repository
+infrastructure issue assigned to `@Latias94`.
+
+The workflow verifies the exact `github.sha` for pull-request merge commits, merge-queue commits,
+and trusted pushes. Manual dispatch requires a full `commit_sha`; checkout is rejected unless HEAD
+matches that object exactly. Pull-request code may run only on a separate immutable one-job Windows
+runner registered with `--ephemeral`. The runner must have no repository or organization secrets,
+no reusable credentials, and no access to privileged internal resources, and its machine or VM must
+be destroyed or returned to a known-clean image after the job. A persistent self-hosted desktop
+must never carry the ephemeral label or execute this workflow. Runner logs must be forwarded before
+the disposable runner is destroyed.
+
+The runner must provide all of the following:
+
+- an unlocked interactive user desktop rather than a service session;
+- compatible process integrity and UIPI boundaries for `SendInput`;
+- one serial owner of the global cursor and pointer buttons;
+- a non-empty virtual screen containing the test window;
+- a functioning native renderer/GPU path;
+- permission to foreground the sentinel HWND without human interaction;
+- one-job ephemeral registration and a clean disposable host; and
+- no credentials or network reachability that untrusted pull-request code could retain or abuse.
+
+The preflight opens a rendered GPUI window, waits for a non-empty framework frame to receive a
+`Submitted` renderer outcome, records and later restores the foreground window and system cursor,
+injects mouse move/down/up through `SendInput` without naming a receiver, observes the actual WndProc
+recipient, and verifies `GetCapture()` acquisition and release. A five-second deadline waits for
+the exact canary-tagged HWND message together with its GPUI observer/capture effect, so stale input
+cannot satisfy the preflight. Stack unwinding releases a matching test capture and restores
+the original cursor; if failure occurs after injected button-down, cleanup first injects a
+best-effort button-up so the desktop cannot remain in a global drag. The input guard is destroyed
+before application/platform teardown, which continues to own every test HWND. The workflow
+serializes all runs through the same concurrency group and never cancels an in-progress cursor
+owner.
+
+Run the sentinel only on that dedicated runner:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+$env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
+cargo nextest run -p open-gpui-windows --locked --run-ignored only -E 'test(/native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture/)' --no-fail-fast
+```
+
+The sentinel is the phase-zero runner proof. The same workflow then runs the Dock-owned scenario
+`docking-native.windows.two-hwnd-captured-drop`:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+$env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
+cargo nextest run -p open-gpui-docking-native --locked --run-ignored only -E 'test(/native_interactive_two_hwnd_captured_drag_routes_preview_and_drop/)' --test-threads=1 --no-fail-fast
+```
+
+That scenario opens two distinct rendered Dock HWNDs, derives source and target points from their
+committed debug-selector bounds and actual client-to-screen scale, and injects an unaddressed
+system drag. It requires the source HWND to acquire and retain `GetCapture()` while the system
+cursor crosses the target HWND, proves the source WndProc remains the raw move/up recipient, waits
+for a non-empty target drop-preview frame, and then requires one newer durable surface revision in
+which the payload moved from the source space to the target space. The test restores the cursor,
+foreground window, button state, and matching capture during normal completion and unwinding.
+
+This two-HWND scenario proves captured routing, preview, and committed-host drop. It does not by
+itself claim desktop live-undock, provisional-content reveal, or same-HWND promotion completion;
+those remain separate native scenarios rather than being inferred from this gate.
 
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open

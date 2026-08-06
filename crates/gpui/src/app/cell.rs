@@ -47,6 +47,40 @@ use crate::{
 
 type OpenUrlsHandler = dyn FnMut(Vec<String>, &mut App);
 type AppHandler = dyn FnMut(&mut App);
+type NativeShutdownCriticalCallback = Box<dyn FnOnce(&mut App)>;
+
+#[derive(Default)]
+struct PreShutdownCriticalState {
+    next_ticket: u64,
+    callbacks: VecDeque<(u64, NativeShutdownCriticalCallback)>,
+}
+
+impl PreShutdownCriticalState {
+    fn protect(&mut self, callback: NativeShutdownCriticalCallback) -> u64 {
+        self.next_ticket = self
+            .next_ticket
+            .checked_add(1)
+            .expect("pre-shutdown critical ticket space exhausted");
+        let ticket = self.next_ticket;
+        self.callbacks.push_back((ticket, callback));
+        ticket
+    }
+
+    fn take(&mut self, ticket: u64) -> Option<NativeShutdownCriticalCallback> {
+        let index = self
+            .callbacks
+            .iter()
+            .position(|(current, _)| *current == ticket)?;
+        self.callbacks.remove(index).map(|(_, callback)| callback)
+    }
+
+    fn take_all(&mut self) -> VecDeque<NativeShutdownCriticalCallback> {
+        std::mem::take(&mut self.callbacks)
+            .into_iter()
+            .map(|(_, callback)| callback)
+            .collect()
+    }
+}
 
 const POINTER_CAPTURE_RELEASE_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_millis(8),
@@ -60,6 +94,12 @@ const SHUTDOWN_COMPLETION_RETRY_DELAYS: [Duration; 5] = [
     Duration::from_millis(128),
     Duration::from_millis(512),
 ];
+// Shutdown cleanup is best-effort after a panic. Bound synchronous unwinding before native
+// teardown proceeds and the first panic is resumed to the caller.
+const SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET: usize = 8;
+// Bound synchronous convergence when terminal effects and critical participants enqueue each
+// other. Exhaustion yields to the existing shutdown retry schedule instead of spinning forever.
+const SHUTDOWN_TERMINAL_CONVERGENCE_WAVE_BUDGET: usize = 8;
 
 fn retain_shutdown_panic(
     first: &mut Option<Box<dyn std::any::Any + Send>>,
@@ -68,6 +108,48 @@ fn retain_shutdown_panic(
     if first.is_none() {
         *first = candidate;
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeShutdownEffectFlushTerminal {
+    Drained,
+    Failed { panic_count: usize },
+}
+
+fn settle_shutdown_effect_flush(
+    first_panic: &mut Option<Box<dyn std::any::Any + Send>>,
+    mut flush: impl FnMut() -> Result<(), Box<dyn std::any::Any + Send>>,
+) -> NativeShutdownEffectFlushTerminal {
+    for panic_count in 1..=SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET {
+        match flush() {
+            Ok(()) => return NativeShutdownEffectFlushTerminal::Drained,
+            Err(payload) => {
+                retain_shutdown_panic(first_panic, Some(payload));
+                if panic_count == SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET {
+                    return NativeShutdownEffectFlushTerminal::Failed { panic_count };
+                }
+            }
+        }
+    }
+    unreachable!("shutdown effect-flush panic budget must be non-zero")
+}
+
+fn settle_shutdown_effect_wave(
+    app: &mut App,
+    generation: u64,
+    phase: &'static str,
+    first_panic: &mut Option<Box<dyn std::any::Any + Send>>,
+) -> NativeShutdownEffectFlushTerminal {
+    let terminal = settle_shutdown_effect_flush(first_panic, || {
+        catch_unwind(AssertUnwindSafe(|| app.flush_effects()))
+    });
+    if let NativeShutdownEffectFlushTerminal::Failed { panic_count } = terminal {
+        log::error!(
+            "shutdown generation {generation} abandoned {phase} effect flushing after {panic_count} consecutive panics",
+        );
+        app.abandon_pending_effects_after_shutdown_failure();
+    }
+    terminal
 }
 
 fn merge_presentation_shutdowns(
@@ -97,6 +179,8 @@ enum NativePointerCaptureReleaseState {
     Queued,
     RetryPending,
     AwaitingNativeWindowTerminal,
+    CompletionQueued(NativeCapturedDragReleaseTerminal),
+    Delivering(NativeCapturedDragReleaseTerminal),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,6 +201,7 @@ struct NativePointerCaptureReleaseBarrier {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeWindowRetirementState {
+    WaitingForDependencies,
     Queued,
     RetryPending,
     AwaitingNativeTerminal,
@@ -125,17 +210,183 @@ enum NativeWindowRetirementState {
 struct NativeWindowRetirementBarrier {
     state: NativeWindowRetirementState,
     presentation_shutdown: PreparedPlatformPresentationShutdown,
+    pending_retirement: Option<NativeWindowRetirement>,
+}
+
+fn native_retirement_dependency_reaches(
+    groups: &HashMap<WindowId, HashSet<WindowId>>,
+    start: WindowId,
+    target: WindowId,
+) -> bool {
+    let mut pending = vec![start];
+    let mut visited = HashSet::new();
+    while let Some(window_id) = pending.pop() {
+        if window_id == target {
+            return true;
+        }
+        if !visited.insert(window_id) {
+            continue;
+        }
+        if let Some(dependencies) = groups.get(&window_id) {
+            pending.extend(dependencies.iter().copied());
+        }
+    }
+    false
 }
 
 struct NativeShutdownFence {
     generation: u64,
     terminate_ingress: bool,
     preparation_complete: bool,
+    initial_effect_flush_terminal: Option<NativeShutdownEffectFlushTerminal>,
     presentation_shutdowns: Option<HashMap<WindowId, PreparedPlatformPresentationShutdown>>,
     retry_epoch: u8,
     registry_cleared: bool,
     was_quitting: bool,
     first_panic: Option<Box<dyn std::any::Any + Send>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NativeShutdownCriticalPhase {
+    BeforeWindowRegistryClear,
+    AfterWindowRegistryClear,
+}
+
+pub(super) enum NativeShutdownCriticalEnqueueError {
+    Inactive(NativeShutdownCriticalCallback),
+    PhasePassed(NativeShutdownCriticalCallback),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeShutdownCriticalWaveOutcome {
+    Idle,
+    Drained,
+    Retry,
+}
+
+#[derive(Default)]
+struct NativeShutdownCriticalState {
+    generation: Option<u64>,
+    registry_cleared: bool,
+    before_registry_clear: VecDeque<NativeShutdownCriticalCallback>,
+    after_registry_clear: VecDeque<NativeShutdownCriticalCallback>,
+}
+
+impl NativeShutdownCriticalState {
+    fn begin(
+        &mut self,
+        generation: u64,
+        before_registry_clear: VecDeque<NativeShutdownCriticalCallback>,
+    ) {
+        assert!(
+            self.generation.is_none()
+                && self.before_registry_clear.is_empty()
+                && self.after_registry_clear.is_empty(),
+            "a new shutdown generation cannot replace pending critical participants"
+        );
+        self.generation = Some(generation);
+        self.registry_cleared = false;
+        self.before_registry_clear = before_registry_clear;
+    }
+
+    fn enqueue(
+        &mut self,
+        generation: u64,
+        phase: NativeShutdownCriticalPhase,
+        callback: NativeShutdownCriticalCallback,
+    ) -> Result<(), NativeShutdownCriticalEnqueueError> {
+        if self.generation != Some(generation) {
+            return Err(NativeShutdownCriticalEnqueueError::Inactive(callback));
+        }
+        match phase {
+            NativeShutdownCriticalPhase::BeforeWindowRegistryClear => {
+                if self.registry_cleared {
+                    return Err(NativeShutdownCriticalEnqueueError::PhasePassed(callback));
+                }
+                self.before_registry_clear.push_back(callback);
+            }
+            NativeShutdownCriticalPhase::AfterWindowRegistryClear => {
+                self.after_registry_clear.push_back(callback);
+            }
+        }
+        Ok(())
+    }
+
+    fn take_wave(
+        &mut self,
+        generation: u64,
+        phase: NativeShutdownCriticalPhase,
+    ) -> VecDeque<NativeShutdownCriticalCallback> {
+        if self.generation != Some(generation) {
+            return VecDeque::new();
+        }
+        match phase {
+            NativeShutdownCriticalPhase::BeforeWindowRegistryClear => {
+                std::mem::take(&mut self.before_registry_clear)
+            }
+            NativeShutdownCriticalPhase::AfterWindowRegistryClear => {
+                std::mem::take(&mut self.after_registry_clear)
+            }
+        }
+    }
+
+    fn has_pending(&self, generation: u64, phase: NativeShutdownCriticalPhase) -> bool {
+        if self.generation != Some(generation) {
+            return false;
+        }
+        match phase {
+            NativeShutdownCriticalPhase::BeforeWindowRegistryClear => {
+                !self.before_registry_clear.is_empty()
+            }
+            NativeShutdownCriticalPhase::AfterWindowRegistryClear => {
+                !self.after_registry_clear.is_empty()
+            }
+        }
+    }
+
+    fn mark_registry_cleared(&mut self, generation: u64) {
+        assert_eq!(
+            self.generation,
+            Some(generation),
+            "registry-clear acknowledgement must match the active shutdown generation"
+        );
+        assert!(
+            self.before_registry_clear.is_empty(),
+            "registry clear cannot pass pending pre-clear critical participants"
+        );
+        self.registry_cleared = true;
+    }
+
+    fn finish(&mut self, generation: u64) {
+        assert_eq!(
+            self.generation,
+            Some(generation),
+            "shutdown completion must match its critical participant generation"
+        );
+        assert!(
+            self.before_registry_clear.is_empty() && self.after_registry_clear.is_empty(),
+            "shutdown cannot finish with pending critical participants"
+        );
+        self.generation = None;
+        self.registry_cleared = false;
+    }
+}
+
+struct NativeShutdownEffectFlushOwnership<'a> {
+    active_generation: &'a Cell<Option<u64>>,
+}
+
+impl<'a> NativeShutdownEffectFlushOwnership<'a> {
+    fn begin(active_generation: &'a Cell<Option<u64>>, generation: u64) -> Self {
+        debug_assert!(active_generation.replace(Some(generation)).is_none());
+        Self { active_generation }
+    }
+}
+
+impl Drop for NativeShutdownEffectFlushOwnership<'_> {
+    fn drop(&mut self) {
+        self.active_generation.set(None);
+    }
 }
 
 enum NativeShutdownCompletionAction {
@@ -262,9 +513,14 @@ pub struct AppCell {
     pointer_capture_releases: RefCell<HashMap<u64, NativePointerCaptureReleaseBarrier>>,
     pointer_capture_release_retries: RefCell<VecDeque<NativePointerCaptureRelease>>,
     native_window_retirements: RefCell<HashMap<WindowId, NativeWindowRetirementBarrier>>,
+    native_window_retirement_dependencies: RefCell<HashMap<WindowId, HashSet<WindowId>>>,
     observed_native_window_terminals: RefCell<HashSet<WindowId>>,
     next_shutdown_generation: Cell<u64>,
     shutdown_fence: RefCell<Option<NativeShutdownFence>>,
+    shutdown_critical: RefCell<NativeShutdownCriticalState>,
+    pre_shutdown_critical: RefCell<PreShutdownCriticalState>,
+    active_shutdown_completion_generation: Cell<Option<u64>>,
+    shutdown_terminate_ingress_requested: Cell<bool>,
     shutdown_completion_queued: Cell<Option<u64>>,
     open_urls_handler: NativeAppHandlerSlot<OpenUrlsHandler>,
     reopen_handler: NativeAppHandlerSlot<AppHandler>,
@@ -289,9 +545,14 @@ impl AppCell {
             pointer_capture_releases: RefCell::new(HashMap::new()),
             pointer_capture_release_retries: RefCell::new(VecDeque::new()),
             native_window_retirements: RefCell::new(HashMap::new()),
+            native_window_retirement_dependencies: RefCell::new(HashMap::new()),
             observed_native_window_terminals: RefCell::new(HashSet::new()),
             next_shutdown_generation: Cell::new(0),
             shutdown_fence: RefCell::new(None),
+            shutdown_critical: RefCell::new(NativeShutdownCriticalState::default()),
+            pre_shutdown_critical: RefCell::new(PreShutdownCriticalState::default()),
+            active_shutdown_completion_generation: Cell::new(None),
+            shutdown_terminate_ingress_requested: Cell::new(false),
             shutdown_completion_queued: Cell::new(None),
             open_urls_handler: NativeAppHandlerSlot::default(),
             reopen_handler: NativeAppHandlerSlot::default(),
@@ -432,14 +693,9 @@ impl AppCell {
     fn enqueue_native_captured_drag_release_completion(
         &self,
         barrier: NativeCapturedDragReleaseBarrier,
-        terminal: NativeCapturedDragReleaseTerminal,
-        continuations: Vec<NativeCapturedDragReleaseContinuation>,
     ) {
-        if continuations.is_empty() {
-            return;
-        }
         self.native_events.enqueue_captured_drag_release_completion(
-            NativeCapturedDragReleaseCompletion::new(barrier, terminal, continuations),
+            NativeCapturedDragReleaseCompletion::new(barrier),
         );
     }
 
@@ -448,58 +704,117 @@ impl AppCell {
         token: NativePointerCaptureReleaseToken,
         terminal: NativeCapturedDragReleaseTerminal,
     ) {
-        let continuations = {
+        let captured_barrier = {
             let mut barriers = self.pointer_capture_releases.borrow_mut();
-            let Some(barrier) = barriers.get(&token.release_generation()) else {
+            let Some(barrier) = barriers.get_mut(&token.release_generation()) else {
                 return;
             };
             if barrier.token != token {
                 return;
             }
-            barriers
-                .remove(&token.release_generation())
-                .expect("matching pointer-capture release barrier must remain present")
-                .continuations
+            let Some(captured_barrier) =
+                NativeCapturedDragReleaseBarrier::from_release_token(token)
+            else {
+                barriers.remove(&token.release_generation());
+                self.pointer_capture_release_retries
+                    .borrow_mut()
+                    .retain(|release| release.token() != token);
+                self.request_active_shutdown_completion();
+                return;
+            };
+            match &mut barrier.state {
+                NativePointerCaptureReleaseState::CompletionQueued(existing_terminal) => {
+                    if terminal == NativeCapturedDragReleaseTerminal::NativeWindowTerminal {
+                        *existing_terminal = terminal;
+                    }
+                    return;
+                }
+                NativePointerCaptureReleaseState::Delivering(_) => return,
+                state => *state = NativePointerCaptureReleaseState::CompletionQueued(terminal),
+            }
+            captured_barrier
         };
         self.pointer_capture_release_retries
             .borrow_mut()
             .retain(|release| release.token() != token);
-        if let Some(barrier) = NativeCapturedDragReleaseBarrier::from_release_token(token) {
-            self.enqueue_native_captured_drag_release_completion(barrier, terminal, continuations);
-        }
+        self.enqueue_native_captured_drag_release_completion(captured_barrier);
         self.request_active_shutdown_completion();
+    }
+
+    fn begin_native_captured_drag_release_completion(
+        &self,
+        release_barrier: NativeCapturedDragReleaseBarrier,
+    ) -> Option<NativeCapturedDragReleaseTerminal> {
+        let mut barriers = self.pointer_capture_releases.borrow_mut();
+        let barrier = barriers.get_mut(&release_barrier.release_generation())?;
+        if barrier.token.window_id() != release_barrier.source_window()
+            || barrier.token.captured_drag_generation() != Some(release_barrier.drag_generation())
+        {
+            return None;
+        }
+        let NativePointerCaptureReleaseState::CompletionQueued(terminal) = barrier.state else {
+            return None;
+        };
+        barrier.state = NativePointerCaptureReleaseState::Delivering(terminal);
+        Some(terminal)
+    }
+
+    fn take_native_captured_drag_release_continuations(
+        &self,
+        release_barrier: NativeCapturedDragReleaseBarrier,
+    ) -> Option<Vec<NativeCapturedDragReleaseContinuation>> {
+        let mut barriers = self.pointer_capture_releases.borrow_mut();
+        let barrier = barriers.get_mut(&release_barrier.release_generation())?;
+        if barrier.token.window_id() != release_barrier.source_window()
+            || barrier.token.captured_drag_generation() != Some(release_barrier.drag_generation())
+            || !matches!(
+                barrier.state,
+                NativePointerCaptureReleaseState::Delivering(_)
+            )
+        {
+            return None;
+        }
+        Some(std::mem::take(&mut barrier.continuations))
+    }
+
+    fn finish_native_captured_drag_release_completion(
+        &self,
+        release_barrier: NativeCapturedDragReleaseBarrier,
+    ) -> bool {
+        let mut barriers = self.pointer_capture_releases.borrow_mut();
+        let removable = barriers
+            .get(&release_barrier.release_generation())
+            .is_some_and(|barrier| {
+                barrier.token.window_id() == release_barrier.source_window()
+                    && barrier.token.captured_drag_generation()
+                        == Some(release_barrier.drag_generation())
+                    && matches!(
+                        barrier.state,
+                        NativePointerCaptureReleaseState::Delivering(_)
+                    )
+                    && barrier.continuations.is_empty()
+            });
+        if removable {
+            barriers.remove(&release_barrier.release_generation());
+        }
+        removable
     }
 
     fn complete_native_pointer_capture_releases_for_native_window_terminal(
         &self,
         window_id: WindowId,
     ) {
-        let released = {
-            let mut barriers = self.pointer_capture_releases.borrow_mut();
-            let release_generations = barriers
-                .iter()
-                .filter_map(|(release_generation, barrier)| {
-                    (barrier.token.window_id() == window_id).then_some(*release_generation)
-                })
-                .collect::<Vec<_>>();
-            release_generations
-                .into_iter()
-                .filter_map(|release_generation| barriers.remove(&release_generation))
-                .collect::<Vec<_>>()
-        };
-        self.pointer_capture_release_retries
-            .borrow_mut()
-            .retain(|release| release.token().window_id() != window_id);
-        for barrier in released {
-            if let Some(release_barrier) =
-                NativeCapturedDragReleaseBarrier::from_release_token(barrier.token)
-            {
-                self.enqueue_native_captured_drag_release_completion(
-                    release_barrier,
-                    NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
-                    barrier.continuations,
-                );
-            }
+        let tokens = self
+            .pointer_capture_releases
+            .borrow()
+            .values()
+            .filter_map(|barrier| (barrier.token.window_id() == window_id).then_some(barrier.token))
+            .collect::<Vec<_>>();
+        for token in tokens {
+            self.complete_native_pointer_capture_release(
+                token,
+                NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
+            );
         }
         self.request_active_shutdown_completion();
     }
@@ -539,11 +854,19 @@ impl AppCell {
         let barrier = NativeCapturedDragReleaseBarrier::from_release_token(token)
             .expect("captured-drag release tokens must include their drag generation");
         if self.native_window_terminal_was_observed(window_id) {
-            self.enqueue_native_captured_drag_release_completion(
-                barrier,
-                NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
-                vec![continuation],
+            let previous = self.pointer_capture_releases.borrow_mut().insert(
+                token.release_generation(),
+                NativePointerCaptureReleaseBarrier {
+                    token,
+                    state: NativePointerCaptureReleaseState::CompletionQueued(
+                        NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
+                    ),
+                    retry_attempts: 0,
+                    continuations: vec![continuation],
+                },
             );
+            debug_assert!(previous.is_none());
+            self.enqueue_native_captured_drag_release_completion(barrier);
             return (token, barrier);
         }
 
@@ -624,18 +947,31 @@ impl AppCell {
         if barrier.token != token || barrier.state != NativePointerCaptureReleaseState::Queued {
             return;
         }
-        barrier.state = NativePointerCaptureReleaseState::RetryPending;
         let retry_delay = POINTER_CAPTURE_RELEASE_RETRY_DELAYS
             .get(usize::from(barrier.retry_attempts))
             .copied();
         barrier.retry_attempts = barrier.retry_attempts.saturating_add(1);
         let retry_epoch = barrier.retry_attempts;
+        if retry_delay.is_some() {
+            barrier.state = NativePointerCaptureReleaseState::RetryPending;
+        }
         drop(barriers);
-        self.pointer_capture_release_retries
-            .borrow_mut()
-            .push_back(release);
         if let Some(retry_delay) = retry_delay {
+            self.pointer_capture_release_retries
+                .borrow_mut()
+                .push_back(release);
             self.schedule_pointer_capture_release_retry(retry_delay, token, retry_epoch);
+        } else {
+            log::error!(
+                "native pointer-capture release window={:?} generation={} failed after {} attempts",
+                token.window_id(),
+                token.release_generation(),
+                usize::from(retry_epoch),
+            );
+            self.complete_native_pointer_capture_release(
+                token,
+                NativeCapturedDragReleaseTerminal::Failed,
+            );
         }
     }
 
@@ -743,6 +1079,103 @@ impl AppCell {
         self.enqueue_window_retirement(window_id, NativeWindowRetirement::new(window_id, window));
     }
 
+    pub(super) fn register_native_window_retirement_dependencies(
+        &self,
+        anchor: WindowId,
+        dependencies: impl IntoIterator<Item = WindowId>,
+    ) -> Result<(), crate::NativeWindowRetirementDependencyError> {
+        let retirements = self.native_window_retirements.borrow();
+        if retirements.contains_key(&anchor) {
+            return Err(
+                crate::NativeWindowRetirementDependencyError::AnchorAlreadyRetiring { anchor },
+            );
+        }
+        if self.native_queries.lookup(anchor).is_none() {
+            return Err(crate::NativeWindowRetirementDependencyError::UnknownAnchor { anchor });
+        }
+        let observed = self.observed_native_window_terminals.borrow();
+        let dependencies = dependencies
+            .into_iter()
+            .filter(|dependency| !observed.contains(dependency))
+            .collect::<HashSet<_>>();
+        drop(observed);
+        for dependency in dependencies.iter().copied() {
+            if self.native_queries.lookup(dependency).is_none()
+                && !retirements.contains_key(&dependency)
+            {
+                return Err(
+                    crate::NativeWindowRetirementDependencyError::UnknownDependency {
+                        anchor,
+                        dependency,
+                    },
+                );
+            }
+        }
+        drop(retirements);
+        if dependencies.is_empty() {
+            return Ok(());
+        }
+        let mut groups = self.native_window_retirement_dependencies.borrow_mut();
+        for dependency in dependencies.iter().copied() {
+            if dependency == anchor
+                || native_retirement_dependency_reaches(&groups, dependency, anchor)
+            {
+                return Err(crate::NativeWindowRetirementDependencyError::Cycle {
+                    anchor,
+                    dependency,
+                });
+            }
+        }
+        groups.entry(anchor).or_default().extend(dependencies);
+        Ok(())
+    }
+
+    pub(super) fn cancel_native_window_retirement_dependencies(&self, anchor: WindowId) -> bool {
+        let removed = self
+            .native_window_retirement_dependencies
+            .borrow_mut()
+            .remove(&anchor)
+            .is_some();
+        if !removed {
+            return false;
+        }
+
+        let retirement = {
+            let mut retirements = self.native_window_retirements.borrow_mut();
+            let Some(barrier) = retirements.get_mut(&anchor) else {
+                return true;
+            };
+            if barrier.state != NativeWindowRetirementState::WaitingForDependencies {
+                return true;
+            }
+            barrier.state = NativeWindowRetirementState::Queued;
+            Some(
+                barrier
+                    .pending_retirement
+                    .take()
+                    .expect("a dependency-blocked retirement must retain its platform owner"),
+            )
+        };
+        if let Some(retirement) = retirement {
+            self.native_events.enqueue_window_retirement(retirement);
+        }
+        true
+    }
+
+    pub(super) fn protect_pre_shutdown_critical(
+        &self,
+        callback: NativeShutdownCriticalCallback,
+    ) -> u64 {
+        self.pre_shutdown_critical.borrow_mut().protect(callback)
+    }
+
+    pub(super) fn take_pre_shutdown_critical(
+        &self,
+        ticket: u64,
+    ) -> Option<NativeShutdownCriticalCallback> {
+        self.pre_shutdown_critical.borrow_mut().take(ticket)
+    }
+
     pub(crate) fn enqueue_platform_window_retirement(
         &self,
         window_id: WindowId,
@@ -771,15 +1204,74 @@ impl AppCell {
                 }
             }
         }
+        let waiting_for_dependencies = self
+            .native_window_retirement_dependencies
+            .borrow()
+            .get(&window_id)
+            .is_some_and(|dependencies| !dependencies.is_empty());
+        let presentation_shutdown = retirement.presentation_shutdown();
+        let mut retirement = Some(retirement);
+        let (state, pending_retirement) = if waiting_for_dependencies {
+            (
+                NativeWindowRetirementState::WaitingForDependencies,
+                retirement.take(),
+            )
+        } else {
+            (NativeWindowRetirementState::Queued, None)
+        };
         let previous = self.native_window_retirements.borrow_mut().insert(
             window_id,
             NativeWindowRetirementBarrier {
-                state: NativeWindowRetirementState::Queued,
-                presentation_shutdown: retirement.presentation_shutdown(),
+                state,
+                presentation_shutdown,
+                pending_retirement,
             },
         );
         debug_assert!(previous.is_none(), "native window retirement queued twice");
-        self.native_events.enqueue_window_retirement(retirement);
+        if !waiting_for_dependencies {
+            self.native_events.enqueue_window_retirement(
+                retirement.expect("queued retirement must retain its platform owner"),
+            );
+        }
+    }
+
+    fn release_native_window_retirement_dependencies(&self, terminal_window: WindowId) {
+        let ready = {
+            let mut groups = self.native_window_retirement_dependencies.borrow_mut();
+            groups.remove(&terminal_window);
+            let ready = groups
+                .iter_mut()
+                .filter_map(|(anchor, dependencies)| {
+                    dependencies.remove(&terminal_window);
+                    dependencies.is_empty().then_some(*anchor)
+                })
+                .collect::<Vec<_>>();
+            for anchor in &ready {
+                groups.remove(anchor);
+            }
+            ready
+        };
+        for anchor in ready {
+            let retirement = {
+                let mut retirements = self.native_window_retirements.borrow_mut();
+                let Some(barrier) = retirements.get_mut(&anchor) else {
+                    continue;
+                };
+                if barrier.state != NativeWindowRetirementState::WaitingForDependencies {
+                    continue;
+                }
+                barrier.state = NativeWindowRetirementState::Queued;
+                Some(
+                    barrier
+                        .pending_retirement
+                        .take()
+                        .expect("a dependency-blocked retirement must retain its platform owner"),
+                )
+            };
+            if let Some(retirement) = retirement {
+                self.native_events.enqueue_window_retirement(retirement);
+            }
+        }
     }
 
     fn defer_native_window_retirement_retry(&self, mut retirement: NativeWindowRetirement) {
@@ -866,6 +1358,7 @@ impl AppCell {
                 );
             }
         }
+        self.release_native_window_retirement_dependencies(window_id);
         self.request_active_shutdown_completion();
     }
 
@@ -879,8 +1372,108 @@ impl AppCell {
             .collect()
     }
 
+    fn quiesce_shutdown_presentations(&self, fence: &mut NativeShutdownFence) -> bool {
+        merge_presentation_shutdowns(
+            fence
+                .presentation_shutdowns
+                .as_mut()
+                .expect("shutdown preparation must own presentation authorities"),
+            self.pending_native_window_presentation_shutdowns(),
+        );
+
+        let mut all_presentations_quiesced = true;
+        for shutdown in fence
+            .presentation_shutdowns
+            .as_ref()
+            .expect("shutdown preparation must own presentation authorities")
+            .values()
+        {
+            if shutdown.snapshot().quiesced() {
+                continue;
+            }
+            match catch_unwind(AssertUnwindSafe(|| shutdown.quiesce())) {
+                Ok(PlatformPresentationShutdownOutcome::Quiesced)
+                    if shutdown.snapshot().quiesced() => {}
+                Ok(_) => all_presentations_quiesced = false,
+                Err(payload) => {
+                    retain_shutdown_panic(&mut fence.first_panic, Some(payload));
+                    all_presentations_quiesced = false;
+                }
+            }
+        }
+        all_presentations_quiesced
+    }
+
     fn pointer_capture_release_barriers_are_clear(&self) -> bool {
         self.pointer_capture_releases.borrow().is_empty()
+    }
+
+    pub(super) fn shutdown_fence_owns_effect_flush(&self) -> bool {
+        self.active_shutdown_completion_generation.get().is_some()
+            || self.shutdown_fence.borrow().is_some()
+    }
+
+    fn active_shutdown_generation(&self) -> Option<u64> {
+        self.active_shutdown_completion_generation
+            .get()
+            .or_else(|| {
+                self.shutdown_fence
+                    .borrow()
+                    .as_ref()
+                    .map(|fence| fence.generation)
+            })
+    }
+
+    pub(super) fn enqueue_shutdown_critical(
+        &self,
+        phase: NativeShutdownCriticalPhase,
+        callback: NativeShutdownCriticalCallback,
+    ) -> Result<(), NativeShutdownCriticalEnqueueError> {
+        let Some(generation) = self.active_shutdown_generation() else {
+            return Err(NativeShutdownCriticalEnqueueError::Inactive(callback));
+        };
+        self.shutdown_critical
+            .borrow_mut()
+            .enqueue(generation, phase, callback)?;
+        self.request_shutdown_completion(generation);
+        Ok(())
+    }
+
+    fn shutdown_critical_has_pending(
+        &self,
+        generation: u64,
+        phase: NativeShutdownCriticalPhase,
+    ) -> bool {
+        self.shutdown_critical
+            .borrow()
+            .has_pending(generation, phase)
+    }
+
+    fn run_shutdown_critical_wave(
+        &self,
+        phase: NativeShutdownCriticalPhase,
+        fence: &mut NativeShutdownFence,
+    ) -> NativeShutdownCriticalWaveOutcome {
+        if !self.shutdown_critical_has_pending(fence.generation, phase) {
+            return NativeShutdownCriticalWaveOutcome::Idle;
+        }
+        let Ok(mut app) = self.app.try_borrow_mut() else {
+            return NativeShutdownCriticalWaveOutcome::Retry;
+        };
+        let callbacks = self
+            .shutdown_critical
+            .borrow_mut()
+            .take_wave(fence.generation, phase);
+        for callback in callbacks {
+            let result = catch_unwind(AssertUnwindSafe(|| callback(&mut app)));
+            retain_shutdown_panic(&mut fence.first_panic, result.err());
+        }
+        drop(app);
+        if self.shutdown_critical_has_pending(fence.generation, phase) {
+            NativeShutdownCriticalWaveOutcome::Retry
+        } else {
+            NativeShutdownCriticalWaveOutcome::Drained
+        }
     }
 
     fn native_window_retirement_barriers_are_clear(&self) -> bool {
@@ -892,6 +1485,12 @@ impl AppCell {
         terminate_ingress: bool,
         was_quitting: bool,
     ) -> (u64, bool) {
+        if let Some(generation) = self.active_shutdown_completion_generation.get() {
+            if terminate_ingress {
+                self.shutdown_terminate_ingress_requested.set(true);
+            }
+            return (generation, false);
+        }
         let mut fence = self.shutdown_fence.borrow_mut();
         if let Some(active) = fence.as_mut() {
             active.terminate_ingress |= terminate_ingress;
@@ -905,10 +1504,15 @@ impl AppCell {
         );
         self.shutdown_completion_queued.set(None);
         self.native_events.begin_shutdown(generation);
+        let protected_before_registry_clear = self.pre_shutdown_critical.borrow_mut().take_all();
+        self.shutdown_critical
+            .borrow_mut()
+            .begin(generation, protected_before_registry_clear);
         *fence = Some(NativeShutdownFence {
             generation,
             terminate_ingress,
             preparation_complete: false,
+            initial_effect_flush_terminal: None,
             presentation_shutdowns: None,
             retry_epoch: 0,
             registry_cleared: false,
@@ -916,6 +1520,11 @@ impl AppCell {
             first_panic: None,
         });
         (generation, true)
+    }
+
+    fn park_shutdown_fence(&self, mut fence: NativeShutdownFence) {
+        fence.terminate_ingress |= self.shutdown_terminate_ingress_requested.replace(false);
+        *self.shutdown_fence.borrow_mut() = Some(fence);
     }
 
     pub(super) fn finish_shutdown_preparation(
@@ -1026,28 +1635,34 @@ impl AppCell {
                 panic: None,
             };
         }
+        let _effect_flush_ownership = NativeShutdownEffectFlushOwnership::begin(
+            &self.active_shutdown_completion_generation,
+            generation,
+        );
 
         if fence.presentation_shutdowns.is_none() {
             let Ok(mut app) = self.app.try_borrow_mut() else {
-                *self.shutdown_fence.borrow_mut() = Some(fence);
+                self.park_shutdown_fence(fence);
                 return NativeShutdownCompletionAction::Retry;
             };
             if super::window_registry::has_checked_out_window(&app) {
                 drop(app);
-                *self.shutdown_fence.borrow_mut() = Some(fence);
+                self.park_shutdown_fence(fence);
                 return NativeShutdownCompletionAction::Retry;
             }
 
-            let window_cleanup = catch_unwind(AssertUnwindSafe(|| {
-                app.prepare_shutdown_pointer_sessions();
-            }));
-            retain_shutdown_panic(&mut fence.first_panic, window_cleanup.err());
+            if fence.initial_effect_flush_terminal.is_none() {
+                let window_cleanup = catch_unwind(AssertUnwindSafe(|| {
+                    app.prepare_shutdown_pointer_sessions();
+                }));
+                retain_shutdown_panic(&mut fence.first_panic, window_cleanup.err());
 
-            loop {
-                match catch_unwind(AssertUnwindSafe(|| app.flush_effects())) {
-                    Ok(()) => break,
-                    Err(payload) => retain_shutdown_panic(&mut fence.first_panic, Some(payload)),
-                }
+                fence.initial_effect_flush_terminal = Some(settle_shutdown_effect_wave(
+                    &mut app,
+                    fence.generation,
+                    "initial",
+                    &mut fence.first_panic,
+                ));
             }
 
             let prepared = catch_unwind(AssertUnwindSafe(|| {
@@ -1058,7 +1673,7 @@ impl AppCell {
                 Ok(prepared) => prepared,
                 Err(payload) => {
                     retain_shutdown_panic(&mut fence.first_panic, Some(payload));
-                    *self.shutdown_fence.borrow_mut() = Some(fence);
+                    self.park_shutdown_fence(fence);
                     return NativeShutdownCompletionAction::Retry;
                 }
             };
@@ -1067,48 +1682,44 @@ impl AppCell {
             fence.presentation_shutdowns = Some(shutdowns);
         }
 
-        let pending_retirements = self.pending_native_window_presentation_shutdowns();
-        merge_presentation_shutdowns(
-            fence
-                .presentation_shutdowns
-                .as_mut()
-                .expect("shutdown preparation must own presentation authorities"),
-            pending_retirements,
-        );
-
-        let mut all_presentations_quiesced = true;
-        for shutdown in fence
-            .presentation_shutdowns
-            .as_ref()
-            .expect("shutdown preparation must own presentation authorities")
-            .values()
-        {
-            if shutdown.snapshot().quiesced() {
-                continue;
-            }
-            match catch_unwind(AssertUnwindSafe(|| shutdown.quiesce())) {
-                Ok(PlatformPresentationShutdownOutcome::Quiesced)
-                    if shutdown.snapshot().quiesced() => {}
-                Ok(_) => all_presentations_quiesced = false,
-                Err(payload) => {
-                    retain_shutdown_panic(&mut fence.first_panic, Some(payload));
-                    all_presentations_quiesced = false;
-                }
-            }
+        if !self.quiesce_shutdown_presentations(&mut fence) {
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
         }
-        if !all_presentations_quiesced {
-            *self.shutdown_fence.borrow_mut() = Some(fence);
+
+        if self.run_shutdown_critical_wave(
+            NativeShutdownCriticalPhase::BeforeWindowRegistryClear,
+            &mut fence,
+        ) == NativeShutdownCriticalWaveOutcome::Retry
+        {
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
+
+        // Capture-release completions can enqueue pre-clear lifecycle work. The registry must
+        // remain authoritative until both the release barrier and its critical continuation have
+        // settled.
+        if !self.pointer_capture_release_barriers_are_clear() {
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
+
+        // Pre-clear participants may have logically removed windows and transferred their exact
+        // presentation tickets into the native-retirement coordinator. Claim and quiesce those
+        // new authorities before the registry can be cleared.
+        if !self.quiesce_shutdown_presentations(&mut fence) {
+            self.park_shutdown_fence(fence);
             return NativeShutdownCompletionAction::Retry;
         }
 
         if !fence.registry_cleared {
             let Ok(mut app) = self.app.try_borrow_mut() else {
-                *self.shutdown_fence.borrow_mut() = Some(fence);
+                self.park_shutdown_fence(fence);
                 return NativeShutdownCompletionAction::Retry;
             };
             if super::window_registry::has_checked_out_window(&app) {
                 drop(app);
-                *self.shutdown_fence.borrow_mut() = Some(fence);
+                self.park_shutdown_fence(fence);
                 return NativeShutdownCompletionAction::Retry;
             }
 
@@ -1120,7 +1731,7 @@ impl AppCell {
                 Err(payload) => {
                     retain_shutdown_panic(&mut fence.first_panic, Some(payload));
                     drop(app);
-                    *self.shutdown_fence.borrow_mut() = Some(fence);
+                    self.park_shutdown_fence(fence);
                     return NativeShutdownCompletionAction::Retry;
                 }
             };
@@ -1133,12 +1744,25 @@ impl AppCell {
             );
             if added {
                 drop(app);
-                *self.shutdown_fence.borrow_mut() = Some(fence);
+                self.park_shutdown_fence(fence);
+                return NativeShutdownCompletionAction::Retry;
+            }
+
+            if self.shutdown_critical_has_pending(
+                fence.generation,
+                NativeShutdownCriticalPhase::BeforeWindowRegistryClear,
+            ) || !self.pointer_capture_release_barriers_are_clear()
+            {
+                drop(app);
+                self.park_shutdown_fence(fence);
                 return NativeShutdownCompletionAction::Retry;
             }
 
             let detached_windows = super::window_registry::take_all_for_shutdown(&mut app);
             fence.registry_cleared = true;
+            self.shutdown_critical
+                .borrow_mut()
+                .mark_registry_cleared(fence.generation);
             drop(app);
             for (window_id, window) in detached_windows {
                 let enqueue = catch_unwind(AssertUnwindSafe(|| {
@@ -1148,18 +1772,82 @@ impl AppCell {
             }
         }
 
-        if !self.pointer_capture_release_barriers_are_clear() {
-            *self.shutdown_fence.borrow_mut() = Some(fence);
+        if self.run_shutdown_critical_wave(
+            NativeShutdownCriticalPhase::AfterWindowRegistryClear,
+            &mut fence,
+        ) == NativeShutdownCriticalWaveOutcome::Retry
+        {
+            self.park_shutdown_fence(fence);
             return NativeShutdownCompletionAction::Retry;
         }
 
-        if fence.terminate_ingress && !self.native_window_retirement_barriers_are_clear() {
-            *self.shutdown_fence.borrow_mut() = Some(fence);
+        fence.terminate_ingress |= self.shutdown_terminate_ingress_requested.replace(false);
+
+        if !self.pointer_capture_release_barriers_are_clear() {
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
+
+        if !self.native_window_retirement_barriers_are_clear() {
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
+
+        let mut terminal_converged = false;
+        for _ in 0..SHUTDOWN_TERMINAL_CONVERGENCE_WAVE_BUDGET {
+            let Ok(mut app) = self.app.try_borrow_mut() else {
+                self.park_shutdown_fence(fence);
+                return NativeShutdownCompletionAction::Retry;
+            };
+            settle_shutdown_effect_wave(
+                &mut app,
+                fence.generation,
+                "terminal",
+                &mut fence.first_panic,
+            );
+            drop(app);
+
+            // Terminal effects may reenter shutdown, retire another presentation, or reserve a
+            // new capture-release barrier. Revalidate every authority before the fence can
+            // disappear.
+            fence.terminate_ingress |= self.shutdown_terminate_ingress_requested.replace(false);
+            if !self.quiesce_shutdown_presentations(&mut fence) {
+                self.park_shutdown_fence(fence);
+                return NativeShutdownCompletionAction::Retry;
+            }
+            match self.run_shutdown_critical_wave(
+                NativeShutdownCriticalPhase::AfterWindowRegistryClear,
+                &mut fence,
+            ) {
+                NativeShutdownCriticalWaveOutcome::Idle => {
+                    terminal_converged = true;
+                    break;
+                }
+                NativeShutdownCriticalWaveOutcome::Drained => {
+                    // The participant may have produced ordinary effects. Flush them before
+                    // deciding that shutdown is terminal.
+                }
+                NativeShutdownCriticalWaveOutcome::Retry => {
+                    self.park_shutdown_fence(fence);
+                    return NativeShutdownCompletionAction::Retry;
+                }
+            }
+        }
+        if !terminal_converged {
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
+        if !self.pointer_capture_release_barriers_are_clear() {
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
+        if !self.native_window_retirement_barriers_are_clear() {
+            self.park_shutdown_fence(fence);
             return NativeShutdownCompletionAction::Retry;
         }
 
         let Ok(mut app) = self.app.try_borrow_mut() else {
-            *self.shutdown_fence.borrow_mut() = Some(fence);
+            self.park_shutdown_fence(fence);
             return NativeShutdownCompletionAction::Retry;
         };
         app.quitting = fence.terminate_ingress;
@@ -1171,6 +1859,8 @@ impl AppCell {
             app.quitting = fence.was_quitting;
         }
         drop(app);
+
+        self.shutdown_critical.borrow_mut().finish(fence.generation);
 
         NativeShutdownCompletionAction::Complete {
             terminate_ingress: fence.terminate_ingress,
@@ -1839,9 +2529,6 @@ impl AppCell {
         token: NativePointerCaptureReleaseToken,
         retry_epoch: u8,
     ) {
-        if self.native_callback_lease_active() || !self.app_is_idle() {
-            return;
-        }
         self.retry_pending_pointer_capture_releases(
             NativePointerCaptureReleaseRetryTrigger::Delayed { token, retry_epoch },
         );
@@ -2037,7 +2724,11 @@ impl AppCell {
                                 &self.native_events,
                                 completion.pending_diagnostic(sequence),
                             );
-                            terminal.run_callback(|| self.drain_native_captured_drags());
+                            let barrier = completion.barrier();
+                            let mut first_panic = catch_unwind(AssertUnwindSafe(|| {
+                                self.drain_native_captured_drags()
+                            }))
+                            .err();
                             let Ok(mut app) = self.app.try_borrow_mut() else {
                                 terminal.pending.take().expect(
                                     "blocked captured-drag release terminal must remain pending",
@@ -2048,20 +2739,55 @@ impl AppCell {
                                         completion,
                                     },
                                 );
-                                drain.block_on_app();
-                                return;
+                                if let Some(payload) = first_panic {
+                                    self.native_events.schedule_drain_after_unwind();
+                                    resume_unwind(payload);
+                                } else {
+                                    drain.block_on_app();
+                                    return;
+                                }
                             };
-                            let (barrier, release_terminal, continuations) =
-                                completion.into_parts();
-                            let mut first_panic = None;
-                            for continuation in continuations {
-                                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
-                                    app.update(|app| continuation(barrier, release_terminal, app));
-                                })) {
-                                    retain_shutdown_panic(&mut first_panic, Some(payload));
+                            let Some(release_terminal) =
+                                self.begin_native_captured_drag_release_completion(barrier)
+                            else {
+                                drop(app);
+                                self.wake_app_borrow_waiters();
+                                if let Some(payload) = first_panic {
+                                    terminal.settle(NativeBoundaryDisposition::InvariantFailure(
+                                        NativeInvariantFailure::CallbackPanicked,
+                                    ));
+                                    resume_unwind(payload);
+                                }
+                                terminal.settle(NativeBoundaryDisposition::Stale);
+                                continue;
+                            };
+                            loop {
+                                let continuations = self
+                                    .take_native_captured_drag_release_continuations(barrier)
+                                    .expect(
+                                        "delivering captured-drag release barrier must remain present",
+                                    );
+                                if continuations.is_empty() {
+                                    assert!(
+                                        self.finish_native_captured_drag_release_completion(
+                                            barrier
+                                        ),
+                                        "drained captured-drag release barrier must finish exactly once",
+                                    );
+                                    break;
+                                }
+                                for continuation in continuations {
+                                    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+                                        app.update(|app| {
+                                            continuation(barrier, release_terminal, app)
+                                        });
+                                    })) {
+                                        retain_shutdown_panic(&mut first_panic, Some(payload));
+                                    }
                                 }
                             }
                             drop(app);
+                            self.request_active_shutdown_completion();
                             self.wake_app_borrow_waiters();
                             if let Some(payload) = first_panic {
                                 terminal.settle(NativeBoundaryDisposition::InvariantFailure(
@@ -2453,7 +3179,11 @@ impl Deref for AppRef<'_> {
 impl Drop for AppRef<'_> {
     fn drop(&mut self) {
         drop(self.app.take());
-        self.cell.app_borrow_released();
+        if std::thread::panicking() {
+            self.cell.native_events.schedule_drain_after_unwind();
+        } else {
+            self.cell.app_borrow_released();
+        }
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped borrow from {thread_id:?}");
@@ -2488,10 +3218,677 @@ impl DerefMut for AppRefMut<'_> {
 impl Drop for AppRefMut<'_> {
     fn drop(&mut self) {
         drop(self.app.take());
-        self.cell.app_borrow_released();
+        if std::thread::panicking() {
+            self.cell.native_events.schedule_drain_after_unwind();
+        } else {
+            self.cell.app_borrow_released();
+        }
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped {thread_id:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        AnyWindowHandle, AppContext, Empty, QuitMode, TestAppContext, WindowOptions, px, size,
+    };
+
+    fn enqueue_persistent_panicking_shutdown_effect(attempts: Rc<Cell<usize>>, app: &mut App) {
+        app.defer(move |app| {
+            attempts.set(attempts.get() + 1);
+            enqueue_persistent_panicking_shutdown_effect(attempts.clone(), app);
+            panic!("injected persistent shutdown effect panic");
+        });
+    }
+
+    #[test]
+    fn shutdown_effect_flush_settles_after_its_panic_budget() {
+        let attempts = Cell::new(0usize);
+        let mut first_panic = None;
+
+        let terminal = settle_shutdown_effect_flush(&mut first_panic, || {
+            let attempt = attempts.get() + 1;
+            attempts.set(attempt);
+            Err(Box::new(attempt) as Box<dyn std::any::Any + Send>)
+        });
+
+        assert_eq!(
+            terminal,
+            NativeShutdownEffectFlushTerminal::Failed {
+                panic_count: SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET,
+            }
+        );
+        assert_eq!(attempts.get(), SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET);
+        assert_eq!(
+            first_panic
+                .as_deref()
+                .and_then(|payload| payload.downcast_ref::<usize>()),
+            Some(&1),
+            "shutdown must preserve the first panic while bounding later failures"
+        );
+    }
+
+    #[test]
+    fn shutdown_effect_flush_drains_after_transient_panics() {
+        let attempts = Cell::new(0usize);
+        let mut first_panic = None;
+
+        let terminal = settle_shutdown_effect_flush(&mut first_panic, || {
+            let attempt = attempts.get() + 1;
+            attempts.set(attempt);
+            if attempt < 3 {
+                Err(Box::new(attempt) as Box<dyn std::any::Any + Send>)
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(terminal, NativeShutdownEffectFlushTerminal::Drained);
+        assert_eq!(attempts.get(), 3);
+        assert_eq!(
+            first_panic
+                .as_deref()
+                .and_then(|payload| payload.downcast_ref::<usize>()),
+            Some(&1),
+        );
+    }
+
+    #[crate::test]
+    fn shutdown_continues_after_persistent_effect_panics(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let attempts = Rc::new(Cell::new(0usize));
+        cx.update({
+            let attempts = attempts.clone();
+            move |app| {
+                app.on_app_quit(move |app| {
+                    enqueue_persistent_panicking_shutdown_effect(attempts.clone(), app);
+                    std::future::ready(())
+                })
+                .detach();
+            }
+        });
+
+        let shutdown = catch_unwind(AssertUnwindSafe(|| cx.quit()));
+
+        assert!(shutdown.is_err());
+        assert_eq!(attempts.get(), SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET);
+        assert!(
+            cx.windows().is_empty(),
+            "effect-flush failure must not prevent native window teardown"
+        );
+        cx.update(|app| {
+            assert!(app.pending_effects.is_empty());
+            app.defer(|_| {});
+        });
+    }
+
+    #[crate::test]
+    fn shutdown_started_inside_app_update_cannot_double_panic_during_borrow_drop(
+        cx: &mut TestAppContext,
+    ) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let attempts = Rc::new(Cell::new(0usize));
+        cx.update({
+            let attempts = attempts.clone();
+            move |app| {
+                app.on_app_quit(move |app| {
+                    enqueue_persistent_panicking_shutdown_effect(attempts.clone(), app);
+                    std::future::ready(())
+                })
+                .detach();
+            }
+        });
+
+        let shutdown = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|app| app.shutdown());
+        }));
+
+        assert!(shutdown.is_err());
+        assert_eq!(attempts.get(), SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET);
+        assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
+    fn shutdown_critical_phases_survive_ordinary_effect_abandonment(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let attempts = Rc::new(Cell::new(0usize));
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        cx.update({
+            let attempts = attempts.clone();
+            let phases = phases.clone();
+            move |app| {
+                app.on_app_quit(move |app| {
+                    enqueue_persistent_panicking_shutdown_effect(attempts.clone(), app);
+                    app.defer_shutdown_critical_before_window_registry_clear({
+                        let phases = phases.clone();
+                        move |app| {
+                            assert!(
+                                !app.windows().is_empty(),
+                                "pre-clear critical work must observe the live registry"
+                            );
+                            phases.borrow_mut().push("before");
+                        }
+                    });
+                    app.defer_shutdown_critical_after_window_registry_clear({
+                        let phases = phases.clone();
+                        move |app| {
+                            assert!(
+                                app.windows().is_empty(),
+                                "post-clear critical work must observe an empty registry"
+                            );
+                            phases.borrow_mut().push("after");
+                        }
+                    });
+                    std::future::ready(())
+                })
+                .detach();
+            }
+        });
+
+        let shutdown = catch_unwind(AssertUnwindSafe(|| cx.quit()));
+
+        assert!(shutdown.is_err());
+        assert_eq!(attempts.get(), SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET);
+        assert_eq!(phases.borrow().as_slice(), &["before", "after"]);
+        assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
+    fn late_pre_clear_critical_work_runs_synchronously_after_registry_clear(
+        cx: &mut TestAppContext,
+    ) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let nested_ran = Rc::new(Cell::new(false));
+        let observed_synchronously = Rc::new(Cell::new(false));
+        cx.update({
+            let nested_ran = nested_ran.clone();
+            let observed_synchronously = observed_synchronously.clone();
+            move |app| {
+                app.on_app_quit(move |app| {
+                    let observed_synchronously = observed_synchronously.clone();
+                    app.defer_shutdown_critical_after_window_registry_clear({
+                        let nested_ran = nested_ran.clone();
+                        move |app| {
+                            assert!(
+                                app.windows().is_empty(),
+                                "post-clear critical work must observe an empty registry"
+                            );
+                            app.defer_shutdown_critical_before_window_registry_clear_or_run_now({
+                                let nested_ran = nested_ran.clone();
+                                move |app| {
+                                    assert!(
+                                        app.windows().is_empty(),
+                                        "late pre-clear work must run in the post-clear App turn"
+                                    );
+                                    nested_ran.set(true);
+                                }
+                            });
+                            assert!(
+                                nested_ran.get(),
+                                "late pre-clear work must execute synchronously after phase passage"
+                            );
+                            observed_synchronously.set(true);
+                        }
+                    });
+                    std::future::ready(())
+                })
+                .detach();
+            }
+        });
+
+        cx.quit();
+
+        assert!(nested_ran.get());
+        assert!(observed_synchronously.get());
+        assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
+    fn pre_shutdown_critical_work_survives_later_effect_abandonment(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let attempts = Rc::new(Cell::new(0usize));
+        let critical_ran = Rc::new(Cell::new(false));
+
+        let shutdown = catch_unwind(AssertUnwindSafe(|| {
+            cx.update({
+                let attempts = attempts.clone();
+                let critical_ran = critical_ran.clone();
+                move |app| {
+                    for _ in 0..SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET {
+                        app.defer({
+                            let attempts = attempts.clone();
+                            move |_| {
+                                attempts.set(attempts.get() + 1);
+                                panic!("injected pre-existing shutdown effect panic");
+                            }
+                        });
+                    }
+                    app.defer_shutdown_critical_before_window_registry_clear(move |app| {
+                        assert!(
+                            !app.windows().is_empty(),
+                            "protected pre-shutdown work must run before registry clear"
+                        );
+                        critical_ran.set(true);
+                    });
+                    app.shutdown();
+                }
+            });
+            cx.run_until_parked();
+        }));
+
+        assert!(shutdown.is_err());
+        assert_eq!(attempts.get(), SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET);
+        assert!(critical_ran.get());
+        assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
+    fn post_terminal_critical_work_gets_a_follow_up_effect_wave(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let follow_up_effect_ran = Rc::new(Cell::new(false));
+        cx.update({
+            let follow_up_effect_ran = follow_up_effect_ran.clone();
+            move |app| {
+                app.on_app_quit(move |app| {
+                    app.defer_shutdown_critical_after_window_registry_clear({
+                        let follow_up_effect_ran = follow_up_effect_ran.clone();
+                        move |app| {
+                            app.defer(move |app| {
+                                app.defer_shutdown_critical_after_window_registry_clear(
+                                    move |app| {
+                                        app.defer(move |_| follow_up_effect_ran.set(true));
+                                    },
+                                );
+                            });
+                        }
+                    });
+                    std::future::ready(())
+                })
+                .detach();
+            }
+        });
+
+        cx.quit();
+        cx.run_until_parked();
+
+        assert!(
+            follow_up_effect_ran.get(),
+            "effects created by a post-terminal critical participant must flush before completion"
+        );
+    }
+
+    #[crate::test]
+    fn native_retirement_dependencies_hold_anchor_until_dependents_are_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let anchor: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let dependent: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let anchor_platform = cx.test_window(anchor);
+        let dependent_platform = cx.test_window(dependent);
+        let anchor_terminal = cx.hold_window_native_terminal(anchor);
+        let dependent_terminal = cx.hold_window_native_terminal(dependent);
+
+        cx.update(|app| {
+            app.register_native_window_retirement_dependencies(
+                anchor.window_id(),
+                [dependent.window_id()],
+            )
+            .expect("one anchor-to-dependent edge must be acyclic");
+            anchor
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the anchor should remain logically registered");
+            dependent
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the dependent should remain logically registered");
+        });
+        cx.run_until_parked();
+
+        assert_eq!(dependent_platform.presentation_shutdown_counts().2, 1);
+        assert_eq!(
+            anchor_platform.presentation_shutdown_counts().2,
+            0,
+            "anchor retirement must wait for the dependent native terminal"
+        );
+
+        assert!(dependent_terminal.release());
+        cx.run_until_parked();
+        assert_eq!(anchor_platform.presentation_shutdown_counts().2, 1);
+        assert!(anchor_terminal.release());
+        cx.run_until_parked();
+        assert!(cx.app.native_window_retirement_barriers_are_clear());
+    }
+
+    #[crate::test]
+    fn cancelling_native_retirement_dependencies_dispatches_a_waiting_anchor(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let anchor: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let dependent: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let anchor_platform = cx.test_window(anchor);
+        let anchor_terminal = cx.hold_window_native_terminal(anchor);
+        let dependent_terminal = cx.hold_window_native_terminal(dependent);
+
+        cx.update(|app| {
+            app.register_native_window_retirement_dependencies(
+                anchor.window_id(),
+                [dependent.window_id()],
+            )
+            .expect("one anchor-to-dependent edge must be acyclic");
+            anchor
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the anchor should remain logically registered");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            anchor_platform.presentation_shutdown_counts().2,
+            0,
+            "the anchor must first enter dependency-blocked retirement"
+        );
+
+        cx.update(|app| {
+            assert!(app.cancel_native_window_retirement_dependencies(anchor.window_id()));
+            assert!(
+                !app.cancel_native_window_retirement_dependencies(anchor.window_id()),
+                "the exact dependency group must only be cancelled once"
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            anchor_platform.presentation_shutdown_counts().2,
+            1,
+            "cancellation must transfer the retained anchor owner to native retirement"
+        );
+        assert!(anchor_terminal.release());
+        cx.run_until_parked();
+
+        cx.update(|app| {
+            dependent
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the dependent should remain logically registered");
+        });
+        cx.run_until_parked();
+        assert!(dependent_terminal.release());
+        cx.run_until_parked();
+        assert!(cx.app.native_window_retirement_barriers_are_clear());
+    }
+
+    #[crate::test]
+    fn native_retirement_dependency_cycles_are_rejected(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let anchor: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let dependent: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+
+        cx.update(|app| {
+            app.register_native_window_retirement_dependencies(
+                anchor.window_id(),
+                [dependent.window_id()],
+            )
+            .expect("the first dependency edge must be admitted");
+            assert_eq!(
+                app.register_native_window_retirement_dependencies(
+                    dependent.window_id(),
+                    [anchor.window_id()],
+                ),
+                Err(crate::NativeWindowRetirementDependencyError::Cycle {
+                    anchor: dependent.window_id(),
+                    dependency: anchor.window_id(),
+                })
+            );
+            anchor
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the anchor should remain logically registered");
+            dependent
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the dependent should remain logically registered");
+        });
+        cx.run_until_parked();
+
+        assert!(cx.app.native_window_retirement_barriers_are_clear());
+    }
+
+    #[crate::test]
+    fn native_retirement_dependencies_reject_unknown_identities_atomically(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let anchor: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let dependent: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let anchor_platform = cx.test_window(anchor);
+        let anchor_terminal = cx.hold_window_native_terminal(anchor);
+        let dependent_terminal = cx.hold_window_native_terminal(dependent);
+        let unknown_anchor = WindowId::from((9_001_u64 << 32) | 1);
+        let unknown_dependency = WindowId::from((9_002_u64 << 32) | 1);
+        let rolled_back_dependency = WindowId::from((9_003_u64 << 32) | 1);
+        cx.app.reserve_native_window(rolled_back_dependency);
+        cx.app.remove_native_window(rolled_back_dependency);
+
+        cx.update(|app| {
+            assert_eq!(
+                app.register_native_window_retirement_dependencies(
+                    unknown_anchor,
+                    [dependent.window_id()],
+                ),
+                Err(
+                    crate::NativeWindowRetirementDependencyError::UnknownAnchor {
+                        anchor: unknown_anchor,
+                    }
+                )
+            );
+            assert_eq!(
+                app.register_native_window_retirement_dependencies(
+                    anchor.window_id(),
+                    [rolled_back_dependency],
+                ),
+                Err(
+                    crate::NativeWindowRetirementDependencyError::UnknownDependency {
+                        anchor: anchor.window_id(),
+                        dependency: rolled_back_dependency,
+                    }
+                )
+            );
+            assert_eq!(
+                app.register_native_window_retirement_dependencies(
+                    anchor.window_id(),
+                    [dependent.window_id(), unknown_dependency],
+                ),
+                Err(
+                    crate::NativeWindowRetirementDependencyError::UnknownDependency {
+                        anchor: anchor.window_id(),
+                        dependency: unknown_dependency,
+                    }
+                )
+            );
+            anchor
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the anchor should remain logically registered");
+            dependent
+                .update(app, |_, window, cx| window.remove_window(cx))
+                .expect("the dependent should remain logically registered");
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            anchor_platform.presentation_shutdown_counts().2,
+            1,
+            "a rejected dependency batch must not partially retain the anchor"
+        );
+        assert!(dependent_terminal.release());
+        assert!(anchor_terminal.release());
+        cx.run_until_parked();
+        assert!(cx.app.native_window_retirement_barriers_are_clear());
+    }
+
+    #[crate::test]
+    fn nonterminating_shutdown_keeps_window_open_barrier_through_retirement_retry(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let platform_window = cx.test_window(window);
+        platform_window.reject_native_retirement_attempts(2);
+
+        cx.update(|app| app.shutdown());
+        cx.run_until_parked();
+
+        let blocked = cx.update(|app| {
+            app.open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+        });
+        assert_eq!(
+            blocked
+                .expect_err("a retry-pending native owner must retain the window-open barrier")
+                .stage(),
+            crate::WindowOpenFailureStage::AppShutdown
+        );
+        assert_eq!(platform_window.presentation_shutdown_counts().2, 0);
+
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(8));
+        cx.run_until_parked();
+
+        assert_eq!(platform_window.presentation_shutdown_counts().2, 1);
+        let replacement: AnyWindowHandle = cx
+            .update(|app| app.open_window(WindowOptions::default(), |_, app| app.new(|_| Empty)))
+            .expect("reopen must wait for exact native retirement terminal")
+            .into();
+        assert!(replacement.update(cx, |_, _, _| ()).is_ok());
+    }
+
+    #[crate::test]
+    fn terminating_shutdown_waits_for_queued_capture_release_completion(cx: &mut TestAppContext) {
+        let source: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let platform_window = cx.test_window(source);
+        let generation = cx.update(|app| {
+            app.reserve_native_captured_drag_start()
+                .token()
+                .generation()
+        });
+        let completions = Rc::new(RefCell::new(Vec::new()));
+        let (token, barrier) = cx.app.reserve_native_captured_drag_release(
+            source.window_id(),
+            generation,
+            Box::new({
+                let completions = completions.clone();
+                move |barrier, terminal, _| {
+                    completions.borrow_mut().push((barrier, terminal));
+                }
+            }),
+        );
+
+        let mut app = cx.app.borrow_mut();
+        cx.app.settle_native_pointer_capture_release(
+            token,
+            platform_window.command_dispatcher(),
+            true,
+        );
+        app.shutdown_from_native_quit();
+        drop(app);
+        cx.run_until_parked();
+
+        assert_eq!(
+            completions.borrow().as_slice(),
+            &[(barrier, NativeCapturedDragReleaseTerminal::Released)],
+            "terminating shutdown must not discard a release continuation queued behind its final native attempt"
+        );
+        assert!(cx.app.pointer_capture_release_barriers_are_clear());
+        assert!(cx.windows().is_empty());
+    }
+
+    fn assert_shutdown_flushes_effects_created_by_release_completion(
+        cx: &mut TestAppContext,
+        terminate_ingress: bool,
+    ) {
+        let source: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let platform_window = cx.test_window(source);
+        let generation = cx.update(|app| {
+            app.reserve_native_captured_drag_start()
+                .token()
+                .generation()
+        });
+        let deferred_effect_ran = Rc::new(Cell::new(false));
+        let (token, _) = cx.app.reserve_native_captured_drag_release(
+            source.window_id(),
+            generation,
+            Box::new({
+                let deferred_effect_ran = deferred_effect_ran.clone();
+                move |_, terminal, app| {
+                    assert_eq!(terminal, NativeCapturedDragReleaseTerminal::Released);
+                    app.defer(move |_| deferred_effect_ran.set(true));
+                }
+            }),
+        );
+
+        let mut app = cx.app.borrow_mut();
+        cx.app.settle_native_pointer_capture_release(
+            token,
+            platform_window.command_dispatcher(),
+            true,
+        );
+        if terminate_ingress {
+            app.shutdown_from_native_quit();
+        } else {
+            app.shutdown();
+        }
+        drop(app);
+        cx.run_until_parked();
+
+        assert!(
+            deferred_effect_ran.get(),
+            "shutdown must reach effect quiescence after release continuations settle"
+        );
+        assert!(cx.app.borrow().pending_effects.is_empty());
+        assert!(cx.app.pointer_capture_release_barriers_are_clear());
+        assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
+    fn terminating_shutdown_flushes_effects_created_by_release_completion(cx: &mut TestAppContext) {
+        assert_shutdown_flushes_effects_created_by_release_completion(cx, true);
+    }
+
+    #[crate::test]
+    fn non_terminating_shutdown_flushes_effects_created_by_release_completion(
+        cx: &mut TestAppContext,
+    ) {
+        assert_shutdown_flushes_effects_created_by_release_completion(cx, false);
     }
 }

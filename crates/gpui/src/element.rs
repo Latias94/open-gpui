@@ -119,6 +119,14 @@ pub trait Element: 'static + IntoElement {
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     fn write_a11y_info(&self, _node: &mut accesskit::Node) {}
 
+    /// Returns whether GPUI should infer the default `ScrollIntoView` action for this node.
+    ///
+    /// Elements that write an exact accessibility action set can return `false` and publish
+    /// their actions from [`Element::write_a11y_info`] instead.
+    fn infer_a11y_scroll_into_view(&self) -> bool {
+        true
+    }
+
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
         AnyElement::new(self)
@@ -468,7 +476,9 @@ impl<E: Element> Drawable<E> {
                             let node_id = global_id.accesskit_node_id();
                             let mut node = accesskit::Node::new(role);
                             self.element.write_a11y_info(&mut node);
-                            node.add_action(accesskit::Action::ScrollIntoView);
+                            if self.element.infer_a11y_scroll_into_view() {
+                                node.add_action(accesskit::Action::ScrollIntoView);
+                            }
                             node.clear_transform();
                             node.set_bounds(accessibility_bounds);
                             pushed_a11y_node = window.a11y.nodes.push(node_id, node);

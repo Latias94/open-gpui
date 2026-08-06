@@ -1,6 +1,264 @@
 use super::*;
 
+pub(crate) struct DockViewportLockedDropRoute {
+    drag_session: DockRuntimeDragSession,
+    kind: DockViewportLockedDropRouteKind,
+}
+
+#[must_use = "a prepared live-undock host drop must complete commit preflight"]
+pub(crate) struct DockViewportPreparedLiveUndockHostDrop {
+    drag_session: DockRuntimeDragSession,
+    locked: crate::viewport_runtime::DockViewportLockedWorkspaceDrop,
+    target_window: AnyWindowHandle,
+}
+
+#[must_use = "a preflighted live-undock host drop must commit exactly once"]
+pub(crate) struct DockViewportPreflightedLiveUndockHostDrop {
+    prepared: crate::viewport_runtime::DockViewportPreflightedLockedPayloadDrop,
+}
+
+#[must_use = "a committed live-undock host drop must settle its returned window effects"]
+pub(crate) struct DockViewportCommittedLiveUndockHostDrop {
+    outcome: DockViewportDropRouteOutcome,
+    window_effects: DockViewportWindowEffects,
+}
+
+impl DockViewportCommittedLiveUndockHostDrop {
+    pub(crate) fn outcome(&self) -> &DockViewportDropRouteOutcome {
+        &self.outcome
+    }
+
+    pub(crate) fn into_parts(self) -> (DockViewportDropRouteOutcome, DockViewportWindowEffects) {
+        (self.outcome, self.window_effects)
+    }
+}
+
+enum DockViewportLockedDropRouteKind {
+    Workspace(crate::viewport_runtime::DockViewportLockedWorkspaceDrop),
+    TearOff(DockViewportPreparedTearOffDrop),
+}
+
+impl DockViewportLockedDropRoute {
+    pub(crate) fn drag_session(&self) -> &DockRuntimeDragSession {
+        &self.drag_session
+    }
+
+    pub(crate) const fn is_workspace(&self) -> bool {
+        matches!(self.kind, DockViewportLockedDropRouteKind::Workspace(_))
+    }
+}
+
 impl DockViewportRuntimeHandle {
+    pub(crate) fn prepare_live_undock_host_drop(
+        &self,
+        locked: DockViewportLockedDropRoute,
+        target_window: AnyWindowHandle,
+    ) -> Result<DockViewportPreparedLiveUndockHostDrop, DockActionApplyError> {
+        let DockViewportLockedDropRoute { drag_session, kind } = locked;
+        let DockViewportLockedDropRouteKind::Workspace(locked) = kind else {
+            return Err(DockActionApplyError::DropTargetUnavailable);
+        };
+        Ok(DockViewportPreparedLiveUndockHostDrop {
+            drag_session,
+            locked,
+            target_window,
+        })
+    }
+
+    pub(crate) fn preflight_live_undock_host_drop_commit(
+        &self,
+        prepared: DockViewportPreparedLiveUndockHostDrop,
+        cx: &mut App,
+    ) -> Result<DockViewportPreflightedLiveUndockHostDrop, DockActionApplyError> {
+        let DockViewportPreparedLiveUndockHostDrop {
+            drag_session,
+            locked,
+            target_window,
+        } = prepared;
+        let prepared =
+            self.runtime
+                .borrow()
+                .prepare_atomic_locked_payload_drop(locked, target_window, None);
+        let result = match prepared {
+            Ok(prepared) => {
+                let sampled = prepared.sample_atomic_locked_payload_drop(cx);
+                self.runtime
+                    .borrow()
+                    .preflight_atomic_locked_payload_drop(sampled, cx)
+            }
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(prepared) => Ok(DockViewportPreflightedLiveUndockHostDrop { prepared }),
+            Err(error) => {
+                self.runtime
+                    .borrow_mut()
+                    .record_drop_route_result(&Err(error.clone()));
+                let preview_update = self
+                    .runtime
+                    .borrow_mut()
+                    .clear_routed_drop_preview_for_drag_session(Some(&drag_session));
+                refresh_runtime_update(preview_update, cx);
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn commit_preflighted_live_undock_host_drop(
+        &self,
+        preflighted: DockViewportPreflightedLiveUndockHostDrop,
+        commit_presentation_authority: impl FnOnce(&mut App),
+        cx: &mut App,
+    ) -> DockViewportCommittedLiveUndockHostDrop {
+        self.with_surface_transaction(cx, |_surface_transaction, cx| {
+            let committed = self
+                .runtime
+                .borrow_mut()
+                .commit_preflighted_locked_payload_drop(preflighted.prepared, cx);
+            let (outcome, update, window_effects) = committed.into_parts();
+            commit_presentation_authority(cx);
+            self.publish_surface_commit(&update, cx);
+            DockViewportCommittedLiveUndockHostDrop {
+                outcome,
+                window_effects,
+            }
+        })
+    }
+
+    pub(crate) fn lock_payload_drop_from_screen(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        borrowed_source_window: AnyWindowHandle,
+        cx: &mut App,
+    ) -> Result<DockViewportLockedDropRoute, DockActionApplyError> {
+        let drag_session = request
+            .drag_session()
+            .cloned()
+            .ok_or(DockActionApplyError::DropDragSessionMissing)?;
+        let resolution = self
+            .resolve_payload_drop_delivery_for_request_outcome_excluding(
+                request,
+                Some(borrowed_source_window.window_id()),
+                cx,
+            )
+            .into_resolution();
+        let delivery = DockDropDelivery::from_resolution(resolution)?;
+        let kind = match delivery.into_tear_off_request() {
+            Ok(request) => {
+                let controller = self.runtime.borrow().controller_entity();
+                let graph_spaces =
+                    cx.read_entity(&controller, |controller, _| controller.graph().spaces());
+                let probe = self
+                    .runtime
+                    .borrow_mut()
+                    .prepare_tear_off_drop_delivery(request, &graph_spaces)?;
+                DockViewportLockedDropRouteKind::TearOff(probe.sample(cx)?)
+            }
+            Err(delivery) => {
+                let controller = self.runtime.borrow().controller_entity();
+                let workspace_facts = cx.read_entity(&controller, |controller, _| {
+                    crate::DockViewportWorkspaceRouteFacts::capture_for_payload(
+                        controller.workspace(),
+                        delivery.payload(),
+                        delivery.source_node(),
+                    )
+                });
+                let commit = self
+                    .runtime
+                    .borrow()
+                    .resolve_locked_workspace_drop_delivery(delivery, &workspace_facts)?;
+                let drag_session = commit
+                    .drag_session
+                    .clone()
+                    .ok_or(DockActionApplyError::DropDragSessionMissing)?;
+                let resolved_target = commit.target.clone();
+                let plan = cx.read_entity(&controller, |controller, _| {
+                    controller.workspace().lock_resolved_payload_drop(
+                        &commit.source_space,
+                        commit.payload.as_workspace_payload(commit.source_node),
+                        resolved_target,
+                    )
+                })?;
+                DockViewportLockedDropRouteKind::Workspace(
+                    crate::viewport_runtime::DockViewportLockedWorkspaceDrop::new(
+                        plan,
+                        drag_session,
+                    ),
+                )
+            }
+        };
+        Ok(DockViewportLockedDropRoute { drag_session, kind })
+    }
+
+    pub(crate) fn commit_locked_payload_drop_from_screen(
+        &self,
+        locked: DockViewportLockedDropRoute,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        let DockViewportLockedDropRoute { drag_session, kind } = locked;
+        self.with_surface_transaction(cx, |surface_transaction, cx| {
+            let result = match kind {
+                DockViewportLockedDropRouteKind::Workspace(locked) => {
+                    let prepared = self.runtime.borrow().prepare_locked_payload_drop(
+                        locked,
+                        None,
+                        surface_transaction,
+                    );
+                    let result =
+                        prepared
+                            .and_then(|prepared| prepared.apply(cx))
+                            .and_then(|applied| {
+                                self.runtime.borrow_mut().finalize_payload_drop(applied)
+                            });
+                    if let Ok((_, update)) = &result {
+                        self.publish_surface_commit(update, cx);
+                    }
+                    if let Err(error) = &result {
+                        self.runtime
+                            .borrow_mut()
+                            .record_drop_route_result(&Err(error.clone()));
+                    }
+                    result.map(|(outcome, _)| outcome)
+                }
+                DockViewportLockedDropRouteKind::TearOff(prepared) => {
+                    let result = self
+                        .open_prepared_tear_off_viewport(prepared, None, cx)
+                        .map(DockViewportDropRouteOutcome::tear_off)
+                        .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
+                            message: error.to_string(),
+                        });
+                    self.runtime.borrow_mut().record_drop_route_result(&result);
+                    result
+                }
+            };
+            let preview_update = self
+                .runtime
+                .borrow_mut()
+                .clear_routed_drop_preview_for_drag_session(Some(&drag_session));
+            refresh_runtime_update(preview_update, cx);
+            if let Ok(DockViewportDropRouteOutcome::Action(outcome)) = &result {
+                apply_viewport_window_effects(&self.runtime, outcome.window_effects(), cx);
+            }
+            result
+        })
+    }
+
+    pub(crate) fn record_locked_payload_drop_failure(
+        &self,
+        drag_session: &DockRuntimeDragSession,
+        error: DockActionApplyError,
+        cx: &mut App,
+    ) {
+        self.runtime
+            .borrow_mut()
+            .record_drop_route_result(&Err(error));
+        let preview_update = self
+            .runtime
+            .borrow_mut()
+            .clear_routed_drop_preview_for_drag_session(Some(drag_session));
+        refresh_runtime_update(preview_update, cx);
+    }
+
     #[cfg(test)]
     pub(crate) fn deliver_drop_commit_delivery(
         &self,
@@ -326,6 +584,22 @@ impl DockViewportRuntimeHandle {
                 .runtime
                 .borrow_mut()
                 .record_captured_native_foreign_surface_terminal(request, owner, payload)
+    }
+
+    pub(crate) fn record_captured_native_unavailable_terminal(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        owner: &crate::DockViewportRoutedPreviewOwner,
+        payload: &DockDragPayload,
+    ) -> bool {
+        let Some((source_runtime, _, _, _)) = owner.captured_native_parts() else {
+            return false;
+        };
+        source_runtime == self.identity()
+            && self
+                .runtime
+                .borrow_mut()
+                .record_captured_native_unavailable_terminal(request, owner, payload)
     }
 
     fn resolve_and_update_routed_drop_preview_inner<C: open_gpui::AppContext>(

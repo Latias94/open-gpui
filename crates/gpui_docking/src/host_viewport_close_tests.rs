@@ -415,12 +415,24 @@ mod runtime_suite {
 
         assert_eq!(outcome.status(), DockViewportCloseStatus::MergedBack);
         cx.run_until_parked();
+        let window_focus = main
+            .window()
+            .update(cx, |_, window, cx| {
+                (window.focused(cx), window.committed_focus(cx))
+            })
+            .expect("main viewport should remain live");
+        let host_focus = cx.read_entity(&main_host, |host, _| {
+            (
+                host.pending_focus_command()
+                    .map(|command| (command.source(), command.request().clone())),
+                host.viewport_runtime().pending_activation(),
+            )
+        });
+        let focus_diagnostics = (window_focus, host_focus);
         assert_eq!(
-            main.window()
-                .update(cx, |_, window, cx| window.focused(cx))
-                .expect("main viewport should remain live"),
+            focus_diagnostics.0.0,
             Some(panel_c_focus),
-            "close recovery focus must override an earlier platform activation restore request"
+            "close recovery focus must override an earlier platform activation restore request; diagnostics={focus_diagnostics:?}"
         );
     }
 

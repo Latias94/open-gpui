@@ -87,6 +87,23 @@ impl DockViewportActivationTransaction {
         )
     }
 
+    pub(crate) fn registered_host(
+        registration: DockViewportRegistrationKey,
+        window: impl Into<AnyWindowHandle>,
+        focus_request: DockViewportFocusRequest,
+        target_host: WeakEntity<DockHost>,
+    ) -> Self {
+        Self::with_policy(
+            registration,
+            window.into(),
+            DockViewportWindowActivation::Request,
+            DockViewportFocusCommandSource::ViewportActivation,
+            focus_request,
+            Some(target_host),
+            None,
+        )
+    }
+
     pub(crate) fn close_recovery(
         registration: DockViewportRegistrationKey,
         window: impl Into<AnyWindowHandle>,
@@ -206,6 +223,21 @@ impl DockViewportActivationTransaction {
 
     pub(crate) fn matches_window(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
         self.registration.space() == space && self.registration.window_id() == window_id
+    }
+}
+
+fn focus_command_for_transaction(
+    transaction: &DockViewportActivationTransaction,
+) -> DockViewportFocusCommand {
+    match transaction.surface_activation_binding() {
+        Some(binding) => DockViewportFocusCommand::surface_activation(
+            transaction.focus_request().clone(),
+            binding.clone(),
+        ),
+        None => DockViewportFocusCommand::new(
+            transaction.focus_source(),
+            transaction.focus_request().clone(),
+        ),
     }
 }
 
@@ -389,21 +421,6 @@ fn apply_activation_to_host(
     });
     if changed {
         cx.notify();
-    }
-}
-
-fn focus_command_for_transaction(
-    transaction: &DockViewportActivationTransaction,
-) -> DockViewportFocusCommand {
-    match transaction.surface_activation_binding() {
-        Some(binding) => DockViewportFocusCommand::surface_activation(
-            transaction.focus_request().clone(),
-            binding.clone(),
-        ),
-        None => DockViewportFocusCommand::new(
-            transaction.focus_source(),
-            transaction.focus_request().clone(),
-        ),
     }
 }
 

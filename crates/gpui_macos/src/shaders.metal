@@ -9,9 +9,9 @@ static_assert(sizeof(Quad) == 184, "Quad must match the Rust shader ABI");
 static_assert(sizeof(Shadow) == 136, "Shadow must match the Rust shader ABI");
 static_assert(sizeof(Underline) == 88,
               "Underline must match the Rust shader ABI");
-static_assert(sizeof(MonochromeSprite) == 112,
+static_assert(sizeof(MonochromeSprite) == 120,
               "MonochromeSprite must match the Rust shader ABI");
-static_assert(sizeof(PolychromeSprite) == 120,
+static_assert(sizeof(PolychromeSprite) == 128,
               "PolychromeSprite must match the Rust shader ABI");
 
 float4 hsla_to_rgba(Hsla hsla);

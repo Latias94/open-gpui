@@ -193,6 +193,8 @@ pub(crate) struct DockViewportTearOffPending {
     source_registration: Option<DockViewportRegistrationKey>,
     /// Panel item that should receive GPUI focus after the tear-off completes.
     focus_item: Option<DockItemId>,
+    /// Admission-time graph mutation plan for a release whose policy decision is already frozen.
+    move_plan: Option<crate::viewport_tear_off_move::DockViewportTearOffMovePlan>,
     generation: u64,
 }
 
@@ -215,6 +217,12 @@ impl DockViewportTearOffPending {
 
     pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
         self.focus_item.as_ref()
+    }
+
+    pub(crate) fn move_plan(
+        &self,
+    ) -> Option<&crate::viewport_tear_off_move::DockViewportTearOffMovePlan> {
+        self.move_plan.as_ref()
     }
 }
 
@@ -553,6 +561,25 @@ impl DockViewportTearOffMachine {
         source_registration: Option<DockViewportRegistrationKey>,
         focus_item: Option<DockItemId>,
     ) -> DockViewportTearOffBeginOutcome {
+        self.begin_with_move_plan(
+            request,
+            target_space,
+            source_window,
+            source_registration,
+            focus_item,
+            None,
+        )
+    }
+
+    pub(crate) fn begin_with_move_plan(
+        &mut self,
+        request: DockViewportTearOffRequest,
+        target_space: DockSpaceId,
+        source_window: Option<AnyWindowHandle>,
+        source_registration: Option<DockViewportRegistrationKey>,
+        focus_item: Option<DockItemId>,
+        move_plan: Option<crate::viewport_tear_off_move::DockViewportTearOffMovePlan>,
+    ) -> DockViewportTearOffBeginOutcome {
         let key = request.key();
         if let Some(state) = self.requests_by_key.get(&key) {
             return DockViewportTearOffBeginOutcome::Duplicate(state.pending().clone());
@@ -569,6 +596,7 @@ impl DockViewportTearOffMachine {
             source_window,
             source_registration,
             focus_item,
+            move_plan,
             generation,
         };
         self.requests_by_key

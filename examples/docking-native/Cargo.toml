@@ -30,5 +30,11 @@ open_gpui_ui_core.workspace = true
 open_gpui = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 
+[target.'cfg(windows)'.dev-dependencies]
+anyhow.workspace = true
+futures.workspace = true
+raw-window-handle = "0.6"
+windows.workspace = true
+
 [lints]
 workspace = true

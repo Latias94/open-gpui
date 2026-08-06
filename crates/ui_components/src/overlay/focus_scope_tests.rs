@@ -526,6 +526,62 @@ fn restore_waits_for_the_frame_that_unmounts_the_saved_target(cx: &mut open_gpui
 }
 
 #[open_gpui::test]
+fn ordinary_deactivate_waits_for_a_later_accepted_frame(cx: &mut open_gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.outside.focus(window, cx);
+        view.runtime
+            .activate_scope(FocusScopeId::new(PARENT_SCOPE), window, cx)
+            .expect("parent scope should be registered");
+        view.parent_first.focus(window, cx);
+    });
+    let captured_generation = cx.update(|window, _| window.rendered_frame_revision());
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .deactivate_scope(FocusScopeId::new(PARENT_SCOPE), window, cx)
+            .expect("parent scope should be active");
+        let state = view.runtime.state.read(cx);
+        let pending = state
+            .pending_restore_claim
+            .as_ref()
+            .expect("ordinary deactivation should create a restore claim");
+        assert!(matches!(
+            pending.barrier.resolution(window),
+            super::FocusClaimBarrierResolution::Pending
+        ));
+        assert_eq!(
+            window.rendered_frame_revision(),
+            captured_generation,
+            "the claim is created before a new accepted frame exists"
+        );
+    });
+    assert_focused(cx, "focus-scope:parent-first");
+
+    cx.run_until_parked();
+    let accepted_generation = cx.update(|window, _| window.rendered_frame_revision());
+    assert!(
+        accepted_generation > captured_generation,
+        "the ordinary claim should remain pending until a later frame is accepted"
+    );
+    assert_focused(cx, "focus-scope:parent-first");
+    cx.update(|window, cx| {
+        assert_eq!(
+            window.drain_next_frame_callbacks_for_test(cx),
+            1,
+            "the ordinary claim should settle only after the later frame is accepted"
+        );
+        assert_eq!(window.rendered_frame_revision(), accepted_generation);
+    });
+    assert_focused(cx, "focus-scope:outside");
+    cx.run_until_parked();
+
+    assert_focused(cx, "focus-scope:outside");
+}
+
+#[open_gpui::test]
 fn no_restore_candidate_clears_closing_scope_focus(cx: &mut open_gpui::TestAppContext) {
     let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
     draw(cx);

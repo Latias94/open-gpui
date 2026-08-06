@@ -3969,12 +3969,29 @@ fn menu_owner_unmount_allows_same_id_remount_without_pre_settling_cleanup(
             .is_some(),
         "same-ID remount should register and reopen its submenu branch"
     );
-
+    let generation_before_unmount = cx.update(|window, _| window.rendered_frame_revision());
     cx.update_window_entity(&view, |view, _, cx| {
         view.mounted = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    let accepted_generation = cx.update(|window, cx| {
+        window.draw(cx).clear();
+        window.rendered_frame_revision()
+    });
+    assert!(
+        accepted_generation > generation_before_unmount,
+        "the unmount candidate must become an accepted frame"
+    );
+    assert_eq!(
+        cx.update(|window, _| window.rendered_frame_revision()),
+        accepted_generation,
+        "portal-anchor restoration should settle before any later accepted generation"
+    );
+    assert_eq!(
+        cx.focused_debug_selector().as_deref(),
+        Some("menu-test:remount-window-fallback"),
+        "accepted portal-anchor unlink should restore the fallback in that accepted frame"
+    );
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
@@ -3987,15 +4004,17 @@ fn menu_owner_unmount_allows_same_id_remount_without_pre_settling_cleanup(
     });
     cx.run_until_parked();
 
-    assert!(
-        cx.debug_selector_is_focused("menu-test:remount-window-fallback"),
-        "owner release should restore the window fallback after the trigger and subtree vanish"
-    );
     let released = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
             .snapshot(window, cx)
             .expect("released Menu snapshot should resolve")
     });
+    let focused = cx.focused_debug_selector();
+    assert_eq!(
+        focused.as_deref(),
+        Some("menu-test:remount-window-fallback"),
+        "owner release should restore the window fallback after the trigger and subtree vanish"
+    );
     assert!(
         released
             .layers()

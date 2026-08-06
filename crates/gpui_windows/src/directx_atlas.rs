@@ -11,13 +11,16 @@ use windows::Win32::Graphics::{
 
 use open_gpui::{
     AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
-    AtlasRemoveOutcome, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds,
+    AtlasRemoveOutcome, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureKind,
+    AtlasTextureLeaseEpoch, AtlasTextureLeaseError, AtlasTextureList, AtlasTile, Bounds,
     DevicePixels, PlatformAtlas, Point, Size,
 };
 
 pub(crate) struct DirectXAtlas(Mutex<DirectXAtlasState>);
 
 struct DirectXAtlasState {
+    epoch: AtlasTextureLeaseEpoch,
+    next_texture_generation: u32,
     device: ID3D11Device,
     device_context: ID3D11DeviceContext,
     monochrome_textures: AtlasTextureList<DirectXAtlasTexture>,
@@ -27,17 +30,20 @@ struct DirectXAtlasState {
 }
 
 struct DirectXAtlasTexture {
-    id: AtlasTextureId,
+    id: AtlasTextureInstanceId,
     bytes_per_pixel: u32,
     allocator: BucketedAtlasAllocator,
     texture: ID3D11Texture2D,
     view: [Option<ID3D11ShaderResourceView>; 1],
     live_atlas_keys: u32,
+    live_visual_leases: u32,
 }
 
 impl DirectXAtlas {
     pub(crate) fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Self {
         DirectXAtlas(Mutex::new(DirectXAtlasState {
+            epoch: AtlasTextureLeaseEpoch::INITIAL,
+            next_texture_generation: 1,
             device: device.clone(),
             device_context: device_context.clone(),
             monochrome_textures: Default::default(),
@@ -49,10 +55,10 @@ impl DirectXAtlas {
 
     pub(crate) fn get_texture_view(
         &self,
-        id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
     ) -> [Option<ID3D11ShaderResourceView>; 1] {
         let lock = self.0.lock();
-        let tex = lock.texture(id);
+        let tex = lock.texture(texture);
         tex.view.clone()
     }
 
@@ -62,6 +68,7 @@ impl DirectXAtlas {
         device_context: &ID3D11DeviceContext,
     ) {
         let mut lock = self.0.lock();
+        lock.epoch = lock.epoch.next();
         lock.device = device.clone();
         lock.device_context = device_context.clone();
         lock.monochrome_textures = AtlasTextureList::default();
@@ -89,7 +96,7 @@ impl PlatformAtlas for DirectXAtlas {
             let tile = lock
                 .allocate(size, key.texture_kind())
                 .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
-            let texture = lock.texture(tile.texture_id);
+            let texture = lock.texture(tile.texture_instance());
             texture.upload(&lock.device_context, tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
@@ -129,7 +136,7 @@ impl PlatformAtlas for DirectXAtlas {
             let tile = lock
                 .allocate(size, key.texture_kind())
                 .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
-            let texture = lock.texture(tile.texture_id);
+            let texture = lock.texture(tile.texture_instance());
             texture.upload(&lock.device_context, tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile);
             Ok(AtlasAccess {
@@ -147,9 +154,14 @@ impl PlatformAtlas for DirectXAtlas {
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
 
-        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
+        let Some(texture) = lock
+            .tiles_by_key
+            .remove(key)
+            .map(AtlasTile::texture_instance)
+        else {
             return;
         };
+        let id = texture.texture_id;
 
         let textures = match id.kind {
             AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
@@ -160,13 +172,21 @@ impl PlatformAtlas for DirectXAtlas {
         let Some(texture_slot) = textures.textures.get_mut(id.index as usize) else {
             return;
         };
+        if texture_slot
+            .as_ref()
+            .is_none_or(|resident| resident.id != texture)
+        {
+            return;
+        }
 
-        if let Some(mut texture) = texture_slot.take() {
-            texture.decrement_ref_count();
-            if texture.is_unreferenced() {
-                textures.free_list.push(texture.id.index as usize);
+        if let Some(mut resident) = texture_slot.take() {
+            resident.decrement_ref_count();
+            if resident.is_unreferenced() {
+                textures
+                    .free_list
+                    .push(resident.id.texture_id.index as usize);
             } else {
-                *texture_slot = Some(texture);
+                *texture_slot = Some(resident);
             }
         }
     }
@@ -174,9 +194,14 @@ impl PlatformAtlas for DirectXAtlas {
     fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
         let mut lock = self.0.lock();
 
-        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
+        let Some(texture) = lock
+            .tiles_by_key
+            .remove(key)
+            .map(AtlasTile::texture_instance)
+        else {
             return AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveNoop, None);
         };
+        let id = texture.texture_id;
 
         let textures = match id.kind {
             AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
@@ -187,23 +212,153 @@ impl PlatformAtlas for DirectXAtlas {
         let Some(texture_slot) = textures.textures.get_mut(id.index as usize) else {
             return AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveHit, Some(id));
         };
+        if texture_slot
+            .as_ref()
+            .is_none_or(|resident| resident.id != texture)
+        {
+            return AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveHit, Some(id));
+        }
 
-        if let Some(mut texture) = texture_slot.take() {
-            texture.decrement_ref_count();
-            if texture.is_unreferenced() {
-                textures.free_list.push(texture.id.index as usize);
+        if let Some(mut resident) = texture_slot.take() {
+            resident.decrement_ref_count();
+            if resident.is_unreferenced() {
+                textures
+                    .free_list
+                    .push(resident.id.texture_id.index as usize);
                 AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::TextureFreed, Some(id))
             } else {
-                *texture_slot = Some(texture);
+                *texture_slot = Some(resident);
                 AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::TextureRetained, Some(id))
             }
         } else {
             AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveHit, Some(id))
         }
     }
+
+    fn atlas_texture_lease_epoch(&self) -> AtlasTextureLeaseEpoch {
+        self.0.lock().epoch
+    }
+
+    unsafe fn acquire_atlas_texture_leases(
+        &self,
+        textures: &[AtlasTextureInstanceId],
+    ) -> std::result::Result<AtlasTextureLeaseEpoch, AtlasTextureLeaseError> {
+        debug_assert!(
+            textures
+                .iter()
+                .enumerate()
+                .all(|(index, texture)| !textures[..index].contains(texture)),
+            "atlas texture lease acquisition requires deduplicated texture instances"
+        );
+        let mut lock = self.0.lock();
+        let epoch = lock.epoch;
+        for texture in textures.iter().copied() {
+            let Some(resident) = lock.texture_if_resident(texture) else {
+                return Err(AtlasTextureLeaseError::TextureUnavailable { texture, epoch });
+            };
+            if resident.live_visual_leases == u32::MAX {
+                return Err(AtlasTextureLeaseError::LeaseCountOverflow { texture, epoch });
+            }
+        }
+        for texture in textures.iter().copied() {
+            if let Some(resident) = lock.texture_if_resident_mut(texture) {
+                resident.live_visual_leases += 1;
+            }
+        }
+        Ok(epoch)
+    }
+
+    unsafe fn release_atlas_texture_leases(
+        &self,
+        epoch: AtlasTextureLeaseEpoch,
+        textures: &[AtlasTextureInstanceId],
+    ) {
+        debug_assert!(
+            textures
+                .iter()
+                .enumerate()
+                .all(|(index, texture)| !textures[..index].contains(texture)),
+            "atlas texture lease release requires deduplicated texture instances"
+        );
+        let mut lock = self.0.lock();
+        if lock.epoch != epoch {
+            return;
+        }
+        for texture in textures.iter().copied() {
+            lock.release_visual_lease(texture);
+        }
+    }
 }
 
 impl DirectXAtlasState {
+    fn texture_list(&self, kind: AtlasTextureKind) -> &AtlasTextureList<DirectXAtlasTexture> {
+        match kind {
+            AtlasTextureKind::Monochrome => &self.monochrome_textures,
+            AtlasTextureKind::Polychrome => &self.polychrome_textures,
+            AtlasTextureKind::Subpixel => &self.subpixel_textures,
+        }
+    }
+
+    fn texture_list_mut(
+        &mut self,
+        kind: AtlasTextureKind,
+    ) -> &mut AtlasTextureList<DirectXAtlasTexture> {
+        match kind {
+            AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
+            AtlasTextureKind::Subpixel => &mut self.subpixel_textures,
+        }
+    }
+
+    fn texture_if_resident(&self, texture: AtlasTextureInstanceId) -> Option<&DirectXAtlasTexture> {
+        let id = texture.texture_id;
+        self.texture_list(id.kind)
+            .textures
+            .get(id.index as usize)
+            .and_then(|slot| slot.as_ref())
+            .filter(|resident| resident.id == texture)
+    }
+
+    fn texture_if_resident_mut(
+        &mut self,
+        texture: AtlasTextureInstanceId,
+    ) -> Option<&mut DirectXAtlasTexture> {
+        let id = texture.texture_id;
+        self.texture_list_mut(id.kind)
+            .textures
+            .get_mut(id.index as usize)
+            .and_then(|slot| slot.as_mut())
+            .filter(|resident| resident.id == texture)
+    }
+
+    fn release_visual_lease(&mut self, texture: AtlasTextureInstanceId) {
+        let id = texture.texture_id;
+        let texture_list = self.texture_list_mut(id.kind);
+        let Some(texture_slot) = texture_list.textures.get_mut(id.index as usize) else {
+            return;
+        };
+        if texture_slot
+            .as_ref()
+            .is_none_or(|resident| resident.id != texture)
+        {
+            return;
+        }
+        let Some(mut resident) = texture_slot.take() else {
+            return;
+        };
+        if !resident.release_visual_lease() {
+            *texture_slot = Some(resident);
+            return;
+        }
+        if resident.is_unreferenced() {
+            texture_list
+                .free_list
+                .push(resident.id.texture_id.index as usize);
+        } else {
+            *texture_slot = Some(resident);
+        }
+    }
+
     fn allocate(
         &mut self,
         size: Size<DevicePixels>,
@@ -296,6 +451,15 @@ impl DirectXAtlasState {
             AtlasTextureKind::Subpixel => &mut self.subpixel_textures,
         };
         let index = texture_list.free_list.pop();
+        let generation = self.next_texture_generation;
+        self.next_texture_generation = self
+            .next_texture_generation
+            .checked_add(1)
+            .expect("DirectX atlas texture generation exhausted");
+        let texture_id = AtlasTextureId {
+            index: index.unwrap_or(texture_list.textures.len()) as u32,
+            kind,
+        };
         let view = unsafe {
             let mut view = None;
             self.device
@@ -304,15 +468,16 @@ impl DirectXAtlasState {
             [view]
         };
         let atlas_texture = DirectXAtlasTexture {
-            id: AtlasTextureId {
-                index: index.unwrap_or(texture_list.textures.len()) as u32,
-                kind,
+            id: AtlasTextureInstanceId {
+                texture_id,
+                generation,
             },
             bytes_per_pixel,
             allocator: etagere::BucketedAtlasAllocator::new(device_size_to_etagere(size)),
             texture,
             view,
             live_atlas_keys: 0,
+            live_visual_leases: 0,
         };
         if let Some(ix) = index {
             texture_list.textures[ix] = Some(atlas_texture);
@@ -323,18 +488,9 @@ impl DirectXAtlasState {
         }
     }
 
-    fn texture(&self, id: AtlasTextureId) -> &DirectXAtlasTexture {
-        match id.kind {
-            AtlasTextureKind::Monochrome => &self.monochrome_textures[id.index as usize]
-                .as_ref()
-                .unwrap(),
-            AtlasTextureKind::Polychrome => &self.polychrome_textures[id.index as usize]
-                .as_ref()
-                .unwrap(),
-            AtlasTextureKind::Subpixel => {
-                &self.subpixel_textures[id.index as usize].as_ref().unwrap()
-            }
-        }
+    fn texture(&self, texture: AtlasTextureInstanceId) -> &DirectXAtlasTexture {
+        self.texture_if_resident(texture)
+            .expect("texture must be resident after atlas allocation")
     }
 }
 
@@ -342,13 +498,15 @@ impl DirectXAtlasTexture {
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
         let allocation = self.allocator.allocate(device_size_to_etagere(size))?;
         let tile = AtlasTile {
-            texture_id: self.id,
+            texture_id: self.id.texture_id,
             tile_id: allocation.id.into(),
             bounds: Bounds {
                 origin: etagere_point_to_device(allocation.rectangle.min),
                 size,
             },
             padding: 0,
+            texture_generation: self.id.generation,
+            texture_generation_padding: 0,
         };
         self.live_atlas_keys += 1;
         Some(tile)
@@ -383,8 +541,17 @@ impl DirectXAtlasTexture {
         self.live_atlas_keys -= 1;
     }
 
-    fn is_unreferenced(&mut self) -> bool {
-        self.live_atlas_keys == 0
+    fn release_visual_lease(&mut self) -> bool {
+        let Some(next) = self.live_visual_leases.checked_sub(1) else {
+            debug_assert!(false, "atlas visual lease count underflowed");
+            return false;
+        };
+        self.live_visual_leases = next;
+        true
+    }
+
+    fn is_unreferenced(&self) -> bool {
+        self.live_atlas_keys == 0 && self.live_visual_leases == 0
     }
 }
 

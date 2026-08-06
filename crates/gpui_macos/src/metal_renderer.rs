@@ -9,9 +9,9 @@ use block2::RcBlock;
 use image::RgbaImage;
 use objc2_foundation::NSUInteger;
 use open_gpui::{
-    AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, MonochromeSprite,
-    PaintSurface, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite, PrimitiveBatch,
-    PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    AtlasTextureInstanceId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape,
+    MonochromeSprite, PaintSurface, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite,
+    PrimitiveBatch, PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
     WindowPresentationShutdownTicket, point, size,
 };
 
@@ -899,18 +899,18 @@ impl MetalRenderer {
                     viewport_size,
                     &command_encoder,
                 ),
-                PrimitiveBatch::MonochromeSprites { texture_id, range } => self
+                PrimitiveBatch::MonochromeSprites { texture, range } => self
                     .draw_monochrome_sprites(
-                        texture_id,
+                        texture,
                         &scene.monochrome_sprites[range],
                         instance_buffer,
                         &mut instance_offset,
                         viewport_size,
                         &command_encoder,
                     ),
-                PrimitiveBatch::PolychromeSprites { texture_id, range } => self
+                PrimitiveBatch::PolychromeSprites { texture, range } => self
                     .draw_polychrome_sprites(
-                        texture_id,
+                        texture,
                         &scene.polychrome_sprites[range],
                         instance_buffer,
                         &mut instance_offset,
@@ -1337,7 +1337,7 @@ impl MetalRenderer {
 
     fn draw_monochrome_sprites(
         &self,
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         sprites: &[MonochromeSprite],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -1358,7 +1358,7 @@ impl MetalRenderer {
             return false;
         }
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let texture = self.sprite_atlas.metal_texture(texture);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -1411,7 +1411,7 @@ impl MetalRenderer {
 
     fn draw_polychrome_sprites(
         &self,
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
         sprites: &[PolychromeSprite],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -1423,7 +1423,7 @@ impl MetalRenderer {
         }
         align_offset(instance_offset);
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let texture = self.sprite_atlas.metal_texture(texture);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -1928,9 +1928,9 @@ mod abi_layout_tests {
         assert_eq!(size_of::<Quad>(), 184);
         assert_eq!(size_of::<Shadow>(), 136);
         assert_eq!(size_of::<Underline>(), 88);
-        assert_eq!(size_of::<MonochromeSprite>(), 112);
-        assert_eq!(size_of::<SubpixelSprite>(), 112);
-        assert_eq!(size_of::<PolychromeSprite>(), 120);
+        assert_eq!(size_of::<MonochromeSprite>(), 120);
+        assert_eq!(size_of::<SubpixelSprite>(), 120);
+        assert_eq!(size_of::<PolychromeSprite>(), 128);
     }
 
     #[test]

@@ -74,8 +74,10 @@ An accepted activation follows these rules:
   key-up for roles that own Space.
 - AccessKit Click dispatches directly through the same binding and gate. It does not depend on a
   coordinate-synthesized pointer event.
-- `ActivationHandle` dispatches an immediate `Programmatic` source only to its live control in the
-  owning window and returns an explicit dispatched, blocked, unavailable, or wrong-window result.
+- `ActivationHandle` dispatches an immediate `Programmatic` source only to the live control
+  published by the owning window's latest accepted frame and returns an explicit dispatched,
+  blocked, unavailable, or wrong-window result. A rejected candidate cannot replace or clear that
+  binding; accepted absence, hidden presentation, or inert presentation clears it exactly.
 - A consumed physical or semantic gesture produces at most one transaction and one callback. Paths
   that are not accepted do not consume the event and do not mutate state.
 - Public `on_activate` callbacks receive the source that entered the transaction. A value-intent

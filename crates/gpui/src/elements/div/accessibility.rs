@@ -1,5 +1,5 @@
 use crate::{
-    SharedString,
+    FocusHandle, SharedString,
     window::a11y::{A11yActionListener, ACCESSKIT_ACTIONS, action_mask},
 };
 
@@ -33,6 +33,7 @@ impl FromIterator<accesskit::Action> for A11yActionSet {
 pub(super) struct InteractivityAccessibility {
     pub(super) action_listeners: Vec<(accesskit::Action, A11yActionListener)>,
     explicit_actions: Option<A11yActionSet>,
+    accessibility_focus: Option<FocusHandle>,
     pub(super) override_role: Option<accesskit::Role>,
     pub(super) label: Option<SharedString>,
     pub(super) description: Option<SharedString>,
@@ -73,6 +74,18 @@ pub(super) struct InteractivityAccessibility {
 }
 
 impl InteractivityAccessibility {
+    pub(super) fn set_accessibility_focus(&mut self, focus_handle: &FocusHandle) {
+        self.accessibility_focus = Some(focus_handle.clone());
+    }
+
+    pub(super) fn accessibility_focus(&self) -> Option<&FocusHandle> {
+        self.accessibility_focus.as_ref()
+    }
+
+    pub(super) fn has_explicit_actions(&self) -> bool {
+        self.explicit_actions.is_some()
+    }
+
     pub(super) fn add_explicit_action(&mut self, action: accesskit::Action) {
         self.explicit_actions.get_or_insert_default().insert(action);
     }

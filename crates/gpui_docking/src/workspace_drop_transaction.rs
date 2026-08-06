@@ -1,9 +1,10 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockGraphDropTarget, DockItemId, DockNodeId,
+    DockActionApplyError, DockActionOutcome, DockGraphDropTarget, DockItemId, DockNodeId, DockOp,
     DockSpaceId, DockWorkspace,
+    locked_drop_identity::{DockLockedPayloadIdentity, DockLockedTargetIdentity},
     workspace_drop_target::{
-        DockWorkspaceDropCommitTargetKind, DockWorkspaceResolvedDropTarget,
-        resolve_workspace_drop_commit_target,
+        DockWorkspaceDropCommitTarget, DockWorkspaceDropCommitTargetKind,
+        DockWorkspaceResolvedDropTarget, resolve_workspace_drop_commit_target,
     },
     workspace_move_validation::dock_target_validator,
 };
@@ -13,6 +14,54 @@ pub(crate) struct DockWorkspacePayloadDropRequest<'a> {
     pub(crate) payload: DockWorkspaceDropPayload<'a>,
     pub(crate) target: DockWorkspaceResolvedDropTarget,
     pub(crate) frozen_focus_item: Option<&'a DockItemId>,
+}
+
+pub(crate) struct DockWorkspaceLockedPayloadDropRequest<'a> {
+    pub(crate) plan: DockWorkspaceLockedPayloadDropPlan,
+    pub(crate) frozen_focus_item: Option<&'a DockItemId>,
+}
+
+#[derive(Debug)]
+#[must_use = "a prepared locked payload drop must commit its projected graph"]
+pub(crate) struct DockWorkspacePreparedLockedPayloadDrop {
+    graph: crate::DockGraph,
+    outcome: DockWorkspacePayloadDropOutcome,
+}
+
+impl DockWorkspacePreparedLockedPayloadDrop {
+    pub(crate) fn space_is_empty(&self, space: &DockSpaceId) -> bool {
+        self.graph.collect_items_in_space(space).is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockWorkspaceLockedPayloadDropPlan {
+    source: DockLockedPayloadIdentity,
+    target: DockLockedTargetIdentity,
+}
+
+impl DockWorkspaceLockedPayloadDropPlan {
+    pub(crate) fn source_space(&self) -> &DockSpaceId {
+        self.source.source_space()
+    }
+
+    pub(crate) fn target_space(&self) -> &DockSpaceId {
+        self.target.target_space()
+    }
+
+    fn validate(&self, workspace: &DockWorkspace) -> Result<(), DockActionApplyError> {
+        self.source.validate(workspace.graph())?;
+        self.target.validate(workspace.graph())
+    }
+
+    fn graph_op(&self) -> DockOp {
+        self.source
+            .graph_op(self.target.target_space(), self.target.graph_target())
+    }
+
+    fn payload(&self) -> DockWorkspaceDropPayload<'_> {
+        self.source.as_workspace_payload()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,13 +114,7 @@ impl DockWorkspace {
             frozen_focus_item,
         } = request;
 
-        let commit_target = {
-            let target_space = target.target_space().clone();
-            let payload_classes = self.payload_dock_classes_for_workspace_payload(&payload);
-            let target_validator =
-                dock_target_validator(&target_space, &payload_classes, self.policy());
-            resolve_workspace_drop_commit_target(self, target, Some(&target_validator))?
-        };
+        let commit_target = self.lock_resolved_payload_drop_target(payload, target)?;
         let focus_target_space = commit_target.target_space().clone();
         let commit_target = commit_target.into_parts();
         let action = match commit_target.kind {
@@ -102,6 +145,81 @@ impl DockWorkspace {
                 frozen_focus_item,
             ),
         ))
+    }
+
+    pub(crate) fn lock_resolved_payload_drop_target(
+        &self,
+        payload: DockWorkspaceDropPayload<'_>,
+        target: DockWorkspaceResolvedDropTarget,
+    ) -> Result<DockWorkspaceDropCommitTarget, DockActionApplyError> {
+        let target_space = target.target_space().clone();
+        let payload_classes = self.payload_dock_classes_for_workspace_payload(&payload);
+        let target_validator =
+            dock_target_validator(&target_space, &payload_classes, self.policy());
+        resolve_workspace_drop_commit_target(self, target, Some(&target_validator))
+    }
+
+    pub(crate) fn lock_resolved_payload_drop(
+        &self,
+        source_space: &DockSpaceId,
+        payload: DockWorkspaceDropPayload<'_>,
+        target: DockWorkspaceResolvedDropTarget,
+    ) -> Result<DockWorkspaceLockedPayloadDropPlan, DockActionApplyError> {
+        let source = DockLockedPayloadIdentity::capture(self.graph(), source_space, payload)?;
+        let target = self
+            .lock_resolved_payload_drop_target(payload, target)?
+            .into_locked_identity();
+        let plan = DockWorkspaceLockedPayloadDropPlan { source, target };
+        plan.validate(self)?;
+        let mut graph = self.graph().clone();
+        graph.apply_op_checked(&plan.graph_op())?;
+        Ok(plan)
+    }
+
+    pub(crate) fn commit_locked_payload_drop(
+        &mut self,
+        request: DockWorkspaceLockedPayloadDropRequest<'_>,
+    ) -> Result<DockWorkspacePayloadDropOutcome, DockActionApplyError> {
+        let prepared = self.prepare_locked_payload_drop(request)?;
+        Ok(self.commit_prepared_locked_payload_drop(prepared))
+    }
+
+    pub(crate) fn prepare_locked_payload_drop(
+        &self,
+        request: DockWorkspaceLockedPayloadDropRequest<'_>,
+    ) -> Result<DockWorkspacePreparedLockedPayloadDrop, DockActionApplyError> {
+        let DockWorkspaceLockedPayloadDropRequest {
+            plan,
+            frozen_focus_item,
+        } = request;
+        plan.validate(self)?;
+        let focus_target_space = plan.target_space().clone();
+        let focus_item = match plan.payload() {
+            DockWorkspaceDropPayload::Item { item, .. } => Some((*item).clone()),
+            DockWorkspaceDropPayload::Tabs { .. } | DockWorkspaceDropPayload::Floating { .. } => {
+                frozen_focus_item.cloned()
+            }
+        };
+        let mut graph = self.graph().clone();
+        let action = DockActionOutcome::from_changed(graph.apply_op_checked(&plan.graph_op())?);
+        let focus_item = focus_item.filter(|item| {
+            graph
+                .find_item_in_space(&focus_target_space, item)
+                .is_some()
+        });
+        Ok(DockWorkspacePreparedLockedPayloadDrop {
+            graph,
+            outcome: DockWorkspacePayloadDropOutcome::new(action, focus_item),
+        })
+    }
+
+    pub(crate) fn commit_prepared_locked_payload_drop(
+        &mut self,
+        prepared: DockWorkspacePreparedLockedPayloadDrop,
+    ) -> DockWorkspacePayloadDropOutcome {
+        let DockWorkspacePreparedLockedPayloadDrop { graph, outcome } = prepared;
+        self.set_graph(graph);
+        outcome
     }
 
     fn commit_resolved_payload_graph_target_drop(
@@ -394,6 +512,338 @@ mod tests {
         };
         assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
         assert_eq!(selected.as_ref(), items.get(2));
+    }
+
+    #[test]
+    fn prepared_locked_drop_projects_without_mutating_before_infallible_commit() {
+        let (mut workspace, _root, left, right) = split_workspace();
+        let item_a = item("a");
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &space(),
+                DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item_a,
+                },
+                workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::TabBar {
+                        target_tabs: right,
+                        insert_index: 1,
+                    },
+                ),
+            )
+            .expect("the exact source and target should lock");
+
+        let prepared = workspace
+            .prepare_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect("the locked drop should project against a graph clone");
+
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")],
+            "prepare must not mutate the authoritative graph"
+        );
+
+        let outcome = workspace.commit_prepared_locked_payload_drop(prepared);
+
+        assert_eq!(outcome.action(), DockActionOutcome::Changed);
+        assert_eq!(outcome.focus_item(), Some(&item_a));
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("b"), item("a")]
+        );
+    }
+
+    #[test]
+    fn locked_tab_bar_target_rejects_a_changed_target_tab_sequence() {
+        let (mut workspace, _root, left, right) = split_workspace();
+        let item_a = item("a");
+        let payload = DockWorkspaceDropPayload::Item {
+            source_tabs: left,
+            item: &item_a,
+        };
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &space(),
+                payload,
+                workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::TabBar {
+                        target_tabs: right,
+                        insert_index: 1,
+                    },
+                ),
+            )
+            .expect("the original target tab gap should lock");
+
+        workspace
+            .commit_graph_op(DockOp::OpenItem {
+                space: space(),
+                target_tabs: Some(right),
+                item: item("x"),
+                insert_index: Some(0),
+            })
+            .expect("the target stack mutation should commit");
+
+        let err = workspace
+            .commit_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect_err("a frozen tab gap must not redirect after the target sequence changes");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("x"), item("b")]
+        );
+    }
+
+    #[test]
+    fn locked_tabs_drop_rejects_changed_payload_items() {
+        let (mut workspace, _root, left, _right) = split_workspace();
+        let detached = DockSpaceId::from("detached");
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &space(),
+                DockWorkspaceDropPayload::Tabs { source_tabs: left },
+                workspace_kind_target(
+                    &detached,
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: detached.clone(),
+                    },
+                ),
+            )
+            .expect("the original tabs payload should lock");
+
+        workspace
+            .commit_graph_op(DockOp::OpenItem {
+                space: space(),
+                target_tabs: Some(left),
+                item: item("x"),
+                insert_index: None,
+            })
+            .expect("the listener-time source mutation should commit");
+
+        let err = workspace
+            .commit_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect_err("a locked tabs payload must retain its exact ordered items");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::DropPayloadMismatch {
+                space: space(),
+                tabs: left,
+            }
+        );
+        assert_eq!(workspace.graph().root(&detached), None);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("x"), item("b")]
+        );
+    }
+
+    #[test]
+    fn locked_floating_drop_rejects_changed_payload_items() {
+        let detached = DockSpaceId::from("detached");
+        let mut graph = DockGraph::new();
+        let root_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let floating_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let floating = graph.insert_node(DockNode::Floating {
+            child: floating_tabs,
+        });
+        graph.set_root(space(), root_tabs);
+        graph
+            .floating_containers_mut(space())
+            .push(DockFloatingContainer {
+                node: floating,
+                bounds: bounds(),
+            });
+        let mut workspace = DockWorkspace::new(space(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &space(),
+                DockWorkspaceDropPayload::Floating { floating },
+                workspace_kind_target(
+                    &detached,
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: detached.clone(),
+                    },
+                ),
+            )
+            .expect("the original floating payload should lock");
+
+        workspace
+            .commit_graph_op(DockOp::OpenItem {
+                space: space(),
+                target_tabs: Some(floating_tabs),
+                item: item("x"),
+                insert_index: None,
+            })
+            .expect("the listener-time floating mutation should commit");
+
+        let err = workspace
+            .commit_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect_err("a locked floating payload must retain its exact ordered items");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::DropPayloadMismatch {
+                space: space(),
+                tabs: floating,
+            }
+        );
+        assert_eq!(workspace.graph().root(&detached), None);
+        assert_eq!(
+            workspace.graph().collect_items_in_subtree(floating),
+            vec![item("a"), item("x")]
+        );
+    }
+
+    #[test]
+    fn locked_leaf_center_rejects_reparented_target_tabs() {
+        let (
+            mut workspace,
+            source_space,
+            target_space,
+            source_tabs,
+            target_root,
+            target_left,
+            _target_right,
+        ) = root_edge_workspace(vec![item("a")]);
+        let item_a = item("a");
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &source_space,
+                DockWorkspaceDropPayload::Item {
+                    source_tabs,
+                    item: &item_a,
+                },
+                workspace_kind_target(
+                    &target_space,
+                    DockResolvedDropTargetKind::LeafCenter {
+                        root: target_root,
+                        target_tabs: target_left,
+                    },
+                ),
+            )
+            .expect("the original leaf-center owner should lock");
+
+        workspace
+            .commit_graph_op(DockOp::FloatTabsInWindow {
+                source_space: target_space.clone(),
+                source_tabs: target_left,
+                target_space: target_space.clone(),
+                bounds: bounds(),
+            })
+            .expect("the listener-time target reparent should commit");
+
+        let err = workspace
+            .commit_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect_err("a leaf-center target must retain its original root owner");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&source_space),
+            vec![item("a")]
+        );
+        assert!(
+            workspace
+                .graph()
+                .find_item_in_space(&target_space, &item("b"))
+                .is_some(),
+            "the listener-time target reparent must remain intact after rejection"
+        );
+    }
+
+    #[test]
+    fn locked_floating_title_bar_rejects_reparented_target_tabs() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let target_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let floating = graph.insert_node(DockNode::Floating { child: target_tabs });
+        graph.set_root(space(), source_tabs);
+        graph
+            .floating_containers_mut(space())
+            .push(DockFloatingContainer {
+                node: floating,
+                bounds: bounds(),
+            });
+        let mut workspace = DockWorkspace::new(space(), graph);
+        let item_a = item("a");
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &space(),
+                DockWorkspaceDropPayload::Item {
+                    source_tabs,
+                    item: &item_a,
+                },
+                workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::FloatingTitleBar {
+                        floating,
+                        target_tabs,
+                    },
+                ),
+            )
+            .expect("the original floating title-bar owner should lock");
+        let edge_plan = workspace
+            .graph()
+            .edge_dock_plan(&space(), source_tabs, DropZone::Right)
+            .expect("the floating subtree should be dockable beside the root");
+
+        workspace
+            .commit_graph_op(DockOp::MoveFloating {
+                source_space: space(),
+                floating,
+                target_space: space(),
+                target: DockGraphDropTarget::edge(edge_plan),
+            })
+            .expect("the listener-time floating reparent should commit");
+
+        let err = workspace
+            .commit_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect_err("a floating title-bar target must retain its original owner");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().find_item_in_space(&space(), &item("a")),
+            Some((source_tabs, 0))
+        );
+        assert_eq!(
+            workspace.graph().find_item_in_space(&space(), &item("b")),
+            Some((target_tabs, 0))
+        );
     }
 
     #[test]
@@ -817,6 +1267,93 @@ mod tests {
         assert_eq!(
             workspace.graph().collect_items_in_space(&detached),
             vec![item("a")]
+        );
+    }
+
+    #[test]
+    fn resolved_empty_space_target_still_requires_current_platform_viewport_policy() {
+        let (mut workspace, _root, left, _right) = split_workspace();
+        let detached = DockSpaceId::from("detached");
+
+        let err = workspace
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
+                source_space: &space(),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
+                target: workspace_kind_target(
+                    &detached,
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: detached.clone(),
+                    },
+                ),
+            })
+            .expect_err("ordinary drops must keep current-policy commit semantics");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::Policy(DockPolicyError::PlatformViewportsDisabled)
+        );
+        assert_eq!(workspace.graph().root(&detached), None);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")]
+        );
+    }
+
+    #[test]
+    fn locked_item_drop_rejects_a_stale_source_tabs_identity() {
+        let (mut workspace, _root, left, right) = split_workspace();
+        let detached = DockSpaceId::from("detached");
+        let item_a = item("a");
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let payload = DockWorkspaceDropPayload::Item {
+            source_tabs: left,
+            item: &item_a,
+        };
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &space(),
+                payload,
+                workspace_kind_target(
+                    &detached,
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: detached.clone(),
+                    },
+                ),
+            )
+            .expect("the original item source should lock");
+
+        workspace
+            .commit_tab_move(
+                &space(),
+                left,
+                &item_a,
+                &space(),
+                DockGraphDropTarget::center(right),
+            )
+            .expect("the listener-time source move should commit");
+
+        let err = workspace
+            .commit_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect_err("a frozen item drop must retain its exact source tabs identity");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::ItemNotInTabs {
+                tabs: left,
+                item: item_a,
+            }
+        );
+        assert_eq!(workspace.graph().root(&detached), None);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("b"), item("a")]
         );
     }
 

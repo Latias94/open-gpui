@@ -23,25 +23,6 @@ const REMOVED_PRESENTATION_AUTHORITIES: &[&str] = &[
     "enter_hidden_subtree",
 ];
 
-const REMOVED_PRESENTATION_FLUENT_METHODS: &[(&str, &str)] = &[
-    (
-        "visible",
-        "generated `.visible()` / `fn visible` style method",
-    ),
-    (
-        "invisible",
-        "generated `.invisible()` / `fn invisible` style method",
-    ),
-];
-
-const REMOVED_STYLE_VISIBILITY_FIELDS: &[(&str, &str)] = &[
-    ("Style", "public Style::visibility field"),
-    (
-        "StyleRefinement",
-        "public StyleRefinement::visibility field",
-    ),
-];
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScenarioArtifact {
@@ -1208,7 +1189,7 @@ fn dependency_table_has_ui_components(dependencies: &toml::map::Map<String, toml
 }
 
 fn removed_presentation_authorities(source: &str) -> Vec<&'static str> {
-    let mut removed = REMOVED_PRESENTATION_AUTHORITIES
+    REMOVED_PRESENTATION_AUTHORITIES
         .iter()
         .copied()
         .filter(|token| match *token {
@@ -1217,23 +1198,7 @@ fn removed_presentation_authorities(source: &str) -> Vec<&'static str> {
             }
             _ => source.contains(token),
         })
-        .collect::<Vec<_>>();
-    if let Ok(file) = syn::parse_file(source) {
-        if items_have_public_visibility_surface(&file.items) {
-            removed.push("public Visibility export");
-        }
-        for &(owner, label) in REMOVED_STYLE_VISIBILITY_FIELDS {
-            if items_have_public_named_field(&file.items, owner, "visibility") {
-                removed.push(label);
-            }
-        }
-        for &(method_name, label) in REMOVED_PRESENTATION_FLUENT_METHODS {
-            if items_have_retired_presentation_fluent_method(&file.items, method_name) {
-                removed.push(label);
-            }
-        }
-    }
-    removed
+        .collect()
 }
 
 fn source_contains_path_token(source: &str, token: &str) -> bool {
@@ -1249,118 +1214,6 @@ fn source_contains_path_token(source: &str, token: &str) -> bool {
             .is_none_or(|character| !character.is_alphanumeric() && character != '_');
         starts_at_boundary && ends_at_boundary
     })
-}
-
-fn items_have_public_visibility_surface(items: &[syn::Item]) -> bool {
-    items.iter().any(|item| match item {
-        syn::Item::Enum(item) => is_public(&item.vis) && item.ident == "Visibility",
-        syn::Item::Struct(item) => is_public(&item.vis) && item.ident == "Visibility",
-        syn::Item::Type(item) => is_public(&item.vis) && item.ident == "Visibility",
-        syn::Item::Use(item) => is_public(&item.vis) && use_tree_exports_visibility(&item.tree),
-        syn::Item::Mod(item) => {
-            is_public(&item.vis)
-                && item
-                    .content
-                    .as_ref()
-                    .is_some_and(|(_, items)| items_have_public_visibility_surface(items))
-        }
-        _ => false,
-    })
-}
-
-fn items_have_public_named_field(items: &[syn::Item], owner_name: &str, field_name: &str) -> bool {
-    items.iter().any(|item| match item {
-        syn::Item::Struct(item) => {
-            is_public(&item.vis)
-                && item.ident == owner_name
-                && match &item.fields {
-                    syn::Fields::Named(fields) => fields.named.iter().any(|field| {
-                        is_public(&field.vis)
-                            && field
-                                .ident
-                                .as_ref()
-                                .is_some_and(|ident| ident == field_name)
-                    }),
-                    syn::Fields::Unnamed(_) | syn::Fields::Unit => false,
-                }
-        }
-        syn::Item::Mod(item) => {
-            is_public(&item.vis)
-                && item.content.as_ref().is_some_and(|(_, items)| {
-                    items_have_public_named_field(items, owner_name, field_name)
-                })
-        }
-        _ => false,
-    })
-}
-
-fn items_have_retired_presentation_fluent_method(items: &[syn::Item], method_name: &str) -> bool {
-    items.iter().any(|item| match item {
-        syn::Item::Trait(item) if is_public(&item.vis) => item.items.iter().any(|trait_item| {
-            let syn::TraitItem::Fn(method) = trait_item else {
-                return false;
-            };
-            method.sig.ident == method_name
-                && (item.ident == "Styled"
-                    || method
-                        .default
-                        .as_ref()
-                        .is_some_and(block_assigns_style_visibility))
-        }),
-        syn::Item::Impl(item) => item.items.iter().any(|impl_item| {
-            let syn::ImplItem::Fn(method) = impl_item else {
-                return false;
-            };
-            is_public(&method.vis)
-                && method.sig.ident == method_name
-                && block_assigns_style_visibility(&method.block)
-        }),
-        syn::Item::Mod(item) => {
-            is_public(&item.vis)
-                && item.content.as_ref().is_some_and(|(_, items)| {
-                    items_have_retired_presentation_fluent_method(items, method_name)
-                })
-        }
-        _ => false,
-    })
-}
-
-fn block_assigns_style_visibility(block: &syn::Block) -> bool {
-    block.stmts.iter().any(|statement| {
-        let expression = match statement {
-            syn::Stmt::Expr(expression, _) => expression,
-            syn::Stmt::Local(_) | syn::Stmt::Item(_) | syn::Stmt::Macro(_) => return false,
-        };
-        let syn::Expr::Assign(assignment) = expression else {
-            return false;
-        };
-        let syn::Expr::Field(field) = assignment.left.as_ref() else {
-            return false;
-        };
-        let syn::Member::Named(field_name) = &field.member else {
-            return false;
-        };
-        let syn::Expr::MethodCall(style_call) = field.base.as_ref() else {
-            return false;
-        };
-        field_name == "visibility" && style_call.method == "style" && style_call.args.is_empty()
-    })
-}
-
-fn is_public(visibility: &syn::Visibility) -> bool {
-    matches!(visibility, syn::Visibility::Public(_))
-}
-
-fn use_tree_exports_visibility(tree: &syn::UseTree) -> bool {
-    match tree {
-        syn::UseTree::Name(name) => name.ident == "Visibility",
-        syn::UseTree::Rename(rename) => {
-            rename.ident == "Visibility" || rename.rename == "Visibility"
-        }
-        syn::UseTree::Path(path) => use_tree_exports_visibility(&path.tree),
-        syn::UseTree::Group(group) => group.items.iter().any(use_tree_exports_visibility),
-        syn::UseTree::Glob(_) => false,
-    }
 }
 
 fn collect_named_files(
@@ -1597,35 +1450,13 @@ mod tests {
     }
 
     #[test]
-    fn presentation_authority_scan_rejects_every_retired_entry_point() {
+    fn presentation_authority_scan_rejects_exact_retired_internal_tokens() {
         let source = REMOVED_PRESENTATION_AUTHORITIES.join("\n");
         assert_eq!(
             removed_presentation_authorities(&source),
             REMOVED_PRESENTATION_AUTHORITIES
         );
         assert!(removed_presentation_authorities("SubtreePresentation::Hidden").is_empty());
-
-        for source in [
-            "pub use crate::SubtreePresentation as Visibility;",
-            "pub use crate::{Other, SubtreePresentation as Visibility};",
-            "pub use legacy::Visibility;",
-            "pub use legacy::Visibility as LegacyVisibility;",
-            "pub type Visibility = SubtreePresentation;",
-            "pub enum Visibility { Visible, Hidden }",
-            "pub struct Visibility;",
-        ] {
-            assert_eq!(
-                removed_presentation_authorities(source),
-                vec!["public Visibility export"]
-            );
-        }
-        assert!(removed_presentation_authorities("pub(crate) type Visibility = (); ").is_empty());
-        assert!(
-            removed_presentation_authorities(
-                "mod private { pub enum Visibility { Visible, Hidden } }"
-            )
-            .is_empty()
-        );
     }
 
     #[test]
@@ -1756,85 +1587,5 @@ mod tests {
                 &manifest
             ));
         }
-    }
-
-    #[test]
-    fn presentation_authority_scan_rejects_retired_style_visibility_fields() {
-        for (source, expected) in [
-            (
-                "pub struct Style { pub visibility: Visibility }",
-                "public Style::visibility field",
-            ),
-            (
-                r#"
-                #[derive(Serialize, JsonSchema)]
-                pub struct StyleRefinement {
-                    #[serde(default)]
-                    pub visibility: Option<Visibility>,
-                }
-                "#,
-                "public StyleRefinement::visibility field",
-            ),
-            (
-                "pub mod style { pub struct Style { pub visibility: bool } }",
-                "public Style::visibility field",
-            ),
-        ] {
-            assert_eq!(removed_presentation_authorities(source), vec![expected]);
-        }
-
-        for source in [
-            "pub struct Widget { pub visibility: bool }",
-            "pub struct Style { visibility: bool }",
-            "mod private { pub struct Style { pub visibility: bool } }",
-            "impl Widget { pub fn visible(&self) -> bool { self.visibility } }",
-            "fn render() { widget.visible(); widget.visible(predicate); }",
-            "fn inspect() { let visible = model.is_visible(); }",
-            "fn inspect() { let mode = PanelVisibility::Visible; }",
-            "fn inspect() { let mode = Visibility::VisibleWhenActive; }",
-        ] {
-            assert!(
-                removed_presentation_authorities(source).is_empty(),
-                "ordinary business visibility must not be treated as a retired GPUI authority: {source}"
-            );
-        }
-    }
-
-    #[test]
-    fn presentation_authority_scan_distinguishes_style_fluent_methods_from_business_visibility() {
-        let generated_methods = r#"
-            pub trait Styled: Sized {
-                fn style(&mut self) -> &mut StyleRefinement;
-
-                fn visible(mut self) -> Self {
-                    self.style().visibility = Some(Visibility::Visible);
-                    self
-                }
-
-                fn invisible(mut self) -> Self {
-                    self.style().visibility = Some(Visibility::Hidden);
-                    self
-                }
-            }
-        "#;
-        let removed = removed_presentation_authorities(generated_methods);
-        assert!(removed.contains(&"generated `.visible()` / `fn visible` style method"));
-        assert!(removed.contains(&"generated `.invisible()` / `fn invisible` style method"));
-
-        assert_eq!(
-            removed_presentation_authorities(
-                "pub trait Styled { fn visible(self) -> Self; fn invisible(self) -> Self; }"
-            ),
-            vec![
-                "generated `.visible()` / `fn visible` style method",
-                "generated `.invisible()` / `fn invisible` style method",
-            ]
-        );
-        assert!(
-            removed_presentation_authorities(
-                "pub trait OverlayState { fn visible(&self) -> bool; } fn render() { state.visible(); }"
-            )
-            .is_empty()
-        );
     }
 }

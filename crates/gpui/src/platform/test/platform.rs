@@ -2,13 +2,13 @@ use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHeadlessRenderer,
-    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
-    PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PromptButton,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
-    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowCoordinateSpace,
-    WindowCreationSupport, WindowInitialPresentationOrder, WindowMutationSupport, WindowParams,
-    size,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformNativeDragHysteresis, PlatformTextSystem, PlatformWindowCapabilities,
+    PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities, PlatformWindowHitStack,
+    PlatformWindowMutationCapabilities, Point, PromptButton, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow,
+    ThermalState, WindowAppearance, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowMutationSupport, WindowParams, size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -32,6 +32,7 @@ pub(crate) struct TestPlatform {
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     window_stack: RefCell<Option<Vec<TestWindow>>>,
     window_hit_stack: RefCell<Option<PlatformWindowHitStack>>,
+    native_drag_hysteresis: RefCell<Option<PlatformNativeDragHysteresis>>,
     platform_viewport_windows: RefCell<bool>,
     pointer_input_mutation_supported: RefCell<bool>,
     window_creation_capabilities_override: RefCell<Option<PlatformWindowCreationCapabilities>>,
@@ -160,6 +161,7 @@ impl TestPlatform {
             hovered_window: Default::default(),
             window_stack: Default::default(),
             window_hit_stack: Default::default(),
+            native_drag_hysteresis: Default::default(),
             platform_viewport_windows: RefCell::new(true),
             pointer_input_mutation_supported: RefCell::new(true),
             window_creation_capabilities_override: RefCell::new(None),
@@ -210,6 +212,13 @@ impl TestPlatform {
 
     pub(crate) fn set_platform_viewport_windows(&self, supported: bool) {
         *self.platform_viewport_windows.borrow_mut() = supported;
+    }
+
+    pub(crate) fn set_native_drag_hysteresis(
+        &self,
+        hysteresis: Option<PlatformNativeDragHysteresis>,
+    ) {
+        *self.native_drag_hysteresis.borrow_mut() = hysteresis;
     }
 
     pub(crate) fn fail_next_window_map(&self, message: impl Into<String>) {
@@ -648,6 +657,10 @@ impl Platform for TestPlatform {
             })
             .cloned()
             .unwrap_or(PlatformWindowHitStack::Unavailable)
+    }
+
+    fn native_drag_hysteresis(&self) -> Option<PlatformNativeDragHysteresis> {
+        *self.native_drag_hysteresis.borrow()
     }
 
     fn viewport_capabilities(&self) -> crate::PlatformViewportCapabilities {

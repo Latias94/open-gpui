@@ -149,6 +149,7 @@ proptest = { workspace = true }
 rand.workspace = true
 open_gpui_scheduler = { workspace = true, features = ["test-support"] }
 syn.workspace = true
+trybuild.workspace = true
 unicode-segmentation = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]

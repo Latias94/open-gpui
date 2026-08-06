@@ -299,6 +299,13 @@ When the tracked element is a cached `AnyView`, its cache layout and rendered ro
 semantic anchor root. GPUI recaptures that root instead of replaying an inner cache journal, while
 ordinary descendant scopes remain outside the target facts.
 
+Portal-anchor linkage is a cross-frame publication. Its adapter consumes GPUI's window-bound
+`AcceptedFrameFence` after the candidate swap, so unlink-driven close and focus restoration may
+settle against the frame that already removed the anchor. Ordinary event-driven focus transitions
+do not own that proof and must still wait for a later accepted frame. Releasing a component owner
+must not cancel an inactive scope's established restore obligation; replacing the subtree authority
+for the same stable identity must cancel the stale obligation.
+
 `portal_anchor_follower` resolves after ordinary prepaint and emits an explicit window-space portal.
 Views that resolve a portal anchor, including custom deferred work, are recorded as cross-view
 dependencies and are rebuilt on the next frame instead of replaying a stale cached deferred journal.
@@ -991,6 +998,15 @@ redraw transfers physical focus to the resolved fallback only when a previously 
 handle became invalid; external window focus is preserved.
 Long Sidebar navigation uses the shared local scroll primitive so wheel input stays inside the
 sidebar viewport instead of leaking to the outer Components page.
+
+Programmatic activation is an accepted-frame projection. Each logical `ActivationHandle` owns one
+stable window-scoped prepaint publication identity; candidate render records the dispatcher in the
+frame journal, but the handle changes only after that candidate becomes the rendered frame. Atlas
+rejection or transactional rollback preserves the still-visible control, cached journal replay
+renews the same publication, and an accepted frame where the control is absent, hidden, or inert
+clears only that exact binding. Reusing one handle for simultaneously committed controls is
+last-accepted-publication-wins and remains discouraged; applications should allocate one handle per
+independently addressable control.
 
 Sidebar v1 is a bounded navigation primitive, not a full application shell. Provider contexts,
 mobile sheet routing, nested submenus, route integration, keyboard shortcut toggles, persisted

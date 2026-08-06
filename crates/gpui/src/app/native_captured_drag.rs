@@ -40,9 +40,25 @@ impl fmt::Display for NativeIngressSequence {
     }
 }
 
-/// Stable identity for one active framework drag.
+/// Stable non-zero identity for one active framework drag.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NativeCapturedDragGeneration(u64);
+
+impl NativeCapturedDragGeneration {
+    fn new(ordinal: u64) -> Self {
+        assert_ne!(
+            ordinal, 0,
+            "native captured-drag generation zero is reserved"
+        );
+        Self(ordinal)
+    }
+
+    /// Returns the non-zero monotonic ordinal assigned to this drag generation.
+    #[doc(hidden)]
+    pub fn ordinal(self) -> u64 {
+        self.0
+    }
+}
 
 /// Exact post-borrow native capture-release authority for one cancelled drag generation.
 ///
@@ -83,7 +99,10 @@ impl NativeCapturedDragReleaseBarrier {
     }
 }
 
-/// The only terminal outcomes that permit effects dependent on a cancelled native capture.
+/// Terminal outcome for one exact cancelled native capture.
+///
+/// Consumers must treat [`Self::Failed`] as fail-closed: it settles the framework barrier but does
+/// not prove that effects dependent on native capture release are safe.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeCapturedDragReleaseTerminal {
@@ -93,6 +112,8 @@ pub enum NativeCapturedDragReleaseTerminal {
     NativeWindowTerminal,
     /// A replacement logical owner still holds capture, so the old release is unnecessary.
     NotRequired,
+    /// The bounded backend release attempts were exhausted without a native terminal fact.
+    Failed,
 }
 
 pub(super) type NativeCapturedDragReleaseContinuation =
@@ -100,35 +121,15 @@ pub(super) type NativeCapturedDragReleaseContinuation =
 
 pub(super) struct NativeCapturedDragReleaseCompletion {
     barrier: NativeCapturedDragReleaseBarrier,
-    terminal: NativeCapturedDragReleaseTerminal,
-    continuations: Vec<NativeCapturedDragReleaseContinuation>,
 }
 
 impl NativeCapturedDragReleaseCompletion {
-    pub(super) fn new(
-        barrier: NativeCapturedDragReleaseBarrier,
-        terminal: NativeCapturedDragReleaseTerminal,
-        continuations: Vec<NativeCapturedDragReleaseContinuation>,
-    ) -> Self {
-        Self {
-            barrier,
-            terminal,
-            continuations,
-        }
+    pub(super) fn new(barrier: NativeCapturedDragReleaseBarrier) -> Self {
+        Self { barrier }
     }
 
     pub(super) fn barrier(&self) -> NativeCapturedDragReleaseBarrier {
         self.barrier
-    }
-
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        NativeCapturedDragReleaseBarrier,
-        NativeCapturedDragReleaseTerminal,
-        Vec<NativeCapturedDragReleaseContinuation>,
-    ) {
-        (self.barrier, self.terminal, self.continuations)
     }
 }
 
@@ -1043,7 +1044,8 @@ impl App {
             "a native captured-drag start cannot replace a live framework drag"
         );
         self.retire_native_captured_drag_authority();
-        let generation = NativeCapturedDragGeneration(self.next_native_captured_drag_generation);
+        let generation =
+            NativeCapturedDragGeneration::new(self.next_native_captured_drag_generation);
         self.next_native_captured_drag_generation = self
             .next_native_captured_drag_generation
             .checked_add(1)
@@ -1122,13 +1124,14 @@ impl App {
         .is_some()
     }
 
-    /// Cancels one exact native captured drag and invokes `on_terminal` after its native capture
-    /// reaches a terminal release state.
+    /// Cancels one exact native captured drag and invokes `on_terminal` after its release barrier
+    /// reaches a terminal outcome.
     ///
     /// The callback is ordered through GPUI's post-borrow native work FIFO. It receives the
     /// complete source-window, drag, and release identities so a delayed G1 terminal cannot
-    /// authorize effects for a replacement drag. Returning `None` means neither this exact drag
-    /// nor an already-pending release for it exists.
+    /// authorize effects for a replacement drag. [`NativeCapturedDragReleaseTerminal::Failed`]
+    /// settles the barrier without authorizing effects that require proven native release.
+    /// Returning `None` means neither this exact drag nor an already-pending release for it exists.
     #[doc(hidden)]
     pub fn cancel_native_captured_drag_with_release_barrier(
         &mut self,

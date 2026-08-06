@@ -3,10 +3,10 @@ use crate::viewport_registry::DockViewportRouteUnavailableReason;
 #[cfg(test)]
 use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
 use crate::{
-    DockSpaceId,
+    DockSpaceId, DockViewportRuntimeLineage,
     viewport_registry::{
-        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRegistrationKey,
-        DockViewportRegistry,
+        DockViewportInputMask, DockViewportPlatformRequests,
+        DockViewportPreparedVacantRegistration, DockViewportRegistrationKey, DockViewportRegistry,
     },
 };
 use open_gpui::{AnyWindowHandle, WindowId};
@@ -29,6 +29,30 @@ impl DockViewportAdapter {
     /// Creates an empty viewport adapter.
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn prepare_vacant_registration(
+        &mut self,
+        space: DockSpaceId,
+        window: AnyWindowHandle,
+        lineage: DockViewportRuntimeLineage,
+    ) -> Option<DockViewportPreparedVacantRegistration> {
+        self.registry
+            .prepare_vacant_registration(space, window, lineage)
+    }
+
+    pub(crate) fn can_commit_vacant_registration(
+        &self,
+        prepared: &DockViewportPreparedVacantRegistration,
+    ) -> bool {
+        self.registry.can_commit_vacant_registration(prepared)
+    }
+
+    pub(crate) fn commit_vacant_registration(
+        &mut self,
+        prepared: DockViewportPreparedVacantRegistration,
+    ) -> DockViewportRegistrationKey {
+        self.registry.commit_vacant_registration(prepared)
     }
 
     /// Removes a viewport by logical dock space.

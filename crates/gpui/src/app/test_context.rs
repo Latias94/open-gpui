@@ -106,6 +106,22 @@ impl TestWindowCloseRequestOutcome {
     }
 }
 
+/// A retained read-only view of one TestPlatform window's activation command count.
+///
+/// The probe remains readable after the logical window leaves the App registry, which lets
+/// shutdown tests verify that no late activation escaped before native terminal convergence.
+#[derive(Clone)]
+pub struct TestWindowActivationProbe {
+    window: TestWindow,
+}
+
+impl TestWindowActivationProbe {
+    /// Returns how many native activation commands the test window has accepted.
+    pub fn count(&self) -> usize {
+        self.window.activation_count()
+    }
+}
+
 /// Holds a TestPlatform native close callback after GPUI has removed the logical window.
 ///
 /// Call [`Self::release`] to deliver the terminal native `Closed` event at a controlled point.
@@ -883,6 +899,16 @@ impl TestAppContext {
             .set_physical_client_geometry(bounds, scale_factor);
     }
 
+    /// Overrides the native drag hysteresis sampled by subsequently started test drags.
+    ///
+    /// Pass `None` to model a platform that cannot report this native fact.
+    pub fn set_platform_native_drag_hysteresis(
+        &self,
+        hysteresis: Option<crate::PlatformNativeDragHysteresis>,
+    ) {
+        self.test_platform.set_native_drag_hysteresis(hysteresis);
+    }
+
     /// Overrides one test window's native pointer-capture release result.
     pub fn set_pointer_capture_release_callback(
         &self,
@@ -974,6 +1000,19 @@ impl TestAppContext {
         );
         TestWindowNativeTerminalHold {
             window: Some(platform_window),
+        }
+    }
+
+    /// Controls whether `window` can acknowledge presentation shutdown.
+    pub fn block_window_presentation_shutdown(&self, window: AnyWindowHandle, blocked: bool) {
+        self.test_window(window)
+            .block_presentation_shutdown(blocked);
+    }
+
+    /// Retains a read-only activation counter for `window` across logical window removal.
+    pub fn window_activation_probe(&self, window: AnyWindowHandle) -> TestWindowActivationProbe {
+        TestWindowActivationProbe {
+            window: self.test_window(window),
         }
     }
 
@@ -1623,6 +1662,7 @@ impl VisualTestContext {
             let (request_layout_state, prepaint_state) = element.paint(window, cx);
 
             window.invalidator.set_phase(DrawPhase::None);
+            window.accept_visual_test_frame_transfers();
             window.refresh();
 
             drop(element);
@@ -2955,31 +2995,22 @@ mod tests {
             .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
             .into();
         let sampled_point = point(DevicePixels(-48), DevicePixels(96));
-        let hits = vec![
-            PlatformWindowHit::OpaqueBarrier {
-                coverage: PlatformWindowPhysicalCoverage::try_new(Bounds::new(
-                    point(DevicePixels(-64), DevicePixels(80)),
-                    size(DevicePixels(640), DevicePixels(400)),
-                ))
-                .expect("test coverage must be representable"),
-            },
-            PlatformWindowHit::RegisteredApplication {
-                window: registered,
-                coverage: PlatformWindowPhysicalCoverage::try_new(Bounds::new(
-                    point(DevicePixels(-64), DevicePixels(80)),
-                    size(DevicePixels(640), DevicePixels(400)),
-                ))
-                .expect("test coverage must be representable"),
-                geometry: PlatformWindowPhysicalGeometry::try_new(
-                    Bounds::new(
-                        point(DevicePixels(-48), DevicePixels(96)),
-                        size(DevicePixels(608), DevicePixels(352)),
-                    ),
-                    1.5,
-                )
-                .expect("test geometry must be representable"),
-            },
-        ];
+        let hits = vec![PlatformWindowHit::RegisteredApplication {
+            window: registered,
+            coverage: PlatformWindowPhysicalCoverage::try_new(Bounds::new(
+                point(DevicePixels(-64), DevicePixels(80)),
+                size(DevicePixels(640), DevicePixels(400)),
+            ))
+            .expect("test coverage must be representable"),
+            geometry: PlatformWindowPhysicalGeometry::try_new(
+                Bounds::new(
+                    point(DevicePixels(-48), DevicePixels(96)),
+                    size(DevicePixels(608), DevicePixels(352)),
+                ),
+                1.5,
+            )
+            .expect("test geometry must be representable"),
+        }];
         let stack = PlatformWindowHitStack::try_available(sampled_point, hits)
             .expect("test hits must cover the sampled point");
 

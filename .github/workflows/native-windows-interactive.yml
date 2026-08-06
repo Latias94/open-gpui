@@ -1,0 +1,90 @@
+name: Windows native interactive
+
+on:
+  pull_request:
+    branches:
+      - master
+      - main
+  merge_group:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact commit SHA to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: open-gpui-windows-native-interactive
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: '1'
+  CARGO_TERM_COLOR: always
+  OPEN_GPUI_NATIVE_INTERACTIVE: '1'
+  OPEN_GPUI_NATIVE_CANDIDATE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+
+jobs:
+  runner-preflight:
+    name: native interactive runner preflight
+    runs-on:
+      - self-hosted
+      - windows
+      - x64
+      - open-gpui-windows-native-interactive-ephemeral
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.OPEN_GPUI_NATIVE_CANDIDATE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact candidate checkout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidateSha = $env:OPEN_GPUI_NATIVE_CANDIDATE_SHA.Trim()
+          if ($candidateSha -notmatch '^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$') {
+            throw "Native interactive candidate is not a full Git object id: $candidateSha"
+          }
+          $actualSha = (git rev-parse HEAD).Trim()
+          if ($actualSha -ne $candidateSha) {
+            throw "Native interactive checkout drifted: expected $candidateSha, got $actualSha"
+          }
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prove interactive desktop, system input, WndProc, capture, and renderer
+        shell: pwsh
+        run: >-
+          cargo nextest run -p open-gpui-windows --locked --run-ignored only
+          -E 'test(/native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture/)'
+          --no-fail-fast
+
+      - name: Prove real two-HWND Dock captured drag, preview, and drop
+        shell: pwsh
+        run: >-
+          cargo nextest run -p open-gpui-docking-native --locked --run-ignored only
+          -E 'test(/native_interactive_two_hwnd_captured_drag_routes_preview_and_drop/)'
+          --test-threads=1 --no-fail-fast
+
+      - name: Run rendered native Docking baseline after preflight
+        shell: pwsh
+        run: cargo nextest run -p open-gpui-docking-native --locked --no-fail-fast

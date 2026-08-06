@@ -1005,8 +1005,10 @@ impl WindowOverlayRuntimeState {
         });
 
         let restore_owner = self.subtree_restore_owner(&lease.layer_id, &layer_ids);
-        let cancel_focus_claims =
-            self.subtree_focus_claim_cancellations(&layer_ids, restore_owner.as_ref());
+        let cancel_focus_claims = self.subtree_focus_claim_cancellations_for_owner_release(
+            &layer_ids,
+            restore_owner.as_ref(),
+        );
 
         let removals = layer_ids
             .into_iter()

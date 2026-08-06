@@ -34,8 +34,23 @@ impl DockViewportRuntimeHandle {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockViewportCloseOutcome {
-        if let Some(owner) = self.surface_owner() {
-            crate::surface::handle_surface_window_closed(&owner, window_id, cx);
+        let live_undock_registration = self
+            .surface_owner()
+            .and_then(|owner| crate::surface::handle_surface_window_closed(&owner, window_id, cx));
+        if let Some(registration) = live_undock_registration {
+            #[cfg(test)]
+            self.run_live_undock_logical_close_selection_hook_for_test(cx);
+            let closed = self
+                .runtime
+                .borrow_mut()
+                .settle_live_undock_committed_destination_logical_close(&registration);
+            if let Some(closed) = closed {
+                self.clear_platform_mutation_observation_subscriptions(window_id);
+                let closed_effects = closed.window_effects();
+                let _ = clear_dockhost_drop_previews(closed_effects.refresh().iter().cloned(), cx);
+                apply_viewport_window_effects(&self.runtime, closed_effects, cx);
+                return closed.outcome;
+            }
         }
         self.with_surface_transaction(cx, |surface_transaction, cx| {
             let work_context = self
@@ -144,6 +159,9 @@ impl DockViewportRuntimeHandle {
         let surface_owner = self.surface_owner.clone();
         #[cfg(test)]
         let window_close_apply_test_hook = self.window_close_apply_test_hook.clone();
+        #[cfg(test)]
+        let live_undock_logical_close_selection_test_hook =
+            self.live_undock_logical_close_selection_test_hook.clone();
         cx.on_window_closed(move |cx, window_id| {
             let Some(runtime) = runtime.upgrade() else {
                 platform_mutation_observation_subscriptions
@@ -175,6 +193,9 @@ impl DockViewportRuntimeHandle {
                 surface_owner: surface_owner.clone(),
                 #[cfg(test)]
                 window_close_apply_test_hook: window_close_apply_test_hook.clone(),
+                #[cfg(test)]
+                live_undock_logical_close_selection_test_hook:
+                    live_undock_logical_close_selection_test_hook.clone(),
             };
             let _ = handle.handle_window_closed_with_app(window_id, cx);
         })

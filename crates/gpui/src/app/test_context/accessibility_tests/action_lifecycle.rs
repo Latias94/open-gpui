@@ -191,6 +191,12 @@ fn accessibility_action_declarations_publish_exact_sets(cx: &mut TestAppContext)
     assert!(!empty.supports_action(AccessibleAction::Click));
     assert!(!empty.supports_action(AccessibleAction::Focus));
     assert!(!empty.supports_action(AccessibleAction::Increment));
+    assert!(
+        crate::window::a11y::ACCESSKIT_ACTIONS
+            .iter()
+            .all(|action| !empty.supports_action(*action)),
+        "an explicit empty action set must not receive inferred actions"
+    );
 
     assert!(cx.dispatch_accessibility_action(
         window,
@@ -216,16 +222,19 @@ fn accessibility_action_declarations_publish_exact_sets(cx: &mut TestAppContext)
     assert!(listener_free.supports_action(AccessibleAction::Increment));
     assert!(!listener_free.supports_action(AccessibleAction::Click));
     assert!(!listener_free.supports_action(AccessibleAction::Focus));
+    assert!(!listener_free.supports_action(AccessibleAction::ScrollIntoView));
 
     let (_, replaced) = node_with_label(&update, "Single then set actions");
     assert!(!replaced.supports_action(AccessibleAction::Click));
     assert!(replaced.supports_action(AccessibleAction::Focus));
     assert!(!replaced.supports_action(AccessibleAction::Increment));
+    assert!(!replaced.supports_action(AccessibleAction::ScrollIntoView));
 
     let (_, extended) = node_with_label(&update, "Set then single actions");
     assert!(!extended.supports_action(AccessibleAction::Click));
     assert!(extended.supports_action(AccessibleAction::Focus));
     assert!(extended.supports_action(AccessibleAction::Increment));
+    assert!(!extended.supports_action(AccessibleAction::ScrollIntoView));
 }
 
 struct EarlyA11yRegistrationProbeView {

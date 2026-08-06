@@ -139,6 +139,7 @@ impl DockViewportDropRouteRequest {
     pub(crate) fn from_captured_native_route(
         payload: &DockDragPayload,
         drag_session: DockRuntimeDragSession,
+        source_window: AnyWindowHandle,
         tear_off_geometry: Option<DockDragTearOffGeometry>,
         suggested_window_bounds: Option<WindowBounds>,
         source_local_position: Point<Pixels>,
@@ -147,7 +148,8 @@ impl DockViewportDropRouteRequest {
         sequence: NativeIngressSequence,
         cx: &App,
     ) -> Self {
-        let platform_signals = DockViewportPlatformSignals::from_captured_native_transport(cx);
+        let platform_signals = DockViewportPlatformSignals::from_captured_native_transport(cx)
+            .with_frame_sampling_exclusion_window(source_window);
         Self::new(
             payload.source_space.clone(),
             payload.source_node,

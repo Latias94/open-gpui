@@ -509,6 +509,28 @@ impl LineLayoutCache {
         curr_frame.used_wrapped_lines_by_hash.clear();
     }
 
+    pub(crate) fn abort_frame(&self) {
+        let mut previous_frame = self.previous_frame.lock();
+        let mut current_frame = self.current_frame.write();
+
+        // Layout lookup transfers reusable entries into the candidate cache. Put every candidate
+        // entry back so rejecting a frame cannot hollow out the last committed cache.
+        previous_frame.lines.extend(current_frame.lines.drain());
+        previous_frame
+            .wrapped_lines
+            .extend(current_frame.wrapped_lines.drain());
+        previous_frame
+            .lines_by_hash
+            .extend(current_frame.lines_by_hash.drain());
+        previous_frame
+            .wrapped_lines_by_hash
+            .extend(current_frame.wrapped_lines_by_hash.drain());
+        current_frame.used_lines.clear();
+        current_frame.used_wrapped_lines.clear();
+        current_frame.used_lines_by_hash.clear();
+        current_frame.used_wrapped_lines_by_hash.clear();
+    }
+
     pub fn layout_wrapped_line<Text>(
         &self,
         text: Text,

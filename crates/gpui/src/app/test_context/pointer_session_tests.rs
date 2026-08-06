@@ -3091,6 +3091,11 @@ fn assert_native_captured_drag_start_was_revoked(
 ) {
     let reserved_generations = fixture.reserved_generations.borrow();
     assert_eq!(reserved_generations.len(), 1);
+    assert_ne!(
+        reserved_generations[0].ordinal(),
+        0,
+        "the first production drag generation must be representable in non-zero identity domains"
+    );
     {
         let prepared_consumer = fixture.prepared_consumer.borrow();
         let prepared_consumer = prepared_consumer
@@ -3746,8 +3751,8 @@ fn app_shutdown_settles_the_active_native_drag_and_preserves_outbox_reuse(cx: &m
     assert!(cx.windows().is_empty());
     assert_eq!(
         release_attempts.get(),
-        1,
-        "native-window retirement must settle the capture barrier and invalidate its delayed retry"
+        2,
+        "shutdown must let the already-scheduled retry settle native capture before retiring the window"
     );
     assert!(cx.read(|app| app.active_drag.is_none()));
     assert!(deliveries.borrow().iter().any(|(phase, generation)| {
@@ -3797,6 +3802,136 @@ fn app_shutdown_settles_the_active_native_drag_and_preserves_outbox_reuse(cx: &m
         PointerCancelReason::WindowClosed,
     )));
     let _ = subscription;
+}
+
+fn start_native_capture_release_rejected_once(
+    cx: &mut TestAppContext,
+    value: &'static str,
+) -> (crate::AnyWindowHandle, crate::TestWindow, Rc<Cell<usize>>) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        move |_, _| {
+            let attempt = attempts.get();
+            attempts.set(attempt + 1);
+            if attempt == 0 {
+                PlatformPointerCaptureReleaseOutcome::Rejected
+            } else {
+                PlatformPointerCaptureReleaseOutcome::Released
+            }
+        }
+    });
+
+    let generation = cx
+        .update_window(source, move |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new(value),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start its native captured drag");
+
+    cx.update(|app| {
+        assert!(app.cancel_native_captured_drag(
+            source.window_id(),
+            generation,
+            PointerCancelReason::CaptureRevoked,
+        ));
+    });
+    assert_eq!(attempts.get(), 1, "the initial release must be rejected");
+
+    (source, platform_window, attempts)
+}
+
+#[open_gpui::test]
+fn delayed_capture_release_wake_is_not_lost_while_app_is_borrowed(cx: &mut TestAppContext) {
+    let (source, platform_window, attempts) =
+        start_native_capture_release_rejected_once(cx, "borrowed-app-release-retry");
+
+    let app_borrow = cx.app.borrow_mut();
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    assert_eq!(
+        attempts.get(),
+        1,
+        "the App borrow may postpone the queued release, but must not discard its one-shot wake"
+    );
+    drop(app_borrow);
+    assert_eq!(
+        attempts.get(),
+        2,
+        "dropping the App borrow must drain the retry queued by the one-shot wake"
+    );
+    cx.run_until_parked();
+
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_prepare_history()
+            .len(),
+        1,
+        "the retry must reuse the exact prepared backend session"
+    );
+    cx.update_window(source, |_, window, app| window.remove_window(app))
+        .expect("the released source should remain removable");
+    cx.run_until_parked();
+}
+
+#[open_gpui::test]
+fn delayed_capture_release_wake_is_not_lost_while_native_callback_lease_is_active(
+    cx: &mut TestAppContext,
+) {
+    let (source, platform_window, attempts) =
+        start_native_capture_release_rejected_once(cx, "leased-release-retry");
+
+    let callback_lease = cx.app.begin_platform_input_lease(1);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    assert_eq!(
+        attempts.get(),
+        1,
+        "the callback lease must postpone native work without discarding the retry wake"
+    );
+    drop(callback_lease);
+    assert_eq!(
+        attempts.get(),
+        2,
+        "retiring the callback lease must drain the retry enqueued by the one-shot wake"
+    );
+    cx.run_until_parked();
+
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+    assert_eq!(
+        platform_window
+            .native_pointer_capture_release_prepare_history()
+            .len(),
+        1,
+        "the postponed retry must reuse the exact prepared backend session"
+    );
+    cx.update_window(source, |_, window, app| window.remove_window(app))
+        .expect("the released source should remain removable");
+    cx.run_until_parked();
 }
 
 #[open_gpui::test]
@@ -3984,7 +4119,9 @@ fn capture_release_is_prepared_before_a_budget_delayed_first_dispatch(cx: &mut T
 }
 
 #[open_gpui::test]
-fn repeated_capture_release_rejection_stops_after_bounded_delayed_retries(cx: &mut TestAppContext) {
+fn repeated_capture_release_rejection_settles_failed_after_bounded_delayed_retries(
+    cx: &mut TestAppContext,
+) {
     let source: crate::AnyWindowHandle = cx
         .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
         .into();
@@ -4030,13 +4167,22 @@ fn repeated_capture_release_rejection_stops_after_bounded_delayed_retries(cx: &m
         })
         .expect("the source must start G1");
 
-    cx.update(|app| {
-        assert!(app.cancel_native_captured_drag(
-            source.window_id(),
-            generation,
-            PointerCancelReason::CaptureRevoked,
-        ));
-    });
+    let completions = Rc::new(RefCell::new(Vec::new()));
+    let barrier = cx
+        .update({
+            let completions = completions.clone();
+            move |app| {
+                app.cancel_native_captured_drag_with_release_barrier(
+                    source.window_id(),
+                    generation,
+                    PointerCancelReason::CaptureRevoked,
+                    move |barrier, terminal, _| {
+                        completions.borrow_mut().push((barrier, terminal));
+                    },
+                )
+            }
+        })
+        .expect("the exact captured drag must reserve its release barrier");
     assert_eq!(
         attempts.get(),
         1,
@@ -4054,13 +4200,18 @@ fn repeated_capture_release_rejection_stops_after_bounded_delayed_retries(cx: &m
     assert_eq!(
         attempts.get(),
         4,
-        "three bounded delayed retries must be attempted before waiting for a new native fact"
+        "three bounded delayed retries must run before release settles as failed"
+    );
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[(barrier, NativeCapturedDragReleaseTerminal::Failed)],
+        "retry exhaustion must settle the exact barrier without pretending native release"
     );
     cx.run_until_parked();
     assert_eq!(
         attempts.get(),
         4,
-        "a saturated rejection must not leave another self-scheduled wake behind"
+        "a failed release terminal must not leave another self-scheduled wake behind"
     );
 
     assert!(platform_window.simulate_frame(RequestFrameOptions {
@@ -4071,7 +4222,7 @@ fn repeated_capture_release_rejection_stops_after_bounded_delayed_retries(cx: &m
     assert_eq!(
         attempts.get(),
         4,
-        "ordinary frame progress must not wake a saturated capture release"
+        "ordinary frame progress must not revive a failed capture release"
     );
 
     release_allowed.set(true);
@@ -4079,21 +4230,19 @@ fn repeated_capture_release_rejection_stops_after_bounded_delayed_retries(cx: &m
     cx.run_until_parked();
     assert_eq!(
         attempts.get(),
-        5,
-        "a later explicit native fact may retry the saturated barrier without reintroducing a busy wake"
+        4,
+        "a later native fact must not revive a barrier that already settled as failed"
     );
-    assert_eq!(platform_window.native_pointer_capture_release_count(), 1);
+    assert_eq!(platform_window.native_pointer_capture_release_count(), 0);
 
     cx.update_window(source, |_, window, app| window.remove_window(app))
-        .expect("the release source should remain removable after its terminal retry");
+        .expect("the release source should remain removable after release failure");
     cx.run_until_parked();
     assert!(cx.windows().is_empty());
 }
 
 #[open_gpui::test]
-fn shutdown_uses_native_window_terminal_after_capture_release_retries_are_saturated(
-    cx: &mut TestAppContext,
-) {
+fn shutdown_continues_after_capture_release_retries_settle_failed(cx: &mut TestAppContext) {
     let source: crate::AnyWindowHandle = cx
         .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
         .into();
@@ -4167,7 +4316,11 @@ fn shutdown_uses_native_window_terminal_after_capture_release_retries_are_satura
         .advance_clock(Duration::from_millis(128));
     cx.run_until_parked();
     assert_eq!(attempts.get(), 4);
-    assert!(completions.borrow().is_empty());
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[(barrier, NativeCapturedDragReleaseTerminal::Failed)],
+        "retry exhaustion must settle the release barrier before shutdown waits on it"
+    );
 
     cx.update(|app| app.shutdown());
     cx.run_until_parked();
@@ -4187,11 +4340,8 @@ fn shutdown_uses_native_window_terminal_after_capture_release_retries_are_satura
     );
     assert_eq!(
         completions.borrow().as_slice(),
-        &[(
-            barrier,
-            NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
-        )],
-        "the exact captured-drag barrier must settle from the source window's native terminal"
+        &[(barrier, NativeCapturedDragReleaseTerminal::Failed)],
+        "native window retirement must not rewrite an already-failed release terminal"
     );
 
     let reopened: crate::AnyWindowHandle = cx
@@ -4466,6 +4616,306 @@ fn captured_drag_release_barrier_attaches_to_the_exact_pending_cancellation(
                 })
             && diagnostic.disposition == NativeBoundaryDisposition::DELIVERED
     }));
+}
+
+#[open_gpui::test]
+fn captured_drag_release_completion_queued_accepts_a_second_continuation(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        move |_, _| {
+            attempts.set(attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Released
+        }
+    });
+    let generation = cx.update(|app| {
+        app.reserve_native_captured_drag_start()
+            .token()
+            .generation()
+    });
+    let completions = Rc::new(RefCell::<
+        Vec<(
+            &'static str,
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+        )>,
+    >::new(Vec::new()));
+
+    let app_cell = cx.app.clone();
+    let mut app = app_cell.borrow_mut();
+    let (token, barrier) = app_cell.reserve_native_captured_drag_release(
+        source.window_id(),
+        generation,
+        Box::new({
+            let completions = completions.clone();
+            move |barrier, terminal, _| {
+                completions.borrow_mut().push(("first", barrier, terminal));
+            }
+        }),
+    );
+    app_cell.settle_native_pointer_capture_release(
+        token,
+        platform_window.command_dispatcher(),
+        true,
+    );
+    app_cell.drain_native_work_for_test();
+
+    assert_eq!(attempts.get(), 1);
+    assert!(
+        completions.borrow().is_empty(),
+        "the held App borrow must leave the successful release completion queued"
+    );
+    let attached = app.cancel_native_captured_drag_with_release_barrier(
+        source.window_id(),
+        generation,
+        PointerCancelReason::WindowClosed,
+        {
+            let completions = completions.clone();
+            move |barrier, terminal, _| {
+                completions.borrow_mut().push(("second", barrier, terminal));
+            }
+        },
+    );
+    assert_eq!(
+        attached,
+        Some(barrier),
+        "a second claim must attach while the exact barrier is completion-queued"
+    );
+
+    drop(app);
+    cx.run_until_parked();
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[
+            (
+                "first",
+                barrier,
+                NativeCapturedDragReleaseTerminal::Released,
+            ),
+            (
+                "second",
+                barrier,
+                NativeCapturedDragReleaseTerminal::Released,
+            ),
+        ],
+        "both claims must observe the same successful release terminal"
+    );
+    assert_eq!(
+        cx.update(|app| app.cancel_native_captured_drag_with_release_barrier(
+            source.window_id(),
+            generation,
+            PointerCancelReason::WindowClosed,
+            |_, _, _| panic!("a completed release must not retain a continuation"),
+        )),
+        None,
+        "completion delivery must remove the release barrier"
+    );
+
+    cx.update_window(source, |_, window, app| window.remove_window(app))
+        .expect("the source should remain removable after release completion");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn native_terminal_upgrades_a_queued_failed_capture_release_completion(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        move |_, window| {
+            let attempt = attempts.get() + 1;
+            attempts.set(attempt);
+            if attempt == 4 {
+                assert!(
+                    window.simulate_close(),
+                    "the fourth rejection must publish the source native terminal"
+                );
+            }
+            PlatformPointerCaptureReleaseOutcome::Rejected
+        }
+    });
+    let generation = cx.update(|app| {
+        app.reserve_native_captured_drag_start()
+            .token()
+            .generation()
+    });
+    let completions = Rc::new(RefCell::<
+        Vec<(
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+        )>,
+    >::new(Vec::new()));
+
+    let app_cell = cx.app.clone();
+    let app = app_cell.borrow_mut();
+    let (token, barrier) = app_cell.reserve_native_captured_drag_release(
+        source.window_id(),
+        generation,
+        Box::new({
+            let completions = completions.clone();
+            move |barrier, terminal, _| {
+                completions.borrow_mut().push((barrier, terminal));
+            }
+        }),
+    );
+    app_cell.settle_native_pointer_capture_release(
+        token,
+        platform_window.command_dispatcher(),
+        true,
+    );
+    app_cell.drain_native_work_for_test();
+    assert_eq!(attempts.get(), 1);
+
+    for _ in 0..3 {
+        app_cell
+            .retry_native_pointer_capture_release_for_native_window_progress(source.window_id());
+        app_cell.drain_native_work_for_test();
+    }
+    assert_eq!(attempts.get(), 4);
+    assert!(
+        completions.borrow().is_empty(),
+        "the held App borrow must keep the failed release completion queued behind native close"
+    );
+
+    drop(app);
+    cx.run_until_parked();
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[(
+            barrier,
+            NativeCapturedDragReleaseTerminal::NativeWindowTerminal,
+        )],
+        "the earlier native terminal must upgrade the queued failure before delivery"
+    );
+    assert_eq!(
+        cx.update(|app| app.cancel_native_captured_drag_with_release_barrier(
+            source.window_id(),
+            generation,
+            PointerCancelReason::WindowClosed,
+            |_, _, _| panic!("a completed release must not retain a continuation"),
+        )),
+        None,
+        "native-terminal delivery must remove the release barrier"
+    );
+    assert!(
+        !cx.windows().contains(&source),
+        "the source's queued close event must reach logical terminal"
+    );
+}
+
+#[open_gpui::test]
+fn captured_drag_release_delivery_accepts_reentrant_continuation(cx: &mut TestAppContext) {
+    let source: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.update_window(source, |_, window, cx| {
+        window.activate_window();
+        window.draw(cx).clear();
+    })
+    .expect("the release source should remain open");
+    let platform_window = cx.test_window(source);
+    let attempts = Rc::new(Cell::new(0));
+    platform_window.set_pointer_capture_release_callback({
+        let attempts = attempts.clone();
+        move |_, _| {
+            attempts.set(attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Released
+        }
+    });
+
+    let generation = cx
+        .update_window(source, |_, _, app| {
+            let reservation = app.reserve_native_captured_drag_start();
+            let generation = reservation.token().generation();
+            let drag_view = app.new(|_| Empty).into();
+            assert!(app.start_reserved_active_drag(
+                reservation,
+                AnyDrag {
+                    window_id: source.window_id(),
+                    source: None,
+                    value: Arc::new("reentrant-release-attachment"),
+                    view: drag_view,
+                    window_preview_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                },
+            ));
+            generation
+        })
+        .expect("the source must start G1");
+
+    let completions = Rc::new(RefCell::<
+        Vec<(
+            &'static str,
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+        )>,
+    >::new(Vec::new()));
+    let barrier = cx
+        .update({
+            let completions = completions.clone();
+            move |app| {
+                app.cancel_native_captured_drag_with_release_barrier(
+                    source.window_id(),
+                    generation,
+                    PointerCancelReason::WindowClosed,
+                    move |barrier, terminal, app| {
+                        completions.borrow_mut().push(("first", barrier, terminal));
+                        let late_completions = completions.clone();
+                        let attached = app.cancel_native_captured_drag_with_release_barrier(
+                            source.window_id(),
+                            generation,
+                            PointerCancelReason::WindowClosed,
+                            move |barrier, terminal, _| {
+                                late_completions.borrow_mut().push((
+                                    "reentrant",
+                                    barrier,
+                                    terminal,
+                                ));
+                            },
+                        );
+                        assert_eq!(
+                            attached,
+                            Some(barrier),
+                            "completion delivery must retain its barrier for reentrant attachment",
+                        );
+                    },
+                )
+            }
+        })
+        .expect("the exact G1 release must reserve one completion barrier");
+    cx.run_until_parked();
+
+    assert_eq!(attempts.get(), 1);
+    assert_eq!(
+        completions.borrow().as_slice(),
+        &[
+            (
+                "first",
+                barrier,
+                NativeCapturedDragReleaseTerminal::Released,
+            ),
+            (
+                "reentrant",
+                barrier,
+                NativeCapturedDragReleaseTerminal::Released,
+            ),
+        ],
+        "reentrant continuations must drain in the same terminal delivery",
+    );
+
+    cx.update_window(source, |_, window, app| window.remove_window(app))
+        .expect("the source should remain removable after release");
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty());
 }
 
 #[open_gpui::test]

@@ -30,8 +30,9 @@ verified_by:
   without leaving a Dock registration. Post-commit presentation failure enters forced shutdown.
 - Anchor shutdown freezes the exact generation, retires dependent work, bypasses ordinary child
   close policy, closes dependents before the still-live anchor, and reaches `Closed` only after the
-  runtime and every terminal ticket converge. App shutdown uses an explicit pre-clear and
-  post-clear path instead of waiting for callbacks that registry clearing does not emit.
+  runtime and every native terminal ticket converge. App shutdown uses an explicit pre-clear path,
+  then relies on GPUI's retained native-retirement owners rather than treating registry clearing as
+  terminal proof.
 - Native owner hints resolve from the exact active anchor. Stale or alien owner tokens fail with a
   typed error, while unsupported backends omit the hint and unmanaged runtimes retain their
   explicit ownership contract.

@@ -1,5 +1,7 @@
 //! Overlay surface projection and frame-scoped inside geometry.
 
+use open_gpui::AcceptedFrameFence;
+
 use super::{
     AccessibilityTreeScope, AnyElement, App, Bounds, Element, ElementId, Entity, FocusHandle,
     GlobalElementId, InspectorElementId, IntoElement, LayoutId, LiveInsideRegion, MouseButton,
@@ -37,14 +39,19 @@ impl WindowOverlayRuntime {
         Ok(())
     }
 
-    pub(crate) fn mark_portal_anchor_unlinked(
+    pub(crate) fn mark_portal_anchor_unlinked_after_accepted_frame(
         &self,
         binding: &OverlayLayerBinding,
         expected_generation: OverlayLayerGeneration,
+        accepted_frame: AcceptedFrameFence,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), WindowOverlayRuntimeError> {
         self.ensure_binding(binding, window)?;
+        self.state
+            .read(cx)
+            .focus_runtime
+            .validate_accepted_frame(accepted_frame, window)?;
         let Some(plan) = self.state.update(cx, |state, _| {
             state.mark_portal_anchor_unlinked_plan(&binding.lease, expected_generation)
         })?
@@ -54,7 +61,12 @@ impl WindowOverlayRuntime {
         binding.clear_opening_theme();
         self.cancel_focus_claims(&plan.cancel_focus_claims, window, cx)?;
         for dispatch in &plan.dispatches {
-            self.apply_focus_transition(dispatch.focus_transition.clone(), window, cx)?;
+            self.apply_focus_transition_after_accepted_frame(
+                dispatch.focus_transition.clone(),
+                accepted_frame,
+                window,
+                cx,
+            )?;
         }
         self.run_open_change_dispatches(plan.dispatches, window, cx, |_, _| {});
         window.refresh();

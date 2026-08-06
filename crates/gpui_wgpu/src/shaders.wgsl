@@ -174,6 +174,8 @@ struct AtlasTile {
     tile_id: u32,
     padding: u32,
     bounds: AtlasBounds,
+    texture_generation: u32,
+    texture_generation_padding: u32,
 }
 
 // Axis-aligned renderer ABI. Vertex geometry is projected once while fragment

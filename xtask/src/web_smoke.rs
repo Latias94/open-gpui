@@ -120,7 +120,7 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
 })()
 "#;
 
-pub(crate) fn web_smoke(root: &Path) -> Result<(), ()> {
+pub(crate) fn web_smoke(root: &Path, allow_unavailable: bool) -> Result<(), ()> {
     ensure_tool("trunk")?;
 
     let example_dir = root.join(EXAMPLE_DIR);
@@ -166,16 +166,17 @@ pub(crate) fn web_smoke(root: &Path) -> Result<(), ()> {
         eprintln!("{error}");
     })?;
 
-    match wait_for_webgpu_preflight(&mut cdp).map_err(|error| {
+    let preflight = wait_for_webgpu_preflight(&mut cdp).map_err(|error| {
         eprintln!("{error}");
-    })? {
-        WebGpuPreflight::Available => {}
-        WebGpuPreflight::Unavailable(reason) => {
-            println!("web smoke skipped: {reason}");
+    })?;
+    match decide_webgpu_preflight(preflight, allow_unavailable) {
+        Ok(WebGpuPreflightDecision::Run) => {}
+        Ok(WebGpuPreflightDecision::SkipAllowed(reason)) => {
+            println!("web smoke explicitly allowed WebGPU-unavailable skip: {reason}");
             return Ok(());
         }
-        WebGpuPreflight::Pending => {
-            eprintln!("WebGPU preflight remained pending after wait");
+        Err(error) => {
+            eprintln!("{error}");
             return Err(());
         }
     }
@@ -217,6 +218,28 @@ enum WebGpuPreflight {
     Pending,
     Available,
     Unavailable(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WebGpuPreflightDecision {
+    Run,
+    SkipAllowed(String),
+}
+
+fn decide_webgpu_preflight(
+    preflight: WebGpuPreflight,
+    allow_unavailable: bool,
+) -> Result<WebGpuPreflightDecision, String> {
+    match preflight {
+        WebGpuPreflight::Available => Ok(WebGpuPreflightDecision::Run),
+        WebGpuPreflight::Unavailable(reason) if allow_unavailable => {
+            Ok(WebGpuPreflightDecision::SkipAllowed(reason))
+        }
+        WebGpuPreflight::Unavailable(reason) => Err(format!(
+            "WebGPU is unavailable, so the browser behavior gate cannot run: {reason}. Pass `--allow-unavailable` only for an explicit local diagnostic skip."
+        )),
+        WebGpuPreflight::Pending => Err("WebGPU preflight remained pending after wait".to_string()),
+    }
 }
 
 fn enable_browser_domains(cdp: &mut CdpClient) -> Result<(), String> {
@@ -1702,5 +1725,42 @@ mod tests {
     #[test]
     fn webgpu_preflight_result_rejects_malformed_state() {
         assert!(webgpu_preflight_result(&json!({ "available": false })).is_err());
+    }
+
+    #[test]
+    fn webgpu_preflight_policy_runs_when_available() {
+        assert_eq!(
+            decide_webgpu_preflight(WebGpuPreflight::Available, false),
+            Ok(WebGpuPreflightDecision::Run)
+        );
+    }
+
+    #[test]
+    fn webgpu_preflight_policy_fails_closed_when_unavailable() {
+        let error = decide_webgpu_preflight(
+            WebGpuPreflight::Unavailable("adapter missing".to_string()),
+            false,
+        )
+        .unwrap_err();
+        assert!(error.contains("adapter missing"));
+        assert!(error.contains("--allow-unavailable"));
+    }
+
+    #[test]
+    fn webgpu_preflight_policy_requires_an_explicit_local_skip() {
+        assert_eq!(
+            decide_webgpu_preflight(
+                WebGpuPreflight::Unavailable("adapter missing".to_string()),
+                true,
+            ),
+            Ok(WebGpuPreflightDecision::SkipAllowed(
+                "adapter missing".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn webgpu_preflight_policy_rejects_pending_state() {
+        assert!(decide_webgpu_preflight(WebGpuPreflight::Pending, true).is_err());
     }
 }

@@ -1,5 +1,6 @@
 use crate::{
     DockViewportRuntimeLineage,
+    surface::live_undock::DockLiveUndockOpeningKey,
     surface::window_session::{
         DockSurfaceWindowSessionLease, DockSurfaceWindowSessionOpeningToken,
     },
@@ -27,6 +28,7 @@ impl DockViewportWindowAuthority {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum DockViewportWindowRole {
     PrimaryAnchor,
+    ProvisionalViewport(DockLiveUndockOpeningKey),
     ManagedViewport,
 }
 
@@ -54,6 +56,25 @@ pub(crate) struct DockViewportWindowRetirementKey {
     authority: DockViewportWindowAuthority,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct DockProvisionalWindowOwnershipKey {
+    window_id: WindowId,
+    ownership_generation: u64,
+    opening: DockLiveUndockOpeningKey,
+}
+
+#[derive(Debug)]
+pub(crate) struct DockPreparedProvisionalWindowPromotion {
+    key: DockProvisionalWindowOwnershipKey,
+    lease: DockSurfaceWindowSessionLease,
+}
+
+impl DockProvisionalWindowOwnershipKey {
+    pub(crate) const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+}
+
 impl DockViewportWindowRetirementKey {
     pub(crate) fn window_id(self) -> WindowId {
         self.window_id
@@ -72,6 +93,7 @@ impl DockViewportWindowRetirementKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DockViewportWindowOwnershipState {
     Opening,
+    Provisional,
     Owned,
     Retired { close_settled: bool },
 }
@@ -126,6 +148,9 @@ impl DockViewportWindowOwnership {
                 DockViewportWindowOwnershipState::Opening => {
                     status.opening_window_count += 1;
                 }
+                DockViewportWindowOwnershipState::Provisional => {
+                    status.opening_window_count += 1;
+                }
                 DockViewportWindowOwnershipState::Owned => {
                     status.active_window_count += 1;
                 }
@@ -147,7 +172,9 @@ impl DockViewportWindowOwnership {
         if self.windows.get(&window_id).is_some_and(|record| {
             matches!(
                 record.state,
-                DockViewportWindowOwnershipState::Opening | DockViewportWindowOwnershipState::Owned
+                DockViewportWindowOwnershipState::Opening
+                    | DockViewportWindowOwnershipState::Provisional
+                    | DockViewportWindowOwnershipState::Owned
             )
         }) {
             return None;
@@ -194,6 +221,120 @@ impl DockViewportWindowOwnership {
         }
         record.state = DockViewportWindowOwnershipState::Owned;
         true
+    }
+
+    pub(crate) fn register_provisional_window(
+        &mut self,
+        window: AnyWindowHandle,
+        opening: DockLiveUndockOpeningKey,
+    ) -> Option<DockProvisionalWindowOwnershipKey> {
+        let window_id = window.window_id();
+        if self.windows.get(&window_id).is_some_and(|record| {
+            !matches!(
+                record.state,
+                DockViewportWindowOwnershipState::Retired { .. }
+            )
+        }) {
+            return None;
+        }
+        let ownership_generation = self.next_generation();
+        self.windows.insert(
+            window_id,
+            DockViewportWindowOwnershipRecord {
+                generation: ownership_generation,
+                window,
+                authority: DockViewportWindowAuthority::Surface(opening.lease()),
+                role: DockViewportWindowRole::ProvisionalViewport(opening),
+                state: DockViewportWindowOwnershipState::Provisional,
+            },
+        );
+        Some(DockProvisionalWindowOwnershipKey {
+            window_id,
+            ownership_generation,
+            opening,
+        })
+    }
+
+    pub(crate) fn prepare_provisional_window_promotion(
+        &self,
+        window_id: WindowId,
+        opening: DockLiveUndockOpeningKey,
+    ) -> Option<DockPreparedProvisionalWindowPromotion> {
+        let record = self.windows.get(&window_id)?;
+        if record.authority != DockViewportWindowAuthority::Surface(opening.lease())
+            || record.role != DockViewportWindowRole::ProvisionalViewport(opening)
+            || record.state != DockViewportWindowOwnershipState::Provisional
+        {
+            return None;
+        }
+        Some(DockPreparedProvisionalWindowPromotion {
+            key: DockProvisionalWindowOwnershipKey {
+                window_id,
+                ownership_generation: record.generation,
+                opening,
+            },
+            lease: opening.lease(),
+        })
+    }
+
+    pub(crate) fn can_commit_provisional_window_promotion(
+        &self,
+        prepared: &DockPreparedProvisionalWindowPromotion,
+    ) -> bool {
+        self.windows
+            .get(&prepared.key.window_id)
+            .is_some_and(|record| {
+                record.generation == prepared.key.ownership_generation
+                    && record.authority == DockViewportWindowAuthority::Surface(prepared.lease)
+                    && record.role
+                        == DockViewportWindowRole::ProvisionalViewport(prepared.key.opening)
+                    && record.state == DockViewportWindowOwnershipState::Provisional
+            })
+    }
+
+    pub(crate) fn commit_provisional_window_promotion(
+        &mut self,
+        prepared: DockPreparedProvisionalWindowPromotion,
+    ) {
+        assert!(
+            self.can_commit_provisional_window_promotion(&prepared),
+            "prepared provisional ownership must remain exact until commit"
+        );
+        let record = self
+            .windows
+            .get_mut(&prepared.key.window_id)
+            .expect("prepared provisional ownership must remain registered until commit");
+        record.role = DockViewportWindowRole::ManagedViewport;
+        record.state = DockViewportWindowOwnershipState::Owned;
+    }
+
+    pub(crate) fn adopt_frozen_provisional_window(
+        &mut self,
+        window: AnyWindowHandle,
+        opening: DockLiveUndockOpeningKey,
+    ) -> Option<DockProvisionalWindowOwnershipKey> {
+        let window_id = window.window_id();
+        if self.windows.contains_key(&window_id) {
+            return None;
+        }
+        let ownership_generation = self.next_generation();
+        self.windows.insert(
+            window_id,
+            DockViewportWindowOwnershipRecord {
+                generation: ownership_generation,
+                window,
+                authority: DockViewportWindowAuthority::Surface(opening.lease()),
+                role: DockViewportWindowRole::ProvisionalViewport(opening),
+                state: DockViewportWindowOwnershipState::Retired {
+                    close_settled: true,
+                },
+            },
+        );
+        Some(DockProvisionalWindowOwnershipKey {
+            window_id,
+            ownership_generation,
+            opening,
+        })
     }
 
     pub(crate) fn promote_primary_open_attempt(
@@ -329,7 +470,9 @@ impl DockViewportWindowOwnership {
             authority: record.authority,
         };
         match record.state {
-            DockViewportWindowOwnershipState::Opening | DockViewportWindowOwnershipState::Owned => {
+            DockViewportWindowOwnershipState::Opening
+            | DockViewportWindowOwnershipState::Provisional
+            | DockViewportWindowOwnershipState::Owned => {
                 record.state = DockViewportWindowOwnershipState::Retired {
                     close_settled: false,
                 };

@@ -4105,6 +4105,7 @@ dependencies = [
  "syn",
  "taffy",
  "thiserror 2.0.18",
+ "trybuild",
  "ttf-parser",
  "unicode-segmentation",
  "url",
@@ -4217,7 +4218,9 @@ dependencies = [
 name = "open-gpui-docking-native"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "env_logger",
+ "futures",
  "log",
  "open-gpui",
  "open-gpui-devtools",
@@ -4225,7 +4228,9 @@ dependencies = [
  "open-gpui-platform",
  "open-gpui-ui-components",
  "open-gpui-ui-core",
+ "raw-window-handle",
  "serde_json",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -4543,6 +4548,7 @@ dependencies = [
 name = "open-gpui-ui-components"
 version = "0.2.0"
 dependencies = [
+ "image",
  "open-gpui",
  "open-gpui-command",
  "open-gpui-form",
@@ -6659,6 +6665,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "target-triple"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3a6bfce3d99adfa72d24750a61f782f3036a81e7f86d8841ee1326deaebd171"
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7054,6 +7066,21 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "trybuild"
+version = "1.0.120"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e605bf6b39357663d8ba4e984f8be8da8df6bb32e81031d6889024ea8fd68e4"
+dependencies = [
+ "glob",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "target-triple",
+ "termcolor",
+ "toml 1.1.2+spec-1.1.0",
+]
 
 [[package]]
 name = "ttf-parser"

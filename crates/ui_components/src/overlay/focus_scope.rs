@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use open_gpui::{
-    App, AppContext as _, Entity, FocusHandle, KeyDownEvent, WeakFocusHandle, Window, WindowId,
+    AcceptedFrameFence, App, AppContext as _, Entity, FocusHandle, KeyDownEvent, WeakFocusHandle,
+    Window, WindowId,
 };
 use open_gpui_ui_core::{
     FocusResolution, FocusRestoreInput, FocusRestoreIntent, FocusScopeId, FocusScopeMode,
@@ -419,7 +420,12 @@ impl FocusScopeRuntime {
             state.activate_scope(&scope, current.as_ref(), window)
         })?;
         if let Some(claim) = claim {
-            self.schedule_claim(claim, window, cx);
+            self.schedule_claim(
+                claim,
+                FocusClaimBarrier::after_current_generation(window),
+                window,
+                cx,
+            );
         }
         Ok(())
     }
@@ -454,13 +460,61 @@ impl FocusScopeRuntime {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), FocusScopeRuntimeError> {
+        self.deactivate_scope_with_restore_at_barrier(
+            scope,
+            restore,
+            FocusClaimBarrier::after_current_generation(window),
+            window,
+            cx,
+        )
+    }
+
+    /// Deactivates a scope whose non-interactive state is proven by an accepted frame.
+    pub(crate) fn deactivate_scope_with_restore_after_accepted_frame(
+        &self,
+        scope: FocusScopeId,
+        restore: bool,
+        accepted_frame: AcceptedFrameFence,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let barrier = self.accepted_frame_barrier(accepted_frame, window)?;
+        self.deactivate_scope_with_restore_at_barrier(scope, restore, barrier, window, cx)
+    }
+
+    pub(crate) fn validate_accepted_frame(
+        &self,
+        accepted_frame: AcceptedFrameFence,
+        window: &Window,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.accepted_frame_barrier(accepted_frame, window)
+            .map(|_| ())
+    }
+
+    fn accepted_frame_barrier(
+        &self,
+        accepted_frame: AcceptedFrameFence,
+        window: &Window,
+    ) -> Result<FocusClaimBarrier, FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        FocusClaimBarrier::accepted_frame(accepted_frame, window)
+    }
+
+    fn deactivate_scope_with_restore_at_barrier(
+        &self,
+        scope: FocusScopeId,
+        restore: bool,
+        barrier: FocusClaimBarrier,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
         self.ensure_window(window)?;
         let current = window.focused(cx);
         let claim = self.state.update(cx, |state, _| {
             state.deactivate_scope(&scope, current.as_ref(), window, restore)
         })?;
         if let Some(claim) = claim {
-            self.schedule_claim(claim, window, cx);
+            self.schedule_claim(claim, barrier, window, cx);
         }
         Ok(())
     }
@@ -587,16 +641,21 @@ impl FocusScopeRuntime {
         }
     }
 
-    fn schedule_claim(&self, kind: PendingFocusClaimKind, window: &mut Window, cx: &mut App) {
+    fn schedule_claim(
+        &self,
+        kind: PendingFocusClaimKind,
+        barrier: FocusClaimBarrier,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let focus_claim_revision = window.focus_claim_revision();
-        let rendered_frame_revision = window.rendered_frame_revision();
         let sequence = self.state.update(cx, |state, _| {
             state.next_claim_sequence = state.next_claim_sequence.wrapping_add(1);
             let sequence = state.next_claim_sequence;
             state.queue_claim(PendingFocusClaim {
                 sequence,
                 focus_claim_revision,
-                rendered_frame_revision,
+                barrier,
                 kind,
             });
             sequence
@@ -1382,9 +1441,16 @@ impl FocusScopeRuntimeState {
                     self.pending_initial_claim = None;
                     continue;
                 }
-                if pending.rendered_frame_revision == window.rendered_frame_revision() {
-                    self.retarget_pending_claims(sequence);
-                    return Some(FocusCommit::RetryAfterFrame);
+                match pending.barrier.resolution(window) {
+                    FocusClaimBarrierResolution::Pending => {
+                        self.retarget_pending_claims(sequence);
+                        return Some(FocusCommit::RetryAfterFrame);
+                    }
+                    FocusClaimBarrierResolution::Invalid => {
+                        self.pending_initial_claim = None;
+                        continue;
+                    }
+                    FocusClaimBarrierResolution::Satisfied => {}
                 }
 
                 let commit = self
@@ -1417,9 +1483,16 @@ impl FocusScopeRuntimeState {
                 self.pending_restore_claim = None;
                 continue;
             }
-            if pending.rendered_frame_revision == window.rendered_frame_revision() {
-                self.retarget_pending_claims(sequence);
-                return Some(FocusCommit::RetryAfterFrame);
+            match pending.barrier.resolution(window) {
+                FocusClaimBarrierResolution::Pending => {
+                    self.retarget_pending_claims(sequence);
+                    return Some(FocusCommit::RetryAfterFrame);
+                }
+                FocusClaimBarrierResolution::Invalid => {
+                    self.pending_restore_claim = None;
+                    continue;
+                }
+                FocusClaimBarrierResolution::Satisfied => {}
             }
             let commit = self.resolve_restore(&scope, current, window);
             self.pending_restore_claim = None;
@@ -1841,7 +1914,7 @@ impl TargetEntry {
 struct PendingFocusClaim {
     sequence: u64,
     focus_claim_revision: u64,
-    rendered_frame_revision: u64,
+    barrier: FocusClaimBarrier,
     kind: PendingFocusClaimKind,
 }
 
@@ -1903,6 +1976,58 @@ impl PendingClaimRetry {
     pub(crate) const fn was_scheduled(self) -> bool {
         self.sequence.is_some()
     }
+}
+
+#[derive(Clone, Copy)]
+enum FocusClaimBarrier {
+    AfterAcceptedGeneration(u64),
+    AcceptedFrame(AcceptedFrameFence),
+}
+
+impl FocusClaimBarrier {
+    fn after_current_generation(window: &Window) -> Self {
+        Self::AfterAcceptedGeneration(window.rendered_frame_revision())
+    }
+
+    fn accepted_frame(
+        fence: AcceptedFrameFence,
+        window: &Window,
+    ) -> Result<Self, FocusScopeRuntimeError> {
+        if fence.window_id() != window.window_handle().window_id() {
+            return Err(FocusScopeRuntimeError::WrongWindow);
+        }
+        assert!(
+            fence.is_satisfied_by(window),
+            "an accepted-frame callback cannot observe an older rendered generation"
+        );
+        Ok(Self::AcceptedFrame(fence))
+    }
+
+    fn resolution(self, window: &Window) -> FocusClaimBarrierResolution {
+        match self {
+            Self::AfterAcceptedGeneration(generation) => {
+                if window.rendered_frame_revision() > generation {
+                    FocusClaimBarrierResolution::Satisfied
+                } else {
+                    FocusClaimBarrierResolution::Pending
+                }
+            }
+            Self::AcceptedFrame(fence) => {
+                if fence.is_satisfied_by(window) {
+                    FocusClaimBarrierResolution::Satisfied
+                } else {
+                    FocusClaimBarrierResolution::Invalid
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FocusClaimBarrierResolution {
+    Satisfied,
+    Pending,
+    Invalid,
 }
 
 #[derive(Clone)]

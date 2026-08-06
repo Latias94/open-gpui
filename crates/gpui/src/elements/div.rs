@@ -17,14 +17,15 @@
 
 use crate::PinchEvent;
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, EntityId, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, PointerCancelEvent, PointerCaptureHandle, PreparedSubtreeClip,
-    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, TargetedEvent,
-    Task, TooltipId, Window, WindowControlArea, point, px, size,
+    AcceptedFrameFence, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
+    DispatchPhase, Display, Element, ElementId, Entity, EntityId, FocusHandle, Global,
+    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
+    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
+    MousePressureEvent, MouseUpEvent, Overflow, ParentElement, Pixels, Point, PointerCancelEvent,
+    PointerCaptureHandle, PrepaintPublicationId, PreparedSubtreeClip, Render, ScrollWheelEvent,
+    SharedString, Size, Style, StyleRefinement, Styled, TargetedEvent, Task, TooltipId, Window,
+    WindowControlArea, point, px, size,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
@@ -66,6 +67,14 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
+type PrepaintWindowTransactionCallback = Rc<dyn Fn(AcceptedFrameFence, &mut Window, &mut App)>;
+
+struct PrepaintWindowTransaction {
+    publication: PrepaintPublicationId,
+    commit: PrepaintWindowTransactionCallback,
+    discard: PrepaintWindowTransactionCallback,
+}
+
 /// Geometry captured when a pointer drag starts from an interactive element.
 ///
 /// The raw pointer and preview geometry remain in displayed window coordinates. Use the
@@ -74,20 +83,35 @@ pub struct GroupStyle {
 pub struct DragStartGeometry {
     window_position: Point<Pixels>,
     hitbox: Hitbox,
+    pointer_capture_handle: PointerCaptureHandle,
     native_captured_drag_start: crate::app::NativeCapturedDragStartToken,
+    native_drag_start_snapshot: Option<crate::PlatformNativeDragStartSnapshot>,
 }
 
 impl DragStartGeometry {
     fn new(
         window_position: Point<Pixels>,
         hitbox: Hitbox,
+        pointer_capture_handle: PointerCaptureHandle,
         native_captured_drag_start: crate::app::NativeCapturedDragStartToken,
+        native_drag_start_snapshot: Option<crate::PlatformNativeDragStartSnapshot>,
     ) -> Self {
         Self {
             window_position,
             hitbox,
+            pointer_capture_handle,
             native_captured_drag_start,
+            native_drag_start_snapshot,
         }
+    }
+
+    /// Returns the exact pointer-capture owner committed for this drag start.
+    ///
+    /// A framework adapter that temporarily replaces the rendered drag source can bind this
+    /// handle to its replacement element so the pointer session retains one owner in every frame.
+    #[doc(hidden)]
+    pub fn pointer_capture_handle(&self) -> PointerCaptureHandle {
+        self.pointer_capture_handle
     }
 
     /// Returns the exact native captured-drag generation reserved for this start transaction.
@@ -102,6 +126,12 @@ impl DragStartGeometry {
         &self,
     ) -> crate::PreparedNativeCapturedDragConsumer {
         self.native_captured_drag_start.prepare_consumer()
+    }
+
+    /// Returns the immutable native physical facts captured for this drag start.
+    #[doc(hidden)]
+    pub fn native_drag_start_snapshot(&self) -> Option<crate::PlatformNativeDragStartSnapshot> {
+        self.native_drag_start_snapshot
     }
 
     /// Returns the unchanged pointer position in displayed window coordinates.
@@ -819,6 +849,27 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Records a validity-gated cross-frame publication from this element's prepaint scope.
+    ///
+    /// This is a framework-integration seam. Product code should prefer a higher-level component
+    /// handle whose implementation owns the publication identity and acceptance lifecycle.
+    #[doc(hidden)]
+    fn record_prepaint_window_transaction(
+        mut self,
+        publication: PrepaintPublicationId,
+        commit: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
+        discard: impl Fn(AcceptedFrameFence, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity()
+            .prepaint_window_transactions
+            .push(PrepaintWindowTransaction {
+                publication,
+                commit: Rc::new(commit),
+                discard: Rc::new(discard),
+            });
+        self
+    }
+
     /// Assign this element an ID, so that it can be used with interactivity
     fn id(mut self, id: impl Into<ElementId>) -> Stateful<Self> {
         self.interactivity().element_id = Some(id.into());
@@ -1422,6 +1473,21 @@ pub trait InteractiveElement: Sized {
 /// Implementors must return a stable [`ElementId`] whenever a stateful method is used. Built-in
 /// elements normally enforce this by exposing these methods only after [`InteractiveElement::id`].
 pub trait StatefulInteractiveElement: InteractiveElement {
+    /// Declare this element's accessibility node as focused for the current candidate frame.
+    ///
+    /// The handle provides a stable focus identity; it does not need to be the current GPUI input
+    /// focus. This declaration does not make the element focusable, add it to the keyboard
+    /// dispatch tree or tab order, create a hitbox, register input listeners, or infer
+    /// accessibility actions. Use
+    /// [`StatefulInteractiveElement::aria_actions`] to publish an exact action set when the node
+    /// should not expose the default accessibility actions.
+    fn track_accessibility_focus(mut self, focus_handle: &FocusHandle) -> Self {
+        self.interactivity()
+            .accessibility
+            .set_accessibility_focus(focus_handle);
+        self
+    }
+
     /// Set the accessible role for this element.
     ///
     /// See the [accessibility guide](crate::_accessibility) for an overview.
@@ -2305,6 +2371,10 @@ impl Element for Div {
         self.interactivity.write_a11y_info(node);
     }
 
+    fn infer_a11y_scroll_into_view(&self) -> bool {
+        !self.interactivity.accessibility.has_explicit_actions()
+    }
+
     #[stacksafe]
     fn request_layout(
         &mut self,
@@ -2504,6 +2574,7 @@ pub struct Interactivity {
     pub(crate) drag_pointer_capture_handle: Option<PointerCaptureHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) retained_resources: Vec<Rc<dyn Any>>,
+    prepaint_window_transactions: Vec<PrepaintWindowTransaction>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) group: Option<SharedString>,
@@ -2688,6 +2759,7 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> (R, Option<PreparedSubtreeClip>) {
         self.content_size = content_size;
+        let mut prepaint_window_transactions = mem::take(&mut self.prepaint_window_transactions);
         window
             .next_frame
             .retained_resources
@@ -2723,14 +2795,27 @@ impl Interactivity {
             });
         }
 
+        let mut tracked_focus_id = None;
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
+            tracked_focus_id = Some(focus_handle.id);
 
             if window.a11y.is_active() {
                 if let Some(global_id) = global_id {
                     let node_id = global_id.accesskit_node_id();
                     window.a11y.record_focus_id(node_id, focus_handle.id);
                 }
+            }
+        }
+        if let Some(focus_handle) = self.accessibility.accessibility_focus() {
+            window.set_accessibility_focus_handle(focus_handle);
+
+            if tracked_focus_id != Some(focus_handle.id)
+                && window.a11y.is_active()
+                && let Some(global_id) = global_id
+            {
+                let node_id = global_id.accesskit_node_id();
+                window.a11y.record_focus_id(node_id, focus_handle.id);
             }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
@@ -2779,6 +2864,15 @@ impl Interactivity {
                     };
                     let mut callback = Some(f);
                     let mut prepaint = |window: &mut Window| {
+                        for transaction in prepaint_window_transactions.drain(..) {
+                            let commit = transaction.commit;
+                            let discard = transaction.discard;
+                            window.record_prepaint_window_transaction(
+                                transaction.publication,
+                                move |revision, window, cx| commit(revision, window, cx),
+                                move |revision, window, cx| discard(revision, window, cx),
+                            );
+                        }
                         let hitbox = if interactive && self.should_insert_hitbox(&style, window, cx)
                         {
                             Some(window.insert_hitbox(bounds, self.hitbox_behavior))
@@ -3467,6 +3561,16 @@ impl Interactivity {
                                 pending_mouse_down.take();
                                 return;
                             };
+                            let native_drag_start_snapshot = window
+                                .platform_window
+                                .native_pointer_physical_frame()
+                                .zip(cx.platform.native_drag_hysteresis())
+                                .map(|(pointer_frame, hysteresis)| {
+                                    crate::PlatformNativeDragStartSnapshot::new(
+                                        pointer_frame,
+                                        hysteresis,
+                                    )
+                                });
                             if window
                                 .capture_pointer(&drag_pointer_capture_handle, mouse_down.button)
                                 .is_err()
@@ -3480,7 +3584,9 @@ impl Interactivity {
                             let geometry = DragStartGeometry::new(
                                 event.position,
                                 hitbox.clone(),
+                                drag_pointer_capture_handle,
                                 native_captured_drag_start.token(),
+                                native_drag_start_snapshot,
                             );
                             let window_preview_offset = geometry.window_preview_offset();
                             let drag = match catch_unwind(AssertUnwindSafe(|| {
@@ -4575,6 +4681,10 @@ where
         self.element.write_a11y_info(node);
     }
 
+    fn infer_a11y_scroll_into_view(&self) -> bool {
+        self.element.infer_a11y_scroll_into_view()
+    }
+
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
@@ -5074,12 +5184,166 @@ impl ScrollHandleState {
 mod tests {
     use super::*;
     use crate::{
-        AppContext as _, Context, InputEvent, MouseMoveEvent, ScrollDelta, SubtreeTransform,
-        SubtreeTransformExt as _, TestAppContext, VisualContext as _, util::FluentBuilder as _,
+        AppContext as _, Context, DevicePixels, Empty, InputEvent, Modifiers, MouseButton,
+        MouseMoveEvent, PlatformNativeDragHysteresis, PlatformNativeDragStartSnapshot,
+        PlatformWindowPhysicalGeometry, ScrollDelta, SubtreeTransform, SubtreeTransformExt as _,
+        TestAppContext, VisualContext as _, bounds, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
     struct RetainedResourceDropProbe(Rc<Cell<usize>>);
+
+    struct NativeDragStartSnapshotProbe {
+        captured: Rc<Cell<Option<PlatformNativeDragStartSnapshot>>>,
+    }
+
+    impl Render for NativeDragStartSnapshotProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let captured = self.captured.clone();
+            div()
+                .id("native-drag-start-snapshot-probe")
+                .size_full()
+                .on_drag((), move |_, geometry, _, cx| {
+                    captured.set(geometry.native_drag_start_snapshot());
+                    cx.new(|_| Empty)
+                })
+        }
+    }
+
+    fn capture_native_drag_start_snapshot(
+        hysteresis: Option<PlatformNativeDragHysteresis>,
+        physical_bounds: Option<Bounds<DevicePixels>>,
+        scale_factor: f32,
+    ) -> Option<PlatformNativeDragStartSnapshot> {
+        let mut test_app = TestAppContext::single();
+        let captured = Rc::new(Cell::new(None));
+        let (_, cx) = test_app.add_window_view({
+            let captured = captured.clone();
+            move |_, _| NativeDragStartSnapshotProbe { captured }
+        });
+        let window = cx.window_handle();
+        cx.set_platform_native_drag_hysteresis(hysteresis);
+        cx.set_platform_window_physical_client_geometry(window, physical_bounds, scale_factor);
+        cx.update(|window, cx| {
+            window.activate_window();
+            window.draw(cx).clear();
+        });
+        cx.run_until_parked();
+        cx.simulate_mouse_down(
+            point(px(10.0), px(10.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_move(
+            point(px(13.0), px(17.0)),
+            Some(MouseButton::Left),
+            Modifiers::none(),
+        );
+        captured.get()
+    }
+
+    #[test]
+    fn native_drag_start_snapshot_freezes_physical_frame_and_hysteresis() {
+        let initial_bounds = bounds(
+            point(DevicePixels(-640), DevicePixels(-480)),
+            size(DevicePixels(1280), DevicePixels(960)),
+        );
+        let initial_geometry =
+            PlatformWindowPhysicalGeometry::try_new(initial_bounds, 2.0).unwrap();
+        let initial_hysteresis =
+            PlatformNativeDragHysteresis::try_new(DevicePixels(7), DevicePixels(11)).unwrap();
+
+        let mut test_app = TestAppContext::single();
+        let captured = Rc::new(Cell::new(None));
+        let (_, cx) = test_app.add_window_view({
+            let captured = captured.clone();
+            move |_, _| NativeDragStartSnapshotProbe { captured }
+        });
+        let window = cx.window_handle();
+        cx.set_platform_native_drag_hysteresis(Some(initial_hysteresis));
+        cx.set_platform_window_physical_client_geometry(window, Some(initial_bounds), 2.0);
+        cx.update(|window, cx| {
+            window.activate_window();
+            window.draw(cx).clear();
+        });
+        cx.run_until_parked();
+
+        cx.simulate_mouse_down(
+            point(px(10.0), px(10.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_move(
+            point(px(13.0), px(17.0)),
+            Some(MouseButton::Left),
+            Modifiers::none(),
+        );
+
+        let snapshot = captured
+            .get()
+            .expect("the drag start should capture complete native physical facts");
+        assert_eq!(snapshot.hysteresis(), initial_hysteresis);
+        assert_eq!(
+            snapshot.pointer_frame().global_position(),
+            point(DevicePixels(-614), DevicePixels(-446))
+        );
+        assert_eq!(snapshot.pointer_frame().source_geometry(), initial_geometry);
+
+        let replacement_hysteresis =
+            PlatformNativeDragHysteresis::try_new(DevicePixels(99), DevicePixels(101)).unwrap();
+        let replacement_bounds = bounds(
+            point(DevicePixels(200), DevicePixels(300)),
+            size(DevicePixels(400), DevicePixels(500)),
+        );
+        cx.set_platform_native_drag_hysteresis(Some(replacement_hysteresis));
+        cx.set_platform_window_physical_client_geometry(window, Some(replacement_bounds), 1.25);
+
+        assert_eq!(captured.get(), Some(snapshot));
+        assert_eq!(snapshot.hysteresis(), initial_hysteresis);
+        assert_eq!(
+            snapshot.pointer_frame().source_geometry(),
+            initial_geometry,
+            "later platform settings, geometry, and DPI must not rewrite the drag-start facts"
+        );
+    }
+
+    #[test]
+    fn native_drag_start_snapshot_requires_both_physical_facts() {
+        let bounds = bounds(
+            point(DevicePixels(-200), DevicePixels(150)),
+            size(DevicePixels(800), DevicePixels(600)),
+        );
+        let hysteresis =
+            PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(6)).unwrap();
+
+        assert_eq!(
+            capture_native_drag_start_snapshot(None, Some(bounds), 1.5),
+            None,
+            "missing native hysteresis must fail closed"
+        );
+        assert_eq!(
+            capture_native_drag_start_snapshot(Some(hysteresis), None, 1.5),
+            None,
+            "missing callback-scoped physical pointer frame must fail closed"
+        );
+    }
+
+    #[test]
+    fn native_drag_hysteresis_is_positive_inclusive_and_overflow_safe() {
+        assert!(PlatformNativeDragHysteresis::try_new(DevicePixels(0), DevicePixels(1)).is_none());
+        assert!(PlatformNativeDragHysteresis::try_new(DevicePixels(1), DevicePixels(-1)).is_none());
+
+        let hysteresis =
+            PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(6)).unwrap();
+        let start = point(DevicePixels(-10), DevicePixels(20));
+        assert!(!hysteresis.is_exceeded(start, point(DevicePixels(-7), DevicePixels(25))));
+        assert!(hysteresis.is_exceeded(start, point(DevicePixels(-6), DevicePixels(20))));
+        assert!(hysteresis.is_exceeded(start, point(DevicePixels(-10), DevicePixels(14))));
+        assert!(hysteresis.is_exceeded(
+            point(DevicePixels(i32::MIN), DevicePixels(0)),
+            point(DevicePixels(i32::MAX), DevicePixels(0)),
+        ));
+    }
 
     impl Drop for RetainedResourceDropProbe {
         fn drop(&mut self) {

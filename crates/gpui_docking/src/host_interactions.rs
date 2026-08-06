@@ -57,7 +57,8 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> DockRuntimeDragSession {
         let runtime = self.viewport_runtime().clone();
-        let source_window = window.window_handle().window_id();
+        let source_window_handle: open_gpui::AnyWindowHandle = window.window_handle().into();
+        let source_window = source_window_handle.window_id();
         let native_route_context =
             (drag_start.is_some() && cx.viewport_capabilities().window_hit_stack).then(|| {
                 let work_context = self
@@ -72,6 +73,9 @@ impl DockHost {
                 );
                 (work_context, source_binding)
             });
+        let source_focus = native_route_context
+            .as_ref()
+            .and_then(|_| self.capture_payload_focus_snapshot(payload, window, cx));
         let session =
             runtime.begin_payload_drag_with_drag_visual_style(payload, drag_visual_style, cx);
         let mut route_receipt = None;
@@ -81,19 +85,30 @@ impl DockHost {
             if let (Some(drag_start), Some((work_context, source_binding))) =
                 (drag_start, native_route_context)
             {
-                route_receipt = Some(
-                    crate::native_captured_drag::begin_native_captured_drag_route(
-                        runtime.clone(),
-                        work_context,
-                        session.clone(),
-                        payload.clone(),
-                        source_window,
-                        cx.entity().downgrade(),
-                        source_binding,
-                        drag_start,
-                        cx,
-                    ),
+                let receipt = crate::native_captured_drag::begin_native_captured_drag_route(
+                    runtime.clone(),
+                    work_context,
+                    session.clone(),
+                    payload.clone(),
+                    source_window_handle,
+                    cx.entity().downgrade(),
+                    source_binding,
+                    source_focus.clone(),
+                    drag_start,
+                    cx,
                 );
+                if !self.install_native_drag_transport_proxy(
+                    receipt.transport_lease(),
+                    payload.clone(),
+                    drag_start.pointer_capture_handle(),
+                    cx,
+                ) {
+                    crate::native_captured_drag::rollback_native_captured_drag_route_start(
+                        &receipt, cx,
+                    );
+                    panic!("native captured-drag transport proxy must bind to its source host");
+                }
+                route_receipt = Some(receipt);
             }
             let deferred_runtime = runtime.clone();
             let deferred_payload = payload.clone();
@@ -108,6 +123,7 @@ impl DockHost {
         }));
         if let Err(payload) = start {
             if let Some(receipt) = route_receipt.as_ref() {
+                self.retire_native_drag_transport_proxy(receipt.transport_key(), cx);
                 crate::native_captured_drag::rollback_native_captured_drag_route_start(receipt, cx);
             }
             self.interaction_mut()

@@ -1,11 +1,11 @@
-use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
+use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext, wgpu_atlas::WgpuAtlasPresentationReceipt};
 use bytemuck::{Pod, Zeroable};
 use log::warn;
 use open_gpui::{
-    AtlasTextureId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape, GpuSpecs,
-    MonochromeSprite, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite, PrimitiveBatch,
-    PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite, Underline,
-    WindowPresentationShutdownTicket, get_gamma_correction_ratios,
+    AtlasTextureInstanceId, AtlasTextureLeaseError, Background, Bounds, ClipEnvelope, DevicePixels,
+    GpuClipShape, GpuSpecs, MonochromeSprite, Path, PlatformWindowPresentOutcome, Point,
+    PolychromeSprite, PrimitiveBatch, PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size,
+    SubpixelSprite, Underline, WindowPresentationShutdownTicket, get_gamma_correction_ratios,
 };
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -84,6 +84,10 @@ impl SurfaceAcquireRecovery {
             Self::Reject => PlatformWindowPresentOutcome::Rejected,
         }
     }
+}
+
+fn atlas_receipt_failure_outcome(_error: &AtlasTextureLeaseError) -> PlatformWindowPresentOutcome {
+    PlatformWindowPresentOutcome::RepaintRequired
 }
 
 fn surface_acquire_recovery(
@@ -447,7 +451,6 @@ pub struct WgpuRenderer {
     failed_frame_count: u32,
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
     surface_configured: bool,
-    needs_redraw: bool,
     presentation_shutdown: SurfacePresentationShutdown,
     last_submission: Option<wgpu::SubmissionIndex>,
 }
@@ -768,7 +771,6 @@ impl WgpuRenderer {
             failed_frame_count: 0,
             device_lost: context.device_lost_flag(),
             surface_configured: true,
-            needs_redraw: false,
             presentation_shutdown: SurfacePresentationShutdown::default(),
             last_submission: None,
         })
@@ -1442,10 +1444,6 @@ impl WgpuRenderer {
         }
 
         let configured = self.surface_configured;
-        if configured {
-            // Keep requesting frames even when creation fails so the retained factory can retry.
-            self.needs_redraw = true;
-        }
 
         let surface_factory = &self.surface_factory;
         let surface_config = &self.surface_config;
@@ -1529,9 +1527,8 @@ impl WgpuRenderer {
                     res.invalidate_intermediate_textures();
                 }
                 self.atlas.clear();
-                self.needs_redraw = true;
                 self.failed_frame_count = 0;
-                return PlatformWindowPresentOutcome::Deferred;
+                return PlatformWindowPresentOutcome::RepaintRequired;
             }
         } else {
             self.failed_frame_count = 0;
@@ -1542,6 +1539,23 @@ impl WgpuRenderer {
         };
 
         self.atlas.before_frame();
+
+        let atlas_presentation = match self.atlas.prepare_presentation(scene.batches().filter_map(
+            |batch| match batch {
+                PrimitiveBatch::MonochromeSprites { texture, .. }
+                | PrimitiveBatch::SubpixelSprites { texture, .. }
+                | PrimitiveBatch::PolychromeSprites { texture, .. } => Some(texture),
+                _ => None,
+            },
+        )) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                warn!(
+                    "Atlas texture unavailable while preparing frame; requesting a fresh framework frame: {error}"
+                );
+                return atlas_receipt_failure_outcome(&error);
+            }
+        };
 
         let frame = match self
             .resources()
@@ -1701,24 +1715,27 @@ impl WgpuRenderer {
                             &mut instance_offset,
                             &mut pass,
                         ),
-                        PrimitiveBatch::MonochromeSprites { texture_id, range } => self
+                        PrimitiveBatch::MonochromeSprites { texture, range } => self
                             .draw_monochrome_sprites(
                                 &scene.monochrome_sprites[range],
-                                texture_id,
+                                texture,
+                                &atlas_presentation,
                                 &mut instance_offset,
                                 &mut pass,
                             ),
-                        PrimitiveBatch::SubpixelSprites { texture_id, range } => self
+                        PrimitiveBatch::SubpixelSprites { texture, range } => self
                             .draw_subpixel_sprites(
                                 &scene.subpixel_sprites[range],
-                                texture_id,
+                                texture,
+                                &atlas_presentation,
                                 &mut instance_offset,
                                 &mut pass,
                             ),
-                        PrimitiveBatch::PolychromeSprites { texture_id, range } => self
+                        PrimitiveBatch::PolychromeSprites { texture, range } => self
                             .draw_polychrome_sprites(
                                 &scene.polychrome_sprites[range],
-                                texture_id,
+                                texture,
+                                &atlas_presentation,
                                 &mut instance_offset,
                                 &mut pass,
                             ),
@@ -1809,16 +1826,19 @@ impl WgpuRenderer {
     fn draw_monochrome_sprites(
         &self,
         sprites: &[MonochromeSprite],
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
+        atlas_presentation: &WgpuAtlasPresentationReceipt,
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
+        let texture_view = atlas_presentation
+            .texture_view(texture)
+            .expect("scene atlas texture was validated before rendering");
         let data = unsafe { Self::instance_bytes(sprites) };
         self.draw_instances_with_texture(
             data,
             sprites.len() as u32,
-            &tex_info.view,
+            texture_view,
             &self.resources().pipelines.mono_sprites,
             instance_offset,
             pass,
@@ -1828,11 +1848,14 @@ impl WgpuRenderer {
     fn draw_subpixel_sprites(
         &self,
         sprites: &[SubpixelSprite],
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
+        atlas_presentation: &WgpuAtlasPresentationReceipt,
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
+        let texture_view = atlas_presentation
+            .texture_view(texture)
+            .expect("scene atlas texture was validated before rendering");
         let data = unsafe { Self::instance_bytes(sprites) };
         let resources = self.resources();
         let pipeline = resources
@@ -1843,7 +1866,7 @@ impl WgpuRenderer {
         self.draw_instances_with_texture(
             data,
             sprites.len() as u32,
-            &tex_info.view,
+            texture_view,
             pipeline,
             instance_offset,
             pass,
@@ -1853,16 +1876,19 @@ impl WgpuRenderer {
     fn draw_polychrome_sprites(
         &self,
         sprites: &[PolychromeSprite],
-        texture_id: AtlasTextureId,
+        texture: AtlasTextureInstanceId,
+        atlas_presentation: &WgpuAtlasPresentationReceipt,
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
+        let texture_view = atlas_presentation
+            .texture_view(texture)
+            .expect("scene atlas texture was validated before rendering");
         let data = unsafe { Self::instance_bytes(sprites) };
         self.draw_instances_with_texture(
             data,
             sprites.len() as u32,
-            &tex_info.view,
+            texture_view,
             &self.resources().pipelines.poly_sprites,
             instance_offset,
             pass,
@@ -2416,7 +2442,6 @@ impl WgpuRenderer {
         }
 
         self.surface_configured = false;
-        self.needs_redraw = false;
         if let Some(resources) = self.resources.as_mut() {
             drop(resources.surface.take());
             resources.invalidate_intermediate_textures();
@@ -2487,16 +2512,6 @@ impl WgpuRenderer {
     pub fn device_lost(&self) -> bool {
         !self.presentation_shutdown.is_active()
             && self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// Returns true if a redraw is needed because GPU state was cleared.
-    /// Calling this method clears the flag.
-    pub fn needs_redraw(&mut self) -> bool {
-        if self.presentation_shutdown.is_active() {
-            self.needs_redraw = false;
-            return false;
-        }
-        std::mem::take(&mut self.needs_redraw)
     }
 
     /// Recovers from a lost GPU device by recreating the renderer with a new context.
@@ -2730,6 +2745,25 @@ mod abi_layout_tests {
     }
 
     #[test]
+    fn stale_atlas_receipt_requires_a_fresh_framework_scene() {
+        let error = AtlasTextureLeaseError::TextureUnavailable {
+            texture: AtlasTextureInstanceId {
+                texture_id: open_gpui::AtlasTextureId {
+                    index: 7,
+                    kind: open_gpui::AtlasTextureKind::Polychrome,
+                },
+                generation: 2,
+            },
+            epoch: open_gpui::AtlasTextureLeaseEpoch::INITIAL,
+        };
+
+        assert_eq!(
+            atlas_receipt_failure_outcome(&error),
+            PlatformWindowPresentOutcome::RepaintRequired
+        );
+    }
+
+    #[test]
     fn surface_recreation_drops_the_old_surface_before_create() {
         let drop_count = Cell::new(0);
         let mut surface = Some(SurfaceDropProbe {
@@ -2847,13 +2881,13 @@ mod abi_layout_tests {
         assert_eq!(size_of::<Underline>(), 88);
 
         assert_eq!(offset_of!(MonochromeSprite, clip), 24);
-        assert_eq!(size_of::<MonochromeSprite>(), 112);
+        assert_eq!(size_of::<MonochromeSprite>(), 120);
 
         assert_eq!(offset_of!(SubpixelSprite, clip), 24);
-        assert_eq!(size_of::<SubpixelSprite>(), 112);
+        assert_eq!(size_of::<SubpixelSprite>(), 120);
 
         assert_eq!(offset_of!(PolychromeSprite, clip), 32);
-        assert_eq!(size_of::<PolychromeSprite>(), 120);
+        assert_eq!(size_of::<PolychromeSprite>(), 128);
         for array_stride in [
             size_of::<Quad>(),
             size_of::<Shadow>(),

@@ -29,6 +29,7 @@ unicode-segmentation.workspace = true
 web-time.workspace = true
 
 [dev-dependencies]
+image.workspace = true
 open_gpui = { workspace = true, features = ["test-support"] }
 
 [lints]

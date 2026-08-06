@@ -971,7 +971,7 @@ mod tests {
             remove.image.expect("image-backed remove").image_id,
             image_id
         );
-        assert_eq!(remove.outcome, AtlasRemoveOutcome::RemoveHit);
+        assert_eq!(remove.outcome, AtlasRemoveOutcome::TextureRetained);
     }
 
     #[open_gpui::test]

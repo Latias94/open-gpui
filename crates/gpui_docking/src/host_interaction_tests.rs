@@ -1,24 +1,45 @@
 use crate::{
-    DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockItemId,
-    DockNode, DockNodeId, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockSpaceId,
-    DockSurface, DockSurfacePrimaryWindowOpenOutcome, DockSurfaceWindowSessionShutdownReason,
-    DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
+    DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockGraphDropTarget,
+    DockHost, DockItemId, DockNode, DockNodeId, DockOp, DockPanel, DockPanelDescriptor,
+    DockPanelPlacement, DockSpaceId, DockSurface, DockSurfacePrimaryWindowOpenOutcome,
+    DockSurfaceWindowSessionShutdownReason, DockViewportRuntimeHandle, DockWorkspace, DropZone,
+    SplitAxis,
     debug::DockDebugRegion,
     divider_hit_map::{DockDividerHitMap, DockDividerHitTarget},
     drag::DockDragPayload,
     drop_scene_fact,
     drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
+    host::DockHostWindowBinding,
     host_test_support::*,
     interaction::DockPayloadDropRelease,
+    locked_drop_identity::DockLockedPayloadIdentity,
+    surface::{
+        DockSurfaceOwner,
+        live_undock::{
+            DockLiveUndockDragGeneration, DockLiveUndockEffect, DockLiveUndockFact,
+            DockLiveUndockPromotionDestination, DockLiveUndockPromotionToken,
+            DockLiveUndockRouteFeedback, DockLiveUndockSession, DockLiveUndockSourceSnapshot,
+            DockLiveUndockTrigger,
+        },
+        payload_recovery::{
+            DockPayloadRecoveryAuthority, DockPayloadRecoveryPresentationOrigin,
+            DockPayloadRecoveryReason, DockPayloadRecoveryRestoreAction,
+            DockPayloadRecoveryRestoreError,
+        },
+        with_root_transaction,
+    },
     transition_geometry::DockVisualAffordanceTransitionKind,
+    workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{
     AnyView, AnyWindowHandle, AppContext as _, Bounds, Context, DevicePixels, Entity, Focusable,
-    InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement, Pixels,
-    PlatformWindowHit, PlatformWindowHitStack, PlatformWindowPhysicalCoverage,
-    PlatformWindowPhysicalGeometry, Point, Render, Size, Styled, SubtreeTransform,
+    InteractiveElement, IntoElement, Modifiers, MouseButton, NativeCapturedDragReleaseTerminal,
+    ParentElement, Pixels, PlatformNativeDragHysteresis, PlatformPointerCaptureReleaseOutcome,
+    PlatformWindowDispatch, PlatformWindowHit, PlatformWindowHitStack,
+    PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, Point, PointerCancelReason,
+    PointerCaptureHandle, Render, Size, Styled, Subscription, SubtreeTransform,
     SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window,
-    WindowMouseEvent, canvas, div, point, px, size,
+    WindowHandle, WindowMouseEvent, WindowMutationDomain, canvas, div, point, px, size,
 };
 use slotmap::Key;
 use std::{
@@ -30,6 +51,12 @@ use std::{
 
 struct OccludedDockHostFixture {
     host: Entity<DockHost>,
+}
+
+struct ConditionalOccludedDockHostFixture {
+    host: Entity<DockHost>,
+    occluded: bool,
+    occluded_frame_rendered: Rc<Cell<bool>>,
 }
 
 struct NativeSceneWorkContextSabotagePanel {
@@ -86,6 +113,27 @@ impl Render for OccludedDockHostFixture {
                     .size_full()
                     .occlude(),
             )
+    }
+}
+
+impl Render for ConditionalOccludedDockHostFixture {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let mut content = div()
+            .relative()
+            .size_full()
+            .child(AnyView::from(self.host.clone()));
+        if self.occluded {
+            self.occluded_frame_rendered.set(true);
+            content = content.child(
+                div()
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .size_full()
+                    .occlude(),
+            );
+        }
+        content
     }
 }
 
@@ -189,6 +237,7 @@ fn configure_native_desktop_release(
     source_window: AnyWindowHandle,
     source_size: Size<DevicePixels>,
 ) {
+    advertise_native_drag_hysteresis(cx);
     let source_bounds = Bounds::new(point(DevicePixels(0), DevicePixels(0)), source_size);
     cx.set_platform_window_physical_client_geometry(source_window, Some(source_bounds), 2.0);
     let sampled_point = point(DevicePixels(1800), DevicePixels(1800));
@@ -199,6 +248,7 @@ fn configure_native_desktop_release(
 }
 
 fn advertise_native_window_hit_stack(cx: &TestAppContext) {
+    advertise_native_drag_hysteresis(cx);
     cx.set_platform_window_hit_stack(
         PlatformWindowHitStack::try_available(
             point(DevicePixels(-1), DevicePixels(-1)),
@@ -230,6 +280,7 @@ fn configure_native_registered_window_hit_with_target_size(
     target_point: Point<Pixels>,
     target_size: Size<Pixels>,
 ) {
+    advertise_native_drag_hysteresis(cx);
     let source_bounds = Bounds::new(
         point(DevicePixels(0), DevicePixels(0)),
         size(DevicePixels(720), DevicePixels(440)),
@@ -264,6 +315,13 @@ fn configure_native_registered_window_hit_with_target_size(
     );
 }
 
+fn advertise_native_drag_hysteresis(cx: &TestAppContext) {
+    cx.set_platform_native_drag_hysteresis(Some(
+        PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(4))
+            .expect("test native drag hysteresis must be positive"),
+    ));
+}
+
 struct NativeCapturedSourceFixture {
     surface: DockSurface,
     controller: Entity<DockController>,
@@ -275,6 +333,69 @@ struct NativeCapturedSourceFixture {
     threshold: Point<Pixels>,
     target: Point<Pixels>,
     payload: DockDragPayload,
+    pointer_cancellations: Rc<RefCell<Vec<NativeSourcePointerCancellation>>>,
+    _pointer_event_interceptor: Subscription,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeSourcePointerCancellation {
+    reason: PointerCancelReason,
+    live_presentation: bool,
+    semantic_proxy: bool,
+    transport_proxy: bool,
+    execution_count: usize,
+}
+
+impl NativeSourcePointerCancellation {
+    fn describe(&self) -> String {
+        format!(
+            "reason={:?}, live_presentation={}, semantic_proxy={}, transport_proxy={}, execution_count={}",
+            self.reason,
+            self.live_presentation,
+            self.semantic_proxy,
+            self.transport_proxy,
+            self.execution_count,
+        )
+    }
+}
+
+fn assert_native_source_transport_capture(
+    fixture: &NativeCapturedSourceFixture,
+    expected: Option<PointerCaptureHandle>,
+    cx: &mut TestAppContext,
+) -> PointerCaptureHandle {
+    let capture = fixture
+        .source_window
+        .update(cx, |_, window, _| window.captured_pointer())
+        .expect("the source window should remain available")
+        .expect("the source window should retain pointer capture");
+    let handle = capture.handle();
+    if let Some(expected) = expected {
+        assert_eq!(
+            handle, expected,
+            "the source redraw must preserve the exact pointer-capture owner",
+        );
+    }
+    let proxy = cx
+        .read_entity(&fixture.source_host, |host, _| {
+            host.native_drag_transport_proxy()
+        })
+        .expect("an active native drag must retain its transport proxy");
+    assert_eq!(
+        proxy.pointer_capture(),
+        handle,
+        "the transport proxy must bind the source's exact capture handle",
+    );
+
+    let cancellations = fixture.pointer_cancellations.borrow();
+    if let Some(cancellation) = cancellations.first() {
+        panic!(
+            "the source capture was cancelled while its transport proxy remained responsible: {}; cancellation_count={}",
+            cancellation.describe(),
+            cancellations.len(),
+        );
+    }
+    handle
 }
 
 impl NativeCapturedSourceFixture {
@@ -334,6 +455,44 @@ fn native_captured_source_fixture(cx: &mut TestAppContext) -> NativeCapturedSour
         .expect("the source window should retain a DockHost root")
         .entity(cx)
         .expect("the source DockHost should remain live");
+    let pointer_cancellations = Rc::new(RefCell::new(Vec::new()));
+    let pointer_event_interceptor = cx
+        .update_window(source_window, {
+            let pointer_cancellations = pointer_cancellations.clone();
+            let source_host = source_host.downgrade();
+            let owner = surface.owner().downgrade();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    let WindowMouseEvent::Cancel(event) = event else {
+                        return;
+                    };
+                    let (live_presentation, semantic_proxy, transport_proxy) = source_host
+                        .read_with(cx, |host, _| {
+                            (
+                                host.live_presentation_state().is_some(),
+                                host.live_source_semantic_proxy().is_some(),
+                                host.native_drag_transport_proxy().is_some(),
+                            )
+                        })
+                        .unwrap_or_default();
+                    let execution_count = owner
+                        .read_with(cx, |owner, _| {
+                            owner.live_undock_runtime().execution_count_for_test()
+                        })
+                        .unwrap_or_default();
+                    pointer_cancellations
+                        .borrow_mut()
+                        .push(NativeSourcePointerCancellation {
+                            reason: event.reason,
+                            live_presentation,
+                            semantic_proxy,
+                            transport_proxy,
+                            execution_count,
+                        });
+                })
+            }
+        })
+        .expect("the source should install its pointer cancellation probe");
     let mut source_visual = VisualTestContext::from_window(source_window, cx);
     let source_tab = selector_for(
         &source_visual,
@@ -375,6 +534,351 @@ fn native_captured_source_fixture(cx: &mut TestAppContext) -> NativeCapturedSour
         threshold,
         target,
         payload,
+        pointer_cancellations,
+        _pointer_event_interceptor: pointer_event_interceptor,
+    }
+}
+
+fn begin_native_live_undock_with_released_source(
+    fixture: &mut NativeCapturedSourceFixture,
+    cx: &mut TestAppContext,
+) {
+    configure_native_desktop_release(
+        cx,
+        fixture.source_window,
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    fixture.begin_drag(cx);
+    fixture.source_visual.simulate_mouse_move(
+        point(px(900.0), px(900.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_time = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_time,
+        "the live-undock opening must quiesce without advancing its release deadline"
+    );
+
+    let (phase, execution_count) = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        (
+            owner.live_undock_phase(),
+            owner.live_undock_runtime().execution_count_for_test(),
+        )
+    });
+    let route_facts =
+        cx.read(|app| crate::native_captured_drag::active_live_undock_route_facts_for_test(app));
+    let pointer_capture = fixture
+        .source_window
+        .update(cx, |_, window, _| window.captured_pointer())
+        .ok()
+        .flatten();
+    assert_eq!(
+        phase,
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "the desktop move should bind one live-undock generation; execution_count={execution_count}, drag_session_active={}, route_facts={route_facts:?}, pointer_capture={pointer_capture:?}, cancellations={:?}",
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_some(),
+        fixture.pointer_cancellations.borrow().as_slice(),
+    );
+    assert!(
+        cx.read_entity(&fixture.source_host, |host, _| {
+            matches!(
+                host.live_presentation_state().map(|state| state.mode),
+                Some(
+                    crate::host::DockHostLivePresentationMode::SourceProjection {
+                        phase: crate::host::DockHostLiveSourcePhase::Frozen
+                            | crate::host::DockHostLiveSourcePhase::Retired,
+                        ..
+                    }
+                )
+            )
+        }),
+        "the source must publish its real release proxy before restoration is tested",
+    );
+    assert_native_source_transport_capture(
+        fixture,
+        pointer_capture.map(|capture| capture.handle()),
+        cx,
+    );
+}
+
+fn reveal_live_undock_provisional_destination(
+    fixture: &NativeCapturedSourceFixture,
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<DockHost>, DockSpaceId) {
+    cx.run_until_parked();
+    let destination_window = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.window_id() != fixture.source_window.window_id())
+        .expect("live undock should retain one exact provisional destination window");
+    let destination_host = destination_window
+        .downcast::<DockHost>()
+        .expect("the provisional destination should retain a DockHost root")
+        .entity(cx)
+        .expect("the provisional destination DockHost should remain live");
+    let destination_space = cx.read_entity(&destination_host, |host, _| {
+        assert!(
+            host.is_provisional_viewport(),
+            "the pre-release destination must still be provisional"
+        );
+        assert!(
+            host.current_viewport_registration().is_none(),
+            "a provisional destination must not publish a durable registration"
+        );
+        host.space().clone()
+    });
+    let facts = destination_window
+        .update(cx, |_, window, _| window.presentation_facts())
+        .expect("the provisional destination window should remain live");
+    assert!(
+        facts.native_visible,
+        "the provisional destination must be visible before release"
+    );
+    assert!(
+        facts.non_empty_presented_generation.is_some(),
+        "the provisional destination must present non-empty content before release"
+    );
+
+    let mut destination_visual = VisualTestContext::from_window(destination_window, cx);
+    let reveal_authority = cx.read_entity(&destination_host, |host, cx| {
+        let state = host
+            .live_presentation_state()
+            .expect("the provisional destination should retain live presentation authority");
+        let crate::host::DockHostLivePresentationMode::DestinationProjection {
+            leases,
+            phase: crate::host::DockHostLiveDestinationPhase::RevealArmed { ticket, .. },
+            ..
+        } = state.mode
+        else {
+            panic!("the provisional destination must await exact reveal");
+        };
+        (
+            ticket.snapshot(),
+            open_gpui::view_presentation_window::presented_batch_receipt(cx, &leases),
+        )
+    });
+    let drained =
+        destination_visual.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert_ne!(
+        drained, 0,
+        "the exact reveal observer must retain a next-frame wakeup"
+    );
+    destination_visual.run_until_parked();
+
+    let destination_revealed = cx.read_entity(&fixture.source_host, |host, _| {
+        matches!(
+            host.live_presentation_state().map(|state| state.mode),
+            Some(
+                crate::host::DockHostLivePresentationMode::SourceProjection {
+                    phase: crate::host::DockHostLiveSourcePhase::Retired,
+                    ..
+                }
+            )
+        )
+    });
+    let destination_presentation =
+        cx.read_entity(&destination_host, |host, _| host.live_presentation_state());
+    let destination_window_facts = destination_window
+        .update(cx, |_, window, _| window.presentation_facts())
+        .ok();
+    let owner_phase = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_phase()
+    });
+    assert!(
+        destination_revealed,
+        "the provisional destination must produce one exact native reveal; authority={reveal_authority:?}, host={destination_presentation:?}, window={destination_window_facts:?}, owner={owner_phase:?}, windows={:?}",
+        cx.windows(),
+    );
+    assert!(cx.read_entity(&fixture.source_host, |host, _| {
+        host.live_source_semantic_proxy().is_some()
+    }));
+
+    (destination_window, destination_host, destination_space)
+}
+
+#[open_gpui::test]
+fn native_drag_transport_capture_survives_payload_title_refresh(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    fixture.begin_drag(cx);
+    let capture = assert_native_source_transport_capture(&fixture, None, cx);
+
+    fixture.controller.update(cx, |controller, cx| {
+        controller
+            .workspace_mut()
+            .register_panel_descriptor(item("a"), DockPanelDescriptor::new("Renamed Panel A"));
+        cx.notify();
+    });
+
+    for _ in 0..2 {
+        fixture
+            .source_window
+            .update(cx, |_, window, _| window.refresh())
+            .expect("the source window should remain refreshable");
+        cx.run_until_parked();
+        assert_native_source_transport_capture(&fixture, Some(capture), cx);
+        assert!(
+            fixture
+                .runtime
+                .active_payload_drag_session(&fixture.payload)
+                .is_some(),
+            "a presentation-only title change must not replace the native drag session",
+        );
+    }
+}
+
+#[open_gpui::test]
+fn native_drag_transport_capture_survives_floating_title_refresh(cx: &mut TestAppContext) {
+    let (surface, runtime, source_window, floating) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([
+                DockPanelPlacement::center("a").selected(),
+                DockPanelPlacement::stacked_with("b", "a"),
+            ])
+            .panel_factory("a", "Panel A", |cx| {
+                cx.new(|cx| TestPanel::new("A", cx)).into()
+            })
+            .panel_factory("b", "Panel B", |cx| {
+                cx.new(|cx| TestPanel::new("B", cx)).into()
+            })
+            .allow_floating(true)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the floating captured-drag source surface should build");
+        surface
+            .float_panel_in_window("a", floating_bounds(24.0, 28.0, 240.0, 150.0), cx)
+            .expect("Panel A should become a floating source");
+        let controller = surface.controller(cx);
+        let runtime = surface.viewport_runtime(cx);
+        let floating = cx.read_entity(&controller, |controller, _| {
+            controller
+                .graph()
+                .floating_containers(&DockSpaceId::from("main"))
+                .first()
+                .map(|container| container.node)
+                .expect("the source surface should retain its floating container")
+        });
+        let source_window =
+            match surface.open_primary_window(viewport_window_options(360.0, 240.0), cx) {
+                DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+                outcome => {
+                    panic!("the floating captured-drag source window should open, got {outcome:?}")
+                }
+            };
+        (surface, runtime, source_window, floating)
+    });
+    cx.run_until_parked();
+
+    let source_host = source_window
+        .downcast::<DockHost>()
+        .expect("the source window should retain a DockHost root")
+        .entity(cx)
+        .expect("the floating source DockHost should remain live");
+    let mut source_visual = VisualTestContext::from_window(source_window, cx);
+    let source_handle = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("the floating source handle should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_handle).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let payload =
+        DockDragPayload::new_floating(DockSpaceId::from("main"), floating, "Panel A".to_string());
+    advertise_native_window_hit_stack(cx);
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        runtime.active_payload_drag_session(&payload).is_some(),
+        "the floating title drag should establish one native payload session",
+    );
+    let capture = source_window
+        .update(cx, |_, window, _| window.captured_pointer())
+        .expect("the source window should remain available")
+        .expect("the floating source should retain pointer capture")
+        .handle();
+
+    for _ in 0..2 {
+        source_window
+            .update(cx, |_, window, _| window.refresh())
+            .expect("the floating source window should remain refreshable");
+        cx.run_until_parked();
+        let current_capture = source_window
+            .update(cx, |_, window, _| window.captured_pointer())
+            .expect("the source window should remain available")
+            .expect("the refreshed floating source should retain pointer capture")
+            .handle();
+        assert_eq!(current_capture, capture);
+        let proxy = cx
+            .read_entity(&source_host, |host, _| host.native_drag_transport_proxy())
+            .expect("the floating source should retain its native transport proxy");
+        assert_eq!(proxy.pointer_capture(), capture);
+    }
+
+    drop(surface);
+}
+
+#[open_gpui::test]
+fn moving_presentation_failure_retires_transport_before_source_restoration(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    configure_native_desktop_release(
+        cx,
+        fixture.source_window,
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    fixture.begin_drag(cx);
+    fixture.source_visual.simulate_mouse_move(
+        point(px(900.0), px(900.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+
+    let injected = (0..10_000).any(|_| {
+        let source_projection_and_transport = cx.read_entity(&fixture.source_host, |host, _| {
+            host.live_presentation_state().is_some() && host.native_drag_transport_proxy().is_some()
+        });
+        if source_projection_and_transport
+            && cx.update(|cx| live_runtime.fail_current_presentation_for_test(cx))
+        {
+            true
+        } else {
+            cx.background_executor.tick();
+            false
+        }
+    });
+    assert!(
+        injected,
+        "the moving presentation pipeline should expose one exact failure stage",
+    );
+    cx.run_until_parked();
+
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(host.native_drag_transport_proxy().is_none());
+        assert!(
+            !host.has_native_drag_transport_proxy_slot_for_test(),
+            "source restoration must remove the transport slot, not merely hide an inactive lease",
+        );
+    });
+    for _ in 0..2 {
+        fixture
+            .source_window
+            .update(cx, |_, window, _| window.refresh())
+            .expect("the restored source should remain refreshable");
+        cx.run_until_parked();
+        assert!(cx.read_entity(&fixture.source_host, |host, _| {
+            !host.has_native_drag_transport_proxy_slot_for_test()
+        }));
     }
 }
 
@@ -3671,7 +4175,8 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
         selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
-    let mut workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
     workspace.policy_mut().set_allow_platform_viewports(true);
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
@@ -3737,22 +4242,37 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
     });
 
     let listener_replaced_target = Rc::new(Cell::new(false));
+    let deferred_replaced_target = Rc::new(Cell::new(false));
     let _interceptor = cx
         .update_window(source_window, {
-            let runtime = runtime.clone();
+            let controller = controller.clone();
             let empty_space = empty_space.clone();
             let target_host = target_host.clone();
             let listener_replaced_target = listener_replaced_target.clone();
+            let deferred_replaced_target = deferred_replaced_target.clone();
             move |_, window, _| {
                 window.intercept_window_mouse_events(move |event, _, cx| {
                     if matches!(event, WindowMouseEvent::Up(_))
                         && !listener_replaced_target.replace(true)
                     {
-                        runtime.borrow_mut().replace_adapter_registration_for_test(
-                            empty_space.clone(),
-                            target_window,
-                        );
-                        target_host.update(cx, |_, host_cx| host_cx.notify());
+                        let controller = controller.clone();
+                        let empty_space = empty_space.clone();
+                        let target_host = target_host.clone();
+                        let deferred_replaced_target = deferred_replaced_target.clone();
+                        cx.defer(move |cx| {
+                            controller.update(cx, |controller, controller_cx| {
+                                let mut graph = controller.graph().clone();
+                                let replacement_tabs = graph.insert_node(DockNode::Tabs {
+                                    items: vec![item("b")],
+                                    selected: Some(item("b")),
+                                });
+                                graph.set_root(empty_space, replacement_tabs);
+                                controller.workspace_mut().set_graph(graph);
+                                controller_cx.notify();
+                            });
+                            target_host.update(cx, |_, host_cx| host_cx.notify());
+                            deferred_replaced_target.set(true);
+                        });
                     }
                 })
             }
@@ -3767,6 +4287,7 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
     cx.run_until_parked();
 
     assert!(listener_replaced_target.get());
+    assert!(deferred_replaced_target.get());
     let replacement_frame = cx.read_entity(&target_host, |host, _| {
         host.interaction()
             .viewport_host_scene_frame()
@@ -3774,6 +4295,11 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
             .expect("the listener-created G2 scene should commit")
     });
     assert_ne!(replacement_frame, locked_frame);
+    assert_eq!(
+        replacement_frame.registration_key(),
+        locked_frame.registration_key(),
+        "the deferred G2 scene should replace G1 without replacing its viewport registration"
+    );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
@@ -3781,9 +4307,9 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
             "a stale G1 release reservation must not remove the source item"
         );
         assert_eq!(
-            controller.graph().root(&empty_space),
-            None,
-            "the MouseUp listener's G2 target did not exist when release was locked"
+            controller.graph().collect_items_in_space(&empty_space),
+            vec![item("b")],
+            "the MouseUp listener's G2 target may appear, but it cannot receive the frozen G1 release"
         );
     });
     assert_eq!(
@@ -3796,6 +4322,1906 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
         None,
         "the stale release must still retire its exact drag session"
     );
+}
+
+#[open_gpui::test]
+fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_target(
+    cx: &mut TestAppContext,
+) {
+    let source_space = space();
+    let empty_space = DockSpaceId::from("empty");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let target_host = cx.new(|cx| {
+        DockHost::from_controller(controller.clone(), empty_space.clone(), runtime.clone(), cx)
+    });
+    let occluded_frame_rendered = Rc::new(Cell::new(false));
+    let target_window = cx.open_window(size(px(360.0), px(220.0)), {
+        let target_host = target_host.clone();
+        let occluded_frame_rendered = occluded_frame_rendered.clone();
+        move |_, _| ConditionalOccludedDockHostFixture {
+            host: target_host,
+            occluded: false,
+            occluded_frame_rendered,
+        }
+    });
+    let target_root = target_window
+        .root(cx)
+        .expect("the target window should expose its conditional root");
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let source_window: AnyWindowHandle = source_window.into();
+    let target_window: AnyWindowHandle = target_window.into();
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("the source tab selector should be emitted");
+    let target_empty = selector_for(&target_visual, &target_host, DockDebugRegion::EmptySpace)
+        .expect("the empty target selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = debug_bounds(&mut target_visual, &target_empty).center();
+    let target_global_from_source = point(px(400.0) + end.x, end.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window,
+        target_window,
+        target_global_from_source,
+    );
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    target_visual = VisualTestContext::from_window(target_window, cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "G1 should be the visible release candidate before MouseUp"
+    );
+    let locked_window_frame_revision = cx
+        .update_window(target_window, |_, window, _| {
+            window.rendered_frame_revision()
+        })
+        .expect("the target window should expose its locked frame revision");
+
+    let listener_occluded_target = Rc::new(Cell::new(false));
+    let deferred_occluded_target = Rc::new(Cell::new(false));
+    let _interceptor = cx
+        .update_window(source_window, {
+            let target_root = target_root.clone();
+            let listener_occluded_target = listener_occluded_target.clone();
+            let deferred_occluded_target = deferred_occluded_target.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    if matches!(event, WindowMouseEvent::Up(_))
+                        && !listener_occluded_target.replace(true)
+                    {
+                        let target_root = target_root.clone();
+                        let deferred_occluded_target = deferred_occluded_target.clone();
+                        cx.defer(move |cx| {
+                            target_root.update(cx, |root, root_cx| {
+                                root.occluded = true;
+                                root_cx.notify();
+                            });
+                            deferred_occluded_target.set(true);
+                        });
+                    }
+                })
+            }
+        })
+        .expect("the source should install its MouseUp interceptor");
+
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    assert!(listener_occluded_target.get());
+    assert!(deferred_occluded_target.get());
+    assert!(
+        occluded_frame_rendered.get(),
+        "the deferred BlockMouse overlay should render before terminal release settles"
+    );
+    let occluded_window_frame_revision = cx
+        .update_window(target_window, |_, window, _| {
+            window.rendered_frame_revision()
+        })
+        .expect("the target window should expose its occluded frame revision");
+    assert!(
+        occluded_window_frame_revision > locked_window_frame_revision,
+        "the foreground BlockMouse overlay should commit a newer target-window frame"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a")],
+            "the now-occluded G1 host must not consume the source item"
+        );
+        assert!(
+            controller
+                .graph()
+                .collect_items_in_space(&empty_space)
+                .is_empty(),
+            "the release must not pass through the foreground blocker into the empty host"
+        );
+    });
+    assert_eq!(
+        runtime.active_payload_drag_session(&DockDragPayload::new_item(
+            source_space,
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        )),
+        None,
+        "the rejected release must still retire its exact drag session"
+    );
+}
+
+fn assert_native_captured_release_uses_locked_policy(
+    cx: &mut TestAppContext,
+    allowed_at_mouse_up: bool,
+    allowed_in_listener: bool,
+    expect_drop: bool,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace
+        .policy_mut()
+        .set_allow_center_merge(allowed_at_mouse_up);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let source_window: AnyWindowHandle = source_window.into();
+    let target_window: AnyWindowHandle = target_window.into();
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("the source tab selector should be emitted");
+    let target_panel = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Panel { item: item("b") },
+    )
+    .expect("the target panel selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_position = debug_bounds(&mut target_visual, &target_panel).center();
+    let target_global_from_source = point(px(400.0) + target_position.x, target_position.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window,
+        target_window,
+        target_global_from_source,
+    );
+
+    let listener_ran = Rc::new(Cell::new(false));
+    let _interceptor = cx
+        .update_window(source_window, {
+            let controller = controller.clone();
+            let listener_ran = listener_ran.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    if matches!(event, WindowMouseEvent::Up(_)) && !listener_ran.replace(true) {
+                        controller.update(cx, |controller, _| {
+                            controller
+                                .policy_mut()
+                                .set_allow_center_merge(allowed_in_listener);
+                        });
+                    }
+                })
+            }
+        })
+        .expect("the source should install its MouseUp policy interceptor");
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    assert!(listener_ran.get());
+    cx.read_entity(&controller, |controller, _| {
+        let source_items = controller.graph().collect_items_in_space(&source_space);
+        let target_items = controller.graph().collect_items_in_space(&target_space);
+        if expect_drop {
+            assert!(source_items.is_empty());
+            assert_eq!(target_items.len(), 2);
+            assert!(target_items.contains(&item("a")));
+            assert!(target_items.contains(&item("b")));
+        } else {
+            assert_eq!(source_items, vec![item("a")]);
+            assert_eq!(target_items, vec![item("b")]);
+        }
+    });
+}
+
+#[open_gpui::test]
+fn native_captured_release_keeps_mouse_up_rejection_when_listener_relaxes_policy(
+    cx: &mut TestAppContext,
+) {
+    assert_native_captured_release_uses_locked_policy(cx, false, true, false);
+}
+
+#[open_gpui::test]
+fn native_captured_release_keeps_mouse_up_acceptance_when_listener_tightens_policy(
+    cx: &mut TestAppContext,
+) {
+    assert_native_captured_release_uses_locked_policy(cx, true, false, true);
+}
+
+#[open_gpui::test]
+fn native_captured_release_rejects_tabs_payload_changed_by_mouse_up_listener(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("x", "Panel X", "X"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime,
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let source_window: AnyWindowHandle = source_window.into();
+    let target_window: AnyWindowHandle = target_window.into();
+
+    let source_stack = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tabs { node: source_tabs },
+    )
+    .expect("the source tabs selector should be emitted");
+    let target_stack = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("the target tabs selector should be emitted");
+    let source_bounds = debug_bounds(&mut source_visual, &source_stack);
+    let start = point(
+        source_bounds.origin.x + source_bounds.size.width - px(8.0),
+        source_bounds.origin.y + px(12.0),
+    );
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_position = debug_bounds(&mut target_visual, &target_stack).center();
+    let target_global_from_source = point(px(400.0) + target_position.x, target_position.y);
+    configure_native_registered_window_hit(
+        cx,
+        source_window,
+        target_window,
+        target_global_from_source,
+    );
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    target_visual = VisualTestContext::from_window(target_window, cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "the MouseUp locker should observe a valid Tabs center-drop candidate"
+    );
+
+    let listener_opened_item = Rc::new(Cell::new(false));
+    let _interceptor = cx
+        .update_window(source_window, {
+            let controller = controller.clone();
+            let source_space = source_space.clone();
+            let listener_opened_item = listener_opened_item.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    if matches!(event, WindowMouseEvent::Up(_))
+                        && !listener_opened_item.replace(true)
+                    {
+                        controller.update(cx, |controller, _| {
+                            controller
+                                .open_item(source_space.clone(), Some(source_tabs), item("x"), None)
+                                .expect(
+                                    "the MouseUp listener should add Panel X to the source tabs",
+                                );
+                        });
+                    }
+                })
+            }
+        })
+        .expect("the source should install its MouseUp payload interceptor");
+
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    assert!(listener_opened_item.get());
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a"), item("x")],
+            "a stale frozen Tabs payload must leave both the original and listener-added items at the source"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("b")],
+            "a changed Tabs payload must not partially or fully commit into the target"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn native_captured_release_rejects_floating_title_target_reparented_by_mouse_up_listener(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_root_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_root_tabs);
+    graph
+        .floating_containers_mut(target_space.clone())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(40.0, 48.0, 220.0, 140.0),
+        });
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.policy_mut().set_allow_floating(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let (source_window, source_host, mut source_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space_with_runtime(
+        cx,
+        controller.clone(),
+        runtime,
+        target_space.clone(),
+        size(px(420.0), px(260.0)),
+    );
+    let source_window: AnyWindowHandle = source_window.into();
+    let target_window: AnyWindowHandle = target_window.into();
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("the source tab selector should be emitted");
+    let floating_handle = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("the target floating handle selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_position = debug_bounds(&mut target_visual, &floating_handle).center();
+    let target_global_from_source = point(px(400.0) + target_position.x, target_position.y);
+    configure_native_registered_window_hit_with_target_size(
+        cx,
+        source_window,
+        target_window,
+        target_global_from_source,
+        size(px(420.0), px(260.0)),
+    );
+
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    target_visual = VisualTestContext::from_window(target_window, cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "the MouseUp locker should observe the floating title-bar candidate"
+    );
+
+    let listener_reparented_target = Rc::new(Cell::new(false));
+    let _interceptor = cx
+        .update_window(source_window, {
+            let controller = controller.clone();
+            let target_space = target_space.clone();
+            let listener_reparented_target = listener_reparented_target.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    if matches!(event, WindowMouseEvent::Up(_))
+                        && !listener_reparented_target.replace(true)
+                    {
+                        controller.update(cx, |controller, _| {
+                            let plan = controller
+                                .graph()
+                                .edge_dock_plan(
+                                    &target_space,
+                                    target_root_tabs,
+                                    DropZone::Right,
+                                )
+                                .expect("the main target root should admit an edge move");
+                            controller
+                                .workspace_mut()
+                                .commit_floating_move(
+                                    &target_space,
+                                    floating,
+                                    &target_space,
+                                    DockGraphDropTarget::edge(plan),
+                                )
+                                .expect(
+                                    "the MouseUp listener should dock the floating target into the main tree",
+                                );
+                        });
+                    }
+                })
+            }
+        })
+        .expect("the source should install its MouseUp target interceptor");
+
+    source_visual.simulate_mouse_up(
+        target_global_from_source,
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    assert!(listener_reparented_target.get());
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a")],
+            "the source item must remain when the frozen floating-title owner is stale"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("b"), item("c")],
+            "the locked release must not redirect into the reparented floating tabs"
+        );
+        assert!(
+            controller
+                .graph()
+                .floating_containers(&target_space)
+                .is_empty(),
+            "the listener mutation should have removed the original floating owner"
+        );
+        assert!(
+            matches!(
+                controller.graph().node(floating_tabs),
+                Some(DockNode::Tabs { items, .. }) if items == &vec![item("c")]
+            ),
+            "the listener should preserve the original tabs node while reparenting it into the main tree"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn native_source_restoration_activates_only_after_the_visible_receipt(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source should retain its exact live-undock drag session");
+    let activation = cx.window_activation_probe(fixture.source_window);
+    let activation_before_cancel = activation.count();
+    let observed_before_visible_receipt = Rc::new(Cell::new(false));
+    cx.set_platform_focused_window_available(false);
+
+    cx.update({
+        let activation = activation.clone();
+        let observed_before_visible_receipt = observed_before_visible_receipt.clone();
+        let owner = fixture.surface.owner().clone();
+        let source_host = fixture.source_host.clone();
+        |app| {
+            crate::native_captured_drag::cancel_native_captured_drag_route(
+                fixture.runtime.identity(),
+                Some(&session),
+                Some(&fixture.payload),
+                &fixture.source_host.downgrade(),
+                None,
+                PointerCancelReason::CaptureRevoked,
+                app,
+            );
+            app.defer(move |app| {
+                assert_eq!(
+                    app.read_entity(&owner, |owner, _| owner.live_undock_phase()),
+                    crate::surface::live_undock::DockLiveUndockPhase::Restoring,
+                );
+                app.read_entity(&source_host, |host, _| {
+                    assert!(matches!(
+                        host.live_presentation_state().map(|state| state.mode),
+                        Some(
+                            crate::host::DockHostLivePresentationMode::SourceRestoration {
+                                phase: crate::host::DockHostLiveSourceRestorationPhase::Staging,
+                                ..
+                            }
+                        )
+                    ));
+                    assert!(
+                        host.live_source_semantic_proxy().is_some(),
+                        "restoration staging must preserve semantic continuity",
+                    );
+                    assert!(
+                        host.native_drag_transport_proxy().is_none(),
+                        "route cancellation must retire transport before ordinary source rendering resumes",
+                    );
+                });
+                assert_eq!(
+                    activation.count(),
+                    activation_before_cancel,
+                    "staging source restoration cannot activate before its visible receipt",
+                );
+                observed_before_visible_receipt.set(true);
+            });
+        }
+    });
+
+    assert!(
+        observed_before_visible_receipt.get(),
+        "the FIFO probe must run between source-restoration install and its first frame",
+    );
+
+    cx.run_until_parked();
+    cx.set_platform_focused_window_available(true);
+
+    assert_eq!(
+        activation.count(),
+        activation_before_cancel + 1,
+        "the accepted visible restoration receipt must activate the source exactly once",
+    );
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Idle,
+    );
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "terminal restoration must release the exact drag session",
+    );
+}
+
+#[open_gpui::test]
+fn live_source_restoration_host_loss_after_finish_converges_through_orphan_recovery(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source should retain its exact live-undock drag session");
+    let owner = fixture.surface.owner().clone();
+    let live_runtime = cx.read_entity(&owner, |owner, _| owner.live_undock_runtime());
+    live_runtime.replace_source_host_after_finish_once_for_test();
+    let source_window = fixture.source_window;
+    let source_host = fixture.source_host.downgrade();
+    let panel_entity = cx.read_entity(&fixture.controller, |controller, _| {
+        controller
+            .workspace()
+            .panels()
+            .resolved_render_view(&item("a"))
+            .expect("the live payload should retain its resolved panel view")
+            .entity_id()
+    });
+    drop(fixture.source_host);
+
+    cx.update(|app| {
+        crate::native_captured_drag::cancel_native_captured_drag_route(
+            fixture.runtime.identity(),
+            Some(&session),
+            Some(&fixture.payload),
+            &source_host,
+            None,
+            PointerCancelReason::CaptureRevoked,
+            app,
+        );
+    });
+    cx.run_until_parked();
+
+    assert!(source_host.upgrade().is_none());
+    assert!(
+        source_window
+            .update(cx, |_, window, _| window.presentation_facts())
+            .is_ok(),
+        "source Host loss must not imply source-window terminal"
+    );
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                panel_entity,
+                source_window.window_id(),
+            )
+        })
+        .is_none(),
+        "Host loss before visible confirmation must release the exact restored stable lease"
+    );
+    cx.read_entity(&owner, |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle,
+            "source Host loss must not strand live undock in Restoring"
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
+            ),
+            1,
+            "presentation authority loss must preserve the payload as a pre-commit recovery record"
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "terminal orphan recovery must release the exact drag session"
+    );
+}
+
+#[open_gpui::test]
+fn source_restoration_shutdown_before_visible_receipt_never_activates(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source should retain its exact live-undock drag session");
+    let activation = cx.window_activation_probe(fixture.source_window);
+    let activation_before_cancel = activation.count();
+    let shutdown_started_before_visible_receipt = Rc::new(Cell::new(false));
+    let runtime_identity = fixture.runtime.identity();
+    let payload = fixture.payload.clone();
+    let source_host_weak = fixture.source_host.downgrade();
+
+    cx.update({
+        let activation = activation.clone();
+        let owner = fixture.surface.owner().clone();
+        let source_host = fixture.source_host.clone();
+        let source_window = fixture.source_window;
+        let shutdown_started_before_visible_receipt =
+            shutdown_started_before_visible_receipt.clone();
+        move |app| {
+            crate::native_captured_drag::cancel_native_captured_drag_route(
+                runtime_identity,
+                Some(&session),
+                Some(&payload),
+                &source_host_weak,
+                None,
+                PointerCancelReason::CaptureRevoked,
+                app,
+            );
+            app.defer(move |app| {
+                assert_eq!(
+                    app.read_entity(&owner, |owner, _| owner.live_undock_phase()),
+                    crate::surface::live_undock::DockLiveUndockPhase::Restoring,
+                );
+                app.read_entity(&source_host, |host, _| {
+                    assert!(matches!(
+                        host.live_presentation_state().map(|state| state.mode),
+                        Some(
+                            crate::host::DockHostLivePresentationMode::SourceRestoration {
+                                phase: crate::host::DockHostLiveSourceRestorationPhase::Staging,
+                                ..
+                            }
+                        )
+                    ));
+                    assert!(host.live_source_semantic_proxy().is_some());
+                    assert!(host.native_drag_transport_proxy().is_none());
+                });
+                assert_eq!(activation.count(), activation_before_cancel);
+                source_window
+                    .update(app, |_, window, app| window.remove_window(app))
+                    .expect(
+                        "the source anchor should remain removable before its restoration frame",
+                    );
+                shutdown_started_before_visible_receipt.set(true);
+            });
+        }
+    });
+    assert!(shutdown_started_before_visible_receipt.get());
+    cx.run_until_parked();
+
+    assert_eq!(
+        activation.count(),
+        activation_before_cancel,
+        "surface shutdown must revoke pending source-focus authority",
+    );
+    assert!(cx.windows().is_empty());
+    let status = cx.update(|app| fixture.surface.window_session_status(app));
+    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn surface_owned_native_captured_desktop_release_promotes_exact_visible_provisional_window(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    let accepted_geometry = cx.read_entity(&destination_host, |host, _| {
+        host.live_destination_geometry_for_test()
+    });
+    let destination_window_facts = destination_window
+        .update(cx, |_, window, app| {
+            crate::DockViewportWindowFacts::from_window(window, app)
+        })
+        .expect("the provisional destination should retain current platform facts");
+    assert!(
+        accepted_geometry.is_some(),
+        "the visible provisional must retain accepted host geometry before release; window_facts={destination_window_facts:?}"
+    );
+    let window_count_before_release = cx.windows().len();
+    let revision_before_release = cx.read(|app| fixture.surface.revision(app));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let surface = fixture.surface.clone();
+    let _change_subscription = cx.update(|app| {
+        surface.subscribe_changes(app, {
+            let changes = changes.clone();
+            move |event, _| changes.borrow_mut().push(event.clone())
+        })
+    });
+    {
+        let runtime = fixture.runtime.borrow();
+        assert_eq!(runtime.adapter().window_for_space(&destination_space), None);
+        assert_eq!(
+            runtime
+                .adapter()
+                .space_for_window_id(destination_window.window_id()),
+            None
+        );
+    }
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")]
+        );
+        assert!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space)
+                .is_empty()
+        );
+    });
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the queued placement must quiesce without consuming the release deadline"
+    );
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "a queued placement is not promotion evidence"
+    );
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision_before_release,
+        "queued placement must not publish topology"
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")]
+        );
+    });
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    let (mapped_window, mapped_space, registration) = {
+        let runtime = fixture.runtime.borrow();
+        (
+            runtime.adapter().window_for_space(&destination_space),
+            runtime
+                .adapter()
+                .space_for_window_id(destination_window.window_id())
+                .cloned(),
+            runtime.adapter().registration_key(&destination_space),
+        )
+    };
+    assert_eq!(mapped_window, Some(destination_window));
+    assert_eq!(mapped_space, Some(destination_space.clone()));
+    assert_eq!(
+        cx.windows().len(),
+        window_count_before_release,
+        "same-window promotion must not open a replacement HWND"
+    );
+    let committed_host = destination_window
+        .downcast::<DockHost>()
+        .expect("the committed destination should retain a DockHost root")
+        .entity(cx)
+        .expect("the committed destination DockHost should remain live");
+    assert_eq!(committed_host.entity_id(), destination_host.entity_id());
+    cx.read_entity(&committed_host, |host, _| {
+        assert!(!host.is_provisional_viewport());
+        assert_eq!(host.current_viewport_registration(), registration);
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_destination_semantics().is_none());
+    });
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")]
+        );
+    });
+    assert_eq!(
+        changes.borrow().len(),
+        1,
+        "one same-window promotion must publish one transaction, got {:?}",
+        changes.borrow().as_slice()
+    );
+    assert_eq!(
+        changes.borrow()[0].categories(),
+        [
+            crate::DockSurfaceChangeCategory::Layout,
+            crate::DockSurfaceChangeCategory::Selection,
+            crate::DockSurfaceChangeCategory::PanelLifecycle,
+            crate::DockSurfaceChangeCategory::ViewportTopology,
+            crate::DockSurfaceChangeCategory::ObservedViewportPlacement,
+        ]
+    );
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision_before_release + 1
+    );
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            0
+        );
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
+            ),
+            0
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none()
+    );
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_source_semantic_proxy().is_none());
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
+    let destination_facts = destination_window
+        .update(cx, |_, window, _| window.presentation_facts())
+        .expect("the promoted destination window should remain live");
+    assert!(destination_facts.native_visible);
+    assert!(destination_facts.non_empty_presented_generation.is_some());
+}
+
+#[open_gpui::test]
+fn promoted_same_window_destination_adopts_dynamic_close_policy_and_merge_back_lifecycle(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    let revision_before_release = cx.read(|app| fixture.surface.revision(app));
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the queued placement must quiesce without consuming the release deadline"
+    );
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Idle,
+        "the same-HWND promotion must finish before ordinary close policy takes ownership"
+    );
+    assert_eq!(
+        fixture
+            .runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&destination_space),
+        Some(destination_window)
+    );
+
+    fixture
+        .runtime
+        .set_close_policy(crate::DockViewportClosePolicy::Prevent);
+    let mut destination_visual = VisualTestContext::from_window(destination_window, cx);
+    assert!(
+        !destination_visual.simulate_close(),
+        "a promoted same-HWND viewport must adopt the runtime should-close hook"
+    );
+    assert_eq!(
+        fixture
+            .runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&destination_space),
+        Some(destination_window),
+        "Prevent must preserve the committed destination registration"
+    );
+
+    fixture
+        .runtime
+        .set_close_policy(crate::DockViewportClosePolicy::MergeBack {
+            target_space: DockSpaceId::from("main"),
+        });
+    assert!(
+        destination_visual.simulate_close(),
+        "MergeBack must allow the promoted committed viewport to close"
+    );
+    cx.run_until_parked();
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "the promoted destination should reach ordinary logical and native terminal"
+    );
+    {
+        let runtime = fixture.runtime.borrow();
+        assert_eq!(runtime.adapter().window_for_space(&destination_space), None);
+        assert_eq!(
+            runtime
+                .adapter()
+                .space_for_window_id(destination_window.window_id()),
+            None,
+            "ordinary close must clear both sides of the promoted registration"
+        );
+    }
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b"), item("a")],
+            "MergeBack must move the promoted payload into the configured fallback space"
+        );
+        assert!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space)
+                .is_empty(),
+            "ordinary MergeBack close must retire the destination topology"
+        );
+    });
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision_before_release + 2,
+        "promotion and ordinary MergeBack close must publish one transaction each"
+    );
+}
+
+#[open_gpui::test]
+fn destination_close_during_terminal_interaction_activation_uses_ordinary_close_cleanup(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    let revision_before_release = cx.read(|app| fixture.surface.revision(app));
+
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    let ordinary_close_applied = Rc::new(Cell::new(false));
+    fixture.runtime.install_window_close_apply_hook_for_test({
+        let ordinary_close_applied = ordinary_close_applied.clone();
+        move |_| ordinary_close_applied.set(true)
+    });
+    live_runtime.install_before_destination_interaction_activation_hook_for_test({
+        let owner = fixture.surface.owner().clone();
+        move |cx| {
+            cx.read_entity(&owner, |owner, _| {
+                assert_eq!(
+                    owner.live_undock_phase(),
+                    crate::surface::live_undock::DockLiveUndockPhase::Idle,
+                    "destination interaction activation must run after reducer terminal acceptance"
+                );
+                assert!(
+                    owner
+                        .live_undock_committed_destination_registration_for_logical_close(
+                            destination_window.window_id(),
+                        )
+                        .is_none(),
+                    "an owner-terminal live-undock execution must no longer delegate logical close"
+                );
+            });
+            destination_window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("the committed destination should still be live at interaction activation");
+        }
+    });
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the queued placement must quiesce without consuming the release deadline"
+    );
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "the reentrant ordinary close must reach the destination's logical and native terminal"
+    );
+    assert!(
+        ordinary_close_applied.get(),
+        "owner-terminal reentry must execute the ordinary viewport close transaction"
+    );
+    {
+        let runtime = fixture.runtime.borrow();
+        assert_eq!(runtime.adapter().window_for_space(&destination_space), None);
+        assert_eq!(
+            runtime
+                .adapter()
+                .space_for_window_id(destination_window.window_id()),
+            None,
+            "ordinary close must clear both sides of the committed registration"
+        );
+    }
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")],
+            "a direct logical close has no should-close plan and must preserve the source topology"
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")],
+            "ordinary RetainLayout cleanup must preserve the committed destination topology"
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            0,
+            "an ordinary post-terminal close must not be reclassified as live-undock loss"
+        );
+    });
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision_before_release + 2,
+        "promotion and reentrant ordinary topology cleanup must publish one transaction each"
+    );
+}
+
+#[open_gpui::test]
+fn same_window_promotion_can_commit_failure_restores_without_durable_swap(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    let revision_before_release = cx.read(|app| fixture.surface.revision(app));
+
+    fixture
+        .runtime
+        .reject_next_live_undock_promotion_commit_for_test();
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound
+    );
+
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision_before_release
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")]
+        );
+        assert!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space)
+                .is_empty()
+        );
+    });
+    {
+        let runtime = fixture.runtime.borrow();
+        assert_eq!(runtime.adapter().window_for_space(&destination_space), None);
+        assert_eq!(
+            runtime
+                .adapter()
+                .space_for_window_id(destination_window.window_id()),
+            None
+        );
+    }
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "pre-swap compensation must retire the provisional destination"
+    );
+    assert_eq!(cx.windows(), vec![fixture.source_window]);
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            0
+        );
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
+            ),
+            0
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none()
+    );
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_source_semantic_proxy().is_none());
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
+}
+
+#[open_gpui::test]
+fn stale_selected_same_window_registration_falls_back_to_ordinary_close_before_recovery(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let _window_closed_observer = cx.update(|app| fixture.runtime.observe_window_closed(app));
+    fixture
+        .runtime
+        .set_close_policy(crate::DockViewportClosePolicy::MergeBack {
+            target_space: DockSpaceId::from("main"),
+        });
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    let revision_before_release = cx.read(|app| fixture.surface.revision(app));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let surface = fixture.surface.clone();
+    let _change_subscription = cx.update(|app| {
+        surface.subscribe_changes(app, {
+            let changes = changes.clone();
+            move |event, _| changes.borrow_mut().push(event.clone())
+        })
+    });
+
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    let replacement_registration = Rc::new(RefCell::new(None));
+    fixture
+        .runtime
+        .install_live_undock_logical_close_selection_hook_for_test({
+            let runtime = fixture.runtime.clone();
+            let destination_space = destination_space.clone();
+            let replacement_registration = replacement_registration.clone();
+            move |_| {
+                let replacement = runtime.borrow_mut().replace_adapter_registration_for_test(
+                    destination_space,
+                    destination_window.into(),
+                );
+                *replacement_registration.borrow_mut() = Some(replacement);
+            }
+        });
+    live_runtime.terminate_next_same_window_destination_before_semantics_ack_for_test();
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the queued placement must quiesce without consuming the release deadline"
+    );
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "a queued placement is not promotion evidence"
+    );
+
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "the injected terminal must retire the exact promoted provisional window"
+    );
+    assert_eq!(cx.windows(), vec![fixture.source_window]);
+    assert!(
+        replacement_registration.borrow().is_some(),
+        "the regression must replace the selected live-undock registration before exact settlement"
+    );
+    {
+        let runtime = fixture.runtime.borrow();
+        assert_eq!(runtime.adapter().window_for_space(&destination_space), None);
+        assert_eq!(
+            runtime
+                .adapter()
+                .space_for_window_id(destination_window.window_id()),
+            None,
+            "a terminal destination must not retain registry authority"
+        );
+    }
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")],
+            "post-swap failure must never roll durable topology back"
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            1,
+            "the committed payload must remain discoverable after destination terminal"
+        );
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
+            ),
+            0,
+            "a post-swap loss must not be misclassified as a pre-commit orphan"
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "terminal recovery must release the exact payload drag session"
+    );
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_source_semantic_proxy().is_none());
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(
+        changes.len(),
+        3,
+        "promotion, stale-selection fallback, and viewport-loss recovery must publish three ordered transactions: {changes:?}"
+    );
+    assert_eq!(
+        changes[0].categories(),
+        [
+            crate::DockSurfaceChangeCategory::Layout,
+            crate::DockSurfaceChangeCategory::Selection,
+            crate::DockSurfaceChangeCategory::PanelLifecycle,
+            crate::DockSurfaceChangeCategory::ViewportTopology,
+            crate::DockSurfaceChangeCategory::ObservedViewportPlacement,
+        ]
+    );
+    assert!(changes[0].transitions().is_empty());
+    assert_eq!(
+        changes[1].categories(),
+        [crate::DockSurfaceChangeCategory::ViewportTopology],
+        "stale special-close selection must fall through to one ordinary topology cleanup"
+    );
+    assert!(changes[1].transitions().is_empty());
+    assert_eq!(
+        changes[2].categories(),
+        [
+            crate::DockSurfaceChangeCategory::PanelLifecycle,
+            crate::DockSurfaceChangeCategory::ViewportTopology,
+        ]
+    );
+    assert_eq!(
+        changes[2].transitions(),
+        [crate::DockSurfaceTransition::ViewportLostAfterPromotion]
+    );
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision_before_release + 3
+    );
+}
+
+#[open_gpui::test]
+fn committed_destination_admission_failure_recovers_before_retiring_its_window(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    live_runtime.reject_next_destination_interaction_admission_for_test();
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the queued placement must quiesce without consuming the release deadline"
+    );
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "a queued placement is not promotion evidence"
+    );
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    let (phase, execution_count, recovery_count) =
+        cx.read_entity(fixture.surface.owner(), |owner, _| {
+            (
+                owner.live_undock_phase(),
+                owner.live_undock_runtime().execution_count_for_test(),
+                owner.visible_payload_recovery_count_for_test(
+                    crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+                ),
+            )
+        });
+    assert_eq!(
+        phase,
+        crate::surface::live_undock::DockLiveUndockPhase::Idle,
+        "live-undock recovery must settle after exact destination terminal"
+    );
+    assert_eq!(execution_count, 0);
+    assert_eq!(
+        recovery_count, 1,
+        "the durable payload must remain discoverable after its destination is retired"
+    );
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "terminal recovery must release the exact payload drag session"
+    );
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(
+            host.live_source_semantic_proxy().is_none(),
+            "the recovery record must replace the stale source semantic owner"
+        );
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "the promoted provisional destination must reach native terminal"
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")],
+            "the committed destination topology must survive native window retirement",
+        );
+    });
+}
+
+#[open_gpui::test]
+fn lost_source_host_converges_through_payload_recovery_without_retrying_forever(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source should retain its exact live-undock drag session");
+    let source_host = fixture.source_host.downgrade();
+
+    fixture
+        .source_window
+        .update(cx, |_, window, app| {
+            window.replace_root(app, |_, _| open_gpui::Empty);
+        })
+        .expect("the source window should allow replacing its DockHost root");
+    drop(fixture.source_host);
+    assert!(
+        source_host.upgrade().is_none(),
+        "the runtime must observe the original source Host as unavailable",
+    );
+
+    cx.update(|app| {
+        crate::native_captured_drag::cancel_native_captured_drag_route(
+            fixture.runtime.identity(),
+            Some(&session),
+            Some(&fixture.payload),
+            &source_host,
+            None,
+            PointerCancelReason::CaptureRevoked,
+            app,
+        );
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Idle,
+        "source Host authority loss must terminate through orphan recovery, not a timer retry",
+    );
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "orphan recovery must finalize the exact drag generation",
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")],
+            "payload recovery must preserve the source topology",
+        );
+    });
+
+    fixture
+        .source_window
+        .update(cx, |_, window, app| window.remove_window(app))
+        .expect("the recovered surface should remain normally closeable");
+    cx.run_until_parked();
+    let status = cx.update(|app| fixture.surface.window_session_status(app));
+    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn failed_retired_native_release_is_claimed_by_surface_shutdown(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    fixture.begin_drag(cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source should own an exact native drag session");
+    let lease = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner
+            .window_session()
+            .active_lease()
+            .expect("the managed surface should expose its exact active lease")
+    });
+    let release_attempts = Rc::new(Cell::new(0));
+    cx.set_pointer_capture_release_callback(fixture.source_window, {
+        let release_attempts = release_attempts.clone();
+        move |_| {
+            release_attempts.set(release_attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Rejected
+        }
+    });
+
+    cx.update(|app| {
+        crate::native_captured_drag::cancel_native_captured_drag_route(
+            fixture.runtime.identity(),
+            Some(&session),
+            Some(&fixture.payload),
+            &fixture.source_host.downgrade(),
+            None,
+            PointerCancelReason::CaptureRevoked,
+            app,
+        );
+    });
+    cx.background_executor
+        .advance_clock(Duration::from_millis(8));
+    cx.background_executor
+        .advance_clock(Duration::from_millis(32));
+    cx.background_executor
+        .advance_clock(Duration::from_millis(128));
+    cx.run_until_parked();
+
+    assert_eq!(release_attempts.get(), 4);
+    assert!(cx.read(|app| {
+        crate::native_captured_drag::has_failed_native_captured_release_for_surface_for_test(
+            fixture.runtime.identity(),
+            lease,
+            app,
+        )
+    }));
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        fixture
+            .source_window
+            .update(cx, |_, window, app| window.remove_window(app))
+            .expect("the source anchor should remain removable after release failure");
+        cx.run_until_parked();
+    }))
+    .expect_err("surface shutdown must report the previously failed native release");
+    panic
+        .downcast::<crate::surface::DockSurfaceCaptureReleaseFailure>()
+        .expect(
+            "the persisted release failure must reach the surface coordinator as typed failure",
+        );
+
+    cx.run_until_parked();
+    assert!(cx.windows().is_empty());
+    let status = cx.update(|app| fixture.surface.window_session_status(app));
+    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn reentrant_surface_claim_attaches_to_delivering_native_release(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let native_generation = Rc::new(Cell::new(None));
+    let _native_observer = cx.update({
+        let native_generation = native_generation.clone();
+        move |app| {
+            app.observe_native_captured_drag(move |event, _| {
+                native_generation.set(Some(event.generation()));
+            })
+        }
+    });
+    fixture.begin_drag(cx);
+    fixture.source_visual.simulate_mouse_move(
+        point(fixture.threshold.x + px(1.0), fixture.threshold.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let native_generation = native_generation
+        .get()
+        .expect("the started native drag should publish its generation");
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source should own an exact native drag session");
+    let lease = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner
+            .window_session()
+            .active_lease()
+            .expect("the managed surface should expose its exact active lease")
+    });
+    cx.set_pointer_capture_release_callback(fixture.source_window, |_| {
+        PlatformPointerCaptureReleaseOutcome::Released
+    });
+    let release_outcome = Rc::new(Cell::new(None));
+    let runtime_identity = fixture.runtime.identity();
+    let source_window = fixture.source_window;
+    let source_host = fixture.source_host.downgrade();
+    let payload = fixture.payload.clone();
+
+    let barrier = cx
+        .update({
+            let release_outcome = release_outcome.clone();
+            move |app| {
+                let barrier = app.cancel_native_captured_drag_with_release_barrier(
+                    source_window.window_id(),
+                    native_generation,
+                    PointerCancelReason::WindowClosed,
+                    move |_, terminal, app| {
+                        assert_eq!(terminal, NativeCapturedDragReleaseTerminal::Released);
+                        crate::native_captured_drag::cancel_native_captured_drag_route_for_surface(
+                            runtime_identity,
+                            lease,
+                            move |outcome, _, _| release_outcome.set(Some(outcome)),
+                            app,
+                        );
+                    },
+                );
+                crate::native_captured_drag::cancel_native_captured_drag_route(
+                    runtime_identity,
+                    Some(&session),
+                    Some(&payload),
+                    &source_host,
+                    None,
+                    PointerCancelReason::CaptureRevoked,
+                    app,
+                );
+                barrier
+            }
+        })
+        .expect("the exact native drag must reserve a release barrier");
+    cx.run_until_parked();
+
+    assert_eq!(barrier.source_window(), source_window.window_id());
+    assert_eq!(
+        release_outcome.get(),
+        Some(crate::native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome::Released),
+        "a surface claim during completion delivery must observe the real release terminal",
+    );
+    assert!(cx.read(|app| {
+        !crate::native_captured_drag::has_failed_native_captured_release_for_surface_for_test(
+            runtime_identity,
+            lease,
+            app,
+        )
+    }));
+
+    fixture
+        .source_window
+        .update(cx, |_, window, app| window.remove_window(app))
+        .expect("the source anchor should remain removable after release");
+    cx.run_until_parked();
 }
 
 #[open_gpui::test]
@@ -3952,6 +6378,7 @@ fn stale_native_scene_work_context_retires_source_route_without_another_pointer_
         (surface, source_window, source_tabs)
     });
     cx.run_until_parked();
+    let runtime = surface.viewport_runtime(cx);
 
     let source_host = source_window
         .downcast::<DockHost>()
@@ -3976,7 +6403,6 @@ fn stale_native_scene_work_context_retires_source_route_without_another_pointer_
         item("a"),
         "Panel A".to_string(),
     );
-    let runtime = surface.viewport_runtime(cx);
     advertise_native_window_hit_stack(cx);
 
     activate_window_for_pointer_input(&mut source_visual);
@@ -4930,6 +7356,699 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
             );
         })
         .expect("detached viewport should remain live");
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_live_undock_release_to_existing_host_commits_transfer(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source-live-host");
+    let target_space = DockSpaceId::from("target-live-host");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let surface = cx.update(|app| DockSurface::from_controller(controller.clone(), app));
+    let source_window = cx.update(|app| {
+        match surface.open_primary_window(viewport_window_options(360.0, 220.0), app) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("source primary window should open, got {outcome:?}"),
+        }
+    });
+    cx.run_until_parked();
+    let target_window = cx.update(|app| {
+        match surface.open_viewport(
+            target_space.clone(),
+            viewport_window_options(360.0, 220.0),
+            app,
+        ) {
+            crate::DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("target managed viewport should open, got {outcome:?}"),
+        }
+    });
+    let source_host = source_window
+        .downcast::<DockHost>()
+        .expect("source window should render DockHost")
+        .entity(cx)
+        .expect("source host should remain live");
+    let target_host = target_window
+        .downcast::<DockHost>()
+        .expect("target window should render DockHost")
+        .entity(cx)
+        .expect("target host should remain live");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(source_window, cx);
+    let mut target_visual = VisualTestContext::from_window(target_window, cx);
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    let target_global = point(px(400.0) + target_local.x, target_local.y);
+
+    configure_native_desktop_release(
+        cx,
+        source_window.into(),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    source_visual.simulate_mouse_move(
+        point(px(900.0), px(900.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the live-undock opening should quiesce before its release deadline"
+    );
+
+    assert_eq!(
+        cx.read_entity(surface.owner(), |owner, _| owner.live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "crossing the desktop must bind the live-undock session before host release",
+    );
+
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global,
+    );
+    source_visual.simulate_mouse_move(target_global, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "the existing target host must receive the live route preview before release",
+    );
+
+    source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b")],
+            "a valid host release must remove the payload from the source space",
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("c"), item("a")],
+            "a valid host release must commit into the existing target host",
+        );
+    });
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tab {
+                tabs: target_tabs,
+                item: item("a"),
+            },
+        )
+        .is_some(),
+        "the committed payload must render in the existing target host",
+    );
+    cx.read_entity(&source_host, |host, _| {
+        assert!(
+            host.live_presentation_state().is_none(),
+            "host promotion must retire the source live-presentation authority",
+        );
+        assert!(
+            host.live_source_semantic_proxy().is_none(),
+            "host promotion must retire the source semantic proxy",
+        );
+        assert!(
+            host.native_drag_transport_proxy().is_none(),
+            "host promotion must retire the source transport proxy",
+        );
+    });
+    cx.read_entity(&target_host, |host, _| {
+        assert!(
+            host.live_presentation_state().is_none(),
+            "an existing Host drop must not leave provisional presentation state behind",
+        );
+    });
+    cx.read_entity(surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle,
+            "host transfer must settle the live-undock session",
+        );
+        assert_eq!(
+            owner.live_undock_runtime().execution_count_for_test(),
+            0,
+            "host transfer must retire the runtime execution",
+        );
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            0,
+            "a successful Host transfer must not manufacture a recovery record",
+        );
+    });
+    assert_eq!(
+        cx.windows().len(),
+        2,
+        "the provisional window must retire after the existing Host becomes authoritative",
+    );
+}
+
+#[open_gpui::test]
+fn managed_source_host_drop_into_primary_anchor_preserves_surface_shutdown_hook(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("managed-source-live-host");
+    let target_space = DockSpaceId::from("primary-target-live-host");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let surface = cx.update(|app| DockSurface::from_controller(controller.clone(), app));
+    let target_window = cx.update(|app| {
+        match surface.open_primary_window(viewport_window_options(360.0, 220.0), app) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("target primary window should open, got {outcome:?}"),
+        }
+    });
+    cx.run_until_parked();
+    let source_window = cx.update(|app| {
+        match surface.open_viewport(
+            source_space.clone(),
+            viewport_window_options(360.0, 220.0),
+            app,
+        ) {
+            crate::DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("managed source viewport should open, got {outcome:?}"),
+        }
+    });
+    let source_host = source_window
+        .downcast::<DockHost>()
+        .expect("managed source window should render DockHost")
+        .entity(cx)
+        .expect("managed source host should remain live");
+    let target_host = target_window
+        .downcast::<DockHost>()
+        .expect("primary target window should render DockHost")
+        .entity(cx)
+        .expect("primary target host should remain live");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(source_window, cx);
+    let mut target_visual = VisualTestContext::from_window(target_window, cx);
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("managed source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("primary target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    let target_global = point(px(400.0) + target_local.x, target_local.y);
+
+    configure_native_desktop_release(
+        cx,
+        source_window.into(),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    source_visual.simulate_mouse_move(
+        point(px(900.0), px(900.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the live-undock opening should quiesce before its release deadline"
+    );
+    assert_eq!(
+        cx.read_entity(surface.owner(), |owner, _| owner.live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "crossing the desktop must bind the live-undock session before primary-host release",
+    );
+
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global,
+    );
+    source_visual.simulate_mouse_move(target_global, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let target_visual = VisualTestContext::from_window(target_window, cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "the primary target host must receive the live route preview before release",
+    );
+
+    source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b")],
+            "a valid primary-host release must remove the payload from the managed source",
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("c"), item("a")],
+            "a valid primary-host release must commit into the anchor Host",
+        );
+    });
+    cx.read_entity(surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle,
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert!(
+            owner
+                .window_session()
+                .active_lease_for_anchor(target_window.window_id())
+                .is_some(),
+            "the Host transfer must preserve the primary anchor's active surface lease",
+        );
+    });
+
+    let close = cx.simulate_window_close_request(target_window.into());
+    assert!(
+        !close.native_close_allowed(),
+        "the PrimaryAnchor hook must veto direct native close and own the coordinated shutdown",
+    );
+    assert!(
+        close.terminal_transition_started(),
+        "the vetoed native request must still begin the surface-owned terminal transition",
+    );
+    assert!(
+        cx.windows().is_empty(),
+        "surface shutdown must retire the managed source before completing anchor teardown",
+    );
+    let status = cx.update(|app| surface.window_session_status(app));
+    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn runtime_existing_host_interaction_failure_commits_recovery_and_terminates(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source-live-host-recovery");
+    let target_space = DockSpaceId::from("target-live-host-recovery");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let panel_a = test_view(cx, "A");
+    let panel_a_focus = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let surface = cx.update(|app| DockSurface::from_controller(controller.clone(), app));
+    let source_window = cx.update(|app| {
+        match surface.open_primary_window(viewport_window_options(360.0, 220.0), app) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("source primary window should open, got {outcome:?}"),
+        }
+    });
+    cx.run_until_parked();
+    let target_window = cx.update(|app| {
+        match surface.open_viewport(
+            target_space.clone(),
+            viewport_window_options(360.0, 220.0),
+            app,
+        ) {
+            crate::DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("target managed viewport should open, got {outcome:?}"),
+        }
+    });
+    let source_host = source_window
+        .downcast::<DockHost>()
+        .expect("source window should render DockHost")
+        .entity(cx)
+        .expect("source host should remain live");
+    let target_host = target_window
+        .downcast::<DockHost>()
+        .expect("target window should render DockHost")
+        .entity(cx)
+        .expect("target host should remain live");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(source_window, cx);
+    let target_visual = VisualTestContext::from_window(target_window, cx);
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let mut target_visual = target_visual;
+    let target_local = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    let target_global = point(px(400.0) + target_local.x, target_local.y);
+
+    configure_native_desktop_release(
+        cx,
+        source_window.into(),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    activate_window_for_pointer_input(&mut source_visual);
+    source_visual.update(|window, cx| panel_a_focus.focus(window, cx));
+    assert_eq!(
+        source_visual.update(|window, cx| window.focused(cx)),
+        Some(panel_a_focus.clone()),
+        "the live-undock source should capture exact payload focus evidence",
+    );
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    source_visual.simulate_mouse_move(
+        point(px(900.0), px(900.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(
+        drained_without_advancing_deadline,
+        "the live-undock opening should quiesce before its release deadline"
+    );
+
+    configure_native_registered_window_hit(
+        cx,
+        source_window.into(),
+        target_window.into(),
+        target_global,
+    );
+    source_visual.simulate_mouse_move(target_global, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let live_runtime = cx.read_entity(surface.owner(), |owner, _| owner.live_undock_runtime());
+    live_runtime.reject_next_destination_interaction_admission_for_test();
+
+    source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b")],
+            "committed recovery must not roll the payload back into its source",
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("c"), item("a")],
+            "committed recovery must preserve the single durable payload location",
+        );
+    });
+    cx.read_entity(surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle,
+            "Host recovery must reach a terminal live-undock phase",
+        );
+        assert_eq!(
+            owner.live_undock_runtime().execution_count_for_test(),
+            0,
+            "Host recovery must retire its execution graph",
+        );
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            1,
+            "the durable payload must remain discoverable through one recovery record",
+        );
+    });
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_owned(),
+    );
+    assert!(
+        cx.read_entity(&source_host, |host, _| host
+            .active_payload_drag_session(&payload)
+            .is_none()),
+        "terminal Host recovery must release the exact payload drag session",
+    );
+    cx.read_entity(&source_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_source_semantic_proxy().is_none());
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
+    cx.read_entity(&target_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+    });
+    assert_eq!(
+        cx.windows().len(),
+        2,
+        "the provisional must retire after Host recovery commits",
+    );
+
+    assert_eq!(
+        cx.read_entity(surface.owner(), |owner, _| owner
+            .visible_payload_recovery_entries()
+            .len()),
+        1,
+        "the active anchor should project the durable recovery record before rendering",
+    );
+    assert_eq!(
+        source_host.update(cx, |host, host_cx| host
+            .visible_payload_recovery_entries(host_cx)
+            .len()),
+        1,
+        "the primary DockHost should admit the active-anchor recovery projection",
+    );
+    let recovery_focus = cx.read_entity(surface.owner(), |owner, _| {
+        owner
+            .visible_payload_recovery_entries()
+            .into_iter()
+            .next()
+            .expect("the visible recovery entry should retain one focus handle")
+            .focus_handle()
+            .clone()
+    });
+    assert_eq!(
+        source_visual.update(|window, cx| window.focused(cx)),
+        Some(recovery_focus),
+        "lost focused payload content should hand focus to its visible recovery entry",
+    );
+
+    assert!(cx.activate_accessibility(source_window.into()));
+    let recovery_tree = cx
+        .latest_accessibility_tree_update(source_window.into())
+        .expect("the primary anchor should publish a recovery accessibility tree");
+    let (recovery_node_id, recovery_node) = recovery_tree
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("Lost viewport recovery for Panel A"))
+        .map(|(id, node)| (*id, node))
+        .unwrap_or_else(|| {
+            let labels = recovery_tree
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| node.label())
+                .collect::<Vec<_>>();
+            panic!(
+                "the primary anchor should expose one visible payload recovery entry; labels={labels:?}"
+            );
+        });
+    assert_eq!(recovery_node.role(), open_gpui::accesskit::Role::Group);
+    let recovery_actions = open_gpui::test::ACCESSKIT_ACTIONS
+        .iter()
+        .copied()
+        .filter(|action| recovery_node.supports_action(*action))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        recovery_actions,
+        vec![open_gpui::AccessibleAction::Click],
+        "the recovery group should expose exactly one semantic Restore action",
+    );
+    let mut recovery_descendants = recovery_node.children().to_vec();
+    while let Some(descendant_id) = recovery_descendants.pop() {
+        let descendant = recovery_tree
+            .nodes
+            .iter()
+            .find_map(|(id, node)| (*id == descendant_id).then_some(node))
+            .expect("every recovery descendant should exist in the same committed tree");
+        assert_ne!(
+            descendant.role(),
+            open_gpui::accesskit::Role::TabPanel,
+            "the recovery group must not own a duplicate payload tab-panel subtree",
+        );
+        assert_ne!(
+            descendant.label(),
+            Some("Panel A panel"),
+            "the recovery group must not own the lost payload panel",
+        );
+        recovery_descendants.extend_from_slice(descendant.children());
+    }
+    assert!(
+        recovery_tree
+            .nodes
+            .iter()
+            .all(|(_, node)| node.label() != Some("Panel A panel")),
+        "the recovery entry must not mount a second payload panel subtree",
+    );
+
+    assert!(cx.dispatch_accessibility_action(
+        source_window.into(),
+        open_gpui::accesskit::ActionRequest {
+            action: open_gpui::AccessibleAction::Click,
+            target_tree: open_gpui::accesskit::TreeId::ROOT,
+            target_node: recovery_node_id,
+            data: None,
+        },
+    ));
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b"), item("a")],
+            "Restore should re-home the payload into the primary recovery tab group",
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("c")],
+            "Restore should remove the payload from the lost destination exactly once",
+        );
+    });
+    cx.read_entity(surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            0,
+            "the exact recovery action should consume its durable record",
+        );
+    });
+    let restored_focus_state = source_visual.update(|window, cx| {
+        (
+            window.focused(cx),
+            window.is_focus_handle_rendered(&panel_a_focus),
+        )
+    });
+    assert_eq!(
+        restored_focus_state.0,
+        Some(panel_a_focus),
+        "Restore should return focus to the exact surviving payload focus handle; rendered={} ",
+        restored_focus_state.1,
+    );
+    assert!(
+        restored_focus_state.1,
+        "the restored focus handle must belong to a panel root rendered by the primary Host",
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") },
+        )
+        .is_some(),
+        "the primary Host must render Panel A after recovery commits",
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") },
+        )
+        .is_none(),
+        "the former target Host must retire Panel A after recovery commits",
+    );
+    let restored_tree = cx
+        .latest_accessibility_tree_update(source_window.into())
+        .expect("Restore should publish a replacement accessibility tree");
+    assert!(
+        restored_tree
+            .nodes
+            .iter()
+            .all(|(_, node)| node.label() != Some("Lost viewport recovery for Panel A")),
+        "a consumed recovery action must remove its visible entry",
+    );
 }
 
 #[open_gpui::test]
@@ -6060,4 +9179,1222 @@ fn non_closable_tab_omits_close_control_and_rejects_close_action(cx: &mut TestAp
         })
     });
     assert_eq!(items, vec![item("locked"), item("open")]);
+}
+
+struct PayloadRecoveryHostFixture {
+    surface: DockSurface,
+    payload: DockLockedPayloadIdentity,
+    lost_space: DockSpaceId,
+    lost_tabs: DockNodeId,
+    primary_window: AnyWindowHandle,
+    primary_host: Entity<DockHost>,
+    source_window: AnyWindowHandle,
+    source_host: Entity<DockHost>,
+    panel_a: Entity<TestPanel>,
+    panel_b: Entity<TestPanel>,
+}
+
+fn payload_recovery_host_fixture(cx: &mut TestAppContext) -> PayloadRecoveryHostFixture {
+    let original_space = DockSpaceId::from("payload-recovery-original");
+    let lost_space = DockSpaceId::from("payload-recovery-lost");
+    let primary_space = DockSpaceId::from("payload-recovery-primary");
+    let mut graph = DockGraph::new();
+    let original_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    let primary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("home")],
+        selected: Some(item("home")),
+    });
+    graph.set_root(original_space.clone(), original_tabs);
+    graph.set_root(primary_space.clone(), primary_tabs);
+    let payload = DockLockedPayloadIdentity::capture(
+        &graph,
+        &original_space,
+        DockWorkspaceDropPayload::Tabs {
+            source_tabs: original_tabs,
+        },
+    )
+    .expect("the tabs payload should lock before promotion");
+    graph
+        .apply_op_checked(&DockOp::MoveTabs {
+            source_space: original_space,
+            source_tabs: original_tabs,
+            target_space: lost_space.clone(),
+            target: DockGraphDropTarget::empty_space(),
+        })
+        .expect("the tabs payload should move into the lost viewport");
+    let lost_tabs = graph
+        .root(&lost_space)
+        .expect("the lost viewport should receive one tabs root");
+
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+    let mut workspace = DockWorkspace::new(primary_space, graph);
+    workspace.register_panel_view(item("a"), "Panel A", panel_a.clone());
+    workspace.register_panel_view(item("b"), "Panel B", panel_b.clone());
+    workspace.register_panel_view(item("home"), "Home", test_view(cx, "Home"));
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let surface = cx.update(|app| DockSurface::from_controller(controller, app));
+    let primary_window = cx.update(|app| {
+        match surface.open_primary_window(viewport_window_options(360.0, 220.0), app) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the recovery primary window should open, got {outcome:?}"),
+        }
+    });
+    cx.run_until_parked();
+    let source_window = cx.update(|app| {
+        match surface.open_viewport(
+            lost_space.clone(),
+            viewport_window_options(360.0, 220.0),
+            app,
+        ) {
+            crate::DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the recovery source viewport should open, got {outcome:?}"),
+        }
+    });
+    cx.run_until_parked();
+
+    let primary_host = primary_window
+        .downcast::<DockHost>()
+        .expect("the recovery primary should render DockHost")
+        .entity(cx)
+        .expect("the recovery primary Host should remain live");
+    let source_host = source_window
+        .downcast::<DockHost>()
+        .expect("the recovery source should render DockHost")
+        .entity(cx)
+        .expect("the recovery source Host should remain live");
+    let initial_leases = cx.read(|app| {
+        (
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                panel_a.entity_id(),
+                source_window.window_id(),
+            ),
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                panel_b.entity_id(),
+                source_window.window_id(),
+            ),
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                panel_b.entity_id(),
+                primary_window.window_id(),
+            ),
+        )
+    });
+    assert!(
+        initial_leases.0.is_some(),
+        "the selected source root must own stable presentation authority"
+    );
+    assert_eq!(
+        initial_leases.1, None,
+        "the hidden source root must remain ungoverned"
+    );
+    assert_eq!(
+        initial_leases.2, None,
+        "the hidden root must not leak into the recovery destination"
+    );
+
+    PayloadRecoveryHostFixture {
+        surface,
+        payload,
+        lost_space,
+        lost_tabs,
+        primary_window,
+        primary_host,
+        source_window,
+        source_host,
+        panel_a,
+        panel_b,
+    }
+}
+
+struct PayloadRecoveryRestoreStart {
+    owner: Entity<DockSurfaceOwner>,
+    primary_window: WindowHandle<DockHost>,
+    primary_binding: DockHostWindowBinding,
+    action: DockPayloadRecoveryRestoreAction,
+}
+
+fn prepare_payload_recovery_host_restore(
+    fixture: &PayloadRecoveryHostFixture,
+    cx: &mut TestAppContext,
+) -> PayloadRecoveryRestoreStart {
+    let source_window = fixture
+        .source_window
+        .downcast::<DockHost>()
+        .expect("the recovery source should retain its typed window");
+    let (source_binding, source_registration) = cx.read_entity(&fixture.source_host, |host, _| {
+        (
+            host.current_window_binding()
+                .expect("the recovery source should retain its window binding"),
+            host.current_viewport_registration()
+                .expect("the recovery source should retain its viewport registration"),
+        )
+    });
+    let origin = DockPayloadRecoveryPresentationOrigin::new(
+        source_window,
+        source_binding,
+        source_registration,
+    )
+    .expect("the recovery origin should bind one exact source endpoint");
+    let anchor_lease = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner
+            .window_session()
+            .active_lease()
+            .expect("the recovery destination must own the active surface lease")
+    });
+    let trigger = DockLiveUndockTrigger::new(
+        DockLiveUndockDragGeneration::new(1)
+            .expect("the synthetic recovery drag generation should be non-zero"),
+        DockLiveUndockSourceSnapshot::new(source_window.window_id(), source_binding.generation()),
+        DockLiveUndockRouteFeedback::Desktop,
+    )
+    .expect("the synthetic recovery trigger should be valid");
+    let identity = DockLiveUndockSession::new()
+        .apply(DockLiveUndockFact::Trigger {
+            lease: anchor_lease,
+            trigger,
+        })
+        .into_iter()
+        .find_map(|effect| match effect {
+            DockLiveUndockEffect::OpenProvisional { identity, .. } => Some(identity),
+            _ => None,
+        })
+        .expect("the synthetic trigger should mint one live-undock identity");
+    let authority = DockPayloadRecoveryAuthority::durable_promotion(
+        identity,
+        DockLiveUndockPromotionToken::new(1)
+            .expect("the synthetic promotion token should be non-zero"),
+        DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: source_window.window_id(),
+        },
+    );
+    let owner = fixture.surface.owner().clone();
+    let recovery = with_root_transaction(&owner, cx, |owner, transaction, owner_cx| {
+        let prepared = owner
+            .prepare_payload_recovery_with_origin(
+                authority,
+                &fixture.payload,
+                DockPayloadRecoveryReason::LostViewportRecovery,
+                origin,
+                owner_cx,
+            )
+            .expect("the lost payload should prepare one durable recovery record");
+        owner
+            .commit_payload_recovery(transaction, &prepared, owner_cx)
+            .expect("the lost payload should commit one durable recovery record")
+    });
+    let action = cx.read_entity(&owner, |owner, _| {
+        owner
+            .payload_recovery_restore_action(recovery)
+            .expect("the active anchor should expose one exact restore action")
+    });
+    let primary_window = fixture
+        .primary_window
+        .downcast::<DockHost>()
+        .expect("the recovery destination should retain its typed window");
+    let primary_binding = cx.read_entity(&fixture.primary_host, |host, _| {
+        host.current_window_binding()
+            .expect("the recovery destination should retain its window binding")
+    });
+    PayloadRecoveryRestoreStart {
+        owner,
+        primary_window,
+        primary_binding,
+        action,
+    }
+}
+
+fn start_payload_recovery_host_restore(
+    fixture: &PayloadRecoveryHostFixture,
+    cx: &mut TestAppContext,
+) {
+    let start = prepare_payload_recovery_host_restore(fixture, cx);
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("the recovery executor should accept the exact source and destination endpoints");
+}
+
+#[open_gpui::test]
+fn payload_recovery_source_close_before_release_waits_for_native_terminal(cx: &mut TestAppContext) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let start = prepare_payload_recovery_host_restore(&fixture, cx);
+    let terminal = cx.hold_window_native_terminal(fixture.source_window);
+    let initial = cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner,
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+        .expect("the recovery executor should accept the exact endpoints");
+        let initial = app
+            .read_entity(fixture.surface.owner(), |owner, _| {
+                owner.payload_recovery_execution_snapshot_for_test()
+            })
+            .expect("the recovery executor should retain one transfer");
+        fixture
+            .source_window
+            .update(app, |_, window, app| window.remove_window(app))
+            .expect("the recovery source should begin logical close");
+        initial
+    });
+    assert_eq!(
+        initial.1,
+        open_gpui::view_presentation_window::RehostPhase::AwaitingSourceRelease
+    );
+    assert!(!initial.2);
+    assert_eq!(initial.3, fixture.source_window.window_id());
+    assert_eq!(initial.4, fixture.primary_window.window_id());
+
+    cx.run_until_parked();
+
+    let pending = cx
+        .read_entity(fixture.surface.owner(), |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("logical close must not retire recovery before native terminal");
+    assert_eq!(pending.0, initial.0);
+    assert_eq!(
+        pending.1,
+        open_gpui::view_presentation_window::RehostPhase::Invalidated
+    );
+    assert!(!pending.2);
+    assert!(pending.5);
+    let prepared = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner
+            .payload_recovery_transfer(pending.0)
+            .expect("the native-terminal barrier should retain the transfer")
+            .prepared()
+            .clone()
+    });
+
+    assert!(terminal.release());
+    cx.run_until_parked();
+    assert!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "the exact native terminal should retire the recovery execution"
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
+    }));
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1,
+        "native source loss must preserve the durable recovery entry"
+    );
+    assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+}
+
+#[open_gpui::test]
+fn payload_recovery_endpoint_loss_after_prepare_compensates_before_retry(cx: &mut TestAppContext) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let start = prepare_payload_recovery_host_restore(&fixture, cx);
+    let owner = fixture.surface.owner().clone();
+    let source_window = fixture.source_window;
+    let source_host = fixture.source_host.downgrade();
+
+    drop(fixture.source_host);
+    source_window
+        .update(cx, |_, window, app| {
+            window.replace_root(app, |_, _| open_gpui::Empty);
+        })
+        .expect("the live source window should allow replacing its DockHost root");
+    cx.run_until_parked();
+    assert!(source_host.upgrade().is_none());
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                source_window.window_id(),
+            )
+        })
+        .is_some(),
+        "the resolved panel should still expose the stale source authority before compensation"
+    );
+
+    let first = cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    });
+    assert_eq!(
+        first,
+        Err(DockPayloadRecoveryRestoreError::PresentationEndpointUnavailable)
+    );
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "failed installation must release the executor reservation"
+    );
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                source_window.window_id(),
+            )
+        })
+        .is_none(),
+        "post-prepare endpoint loss must abandon the dead source authority"
+    );
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("compensation must prevent RehostInFlight on the next recovery attempt");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        0
+    );
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+        })
+        .is_some()
+    );
+}
+
+#[open_gpui::test]
+fn payload_recovery_source_install_rejection_compensates_destination_before_retry(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let start = prepare_payload_recovery_host_restore(&fixture, cx);
+    cx.update_entity(&fixture.source_host, |host, _| {
+        host.reject_next_payload_recovery_source_install_for_test();
+    });
+
+    let first = cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    });
+    assert_eq!(
+        first,
+        Err(DockPayloadRecoveryRestoreError::PresentationInstallRejected)
+    );
+    assert!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "a rejected source installation must release the executor reservation"
+    );
+    assert!(cx.read_entity(&fixture.source_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+    assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.source_window.window_id(),
+        )
+        .is_some()
+            && open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+            .is_none()
+    }));
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1
+    );
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("destination compensation must leave the exact recovery immediately retryable");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        0
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.source_window.window_id(),
+        )
+        .is_none()
+            && open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+            .is_some()
+    }));
+}
+
+#[open_gpui::test]
+fn payload_recovery_owner_transfer_rejection_compensates_both_hosts_before_retry(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let start = prepare_payload_recovery_host_restore(&fixture, cx);
+    cx.update_entity(&start.owner, |owner, _| {
+        owner.reject_next_payload_recovery_transfer_install_for_test();
+    });
+
+    let first = cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    });
+    assert_eq!(
+        first,
+        Err(DockPayloadRecoveryRestoreError::PresentationInstallRejected)
+    );
+    assert!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "owner handoff rejection must release the executor reservation"
+    );
+    assert!(cx.read_entity(&fixture.source_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+    assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.source_window.window_id(),
+        )
+        .is_some()
+            && open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+            .is_none()
+    }));
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1
+    );
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("two-host compensation must leave the exact recovery immediately retryable");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        0
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.source_window.window_id(),
+        )
+        .is_none()
+            && open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+            .is_some()
+    }));
+}
+
+#[open_gpui::test]
+fn payload_recovery_source_close_while_restoring_waits_for_native_terminal(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    cx.update_entity(fixture.surface.owner(), |owner, _| {
+        owner.pause_payload_recovery_after_source_release_once_for_test();
+        owner.pause_payload_recovery_after_source_restoration_once_for_test();
+    });
+    start_payload_recovery_host_restore(&fixture, cx);
+    cx.run_until_parked();
+
+    let owner = fixture.surface.owner().clone();
+    let transfer = cx
+        .read_entity(&owner, |owner, _| {
+            let snapshot = owner.payload_recovery_execution_snapshot_for_test()?;
+            owner.payload_recovery_transfer(snapshot.0)
+        })
+        .expect("the paused recovery should retain one admitted transfer");
+    assert_eq!(
+        transfer.prepared().snapshot().phase(),
+        open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
+    );
+    let prepared = transfer.prepared().clone();
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::payload_recovery_presentation_failed(
+            owner.downgrade(),
+            transfer.destination().host().clone(),
+            transfer.destination_presentation(),
+            prepared.clone(),
+            app,
+        );
+    });
+    cx.run_until_parked();
+
+    let restoring = cx
+        .read_entity(&owner, |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("the restoration pause should retain one transfer");
+    assert_eq!(
+        restoring.1,
+        open_gpui::view_presentation_window::RehostPhase::RestoringSource
+    );
+
+    let terminal = cx.hold_window_native_terminal(fixture.source_window);
+    fixture
+        .source_window
+        .update(cx, |_, window, app| window.remove_window(app))
+        .expect("the restoring source should begin logical close");
+    cx.run_until_parked();
+    let pending = cx
+        .read_entity(&owner, |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("logical close during restoration must retain the terminal barrier");
+    assert_eq!(pending.0, restoring.0);
+    assert_eq!(
+        pending.1,
+        open_gpui::view_presentation_window::RehostPhase::Invalidated
+    );
+    assert!(!pending.2);
+    assert!(pending.5);
+    assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+
+    assert!(terminal.release());
+    cx.run_until_parked();
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none()
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
+    }));
+}
+
+#[open_gpui::test]
+fn payload_recovery_source_host_release_retires_execution_while_window_stays_live(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let start = prepare_payload_recovery_host_restore(&fixture, cx);
+    let owner = fixture.surface.owner().clone();
+    let source_window = fixture.source_window;
+    let source_host = fixture.source_host.downgrade();
+    drop(fixture.source_host);
+    let (initial, prepared) = cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+        .expect("the recovery executor should accept the exact endpoints");
+        let initial = app
+            .read_entity(&owner, |owner, _| {
+                owner.payload_recovery_execution_snapshot_for_test()
+            })
+            .expect("the recovery executor should retain one transfer");
+        let prepared = app.read_entity(&owner, |owner, _| {
+            owner
+                .payload_recovery_transfer(initial.0)
+                .expect("the live Host release should begin with one transfer")
+                .prepared()
+                .clone()
+        });
+        source_window
+            .update(app, |_, window, app| {
+                window.replace_root(app, |_, _| open_gpui::Empty);
+            })
+            .expect("the live source window should allow replacing its DockHost root");
+        (initial, prepared)
+    });
+    assert_eq!(
+        initial.1,
+        open_gpui::view_presentation_window::RehostPhase::AwaitingSourceRelease
+    );
+    cx.run_until_parked();
+
+    assert!(
+        source_host.upgrade().is_none(),
+        "the replaced DockHost should reach entity terminal while its window remains live"
+    );
+    assert!(source_window.update(cx, |_, _, _| ()).is_ok());
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "Host endpoint release must not leave a Busy recovery executor"
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
+    }));
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                source_window.window_id(),
+            )
+        })
+        .is_none(),
+        "a released source Host must not retain stable authority in its live window"
+    );
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1,
+        "Host endpoint loss must preserve the durable recovery record"
+    );
+    assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner,
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("the durable recovery action should remain retryable after source Host loss");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        0,
+        "the retry should consume the exact durable recovery action"
+    );
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+        })
+        .is_some(),
+        "the retry should establish stable authority in the primary Host"
+    );
+}
+
+#[open_gpui::test]
+fn payload_recovery_source_host_loss_after_finish_releases_stable_batch_before_retry(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let start = prepare_payload_recovery_host_restore(&fixture, cx);
+    let owner = fixture.surface.owner().clone();
+    cx.update_entity(&owner, |owner, _| {
+        owner.pause_payload_recovery_after_source_release_once_for_test();
+        owner.replace_payload_recovery_source_host_after_finish_once_for_test();
+    });
+    let source_window = fixture.source_window;
+    let source_host = fixture.source_host.downgrade();
+    drop(fixture.source_host);
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("the recovery executor should accept the exact endpoints");
+    cx.run_until_parked();
+
+    let transfer = cx
+        .read_entity(&owner, |owner, _| {
+            let snapshot = owner.payload_recovery_execution_snapshot_for_test()?;
+            owner.payload_recovery_transfer(snapshot.0)
+        })
+        .expect("the source-release pause should retain one admitted transfer");
+    assert_eq!(
+        transfer.prepared().snapshot().phase(),
+        open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
+    );
+    let prepared = transfer.prepared().clone();
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::payload_recovery_presentation_failed(
+            owner.downgrade(),
+            transfer.destination().host().clone(),
+            transfer.destination_presentation(),
+            prepared.clone(),
+            app,
+        );
+    });
+    cx.run_until_parked();
+
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
+    }));
+
+    assert!(source_host.upgrade().is_none());
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                source_window.window_id(),
+            )
+        })
+        .is_none(),
+        "Host loss before its visible checkpoint must release the exact restored stable batch"
+    );
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none()
+    );
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1
+    );
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner,
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("the first retry should consume the durable recovery after source Host loss");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        0
+    );
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+        })
+        .is_some()
+    );
+}
+
+#[open_gpui::test]
+fn payload_recovery_source_close_after_release_preserves_ungoverned_hidden_root(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    cx.update_entity(fixture.surface.owner(), |owner, _| {
+        owner.pause_payload_recovery_after_source_release_once_for_test();
+    });
+    start_payload_recovery_host_restore(&fixture, cx);
+    cx.run_until_parked();
+
+    let released = cx
+        .read_entity(fixture.surface.owner(), |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("the paused recovery executor should retain one transfer");
+    assert_eq!(
+        released.1,
+        open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
+    );
+    assert!(!released.2);
+    let rehost_generation = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner
+            .payload_recovery_transfer(released.0)
+            .expect("the paused recovery executor should retain its transfer")
+            .prepared()
+            .generation()
+    });
+    let source_state = cx
+        .read_entity(&fixture.source_host, |host, _| {
+            host.payload_recovery_presentation_state()
+        })
+        .expect("the released source should retain its frozen projection");
+    assert_eq!(source_state.key.rehost_generation(), rehost_generation);
+    assert!(matches!(
+        source_state.mode,
+        crate::host::DockHostRecoveryPresentationMode::SourceProjection {
+            phase: crate::host::DockHostRecoverySourcePhase::Frozen,
+            ..
+        }
+    ));
+    let destination_state = cx
+        .read_entity(&fixture.primary_host, |host, _| {
+            host.payload_recovery_presentation_state()
+        })
+        .expect("the paused destination should retain its pre-arm projection");
+    assert_eq!(destination_state.key.rehost_generation(), rehost_generation);
+    assert!(matches!(
+        destination_state.mode,
+        crate::host::DockHostRecoveryPresentationMode::DestinationProjection {
+            phase: crate::host::DockHostRecoveryDestinationPhase::AwaitingSourceRelease,
+            ..
+        }
+    ));
+    let hidden_leases = cx.read(|app| {
+        (
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_b.entity_id(),
+                fixture.source_window.window_id(),
+            ),
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_b.entity_id(),
+                fixture.primary_window.window_id(),
+            ),
+        )
+    });
+    assert_eq!(hidden_leases, (None, None));
+
+    let terminal = cx.hold_window_native_terminal(fixture.source_window);
+    fixture
+        .source_window
+        .update(cx, |_, window, app| window.remove_window(app))
+        .expect("the released recovery source should begin logical close");
+    cx.run_until_parked();
+    let pending = cx
+        .read_entity(fixture.surface.owner(), |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("post-release logical close must still await native terminal");
+    assert_eq!(pending.0, released.0);
+    assert_eq!(
+        pending.1,
+        open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
+    );
+    assert!(!pending.2);
+    assert!(pending.5);
+    let prepared = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner
+            .payload_recovery_transfer(pending.0)
+            .expect("the native-terminal barrier should retain the released transfer")
+            .prepared()
+            .clone()
+    });
+
+    assert!(terminal.release());
+    cx.run_until_parked();
+    assert!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none()
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
+    }));
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1,
+        "post-release source loss must preserve the durable recovery entry"
+    );
+    assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+
+    let reopened = cx.update(|app| {
+        match fixture.surface.open_viewport(
+            fixture.lost_space.clone(),
+            viewport_window_options(360.0, 220.0),
+            app,
+        ) {
+            crate::DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the retained recovery source should reopen, got {outcome:?}"),
+        }
+    });
+    cx.run_until_parked();
+    let reopened_host = reopened
+        .downcast::<DockHost>()
+        .expect("the reopened recovery source should render DockHost")
+        .entity(cx)
+        .expect("the reopened recovery source Host should remain live");
+    let mut visual = VisualTestContext::from_window(reopened, cx);
+    let tab_b = selector_for(
+        &visual,
+        &reopened_host,
+        DockDebugRegion::Tab {
+            tabs: fixture.lost_tabs,
+            item: item("b"),
+        },
+    )
+    .expect("the formerly hidden root should render after reopening its source");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+
+    assert!(
+        selector_for(
+            &visual,
+            &reopened_host,
+            DockDebugRegion::Panel { item: item("b") },
+        )
+        .is_some(),
+        "the ungoverned hidden root must remain selectable after source recovery"
+    );
+    let final_leases = cx.read(|app| {
+        (
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_b.entity_id(),
+                reopened.window_id(),
+            ),
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_b.entity_id(),
+                fixture.primary_window.window_id(),
+            ),
+        )
+    });
+    assert!(final_leases.0.is_some());
+    assert_eq!(final_leases.1, None);
+    assert!(
+        cx.read(
+            |app| open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                fixture.primary_window.window_id(),
+            )
+        )
+        .is_none(),
+        "the recovery destination must not retain any source-root authority"
+    );
+}
+
+#[open_gpui::test]
+fn payload_recovery_destination_close_then_source_close_waits_for_source_native_terminal(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    cx.update_entity(fixture.surface.owner(), |owner, _| {
+        owner.pause_payload_recovery_after_source_release_once_for_test();
+    });
+    start_payload_recovery_host_restore(&fixture, cx);
+    cx.run_until_parked();
+
+    let owner = fixture.surface.owner().clone();
+    let admitted = cx
+        .read_entity(&owner, |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("the paused recovery should retain one admitted transfer");
+    assert_eq!(
+        admitted.1,
+        open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
+    );
+    let prepared = cx.read_entity(&owner, |owner, _| {
+        owner
+            .payload_recovery_transfer(admitted.0)
+            .expect("the admitted recovery should retain its exact transfer")
+            .prepared()
+            .clone()
+    });
+    let source_terminal = cx.hold_window_native_terminal(fixture.source_window);
+
+    fixture
+        .primary_window
+        .update(cx, |_, window, app| window.remove_window(app))
+        .expect("the recovery destination should begin logical close");
+    let _ = fixture
+        .source_window
+        .update(cx, |_, window, app| window.remove_window(app));
+    cx.run_until_parked();
+
+    let pending = cx
+        .read_entity(&owner, |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("source logical close must remain sticky after destination invalidation");
+    assert_eq!(pending.0, admitted.0);
+    assert!(!pending.2);
+    assert!(pending.5);
+    assert!(cx.read_entity(
+        &owner,
+        |owner, _| owner.payload_recovery_source_close_state(pending.0) == Some((true, false))
+    ));
+
+    assert!(source_terminal.release());
+    cx.run_until_parked();
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none()
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
+    }));
+}
+
+#[open_gpui::test]
+fn payload_recovery_released_source_host_release_abandons_transfer(cx: &mut TestAppContext) {
+    let fixture = payload_recovery_host_fixture(cx);
+    cx.update_entity(fixture.surface.owner(), |owner, _| {
+        owner.pause_payload_recovery_after_source_release_once_for_test();
+    });
+    start_payload_recovery_host_restore(&fixture, cx);
+    cx.run_until_parked();
+
+    let owner = fixture.surface.owner().clone();
+    let source_window = fixture.source_window;
+    let source_host = fixture.source_host.downgrade();
+    let transfer = cx
+        .read_entity(&owner, |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("the paused recovery executor should retain one transfer");
+    assert_eq!(
+        transfer.1,
+        open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
+    );
+    let prepared = cx.read_entity(&owner, |owner, _| {
+        owner
+            .payload_recovery_transfer(transfer.0)
+            .expect("the released Host should retain one prepared transfer")
+            .prepared()
+            .clone()
+    });
+
+    drop(fixture.source_host);
+    source_window
+        .update(cx, |_, window, app| {
+            window.replace_root(app, |_, _| open_gpui::Empty);
+        })
+        .expect("the released source window should allow replacing its DockHost root");
+    cx.run_until_parked();
+
+    assert!(source_host.upgrade().is_none());
+    assert!(source_window.update(cx, |_, _, _| ()).is_ok());
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "post-release Host loss must retire the recovery executor"
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
+    }));
+    assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+        host.payload_recovery_presentation_state().is_none()
+    }));
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1,
+        "post-release Host loss must preserve the durable recovery record"
+    );
 }

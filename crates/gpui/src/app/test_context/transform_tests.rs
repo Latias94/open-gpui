@@ -63,6 +63,11 @@ struct PrepaintWindowTransactionView {
     discards: Rc<Cell<usize>>,
 }
 
+struct AcceptedPublicationRevisionView {
+    publication: PrepaintPublicationId,
+    observed_revisions: Rc<Cell<Option<(u64, u64)>>>,
+}
+
 struct DeferredLateNumericFailureView {
     commits: Rc<Cell<usize>>,
     clicks: Rc<Cell<usize>>,
@@ -594,6 +599,31 @@ impl Render for PrepaintWindowTransactionView {
             )
             .unwrap(),
         )
+    }
+}
+
+impl Render for AcceptedPublicationRevisionView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let publication = self.publication;
+        let observed_revisions = self.observed_revisions.clone();
+        canvas(
+            move |_, window, _| {
+                window.record_prepaint_window_transaction(
+                    publication,
+                    move |accepted_frame, window, _| {
+                        observed_revisions.set(Some((
+                            accepted_frame.generation(),
+                            window.rendered_frame_revision(),
+                        )));
+                        assert!(accepted_frame.is_satisfied_by(window));
+                    },
+                    |_, _, _| {},
+                );
+            },
+            move |bounds, _, window, _| window.paint_quad(fill(bounds, red())),
+        )
+        .w(px(40.0))
+        .h(px(20.0))
     }
 }
 
@@ -1577,6 +1607,30 @@ fn prepaint_window_transaction_retracts_invalid_rolled_back_and_absent_publicati
         discards.get(),
         3,
         "an absent publication must be retracted only once"
+    );
+}
+
+#[open_gpui::test]
+fn prepaint_window_transaction_publishes_after_the_candidate_frame_is_swapped(
+    cx: &mut TestAppContext,
+) {
+    let observed_revisions = Rc::new(Cell::new(None));
+    cx.open_window(size(px(320.0), px(200.0)), {
+        let observed_revisions = observed_revisions.clone();
+        move |_, _| AcceptedPublicationRevisionView {
+            publication: PrepaintPublicationId::new(),
+            observed_revisions,
+        }
+    });
+    cx.run_until_parked();
+
+    let (published_revision, rendered_revision) = observed_revisions
+        .get()
+        .expect("the accepted publication should run during the initial frame");
+    assert!(published_revision > 0);
+    assert_eq!(
+        rendered_revision, published_revision,
+        "publication callbacks must observe the frame that now owns visible authority"
     );
 }
 

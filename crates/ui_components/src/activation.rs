@@ -6,7 +6,7 @@ use std::rc::Weak;
 
 use open_gpui::{
     App, ClickEvent, ElementId, Entity, FocusHandle, KeyDownEvent, KeyUpEvent, MouseButton,
-    StatefulInteractiveElement, Window, WindowId,
+    PrepaintPublicationId, StatefulInteractiveElement, Window, WindowId,
 };
 use open_gpui_ui_core::AccessibleAction;
 
@@ -121,17 +121,23 @@ type SharedActivationDispatcher = Rc<ActivationDispatcher>;
 type WeakActivationDispatcher = Weak<ActivationDispatcher>;
 
 struct ProgrammaticActivationBinding {
+    publication: PrepaintPublicationId,
     window_id: WindowId,
     dispatcher: WeakActivationDispatcher,
 }
 
+#[derive(Default)]
+struct ActivationHandleState {
+    binding: Option<ProgrammaticActivationBinding>,
+}
+
 /// Stable application-owned request seam for one rendered semantic control.
 ///
-/// Reusing a handle across simultaneously rendered controls replaces the prior binding with the
-/// most recently rendered target; create one handle per independently addressable control.
+/// Reusing a handle across simultaneously committed controls replaces the prior binding with the
+/// last accepted publication; create one handle per independently addressable control.
 #[derive(Clone, Default)]
 pub struct ActivationHandle {
-    binding: Rc<RefCell<Option<ProgrammaticActivationBinding>>>,
+    state: Rc<RefCell<ActivationHandleState>>,
 }
 
 impl ActivationHandle {
@@ -142,16 +148,25 @@ impl ActivationHandle {
 
     /// Requests activation from the currently bound control.
     pub fn request(&self, window: &mut Window, cx: &mut App) -> ActivationRequestResult {
-        let binding = self
-            .binding
-            .borrow()
-            .as_ref()
-            .map(|binding| (binding.window_id, binding.dispatcher.clone()));
-        let Some((window_id, dispatcher)) = binding else {
+        let binding = self.state.borrow().binding.as_ref().map(|binding| {
+            (
+                binding.publication,
+                binding.window_id,
+                binding.dispatcher.clone(),
+            )
+        });
+        let Some((publication, window_id, dispatcher)) = binding else {
             return ActivationRequestResult::Unavailable;
         };
         let Some(dispatcher) = dispatcher.upgrade() else {
-            self.binding.borrow_mut().take();
+            let mut state = self.state.borrow_mut();
+            if state
+                .binding
+                .as_ref()
+                .is_some_and(|binding| binding.publication == publication)
+            {
+                state.binding.take();
+            }
             return ActivationRequestResult::Unavailable;
         };
         if window.window_handle().window_id() != window_id {
@@ -165,21 +180,28 @@ impl ActivationHandle {
         }
     }
 
-    fn bind(&self, window_id: WindowId, dispatcher: &SharedActivationDispatcher) {
-        *self.binding.borrow_mut() = Some(ProgrammaticActivationBinding {
+    fn bind(
+        &self,
+        publication: PrepaintPublicationId,
+        window_id: WindowId,
+        dispatcher: &SharedActivationDispatcher,
+    ) {
+        self.state.borrow_mut().binding = Some(ProgrammaticActivationBinding {
+            publication,
             window_id,
             dispatcher: Rc::downgrade(dispatcher),
         });
     }
 
-    fn unbind(&self, window_id: WindowId) {
+    fn unbind(&self, publication: PrepaintPublicationId) {
         let should_clear = self
-            .binding
+            .state
             .borrow()
+            .binding
             .as_ref()
-            .is_some_and(|binding| binding.window_id == window_id);
+            .is_some_and(|binding| binding.publication == publication);
         if should_clear {
-            self.binding.borrow_mut().take();
+            self.state.borrow_mut().binding.take();
         }
     }
 }
@@ -208,6 +230,8 @@ impl ArmedKeyActivation {
 
 #[derive(Default)]
 struct ActivationRuntime {
+    publication: PrepaintPublicationId,
+    accepted_programmatic_handle: RefCell<Option<ActivationHandle>>,
     enabled: Cell<Option<bool>>,
     armed_key: RefCell<Option<ArmedKeyActivation>>,
     pointer_armed: Cell<bool>,
@@ -227,6 +251,29 @@ impl ActivationRuntime {
 
     fn clear_armed_key(&self) {
         self.armed_key.borrow_mut().take();
+    }
+
+    fn commit_programmatic_handle(
+        &self,
+        handle: Option<&ActivationHandle>,
+        publication: PrepaintPublicationId,
+        window_id: WindowId,
+        dispatcher: &SharedActivationDispatcher,
+        presentation_interactive: bool,
+    ) {
+        if let Some(previous) = self.accepted_programmatic_handle.borrow_mut().take() {
+            previous.unbind(publication);
+        }
+        if presentation_interactive && let Some(handle) = handle {
+            handle.bind(publication, window_id, dispatcher);
+            *self.accepted_programmatic_handle.borrow_mut() = Some(handle.clone());
+        }
+    }
+
+    fn discard_programmatic_handle(&self, publication: PrepaintPublicationId) {
+        if let Some(previous) = self.accepted_programmatic_handle.borrow_mut().take() {
+            previous.unbind(publication);
+        }
     }
 
     fn arm_key(
@@ -282,6 +329,7 @@ pub(crate) struct ActivationBinding {
     keys: ActivationKeyPolicy,
     dispatcher: SharedActivationDispatcher,
     runtime: Entity<ActivationRuntime>,
+    publication: PrepaintPublicationId,
     window_id: WindowId,
     presentation_interactive: bool,
     programmatic_handle: Option<ActivationHandle>,
@@ -297,14 +345,14 @@ impl ActivationBinding {
         transaction: impl Fn(Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
         let presentation_interactive = window.subtree_presentation().is_interactive();
-        let effective_enabled = enabled && presentation_interactive;
         let runtime = window.use_keyed_state(state_key, cx, |_, _| ActivationRuntime::default());
-        runtime.read(cx).rebind(effective_enabled);
+        let publication = runtime.read(cx).publication;
 
         Self {
             keys,
-            dispatcher: Rc::new(ActivationDispatcher::new(effective_enabled, transaction)),
+            dispatcher: Rc::new(ActivationDispatcher::new(enabled, transaction)),
             runtime,
+            publication,
             window_id: window.window_handle().window_id(),
             presentation_interactive,
             programmatic_handle: None,
@@ -317,11 +365,15 @@ impl ActivationBinding {
     }
 
     fn dispatch(&self, source: ActivationSource, window: &mut Window, cx: &mut App) -> bool {
-        if window.window_handle().window_id() != self.window_id {
+        if window.window_handle().window_id() != self.window_id || !self.effective_enabled() {
             return false;
         }
 
         self.dispatcher.dispatch(source, window, cx)
+    }
+
+    fn effective_enabled(&self) -> bool {
+        self.presentation_interactive && self.dispatcher.enabled()
     }
 
     pub(crate) fn programmatic(&self, window: &mut Window, cx: &mut App) -> bool {
@@ -333,34 +385,37 @@ impl ActivationBinding {
     where
         E: StatefulInteractiveElement + Sized,
     {
-        if self.bind_programmatic_handle() {
-            element.retain_for_frame(self.dispatcher)
-        } else {
-            element
-        }
+        self.publish_accepted_runtime(element)
     }
 
     pub(crate) fn bind<E>(self, element: E) -> E
     where
         E: StatefulInteractiveElement + Sized,
     {
+        let programmatic = self.clone();
         let keyboard = self.clone();
-        keyboard.bind_keyboard(self.bind_pointer_and_accessibility(element))
+        let element = self.bind_pointer_and_accessibility_listeners(element);
+        programmatic.bind_programmatic(keyboard.bind_keyboard(element))
     }
 
     pub(crate) fn bind_pointer_and_accessibility<E>(self, element: E) -> E
     where
         E: StatefulInteractiveElement + Sized,
     {
-        let programmatic_dispatcher = self
-            .bind_programmatic_handle()
-            .then(|| self.dispatcher.clone());
+        let programmatic = self.clone();
+        let element = self.bind_pointer_and_accessibility_listeners(element);
+        programmatic.bind_programmatic(element)
+    }
 
+    fn bind_pointer_and_accessibility_listeners<E>(self, element: E) -> E
+    where
+        E: StatefulInteractiveElement + Sized,
+    {
         let pointer = self.clone();
         let pointer_down = self.clone();
         let accessibility = self;
 
-        let element = if pointer.dispatcher.enabled() {
+        let element = if pointer.effective_enabled() {
             let pointer_down_runtime = pointer_down.runtime.clone();
             let pointer_click_runtime = pointer.runtime.clone();
             element
@@ -368,7 +423,7 @@ impl ActivationBinding {
                     MouseButton::Left,
                     move |_, window: &mut Window, cx: &mut App| {
                         pointer_down_runtime.read(cx).arm_pointer(
-                            pointer_down.dispatcher.enabled() && !window.default_prevented(),
+                            pointer_down.effective_enabled() && !window.default_prevented(),
                         );
                     },
                 )
@@ -390,15 +445,9 @@ impl ActivationBinding {
             element
         };
 
-        let element = element.on_ui_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+        element.on_ui_a11y_action(AccessibleAction::Click, move |_, window, cx| {
             accessibility.dispatch(ActivationSource::Accessibility, window, cx);
-        });
-
-        if let Some(dispatcher) = programmatic_dispatcher {
-            element.retain_for_frame(dispatcher)
-        } else {
-            element
-        }
+        })
     }
 
     pub(crate) fn bind_keyboard<E>(self, element: E) -> E
@@ -424,7 +473,7 @@ impl ActivationBinding {
                     runtime.clear_armed_key();
                     return;
                 };
-                if !key_down.dispatcher.enabled() {
+                if !key_down.effective_enabled() {
                     runtime.clear_armed_key();
                     return;
                 }
@@ -458,7 +507,7 @@ impl ActivationBinding {
                 let Some(key) = key_up.keys.resolve(event.keystroke.key.as_str()) else {
                     return;
                 };
-                if !key_up.dispatcher.enabled()
+                if !key_up.effective_enabled()
                     || !armed.is_some_and(|armed| {
                         armed.matches_next_event(
                             key,
@@ -479,16 +528,38 @@ impl ActivationBinding {
             })
     }
 
-    fn bind_programmatic_handle(&self) -> bool {
-        let Some(handle) = self.programmatic_handle.as_ref() else {
-            return false;
-        };
-        if !self.presentation_interactive {
-            handle.unbind(self.window_id);
-            return false;
-        }
-        handle.bind(self.window_id, &self.dispatcher);
-        true
+    fn publish_accepted_runtime<E>(&self, element: E) -> E
+    where
+        E: StatefulInteractiveElement + Sized,
+    {
+        let publication = self.publication;
+        let commit_handle = self.programmatic_handle.clone();
+        let commit_runtime = self.runtime.clone();
+        let discard_runtime = self.runtime.clone();
+        let dispatcher = self.dispatcher.clone();
+        let window_id = self.window_id;
+        let enabled = self.dispatcher.enabled();
+
+        element.record_prepaint_window_transaction(
+            publication,
+            move |_, window, cx| {
+                let presentation_interactive = window.subtree_presentation().is_interactive();
+                let runtime = commit_runtime.read(cx);
+                runtime.rebind(enabled && presentation_interactive);
+                runtime.commit_programmatic_handle(
+                    commit_handle.as_ref(),
+                    publication,
+                    window_id,
+                    &dispatcher,
+                    presentation_interactive,
+                );
+            },
+            move |_, _, cx| {
+                let runtime = discard_runtime.read(cx);
+                runtime.rebind(false);
+                runtime.discard_programmatic_handle(publication);
+            },
+        )
     }
 }
 
