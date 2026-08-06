@@ -615,7 +615,8 @@ where
         element,
         descriptor
             .available_actions()
-            .map(gpui_accessible_action_from_ui),
+            .map(gpui_accessible_action_from_ui)
+            .chain(std::iter::once(GpuiAccessibleAction::ScrollIntoView)),
     )
 }
 

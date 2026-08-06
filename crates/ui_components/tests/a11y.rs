@@ -5,8 +5,8 @@ mod collection_semantics;
 
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    Context, ElementId, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, accesskit, div,
+    Context, ElementId, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle,
+    StatefulInteractiveElement, Styled, VisualContext, Window, accesskit, div, point, px,
 };
 use open_gpui_ui_components::gpui_adapter::UiA11yElementExt;
 use open_gpui_ui_components::{
@@ -66,10 +66,12 @@ fn button_final_tree_and_actions_follow_resolved_projection(cx: &mut open_gpui::
     assert!(!button_node.is_disabled());
     assert!(button_node.supports_action(accesskit::Action::Click));
     assert!(button_node.supports_action(accesskit::Action::Focus));
+    assert!(button_node.supports_action(accesskit::Action::ScrollIntoView));
 
     let (focus_only_id, focus_only) = a11y_node_with_label(&initial, "Focus only");
     assert!(!focus_only.supports_action(accesskit::Action::Click));
     assert!(focus_only.supports_action(accesskit::Action::Focus));
+    assert!(focus_only.supports_action(accesskit::Action::ScrollIntoView));
 
     assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
         action: accesskit::Action::Focus,
@@ -110,6 +112,7 @@ fn button_final_tree_and_actions_follow_resolved_projection(cx: &mut open_gpui::
     assert!(disabled_node.is_disabled());
     assert!(!disabled_node.supports_action(accesskit::Action::Click));
     assert!(!disabled_node.supports_action(accesskit::Action::Focus));
+    assert!(disabled_node.supports_action(accesskit::Action::ScrollIntoView));
 
     assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
         action: accesskit::Action::Click,
@@ -131,6 +134,58 @@ fn button_final_tree_and_actions_follow_resolved_projection(cx: &mut open_gpui::
         !unmounted.nodes.iter().any(|(id, _)| *id == button_id),
         "unmounted semantic nodes must leave the final tree"
     );
+}
+
+#[open_gpui::test]
+fn offscreen_button_scroll_into_view_uses_the_gpui_reveal_authority(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct OffscreenButtonProbe {
+        scroll: ScrollHandle,
+    }
+
+    impl Render for OffscreenButtonProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .relative()
+                .w(px(180.0))
+                .h(px(100.0))
+                .overflow_scroll()
+                .track_scroll(&self.scroll)
+                .child(
+                    div().relative().w(px(180.0)).h(px(320.0)).child(
+                        div()
+                            .absolute()
+                            .top(px(220.0))
+                            .child(Button::new("offscreen-button", "Offscreen action")),
+                    ),
+                )
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| OffscreenButtonProbe {
+        scroll: ScrollHandle::new(),
+    });
+    let scroll = cx.update_window_entity(&view, |view, _, _| view.scroll.clone());
+
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("the offscreen button should remain in the accessibility tree");
+    let (button_id, button) = a11y_node_with_label(&update, "Offscreen action");
+    assert!(button.supports_action(accesskit::Action::ScrollIntoView));
+
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::ScrollIntoView,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: button_id,
+        data: None,
+    }));
+    cx.run_until_parked();
+
+    assert_eq!(scroll.offset().x, px(0.0));
+    assert!(scroll.offset().y < px(0.0));
+    assert_ne!(scroll.offset(), point(px(0.0), px(0.0)));
 }
 
 #[open_gpui::test]

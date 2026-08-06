@@ -227,13 +227,16 @@ impl InteractivityAccessibility {
         if let Some(direction) = self.sort_direction {
             node.set_sort_direction(direction);
         }
-        if self.disabled == Some(true) {
-            return;
-        }
         if let Some(actions) = self.explicit_actions {
-            for action in actions.iter().filter(|action| self.action_allowed(*action)) {
+            for action in actions.iter().filter(|action| {
+                *action == accesskit::Action::ScrollIntoView
+                    || (self.disabled != Some(true) && self.action_allowed(*action))
+            }) {
                 node.add_action(action);
             }
+            return;
+        }
+        if self.disabled == Some(true) {
             return;
         }
         if supports_click {
