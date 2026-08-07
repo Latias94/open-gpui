@@ -5,7 +5,7 @@ status: complete
 scope: U28-U29
 timestamp: 2026-08-06
 git_branch: refactor/ui-framework-authority-convergence
-git_commit: f4f504d2
+git_commit: 2e611636
 verified_by:
   - cargo nextest run -p open-gpui-docking
   - cargo fmt --all -- --check
@@ -37,12 +37,12 @@ propagated or attached to the typed capture failure.
 
 # Test Results
 
-- `open-gpui-docking`: 1,269 passed, 0 skipped.
+- `open-gpui-docking`: 1,270 passed, 0 skipped.
 - Builder-time freeze tests cover admission frozen before registration, synchronous initial close,
   open abort, close-observer panic, stale reducer return, and exact Runtime record removal.
-- Shutdown tests cover invalid presentation binding, held native terminals, Runtime commit panic,
-  surface commit publication panic through the production scheduling entry, and the parallel
-  capture-failure retirement path.
+- Shutdown tests cover invalid presentation binding, a stale open return after reducer retirement,
+  held native terminals, Runtime commit panic, surface commit publication panic through the
+  production scheduling entry, and the parallel capture-failure retirement path.
 - Formatting, whitespace, public API tier, and import-boundary checks passed.
 - Independent state-machine reviews found no remaining reproducible P1 or P2 lifecycle failure in
   this slice. The completion token remains `Copy`; exact generation checks currently enforce its
