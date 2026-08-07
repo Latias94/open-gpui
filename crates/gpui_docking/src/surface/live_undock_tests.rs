@@ -4129,6 +4129,114 @@ fn shutdown_owned_invalid_binding_waits_for_child_native_terminal(
 }
 
 #[open_gpui::test]
+fn shutdown_stale_open_return_waits_for_child_native_terminal(cx: &mut open_gpui::TestAppContext) {
+    enable_provisional_test_windows(cx);
+    let closed = Rc::new(RefCell::new(Vec::new()));
+    let (surface, anchor, provisional, opening, completion, lease) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let closed = closed.clone();
+        cx.on_window_closed(move |_, window_id| closed.borrow_mut().push(window_id))
+            .detach();
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the primary should activate one exact surface lease")
+        });
+        let request = begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
+        let opening = request.key();
+        let runtime = surface.viewport_runtime(cx);
+        let builder_runtime = runtime.clone();
+        let builder_owner = surface.owner().clone();
+        let attempt_slot = Rc::new(Cell::new(None));
+        let builder_attempt_slot = attempt_slot.clone();
+        let provisional: AnyWindowHandle = cx
+            .open_window(provisional_options(&request), move |window, cx| {
+                let attempt = builder_runtime
+                    .begin_live_undock_provisional_open_attempt(window.window_handle(), opening)
+                    .expect("the builder must register exact Runtime ownership");
+                builder_attempt_slot.set(Some(attempt));
+                let effects = prepare_surface_shutdown(
+                    &builder_owner,
+                    lease,
+                    DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                    cx,
+                )
+                .expect("the active surface should freeze the builder-time opening");
+                apply_surface_shutdown_close_effects(&builder_owner, effects, cx);
+                assert!(matches!(
+                    finish_live_undock_open_failure(&builder_owner, opening, cx),
+                    DockLiveUndockOpenFailureOutcome::SettleDependency {
+                        lease: current,
+                        ..
+                    } if current == lease
+                ));
+                cx.new(|_| Empty)
+            })
+            .expect("the stale opening may still return one committed window")
+            .into();
+        let completion = runtime.complete_live_undock_provisional_open_attempt(
+            attempt_slot
+                .take()
+                .expect("the builder must publish its exact Runtime attempt"),
+            opening,
+            false,
+        );
+        assert!(matches!(
+            completion,
+            crate::DockViewportProvisionalOpenAttemptCompletion::ShutdownOwned(_)
+        ));
+        (surface, anchor, provisional, opening, completion, lease)
+    });
+    let provisional_terminal = cx.hold_window_native_terminal(provisional);
+
+    assert_eq!(
+        cx.update(|cx| finish_live_undock_open_return(
+            surface.owner(),
+            opening,
+            provisional,
+            completion,
+            cx,
+        )),
+        DockLiveUndockOpenReturnOutcome::Stale
+    );
+    cx.run_until_parked();
+
+    assert!(!cx.windows().contains(&provisional));
+    assert!(
+        cx.windows().contains(&anchor),
+        "the stale child return must retain the anchor until native terminal"
+    );
+    assert_eq!(closed.borrow().as_slice(), [provisional.window_id()]);
+    let waiting = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(waiting.phase(), DockSurfaceWindowSessionPhase::ShuttingDown);
+    assert_eq!(waiting.pending_terminal_ticket_count(), 2);
+
+    assert!(provisional_terminal.release());
+    cx.run_until_parked();
+
+    assert!(!cx.windows().contains(&anchor));
+    assert_eq!(
+        closed.borrow().as_slice(),
+        [provisional.window_id(), anchor.window_id()]
+    );
+    let runtime = cx.update(|cx| surface.viewport_runtime(cx));
+    assert!(runtime.windows_for_surface(lease).is_empty());
+    let closed_status = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(closed_status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(closed_status.pending_terminal_ticket_count(), 0);
+    assert_eq!(closed_status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
 fn frozen_provisional_builder_initial_close_aborts_exact_runtime_record(
     cx: &mut open_gpui::TestAppContext,
 ) {
