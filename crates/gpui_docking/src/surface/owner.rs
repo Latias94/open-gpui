@@ -25,8 +25,8 @@ use super::{
     },
 };
 use crate::{
-    DockController, DockSpaceId, DockViewportRuntimeHandle,
-    locked_drop_identity::DockLockedPayloadIdentity,
+    DockController, DockSpaceId, DockViewportProvisionalOpenAttemptCompletion,
+    DockViewportRuntimeHandle, locked_drop_identity::DockLockedPayloadIdentity,
     viewport_registry::DockViewportRegistrationKey,
 };
 use open_gpui::{
@@ -314,10 +314,9 @@ impl DockSurfaceOwner {
         &mut self,
         opening: DockLiveUndockOpeningKey,
         window: AnyWindowHandle,
-        runtime_registered: bool,
+        runtime: DockViewportProvisionalOpenAttemptCompletion,
     ) -> DockLiveUndockTransition<DockLiveUndockOpenReturnOutcome> {
-        self.live_undock
-            .complete_opening(opening, window, runtime_registered)
+        self.live_undock.complete_opening(opening, window, runtime)
     }
 
     pub(crate) fn can_admit_live_undock_open_return(

@@ -164,7 +164,6 @@ impl DockViewportSurfaceShutdownReservation {
         self.lease
     }
 
-    #[cfg(test)]
     pub(crate) fn windows(&self) -> &[(crate::DockViewportWindowRole, AnyWindowHandle)] {
         &self.windows
     }

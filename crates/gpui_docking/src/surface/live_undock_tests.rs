@@ -19,7 +19,10 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Empty, EntityId, PlatformWindowCreationCapabilities,
     QuitMode, WindowCreationSupport, WindowId, WindowInitialPresentationOrder, WindowOptions,
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 fn active_window_session(
     authority: u64,
@@ -67,6 +70,16 @@ mod reducer_tests {
 
     fn fake_window(value: u64) -> AnyWindowHandle {
         WindowHandle::<DockHost>::new(WindowId::from(value)).into()
+    }
+
+    fn admitted_runtime(
+        identity: DockLiveUndockIdentity,
+        window: AnyWindowHandle,
+    ) -> crate::DockViewportProvisionalOpenAttemptCompletion {
+        crate::DockViewportProvisionalOpenAttemptCompletion::admitted_for_test(
+            window.window_id(),
+            identity.opening(),
+        )
     }
 
     fn source_for(identity: DockLiveUndockIdentity) -> DockLiveUndockSourceSnapshot {
@@ -133,7 +146,7 @@ mod reducer_tests {
             identity,
             window,
             binding: DockLiveUndockOpeningBinding::ExactGated,
-            runtime_registered: true,
+            runtime: admitted_runtime(identity, window),
         });
         assert!(matches!(
             effects.as_slice(),
@@ -984,7 +997,7 @@ mod reducer_tests {
             identity,
             window,
             binding: DockLiveUndockOpeningBinding::ExactGated,
-            runtime_registered: true,
+            runtime: admitted_runtime(identity, window),
         });
         assert!(late.as_slice().iter().any(|effect| matches!(
             effect,
@@ -1521,7 +1534,7 @@ mod reducer_tests {
             identity,
             window,
             binding: DockLiveUndockOpeningBinding::ExactGated,
-            runtime_registered: true,
+            runtime: admitted_runtime(identity, window),
         });
         assert!(matches!(
             effects.as_slice(),
@@ -1548,7 +1561,7 @@ mod reducer_tests {
                     identity,
                     window,
                     binding: DockLiveUndockOpeningBinding::ExactGated,
-                    runtime_registered: true,
+                    runtime: admitted_runtime(identity, window),
                 })
                 .is_empty(),
             "an opening return cannot issue the placement twice"
@@ -2470,7 +2483,7 @@ mod reducer_tests {
             identity,
             window: late_window,
             binding: DockLiveUndockOpeningBinding::ExactGated,
-            runtime_registered: true,
+            runtime: admitted_runtime(identity, late_window),
         });
         assert!(late.as_slice().iter().any(|effect| matches!(
             effect,
@@ -2600,7 +2613,7 @@ mod reducer_tests {
             identity,
             window: late_window,
             binding: DockLiveUndockOpeningBinding::ExactGated,
-            runtime_registered: true,
+            runtime: admitted_runtime(identity, late_window),
         });
         assert!(late.as_slice().iter().any(|effect| matches!(
             effect,
@@ -3833,7 +3846,7 @@ fn runtime_registration_rejection_is_reported_and_converges_without_bound_owner(
 }
 
 #[open_gpui::test]
-fn late_provisional_return_is_adopted_before_anchor_shutdown_converges(
+fn builder_time_provisional_freeze_retries_close_after_registry_commit(
     cx: &mut open_gpui::TestAppContext,
 ) {
     enable_provisional_test_windows(cx);
@@ -3861,30 +3874,45 @@ fn late_provisional_return_is_adopted_before_anchor_shutdown_converges(
                 .expect("the primary should activate one exact surface lease")
         });
         let request = begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
-        let effects = prepare_surface_shutdown(
-            surface.owner(),
-            lease,
-            DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
-            cx,
-        )
-        .expect("the active surface should begin shutdown");
-        apply_surface_shutdown_close_effects(surface.owner(), effects, cx);
-        assert!(cx.windows().contains(&anchor));
-        assert_eq!(
-            surface.window_session_status(cx).phase(),
-            DockSurfaceWindowSessionPhase::ShuttingDown
-        );
-
+        let opening = request.key();
+        let runtime = surface.viewport_runtime(cx);
+        let builder_runtime = runtime.clone();
+        let builder_owner = surface.owner().clone();
+        let attempt_slot = Rc::new(Cell::new(None));
+        let builder_attempt_slot = attempt_slot.clone();
         let provisional: AnyWindowHandle = cx
-            .open_window(provisional_options(&request), |_, cx| cx.new(|_| Empty))
+            .open_window(provisional_options(&request), move |window, cx| {
+                let attempt = builder_runtime
+                    .begin_live_undock_provisional_open_attempt(window.window_handle(), opening)
+                    .expect("the builder must register Runtime ownership before returning a view");
+                builder_attempt_slot.set(Some(attempt));
+                let effects = prepare_surface_shutdown(
+                    &builder_owner,
+                    lease,
+                    DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                    cx,
+                )
+                .expect("the active surface should freeze the builder-time opening");
+                apply_surface_shutdown_close_effects(&builder_owner, effects, cx);
+                cx.new(|_| Empty)
+            })
             .expect("the cancelled opening may still return one committed HWND")
             .into();
+        let attempt = attempt_slot
+            .take()
+            .expect("the builder must publish its exact Runtime attempt");
+        let completion =
+            runtime.complete_live_undock_provisional_open_attempt(attempt, opening, false);
+        assert!(matches!(
+            completion,
+            crate::DockViewportProvisionalOpenAttemptCompletion::ShutdownOwned(_)
+        ));
         assert!(matches!(
             finish_live_undock_open_return(
                 surface.owner(),
-                request.key(),
+                opening,
                 provisional,
-                true,
+                completion,
                 cx,
             ),
             DockLiveUndockOpenReturnOutcome::Retire {
@@ -3903,12 +3931,367 @@ fn late_provisional_return_is_adopted_before_anchor_shutdown_converges(
     assert_eq!(
         closed.borrow().as_slice(),
         [provisional.window_id(), anchor.window_id()],
-        "the dynamically adopted provisional must reach terminal before the anchor"
+        "the post-commit retry must close the provisional before the anchor"
     );
     let status = cx.update(|cx| surface.window_session_status(cx));
     assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
     assert_eq!(status.pending_terminal_ticket_count(), 0);
     assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn frozen_admission_before_provisional_builder_survives_close_observer_panic(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    enable_provisional_test_windows(cx);
+    let closed = Rc::new(RefCell::new(Vec::new()));
+    let (surface, anchor, runtime, lease) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let closed = closed.clone();
+        cx.on_window_closed(move |_, window_id| closed.borrow_mut().push(window_id))
+            .detach();
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the primary should activate one exact surface lease")
+        });
+        let runtime = surface.viewport_runtime(cx);
+        (surface, anchor, runtime, lease)
+    });
+    cx.run_until_parked();
+
+    let panic_observed = Rc::new(Cell::new(false));
+    let panic_observer = panic_observed.clone();
+    let close = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        cx.update(|cx| {
+            let anchor_id = anchor.window_id();
+            cx.on_window_closed(move |_, window_id| {
+                if window_id != anchor_id && !panic_observer.replace(true) {
+                    panic!("injected provisional close observer panic");
+                }
+            })
+            .detach();
+            let request =
+                begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
+            let owner = surface.owner().clone();
+            runtime.install_live_undock_provisional_builder_hook_for_test(move |cx| {
+                let effects = prepare_surface_shutdown(
+                    &owner,
+                    lease,
+                    DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                    cx,
+                )
+                .expect("the builder race should freeze the active surface");
+                apply_surface_shutdown_close_effects(&owner, effects, cx);
+            });
+            let _ = runtime.open_triggered_live_undock_provisional_viewport(
+                surface.primary_space().clone(),
+                WindowOptions::default(),
+                &request,
+                cx,
+            );
+        });
+    }));
+
+    assert!(panic_observed.get(), "the injected close observer must run");
+    assert!(
+        close.is_err(),
+        "GPUI must rethrow the injected observer panic"
+    );
+    cx.run_until_parked();
+
+    assert_eq!(
+        closed.borrow().last(),
+        Some(&anchor.window_id()),
+        "the provisional child must close before the surface anchor"
+    );
+    assert_eq!(closed.borrow().len(), 2);
+    assert!(!cx.windows().contains(&anchor));
+    assert!(runtime.windows_for_surface(lease).is_empty());
+    let status = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn shutdown_owned_invalid_binding_waits_for_child_native_terminal(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    enable_provisional_test_windows(cx);
+    let closed = Rc::new(RefCell::new(Vec::new()));
+    let (surface, anchor, provisional, identity, completion) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let closed = closed.clone();
+        cx.on_window_closed(move |_, window_id| closed.borrow_mut().push(window_id))
+            .detach();
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the primary should activate one exact surface lease")
+        });
+        let request = begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
+        let identity = request.identity();
+        let opening = request.key();
+        let runtime = surface.viewport_runtime(cx);
+        let builder_runtime = runtime.clone();
+        let builder_owner = surface.owner().clone();
+        let attempt_slot = Rc::new(Cell::new(None));
+        let builder_attempt_slot = attempt_slot.clone();
+        let provisional: AnyWindowHandle = cx
+            .open_window(provisional_options(&request), move |window, cx| {
+                let attempt = builder_runtime
+                    .begin_live_undock_provisional_open_attempt(window.window_handle(), opening)
+                    .expect("the builder must register exact Runtime ownership");
+                builder_attempt_slot.set(Some(attempt));
+                let effects = prepare_surface_shutdown(
+                    &builder_owner,
+                    lease,
+                    DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                    cx,
+                )
+                .expect("the active surface should freeze the builder-time opening");
+                apply_surface_shutdown_close_effects(&builder_owner, effects, cx);
+                cx.new(|_| Empty)
+            })
+            .expect("the frozen opening may still return one committed window")
+            .into();
+        let attempt = attempt_slot
+            .take()
+            .expect("the builder must publish its exact Runtime attempt");
+        let completion =
+            runtime.complete_live_undock_provisional_open_attempt(attempt, opening, false);
+        assert!(matches!(
+            completion,
+            crate::DockViewportProvisionalOpenAttemptCompletion::ShutdownOwned(_)
+        ));
+        (surface, anchor, provisional, identity, completion)
+    });
+    let provisional_terminal = cx.hold_window_native_terminal(provisional);
+
+    cx.update(|cx| {
+        let effects = reduce_live_undock_fact(
+            surface.owner(),
+            DockLiveUndockFact::OpeningReturned {
+                identity,
+                window: provisional,
+                binding: super::live_undock::DockLiveUndockOpeningBinding::Invalid,
+                runtime: completion,
+            },
+            cx,
+        )
+        .expect("the retiring opening must consume its late return");
+        let live_runtime = cx.read_entity(surface.owner(), |owner, _| owner.live_undock_runtime());
+        live_runtime.enqueue_effects(effects, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(!cx.windows().contains(&provisional));
+    assert!(
+        cx.windows().contains(&anchor),
+        "the anchor must remain live while the child native terminal is held"
+    );
+    assert_eq!(closed.borrow().as_slice(), [provisional.window_id()]);
+    let waiting = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(waiting.phase(), DockSurfaceWindowSessionPhase::ShuttingDown);
+    assert_eq!(waiting.pending_terminal_ticket_count(), 2);
+
+    assert!(provisional_terminal.release());
+    cx.run_until_parked();
+
+    assert!(!cx.windows().contains(&anchor));
+    assert_eq!(
+        closed.borrow().as_slice(),
+        [provisional.window_id(), anchor.window_id()]
+    );
+    let closed_status = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(closed_status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(closed_status.pending_terminal_ticket_count(), 0);
+    assert_eq!(closed_status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn frozen_provisional_builder_initial_close_aborts_exact_runtime_record(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    enable_provisional_test_windows(cx);
+    let (surface, anchor, runtime, lease) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the primary should activate one exact surface lease")
+        });
+        let runtime = surface.viewport_runtime(cx);
+        (surface, anchor, runtime, lease)
+    });
+    cx.run_until_parked();
+    cx.close_next_window_during_initial_presentation();
+
+    let error = cx.update(|cx| {
+        let request = begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
+        let owner = surface.owner().clone();
+        runtime.install_live_undock_provisional_builder_hook_for_test(move |cx| {
+            let effects = prepare_surface_shutdown(
+                &owner,
+                lease,
+                DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                cx,
+            )
+            .expect("the builder race should freeze the active surface");
+            apply_surface_shutdown_close_effects(&owner, effects, cx);
+        });
+        runtime
+            .open_triggered_live_undock_provisional_viewport(
+                surface.primary_space().clone(),
+                WindowOptions::default(),
+                &request,
+                cx,
+            )
+            .expect_err("the injected initial close must reject the provisional window")
+            .to_string()
+    });
+
+    assert!(
+        error.contains("closed") || error.contains("initial presentation"),
+        "the platform initial close should reach the caller: {error}"
+    );
+    cx.run_until_parked();
+
+    assert!(!cx.windows().contains(&anchor));
+    assert!(runtime.windows_for_surface(lease).is_empty());
+    assert_eq!(
+        cx.update(|cx| cx.read_entity(surface.owner(), |owner, _| owner.live_undock_phase())),
+        DockLiveUndockPhase::Idle
+    );
+    let status = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn stale_open_return_compensates_exact_runtime_retirement(cx: &mut open_gpui::TestAppContext) {
+    enable_provisional_test_windows(cx);
+    let closed = Rc::new(RefCell::new(Vec::new()));
+    let (surface, anchor, provisional_id, lease) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let closed = closed.clone();
+        cx.on_window_closed(move |_, window_id| closed.borrow_mut().push(window_id))
+            .detach();
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the primary should activate one exact surface lease")
+        });
+        let request = begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
+        let identity = request.identity();
+        let opening = request.key();
+        let runtime = surface.viewport_runtime(cx);
+        let builder_runtime = runtime.clone();
+        let builder_owner = surface.owner().clone();
+        let attempt_slot = Rc::new(Cell::new(None));
+        let builder_attempt_slot = attempt_slot.clone();
+        let provisional: AnyWindowHandle = cx
+            .open_window(provisional_options(&request), move |window, cx| {
+                let attempt = builder_runtime
+                    .begin_live_undock_provisional_open_attempt(window.window_handle(), opening)
+                    .expect("the builder must register one exact Runtime attempt");
+                builder_attempt_slot.set(Some(attempt));
+                finish_live_undock_open_failure(&builder_owner, opening, cx);
+                reduce_live_undock_fact(
+                    &builder_owner,
+                    DockLiveUndockFact::Cancel {
+                        identity,
+                        reason: DockLiveUndockCancelReason::CaptureLost,
+                    },
+                    cx,
+                );
+                cx.new(|_| Empty)
+            })
+            .expect("the stale opening may still return one committed HWND")
+            .into();
+        let completion = runtime.complete_live_undock_provisional_open_attempt(
+            attempt_slot
+                .take()
+                .expect("the builder must publish its exact Runtime attempt"),
+            opening,
+            false,
+        );
+        assert!(matches!(
+            completion,
+            crate::DockViewportProvisionalOpenAttemptCompletion::RetirementRequired(_)
+        ));
+        assert_eq!(
+            finish_live_undock_open_return(surface.owner(), opening, provisional, completion, cx,),
+            DockLiveUndockOpenReturnOutcome::Stale
+        );
+        let provisional_id = provisional.window_id();
+        (surface, anchor, provisional_id, lease)
+    });
+
+    cx.run_until_parked();
+
+    assert!(cx.windows().contains(&anchor));
+    assert!(
+        !cx.windows()
+            .iter()
+            .any(|window| window.window_id() == provisional_id)
+    );
+    assert_eq!(closed.borrow().as_slice(), [provisional_id]);
+    let (windows, ownership) = cx.update(|cx| {
+        let runtime = surface.viewport_runtime(cx);
+        (
+            runtime.windows_for_surface(lease),
+            runtime.runtime_status().window_ownership,
+        )
+    });
+    assert!(windows.iter().any(|(role, window)| {
+        *role == DockViewportWindowRole::PrimaryAnchor && *window == anchor
+    }));
+    assert!(windows.iter().any(|(role, window)| {
+        matches!(role, DockViewportWindowRole::ProvisionalViewport(_))
+            && window.window_id() == provisional_id
+    }));
+    assert_eq!(ownership.opening_window_count, 0);
+    assert_eq!(ownership.active_window_count, 1);
+    assert_eq!(ownership.retiring_window_count, 1);
 }
 
 #[open_gpui::test]

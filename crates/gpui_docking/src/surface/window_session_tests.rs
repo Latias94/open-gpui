@@ -14,6 +14,7 @@ use super::window_session::{
 };
 use crate::{
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportUnavailable, DockViewportClosePolicy,
+    viewport_runtime_handle::DockViewportSurfaceShutdownFailurePoint,
 };
 use open_gpui::{
     AppContext as _, Empty, EntityId, PlatformWindowCreationCapabilities, QuitMode,
@@ -769,6 +770,193 @@ fn failed_capture_release_retires_the_frozen_surface_and_preserves_reopen_progre
         reopened,
         DockSurfacePrimaryWindowOpenOutcome::Opened(opened) if opened.generation() == 2
     ));
+}
+
+fn assert_runtime_shutdown_panic_retains_frozen_windows(
+    cx: &mut open_gpui::TestAppContext,
+    failure_point: DockViewportSurfaceShutdownFailurePoint,
+) {
+    let closed = Rc::new(RefCell::new(Vec::new()));
+    let (surface, anchor, dependent, runtime, lease) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let closed = closed.clone();
+        cx.on_window_closed(move |_, window_id| closed.borrow_mut().push(window_id))
+            .detach();
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let dependent = match surface.open_viewport("secondary", WindowOptions::default(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the dependent viewport should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the active surface should expose its exact lease")
+        });
+        let runtime = surface.viewport_runtime(cx);
+        (surface, anchor, dependent, runtime, lease)
+    });
+    cx.run_until_parked();
+
+    runtime.fail_next_surface_shutdown_at_for_test(failure_point);
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|app| {
+            let effects = super::prepare_surface_shutdown(
+                surface.owner(),
+                lease,
+                DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                app,
+            )
+            .expect("the active lease should begin shutdown");
+            super::schedule_surface_shutdown_close_effects(surface.owner(), effects, None, app);
+        });
+        cx.run_until_parked();
+    }))
+    .expect_err("the scheduled Runtime shutdown panic must propagate after close dispatch");
+    let panic_message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .expect("the injected panic should preserve its message");
+    assert!(panic_message.contains("surface-shutdown failure"));
+
+    cx.run_until_parked();
+    assert_eq!(
+        closed.borrow().as_slice(),
+        [dependent.window_id(), anchor.window_id()],
+        "the Runtime reservation must retain dependent-first close handles across unwind"
+    );
+    assert!(!cx.windows().contains(&dependent));
+    assert!(!cx.windows().contains(&anchor));
+    assert!(runtime.windows_for_surface(lease).is_empty());
+    let status = cx.update(|app| surface.window_session_status(app));
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn runtime_shutdown_precommit_panic_retains_exact_close_handles(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    assert_runtime_shutdown_panic_retains_frozen_windows(
+        cx,
+        DockViewportSurfaceShutdownFailurePoint::BeforeRuntimeCommit,
+    );
+}
+
+#[open_gpui::test]
+fn runtime_shutdown_postcommit_panic_retains_exact_close_handles(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    assert_runtime_shutdown_panic_retains_frozen_windows(
+        cx,
+        DockViewportSurfaceShutdownFailurePoint::AfterRuntimeCommit,
+    );
+}
+
+#[open_gpui::test]
+fn runtime_shutdown_postpublish_panic_retains_exact_close_handles(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    assert_runtime_shutdown_panic_retains_frozen_windows(
+        cx,
+        DockViewportSurfaceShutdownFailurePoint::AfterSurfaceCommitPublish,
+    );
+}
+
+#[open_gpui::test]
+fn capture_failure_postpublish_panic_retains_exact_close_handles(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let closed = Rc::new(RefCell::new(Vec::new()));
+    let (surface, anchor, dependent, runtime, lease) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let closed = closed.clone();
+        cx.on_window_closed(move |_, window_id| closed.borrow_mut().push(window_id))
+            .detach();
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let dependent = match surface.open_viewport("secondary", WindowOptions::default(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the dependent viewport should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the active surface should expose its exact lease")
+        });
+        let runtime = surface.viewport_runtime(cx);
+        (surface, anchor, dependent, runtime, lease)
+    });
+    cx.run_until_parked();
+
+    runtime.fail_next_surface_shutdown_at_for_test(
+        DockViewportSurfaceShutdownFailurePoint::AfterSurfaceCommitPublish,
+    );
+    let mut failure = None;
+    cx.update(|app| {
+        let effects = super::prepare_surface_shutdown(
+            surface.owner(),
+            lease,
+            DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+            app,
+        )
+        .expect("the active lease should begin shutdown");
+        let coordinator = super::surface_shutdown_coordinator(app);
+        coordinator.begin(effects, None);
+        super::finish_scheduled_surface_shutdown(
+            surface.owner(),
+            lease,
+            &coordinator,
+            crate::native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome::Failed,
+            &mut failure,
+            app,
+        );
+    });
+
+    let failure = failure
+        .expect("capture failure must retain the injected publish panic")
+        .downcast::<super::DockSurfaceCaptureReleaseFailure>()
+        .expect("capture failure must remain a typed terminal error");
+    assert_eq!(failure.lease, lease);
+    let prior_panic = failure
+        .prior_panic
+        .expect("the capture failure must retain the earlier publish panic");
+    let panic_message = prior_panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| prior_panic.downcast_ref::<String>().map(String::as_str))
+        .expect("the injected panic should preserve its message");
+    assert!(panic_message.contains("surface-shutdown failure"));
+
+    cx.run_until_parked();
+    assert_eq!(
+        closed.borrow().as_slice(),
+        [dependent.window_id(), anchor.window_id()],
+        "capture failure must retain dependent-first close handles across publish unwind"
+    );
+    assert!(!cx.windows().contains(&dependent));
+    assert!(!cx.windows().contains(&anchor));
+    assert!(runtime.windows_for_surface(lease).is_empty());
+    let status = cx.update(|app| surface.window_session_status(app));
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
 }
 
 #[open_gpui::test]

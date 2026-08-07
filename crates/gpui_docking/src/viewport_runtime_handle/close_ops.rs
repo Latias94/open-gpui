@@ -162,6 +162,11 @@ impl DockViewportRuntimeHandle {
         #[cfg(test)]
         let live_undock_logical_close_selection_test_hook =
             self.live_undock_logical_close_selection_test_hook.clone();
+        #[cfg(test)]
+        let live_undock_provisional_builder_test_hook =
+            self.live_undock_provisional_builder_test_hook.clone();
+        #[cfg(test)]
+        let surface_shutdown_failure_point = self.surface_shutdown_failure_point.clone();
         cx.on_window_closed(move |cx, window_id| {
             let Some(runtime) = runtime.upgrade() else {
                 platform_mutation_observation_subscriptions
@@ -196,6 +201,11 @@ impl DockViewportRuntimeHandle {
                 #[cfg(test)]
                 live_undock_logical_close_selection_test_hook:
                     live_undock_logical_close_selection_test_hook.clone(),
+                #[cfg(test)]
+                live_undock_provisional_builder_test_hook:
+                    live_undock_provisional_builder_test_hook.clone(),
+                #[cfg(test)]
+                surface_shutdown_failure_point: surface_shutdown_failure_point.clone(),
             };
             let _ = handle.handle_window_closed_with_app(window_id, cx);
         })

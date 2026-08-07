@@ -4825,9 +4825,10 @@ impl DockLiveUndockRuntime {
                 window,
                 dependency,
                 binding,
+                runtime,
                 ..
             } => super::retire_live_undock_provisional(
-                owner, identity, window, dependency, binding, cx,
+                owner, identity, window, dependency, binding, runtime, cx,
             ),
             DockLiveUndockEffect::ProvisionalAdmitted {
                 identity, window, ..

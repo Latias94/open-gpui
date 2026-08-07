@@ -384,8 +384,9 @@ pub(crate) use viewport_runtime::*;
 pub(crate) use viewport_runtime_drop_resolution::*;
 pub(crate) use viewport_runtime_effects::*;
 pub(crate) use viewport_runtime_handle::{
-    DockViewportLockedDropRoute, DockViewportPreflightedLiveUndockHostDrop,
-    DockViewportPreparedLiveUndockHostDrop, DockViewportRuntimeHandle, DockViewportRuntimeIdentity,
+    DockViewportLiveUndockProvisionalRetirementOutcome, DockViewportLockedDropRoute,
+    DockViewportPreflightedLiveUndockHostDrop, DockViewportPreparedLiveUndockHostDrop,
+    DockViewportRuntimeHandle, DockViewportRuntimeIdentity,
 };
 pub(crate) use viewport_runtime_lineage::*;
 pub(crate) use viewport_runtime_status::*;

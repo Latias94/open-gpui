@@ -48,7 +48,7 @@ use crate::{
     viewport_runtime::{
         DockViewportClaimedTearOffTarget, DockViewportCommittedLiveUndockPromotion,
         DockViewportPreparedLiveUndockPromotion, DockViewportPreparedTearOffBegin,
-        DockViewportPreparedTearOffDrop,
+        DockViewportPreparedTearOffDrop, DockViewportProvisionalRetirementPlan,
     },
     viewport_window_lifecycle::DockViewportReusableWindow,
 };
@@ -110,6 +110,25 @@ pub struct DockViewportRuntimeHandle {
     #[cfg(test)]
     live_undock_logical_close_selection_test_hook:
         DockViewportLiveUndockLogicalCloseSelectionTestHook,
+    #[cfg(test)]
+    live_undock_provisional_builder_test_hook: DockViewportLiveUndockProvisionalBuilderTestHook,
+    #[cfg(test)]
+    surface_shutdown_failure_point: Rc<Cell<Option<DockViewportSurfaceShutdownFailurePoint>>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockViewportLiveUndockProvisionalRetirementOutcome {
+    CloseDispatched,
+    ShutdownCloseRequired,
+    Stale,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockViewportSurfaceShutdownFailurePoint {
+    BeforeRuntimeCommit,
+    AfterRuntimeCommit,
+    AfterSurfaceCommitPublish,
 }
 
 static NEXT_DOCK_VIEWPORT_RUNTIME_IDENTITY: AtomicU64 = AtomicU64::new(1);
@@ -171,6 +190,25 @@ impl std::fmt::Debug for DockViewportLiveUndockLogicalCloseSelectionTestHook {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DockViewportLiveUndockLogicalCloseSelectionTestHook")
+            .field("installed", &self.0.borrow().is_some())
+            .finish()
+    }
+}
+
+#[cfg(test)]
+type DockViewportLiveUndockProvisionalBuilderCallback = Box<dyn FnOnce(&mut App)>;
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct DockViewportLiveUndockProvisionalBuilderTestHook(
+    Rc<RefCell<Option<DockViewportLiveUndockProvisionalBuilderCallback>>>,
+);
+
+#[cfg(test)]
+impl std::fmt::Debug for DockViewportLiveUndockProvisionalBuilderTestHook {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DockViewportLiveUndockProvisionalBuilderTestHook")
             .field("installed", &self.0.borrow().is_some())
             .finish()
     }
@@ -731,6 +769,10 @@ impl DockViewportRuntimeHandle {
         reservation: DockViewportSurfaceShutdownReservation,
         cx: &mut App,
     ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
+        #[cfg(test)]
+        self.panic_at_surface_shutdown_failure_point_for_test(
+            DockViewportSurfaceShutdownFailurePoint::BeforeRuntimeCommit,
+        );
         let effects = self
             .runtime
             .borrow_mut()
@@ -743,6 +785,10 @@ impl DockViewportRuntimeHandle {
         reservation: DockViewportSurfaceShutdownReservation,
         cx: &mut App,
     ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
+        #[cfg(test)]
+        self.panic_at_surface_shutdown_failure_point_for_test(
+            DockViewportSurfaceShutdownFailurePoint::BeforeRuntimeCommit,
+        );
         let effects = self
             .runtime
             .borrow_mut()
@@ -756,6 +802,10 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
         let (lease, windows, cleanup_update) = effects.into_parts();
+        #[cfg(test)]
+        self.panic_at_surface_shutdown_failure_point_for_test(
+            DockViewportSurfaceShutdownFailurePoint::AfterRuntimeCommit,
+        );
         let Some(work_context) = cleanup_update.work_context() else {
             debug_assert!(cleanup_update.change_categories().is_empty());
             return windows;
@@ -769,6 +819,10 @@ impl DockViewportRuntimeHandle {
             DockViewportRuntimeCommitAuthority::FrozenSurfaceShutdown(work_context),
             &cleanup_update,
             cx,
+        );
+        #[cfg(test)]
+        self.panic_at_surface_shutdown_failure_point_for_test(
+            DockViewportSurfaceShutdownFailurePoint::AfterSurfaceCommitPublish,
         );
         windows
     }
@@ -904,14 +958,37 @@ impl DockViewportRuntimeHandle {
             .reject_next_provisional_registration_for_test();
     }
 
-    pub(crate) fn adopt_provisional_window_during_shutdown(
+    pub(crate) fn retire_live_undock_provisional(
         &self,
+        completion: DockViewportProvisionalOpenAttemptCompletion,
         window: AnyWindowHandle,
-        opening: DockLiveUndockOpeningKey,
-    ) -> bool {
-        self.runtime
+        shutdown_terminal_owned: bool,
+        cx: &mut App,
+    ) -> DockViewportLiveUndockProvisionalRetirementOutcome {
+        let plan = self
+            .runtime
             .borrow_mut()
-            .adopt_provisional_window_during_shutdown(window, opening)
+            .prepare_live_undock_provisional_retirement(
+                completion,
+                window,
+                shutdown_terminal_owned,
+            );
+        match plan {
+            DockViewportProvisionalRetirementPlan::Close(close) => {
+                apply_viewport_window_effects(
+                    &self.runtime,
+                    DockViewportWindowEffects::close_now_only(close),
+                    cx,
+                );
+                DockViewportLiveUndockProvisionalRetirementOutcome::CloseDispatched
+            }
+            DockViewportProvisionalRetirementPlan::ShutdownCloseRequired => {
+                DockViewportLiveUndockProvisionalRetirementOutcome::ShutdownCloseRequired
+            }
+            DockViewportProvisionalRetirementPlan::Stale => {
+                DockViewportLiveUndockProvisionalRetirementOutcome::Stale
+            }
+        }
     }
 
     pub(crate) fn admits_work_context(&self, context: DockViewportRuntimeWorkContext) -> bool {
@@ -941,6 +1018,16 @@ impl DockViewportRuntimeHandle {
         attempt: DockViewportWindowOpenAttemptKey,
     ) -> bool {
         self.runtime.borrow_mut().abort_window_open_attempt(attempt)
+    }
+
+    pub(crate) fn abort_live_undock_provisional_open_attempt(
+        &self,
+        attempt: DockViewportWindowOpenAttemptKey,
+        opening: DockLiveUndockOpeningKey,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .abort_live_undock_provisional_open_attempt(attempt, opening)
     }
 
     pub(crate) fn promote_primary_anchor_open_attempt(
@@ -979,6 +1066,11 @@ impl DockViewportRuntimeHandle {
             #[cfg(test)]
             live_undock_logical_close_selection_test_hook:
                 DockViewportLiveUndockLogicalCloseSelectionTestHook::default(),
+            #[cfg(test)]
+            live_undock_provisional_builder_test_hook:
+                DockViewportLiveUndockProvisionalBuilderTestHook::default(),
+            #[cfg(test)]
+            surface_shutdown_failure_point: Rc::new(Cell::new(None)),
         }
     }
 
@@ -1032,6 +1124,58 @@ impl DockViewportRuntimeHandle {
             .take();
         if let Some(hook) = hook {
             hook(cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_live_undock_provisional_builder_hook_for_test(
+        &self,
+        hook: impl FnOnce(&mut App) + 'static,
+    ) {
+        let mut installed = self
+            .live_undock_provisional_builder_test_hook
+            .0
+            .borrow_mut();
+        assert!(
+            installed.is_none(),
+            "dock live-undock provisional-builder test hook is already installed"
+        );
+        *installed = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    fn run_live_undock_provisional_builder_hook_for_test(&self, cx: &mut App) {
+        let hook = self
+            .live_undock_provisional_builder_test_hook
+            .0
+            .borrow_mut()
+            .take();
+        if let Some(hook) = hook {
+            hook(cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_surface_shutdown_at_for_test(
+        &self,
+        point: DockViewportSurfaceShutdownFailurePoint,
+    ) {
+        assert!(
+            self.surface_shutdown_failure_point
+                .replace(Some(point))
+                .is_none(),
+            "dock viewport surface-shutdown failure point is already installed"
+        );
+    }
+
+    #[cfg(test)]
+    fn panic_at_surface_shutdown_failure_point_for_test(
+        &self,
+        point: DockViewportSurfaceShutdownFailurePoint,
+    ) {
+        if self.surface_shutdown_failure_point.get() == Some(point) {
+            self.surface_shutdown_failure_point.set(None);
+            panic!("injected dock viewport surface-shutdown failure at {point:?}");
         }
     }
 
@@ -2374,6 +2518,8 @@ impl DockViewportRuntimeHandle {
         let owner = managed_surface.owner.clone();
         let open_result = catch_unwind(AssertUnwindSafe(|| {
             cx.open_window(options, move |window, cx| {
+                #[cfg(test)]
+                open_attempt_runtime.run_live_undock_provisional_builder_hook_for_test(cx);
                 let open_attempt = open_attempt_runtime
                     .begin_live_undock_provisional_open_attempt(window.window_handle(), opening);
                 open_attempt_slot_for_builder.set(open_attempt);
@@ -2393,7 +2539,7 @@ impl DockViewportRuntimeHandle {
             Ok(Ok(opened)) => opened,
             Ok(Err(error)) => {
                 if let Some(open_attempt) = open_attempt_slot.take() {
-                    let _ = self.abort_window_open_attempt(open_attempt);
+                    let _ = self.abort_live_undock_provisional_open_attempt(open_attempt, opening);
                 }
                 crate::surface::finish_live_undock_open_failure(
                     &managed_surface.owner,
@@ -2404,7 +2550,7 @@ impl DockViewportRuntimeHandle {
             }
             Err(payload) => {
                 if let Some(open_attempt) = open_attempt_slot.take() {
-                    let _ = self.abort_window_open_attempt(open_attempt);
+                    let _ = self.abort_live_undock_provisional_open_attempt(open_attempt, opening);
                 }
                 crate::surface::finish_live_undock_open_failure(
                     &managed_surface.owner,
@@ -2416,12 +2562,11 @@ impl DockViewportRuntimeHandle {
         };
         let window: AnyWindowHandle = opened.into();
         let Some(open_attempt) = open_attempt_slot.take() else {
-            close_window_quietly(window, cx);
             crate::surface::finish_live_undock_open_return(
                 &managed_surface.owner,
                 opening,
                 window,
-                false,
+                DockViewportProvisionalOpenAttemptCompletion::Stale,
                 cx,
             );
             return Err(std::io::Error::other(
@@ -2434,18 +2579,16 @@ impl DockViewportRuntimeHandle {
         let can_admit = cx.read_entity(&managed_surface.owner, |owner, _| {
             owner.can_admit_live_undock_open_return(opening, window.window_id())
         });
-        let runtime_registered = self
-            .complete_live_undock_provisional_open_attempt(
-                open_attempt,
-                opening,
-                retirement_dependency.is_ok() && can_admit,
-            )
-            .is_admitted();
+        let runtime = self.complete_live_undock_provisional_open_attempt(
+            open_attempt,
+            opening,
+            retirement_dependency.is_ok() && can_admit,
+        );
         let outcome = crate::surface::finish_live_undock_open_return(
             &managed_surface.owner,
             opening,
             window,
-            runtime_registered,
+            runtime,
             cx,
         );
         if let Err(error) = retirement_dependency {

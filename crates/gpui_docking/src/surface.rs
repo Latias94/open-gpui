@@ -460,16 +460,70 @@ pub(crate) fn close_live_undock_window_quietly(window: open_gpui::AnyWindowHandl
     let _ = window.update(cx, |_, window, cx| window.remove_window(cx));
 }
 
+fn adopt_live_undock_shutdown_window(
+    owner: &Entity<DockSurfaceOwner>,
+    lease: window_session::DockSurfaceWindowSessionLease,
+    window: open_gpui::AnyWindowHandle,
+    cx: &mut App,
+) -> bool {
+    let outcome = cx.update_entity(owner, |owner, owner_cx| {
+        let outcome = owner
+            .window_session_mut()
+            .adopt_shutdown_window(lease, window.window_id());
+        if matches!(
+            outcome,
+            window_session::DockSurfaceWindowSessionAdoptWindowOutcome::Added
+        ) {
+            owner_cx.notify();
+        }
+        outcome
+    });
+    matches!(
+        outcome,
+        window_session::DockSurfaceWindowSessionAdoptWindowOutcome::Added
+            | window_session::DockSurfaceWindowSessionAdoptWindowOutcome::AlreadyTracked
+    )
+}
+
+fn retire_stale_live_undock_open_return(
+    owner: &Entity<DockSurfaceOwner>,
+    opening: live_undock::DockLiveUndockOpeningKey,
+    window: open_gpui::AnyWindowHandle,
+    completion: crate::DockViewportProvisionalOpenAttemptCompletion,
+    cx: &mut App,
+) {
+    let lease = opening.lease();
+    let shutdown_terminal_owned = adopt_live_undock_shutdown_window(owner, lease, window, cx);
+    let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
+    match runtime.retire_live_undock_provisional(completion, window, shutdown_terminal_owned, cx) {
+        crate::DockViewportLiveUndockProvisionalRetirementOutcome::CloseDispatched => {}
+        crate::DockViewportLiveUndockProvisionalRetirementOutcome::ShutdownCloseRequired => {
+            debug_assert!(
+                shutdown_terminal_owned,
+                "shutdown-owned provisional close requires one WindowSession terminal ticket"
+            );
+            close_surface_window(owner, lease, window, cx);
+        }
+        crate::DockViewportLiveUndockProvisionalRetirementOutcome::Stale => {
+            if shutdown_terminal_owned {
+                close_surface_window(owner, lease, window, cx);
+            } else {
+                close_live_undock_window_quietly(window, cx);
+            }
+        }
+    }
+}
+
 pub(crate) fn finish_live_undock_open_return(
     owner: &Entity<DockSurfaceOwner>,
     opening: live_undock::DockLiveUndockOpeningKey,
     window: open_gpui::AnyWindowHandle,
-    runtime_registered: bool,
+    runtime: crate::DockViewportProvisionalOpenAttemptCompletion,
     cx: &mut App,
 ) -> live_undock::DockLiveUndockOpenReturnOutcome {
     let (outcome, effects) = cx.update_entity(owner, |owner, owner_cx| {
         let (outcome, effects) = owner
-            .complete_live_undock_opening(opening, window, runtime_registered)
+            .complete_live_undock_opening(opening, window, runtime)
             .into_parts();
         if !matches!(outcome, live_undock::DockLiveUndockOpenReturnOutcome::Stale) {
             owner_cx.notify();
@@ -478,6 +532,9 @@ pub(crate) fn finish_live_undock_open_return(
     });
     let live_runtime = cx.read_entity(owner, |owner, _| owner.live_undock_runtime());
     live_runtime.enqueue_effects(effects, cx);
+    if matches!(outcome, live_undock::DockLiveUndockOpenReturnOutcome::Stale) {
+        retire_stale_live_undock_open_return(owner, opening, window, runtime, cx);
+    }
     outcome
 }
 
@@ -507,6 +564,7 @@ pub(crate) fn retire_live_undock_provisional(
     window: Option<open_gpui::AnyWindowHandle>,
     dependency: Option<window_session::DockSurfaceWindowSessionDependencyId>,
     binding: Option<live_undock::DockLiveUndockOpeningBinding>,
+    completion: Option<crate::DockViewportProvisionalOpenAttemptCompletion>,
     cx: &mut App,
 ) {
     let Some(window) = window else {
@@ -514,38 +572,15 @@ pub(crate) fn retire_live_undock_provisional(
     };
     let opening = identity.opening();
     let lease = opening.lease();
-    let Some(dependency) = dependency else {
-        close_live_undock_window_quietly(window, cx);
-        return;
-    };
-    if binding != Some(live_undock::DockLiveUndockOpeningBinding::ExactGated) {
-        close_live_undock_window_quietly(window, cx);
-        settle_live_undock_dependency(owner, identity, Some(dependency), cx);
-        return;
-    }
-
     let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
-    let adopt = cx.update_entity(owner, |owner, owner_cx| {
-        let outcome = owner
-            .window_session_mut()
-            .adopt_shutdown_window(lease, window.window_id());
-        if matches!(
-            outcome,
-            window_session::DockSurfaceWindowSessionAdoptWindowOutcome::Added
-        ) {
-            owner_cx.notify();
+    let shutdown_terminal_owned = adopt_live_undock_shutdown_window(owner, lease, window, cx);
+    let dependency_transferred = dependency.is_some_and(|dependency| {
+        if !shutdown_terminal_owned
+            || binding != Some(live_undock::DockLiveUndockOpeningBinding::ExactGated)
+        {
+            return false;
         }
-        outcome
-    });
-    let terminal_ticket_installed = matches!(
-        adopt,
-        window_session::DockSurfaceWindowSessionAdoptWindowOutcome::Added
-            | window_session::DockSurfaceWindowSessionAdoptWindowOutcome::AlreadyTracked
-    );
-    let frozen_ownership_installed = terminal_ticket_installed
-        && runtime.adopt_provisional_window_during_shutdown(window, opening);
-    let dependency_transferred = frozen_ownership_installed
-        && cx.update_entity(owner, |owner, owner_cx| {
+        cx.update_entity(owner, |owner, owner_cx| {
             let outcome = owner.transfer_live_undock_dependency_to_window(opening, dependency);
             if matches!(
                 outcome,
@@ -558,12 +593,34 @@ pub(crate) fn retire_live_undock_provisional(
                 window_session::DockSurfaceWindowSessionDependencyTerminalOutcome::Settled
                     | window_session::DockSurfaceWindowSessionDependencyTerminalOutcome::AlreadyTerminal
             )
-        });
-    if dependency_transferred {
-        close_surface_window(owner, lease, window, cx);
-    } else {
-        close_live_undock_window_quietly(window, cx);
-        settle_live_undock_dependency(owner, identity, Some(dependency), cx);
+        })
+    });
+
+    if !dependency_transferred {
+        settle_live_undock_dependency(owner, identity, dependency, cx);
+    }
+
+    let retirement = completion
+        .map(|completion| {
+            runtime.retire_live_undock_provisional(completion, window, shutdown_terminal_owned, cx)
+        })
+        .unwrap_or(crate::DockViewportLiveUndockProvisionalRetirementOutcome::Stale);
+    match retirement {
+        crate::DockViewportLiveUndockProvisionalRetirementOutcome::CloseDispatched => {}
+        crate::DockViewportLiveUndockProvisionalRetirementOutcome::ShutdownCloseRequired => {
+            debug_assert!(
+                shutdown_terminal_owned,
+                "shutdown-owned provisional close requires one WindowSession terminal ticket"
+            );
+            close_surface_window(owner, lease, window, cx);
+        }
+        crate::DockViewportLiveUndockProvisionalRetirementOutcome::Stale => {
+            if shutdown_terminal_owned {
+                close_surface_window(owner, lease, window, cx);
+            } else {
+                close_live_undock_window_quietly(window, cx);
+            }
+        }
     }
 }
 
@@ -812,7 +869,6 @@ struct DockSurfaceShutdownCloseEffects {
     runtime: DockViewportRuntimeHandle,
     lease: window_session::DockSurfaceWindowSessionLease,
     reservation: DockViewportSurfaceShutdownReservation,
-    fallback_windows: Vec<(DockViewportWindowRole, open_gpui::AnyWindowHandle)>,
     activation_settlements: DockSurfaceActivationSettlements,
     first_panic: Option<DockSurfaceShutdownPanic>,
 }
@@ -824,8 +880,8 @@ fn prepare_surface_shutdown(
     cx: &mut App,
 ) -> Option<DockSurfaceShutdownCloseEffects> {
     let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
-    let mut snapshot = runtime.windows_for_surface(lease);
-    let (begin, activation_settlements, live_shutdown, live_effects) =
+    let snapshot = runtime.windows_for_surface(lease);
+    let (begin, activation_settlements, live_effects) =
         cx.update_entity(owner, |owner, owner_cx| {
             let live_shutdown = owner
                 .window_session()
@@ -835,11 +891,7 @@ fn prepare_surface_shutdown(
             let begin = owner.window_session_mut().begin_shutdown_with_dependencies(
                 lease,
                 reason,
-                snapshot.iter().map(|(_, window)| window.window_id()).chain(
-                    live_shutdown
-                        .and_then(|snapshot| snapshot.window())
-                        .map(|window| window.window_id()),
-                ),
+                snapshot.iter().map(|(_, window)| window.window_id()),
                 live_shutdown.map(|snapshot| snapshot.dependency()),
             );
             let (activation_settlements, live_effects) = if matches!(
@@ -856,26 +908,11 @@ fn prepare_surface_shutdown(
             } else {
                 (DockSurfaceActivationSettlements::default(), None)
             };
-            (begin, activation_settlements, live_shutdown, live_effects)
+            (begin, activation_settlements, live_effects)
         });
     if let Some(effects) = live_effects {
         let live_runtime = cx.read_entity(owner, |owner, _| owner.live_undock_runtime());
         live_runtime.enqueue_effects(effects, cx);
-    }
-
-    if let Some(window) = live_shutdown.and_then(|snapshot| snapshot.window())
-        && !snapshot
-            .iter()
-            .any(|(_, current)| current.window_id() == window.window_id())
-    {
-        snapshot.push((
-            DockViewportWindowRole::ProvisionalViewport(
-                live_shutdown
-                    .expect("a live-undock window must belong to one shutdown snapshot")
-                    .opening(),
-            ),
-            window,
-        ));
     }
 
     match begin {
@@ -894,7 +931,6 @@ fn prepare_surface_shutdown(
         runtime,
         lease,
         reservation,
-        fallback_windows: snapshot,
         activation_settlements,
         first_panic: None,
     })
@@ -909,7 +945,6 @@ fn apply_surface_shutdown_close_effects(
         runtime,
         lease,
         reservation,
-        fallback_windows,
         activation_settlements,
         mut first_panic,
     } = effects;
@@ -919,7 +954,8 @@ fn apply_surface_shutdown_close_effects(
         return;
     }
 
-    let mut windows = match catch_unwind(AssertUnwindSafe(|| {
+    let recovery_windows = reservation.windows().to_vec();
+    let windows = match catch_unwind(AssertUnwindSafe(|| {
         runtime.commit_surface_shutdown(reservation, cx)
     })) {
         Ok(windows) => windows,
@@ -929,11 +965,9 @@ fn apply_surface_shutdown_close_effects(
                 Err(payload),
                 "viewport runtime shutdown commit",
             );
-            Vec::new()
+            recovery_windows
         }
     };
-    windows.extend(fallback_windows);
-
     dispatch_surface_shutdown_retirement_effects(
         owner,
         &runtime,
@@ -957,7 +991,6 @@ fn apply_surface_capture_failure_retirement(
         runtime,
         lease,
         reservation,
-        fallback_windows,
         activation_settlements,
         mut first_panic,
     } = effects;
@@ -967,7 +1000,8 @@ fn apply_surface_capture_failure_retirement(
         return first_panic;
     }
 
-    let mut windows = match catch_unwind(AssertUnwindSafe(|| {
+    let recovery_windows = reservation.windows().to_vec();
+    let windows = match catch_unwind(AssertUnwindSafe(|| {
         runtime.retire_frozen_surface_after_capture_failure(reservation, cx)
     })) {
         Ok(windows) => windows,
@@ -977,11 +1011,9 @@ fn apply_surface_capture_failure_retirement(
                 Err(payload),
                 "viewport runtime capture-failure retirement",
             );
-            Vec::new()
+            recovery_windows
         }
     };
-    windows.extend(fallback_windows);
-
     dispatch_surface_shutdown_retirement_effects(
         owner,
         &runtime,

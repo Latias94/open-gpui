@@ -140,6 +140,12 @@ pub(crate) struct DockViewportCommittedLiveUndockPromotion {
     pub(crate) runtime_update: DockViewportRuntimeUpdate,
 }
 
+pub(crate) enum DockViewportProvisionalRetirementPlan {
+    Close(DockViewportWindowCloseEffect),
+    ShutdownCloseRequired,
+    Stale,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct DockViewportTearOffTargetReservation {
     pending: DockViewportTearOffPending,
@@ -1621,12 +1627,9 @@ impl DockViewportRuntime {
         window: AnyWindowHandle,
         opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
     ) -> Option<DockViewportWindowOpenAttemptKey> {
-        let lineage = crate::DockViewportRuntimeLineage::Surface(opening.lease());
-        if !self.admission.get().admits(lineage) {
-            return None;
-        }
+        let shutdown_owned = self.admission.get().frozen_surface_lease() == Some(opening.lease());
         self.window_ownership
-            .begin_provisional_open_attempt(window, opening)
+            .begin_provisional_open_attempt(window, opening, shutdown_owned)
     }
 
     pub(crate) fn complete_live_undock_provisional_open_attempt(
@@ -1643,6 +1646,47 @@ impl DockViewportRuntime {
         }
         self.window_ownership
             .complete_provisional_open_attempt(attempt, opening, admit)
+    }
+
+    pub(crate) fn prepare_live_undock_provisional_retirement(
+        &mut self,
+        completion: DockViewportProvisionalOpenAttemptCompletion,
+        window: AnyWindowHandle,
+        shutdown_terminal_owned: bool,
+    ) -> DockViewportProvisionalRetirementPlan {
+        let retirement = match completion {
+            DockViewportProvisionalOpenAttemptCompletion::Admitted(ownership) => {
+                self.window_ownership.retire_provisional_window(ownership)
+            }
+            DockViewportProvisionalOpenAttemptCompletion::RetirementRequired(ownership) => self
+                .window_ownership
+                .provisional_window_retirement(ownership),
+            DockViewportProvisionalOpenAttemptCompletion::ShutdownOwned(ownership) => {
+                if !self
+                    .window_ownership
+                    .provisional_window_is_shutdown_owned(ownership)
+                {
+                    return DockViewportProvisionalRetirementPlan::Stale;
+                }
+                if shutdown_terminal_owned {
+                    return DockViewportProvisionalRetirementPlan::ShutdownCloseRequired;
+                }
+                self.window_ownership
+                    .reclaim_shutdown_owned_provisional_window(ownership)
+            }
+            DockViewportProvisionalOpenAttemptCompletion::Stale => {
+                return DockViewportProvisionalRetirementPlan::Stale;
+            }
+        };
+        let Some(close) = retirement.and_then(|retirement| {
+            DockViewportWindowCloseEffect::from_retirement(
+                window,
+                DockViewportWindowRetirement::RetiredNow(retirement),
+            )
+        }) else {
+            return DockViewportProvisionalRetirementPlan::Stale;
+        };
+        DockViewportProvisionalRetirementPlan::Close(close)
     }
 
     pub(crate) fn prepare_live_undock_provisional_promotion(
@@ -1749,24 +1793,6 @@ impl DockViewportRuntime {
         self.reject_next_live_undock_promotion_commit.set(true);
     }
 
-    pub(crate) fn adopt_provisional_window_during_shutdown(
-        &mut self,
-        window: AnyWindowHandle,
-        opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
-    ) -> bool {
-        if self.admission.get().frozen_surface_lease() != Some(opening.lease()) {
-            return false;
-        }
-        let Some(ownership) = self
-            .window_ownership
-            .adopt_frozen_provisional_window(window, opening)
-        else {
-            return false;
-        };
-        debug_assert_eq!(ownership.window_id(), window.window_id());
-        true
-    }
-
     pub(crate) fn promote_primary_anchor_open_attempt(
         &mut self,
         key: DockViewportWindowOpenAttemptKey,
@@ -1797,6 +1823,15 @@ impl DockViewportRuntime {
         key: DockViewportWindowOpenAttemptKey,
     ) -> bool {
         self.window_ownership.abort_open_attempt(key)
+    }
+
+    pub(crate) fn abort_live_undock_provisional_open_attempt(
+        &mut self,
+        key: DockViewportWindowOpenAttemptKey,
+        opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
+    ) -> bool {
+        self.window_ownership
+            .abort_provisional_open_attempt(key, opening)
     }
 
     pub(crate) fn retire_window_open_attempt_for_close(

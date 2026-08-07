@@ -1,7 +1,7 @@
 use super::payload_recovery::{DockPayloadRecoveryAuthority, DockPayloadRecoveryCommitReceipt};
 use super::window_session::{DockSurfaceWindowSessionDependencyId, DockSurfaceWindowSessionLease};
 use crate::{
-    host::DockHostLivePresentationCleanupReceipt,
+    DockViewportProvisionalOpenAttemptCompletion, host::DockHostLivePresentationCleanupReceipt,
     native_captured_drag::DockNativeCapturedDragTransportRetirementReceipt,
 };
 use open_gpui::{
@@ -156,10 +156,6 @@ pub(crate) struct DockLiveUndockShutdownSnapshot {
 impl DockLiveUndockShutdownSnapshot {
     pub(crate) const fn identity(self) -> DockLiveUndockIdentity {
         self.identity
-    }
-
-    pub(crate) const fn opening(self) -> DockLiveUndockOpeningKey {
-        self.identity.opening()
     }
 
     pub(crate) const fn dependency(self) -> DockSurfaceWindowSessionDependencyId {
@@ -1662,7 +1658,7 @@ pub(crate) enum DockLiveUndockFact {
         identity: DockLiveUndockIdentity,
         window: AnyWindowHandle,
         binding: DockLiveUndockOpeningBinding,
-        runtime_registered: bool,
+        runtime: DockViewportProvisionalOpenAttemptCompletion,
     },
     OpeningFailed {
         identity: DockLiveUndockIdentity,
@@ -1874,6 +1870,7 @@ pub(crate) enum DockLiveUndockEffect {
         window: Option<AnyWindowHandle>,
         dependency: Option<DockSurfaceWindowSessionDependencyId>,
         binding: Option<DockLiveUndockOpeningBinding>,
+        runtime: Option<DockViewportProvisionalOpenAttemptCompletion>,
         reason: DockLiveUndockRetirementReason,
     },
     CommitSourceProxy {
@@ -2076,7 +2073,10 @@ impl DockLiveUndockOpening {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DockLiveUndockProvisionalLifecycle {
     Opening,
-    Bound(AnyWindowHandle),
+    Bound {
+        window: AnyWindowHandle,
+        runtime: DockViewportProvisionalOpenAttemptCompletion,
+    },
     Unavailable(AnyWindowHandle),
     Failed,
     Terminal(WindowId),
@@ -2184,7 +2184,7 @@ impl DockLiveUndockActive {
     }
 
     const fn bound_window(&self) -> Option<AnyWindowHandle> {
-        if let DockLiveUndockProvisionalLifecycle::Bound(window) = self.provisional {
+        if let DockLiveUndockProvisionalLifecycle::Bound { window, .. } = self.provisional {
             Some(window)
         } else {
             None
@@ -2193,7 +2193,7 @@ impl DockLiveUndockActive {
 
     const fn owned_window(&self) -> Option<AnyWindowHandle> {
         match self.provisional {
-            DockLiveUndockProvisionalLifecycle::Bound(window)
+            DockLiveUndockProvisionalLifecycle::Bound { window, .. }
             | DockLiveUndockProvisionalLifecycle::Unavailable(window) => Some(window),
             DockLiveUndockProvisionalLifecycle::Opening
             | DockLiveUndockProvisionalLifecycle::Failed
@@ -2232,7 +2232,7 @@ impl DockLiveUndockActive {
     fn accepts_presentation_failure(&self, failure: DockLiveUndockPresentationFailure) -> bool {
         if !matches!(
             self.provisional,
-            DockLiveUndockProvisionalLifecycle::Bound(_)
+            DockLiveUndockProvisionalLifecycle::Bound { .. }
         ) {
             return false;
         }
@@ -2669,7 +2669,7 @@ impl DockLiveUndockSession {
             DockLiveUndockFact::OpeningReturned {
                 window,
                 binding,
-                runtime_registered,
+                runtime,
                 ..
             } if active.provisional == DockLiveUndockProvisionalLifecycle::Opening => {
                 if active.host_destination_selected() {
@@ -2679,11 +2679,14 @@ impl DockLiveUndockSession {
                         window: Some(window),
                         dependency: None,
                         binding: Some(binding),
+                        runtime: Some(runtime),
                         reason: DockLiveUndockRetirementReason::HostDestinationSelected,
                     });
-                } else if binding == DockLiveUndockOpeningBinding::ExactGated && runtime_registered
+                } else if binding == DockLiveUndockOpeningBinding::ExactGated
+                    && runtime.is_admitted()
                 {
-                    active.provisional = DockLiveUndockProvisionalLifecycle::Bound(window);
+                    active.provisional =
+                        DockLiveUndockProvisionalLifecycle::Bound { window, runtime };
                     effects.push(DockLiveUndockEffect::ProvisionalAdmitted {
                         identity,
                         window,
@@ -2709,6 +2712,7 @@ impl DockLiveUndockSession {
                         window: Some(window),
                         dependency: None,
                         binding: Some(binding),
+                        runtime: Some(runtime),
                         reason: retirement_reason,
                     });
                     if !active.may_commit_host_without_provisional() {
@@ -2749,7 +2753,7 @@ impl DockLiveUndockSession {
             DockLiveUndockFact::PresentationLeaseActivated { receipt, .. }
                 if matches!(
                     active.provisional,
-                    DockLiveUndockProvisionalLifecycle::Bound(_)
+                    DockLiveUndockProvisionalLifecycle::Bound { .. }
                 ) && active.payload == DockLiveUndockPayloadState::Unclaimed
                     && receipt.identity() == identity
                     && active.accepts_source(receipt.source())
@@ -2832,7 +2836,9 @@ impl DockLiveUndockSession {
                     }
                     DockLiveUndockRevealObservation::Failed { outcome, .. } => {
                         if active.may_commit_host_without_provisional() {
-                            if let Some(window) = active.bound_window() {
+                            if let DockLiveUndockProvisionalLifecycle::Bound { window, runtime } =
+                                active.provisional
+                            {
                                 active.provisional =
                                     DockLiveUndockProvisionalLifecycle::Unavailable(window);
                                 effects.push(DockLiveUndockEffect::ProvisionalRetirementRequired {
@@ -2840,6 +2846,7 @@ impl DockLiveUndockSession {
                                     window: Some(window),
                                     dependency: None,
                                     binding: None,
+                                    runtime: Some(runtime),
                                     reason: DockLiveUndockRetirementReason::PresentationUnavailable,
                                 });
                             }
@@ -3461,6 +3468,7 @@ impl DockLiveUndockSession {
                         window: None,
                         dependency: shutdown_dependency.claimed(),
                         binding: None,
+                        runtime: None,
                         reason,
                     });
                     DockLiveUndockState::Retiring(DockLiveUndockRetiring {
@@ -3470,12 +3478,13 @@ impl DockLiveUndockSession {
                         reason,
                     })
                 }
-                DockLiveUndockProvisionalLifecycle::Bound(window) => {
+                DockLiveUndockProvisionalLifecycle::Bound { window, runtime } => {
                     effects.push(DockLiveUndockEffect::ProvisionalRetirementRequired {
                         identity,
                         window: Some(window),
                         dependency: shutdown_dependency.claimed(),
                         binding: Some(DockLiveUndockOpeningBinding::ExactGated),
+                        runtime: Some(runtime),
                         reason,
                     });
                     DockLiveUndockState::Retiring(DockLiveUndockRetiring {
@@ -3893,7 +3902,10 @@ impl DockLiveUndockSession {
         let mut effects = DockLiveUndockEffects::default();
         match fact {
             DockLiveUndockFact::OpeningReturned {
-                window, binding, ..
+                window,
+                binding,
+                runtime,
+                ..
             } if retiring.window.is_none() => {
                 retiring.window = Some(window);
                 effects.push(DockLiveUndockEffect::ProvisionalRetirementRequired {
@@ -3901,6 +3913,7 @@ impl DockLiveUndockSession {
                     window: Some(window),
                     dependency: retiring.shutdown_dependency.claimed(),
                     binding: Some(binding),
+                    runtime: Some(runtime),
                     reason: retiring.reason,
                 });
                 (DockLiveUndockState::Retiring(retiring), effects)
@@ -4266,7 +4279,7 @@ impl DockLiveUndockSession {
         &mut self,
         key: DockLiveUndockOpeningKey,
         window: AnyWindowHandle,
-        runtime_registered: bool,
+        runtime: DockViewportProvisionalOpenAttemptCompletion,
     ) -> DockLiveUndockTransition<DockLiveUndockOpenReturnOutcome> {
         let Some((identity, binding)) = self.identity_and_binding(key, window.window_id()) else {
             return DockLiveUndockTransition::new(
@@ -4278,7 +4291,7 @@ impl DockLiveUndockSession {
             identity,
             window,
             binding,
-            runtime_registered,
+            runtime,
         });
         let outcome = effects
             .as_slice()

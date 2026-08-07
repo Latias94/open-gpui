@@ -124,16 +124,26 @@ pub(crate) enum DockViewportWindowRetirement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportProvisionalOpenAttemptCompletion {
     Admitted(DockProvisionalWindowOwnershipKey),
-    Retiring {
-        retirement: DockViewportWindowRetirementKey,
-        close_settled: bool,
-    },
+    RetirementRequired(DockProvisionalWindowOwnershipKey),
+    ShutdownOwned(DockProvisionalWindowOwnershipKey),
     Stale,
 }
 
 impl DockViewportProvisionalOpenAttemptCompletion {
     pub(crate) const fn is_admitted(self) -> bool {
         matches!(self, Self::Admitted(_))
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn admitted_for_test(
+        window_id: WindowId,
+        opening: DockLiveUndockOpeningKey,
+    ) -> Self {
+        Self::Admitted(DockProvisionalWindowOwnershipKey {
+            window_id,
+            ownership_generation: 1,
+            opening,
+        })
     }
 }
 
@@ -243,12 +253,23 @@ impl DockViewportWindowOwnership {
         &mut self,
         window: AnyWindowHandle,
         opening: DockLiveUndockOpeningKey,
+        shutdown_owned: bool,
     ) -> Option<DockViewportWindowOpenAttemptKey> {
-        self.begin_open_attempt_with_authority(
+        let attempt = self.begin_open_attempt_with_authority(
             window,
             DockViewportWindowAuthority::Surface(opening.lease()),
             DockViewportWindowRole::ProvisionalViewport(opening),
-        )
+        )?;
+        if shutdown_owned {
+            let record = self
+                .windows
+                .get_mut(&attempt.window_id)
+                .expect("a newly registered provisional opening must remain exact");
+            record.state = DockViewportWindowOwnershipState::Retired {
+                close_settled: true,
+            };
+        }
+        Some(attempt)
     }
 
     pub(crate) fn complete_provisional_open_attempt(
@@ -268,42 +289,127 @@ impl DockViewportWindowOwnership {
         {
             return DockViewportProvisionalOpenAttemptCompletion::Stale;
         }
-        let retirement = DockViewportWindowRetirementKey {
+        let ownership = DockProvisionalWindowOwnershipKey {
             window_id: key.window_id,
             ownership_generation: key.ownership_generation,
-            authority,
+            opening,
         };
         match record.state {
             DockViewportWindowOwnershipState::Opening if admit => {
                 record.state = DockViewportWindowOwnershipState::Provisional;
-                DockViewportProvisionalOpenAttemptCompletion::Admitted(
-                    DockProvisionalWindowOwnershipKey {
-                        window_id: key.window_id,
-                        ownership_generation: key.ownership_generation,
-                        opening,
-                    },
-                )
+                DockViewportProvisionalOpenAttemptCompletion::Admitted(ownership)
             }
             DockViewportWindowOwnershipState::Opening => {
                 record.state = DockViewportWindowOwnershipState::Retired {
                     close_settled: false,
                 };
-                DockViewportProvisionalOpenAttemptCompletion::Retiring {
-                    retirement,
-                    close_settled: false,
-                }
+                DockViewportProvisionalOpenAttemptCompletion::RetirementRequired(ownership)
             }
-            DockViewportWindowOwnershipState::Retired { close_settled } => {
-                DockViewportProvisionalOpenAttemptCompletion::Retiring {
-                    retirement,
-                    close_settled,
-                }
-            }
+            DockViewportWindowOwnershipState::Retired {
+                close_settled: false,
+            } => DockViewportProvisionalOpenAttemptCompletion::RetirementRequired(ownership),
+            DockViewportWindowOwnershipState::Retired {
+                close_settled: true,
+            } => DockViewportProvisionalOpenAttemptCompletion::ShutdownOwned(ownership),
             DockViewportWindowOwnershipState::Provisional
             | DockViewportWindowOwnershipState::Owned => {
                 DockViewportProvisionalOpenAttemptCompletion::Stale
             }
         }
+    }
+
+    pub(crate) fn retire_provisional_window(
+        &mut self,
+        key: DockProvisionalWindowOwnershipKey,
+    ) -> Option<DockViewportWindowRetirementKey> {
+        let record = self.windows.get_mut(&key.window_id)?;
+        let authority = DockViewportWindowAuthority::Surface(key.opening.lease());
+        if record.generation != key.ownership_generation
+            || record.authority != authority
+            || record.role != DockViewportWindowRole::ProvisionalViewport(key.opening)
+            || record.state != DockViewportWindowOwnershipState::Provisional
+        {
+            return None;
+        }
+        record.state = DockViewportWindowOwnershipState::Retired {
+            close_settled: false,
+        };
+        Some(DockViewportWindowRetirementKey {
+            window_id: key.window_id,
+            ownership_generation: key.ownership_generation,
+            authority,
+        })
+    }
+
+    pub(crate) fn provisional_window_retirement(
+        &self,
+        key: DockProvisionalWindowOwnershipKey,
+    ) -> Option<DockViewportWindowRetirementKey> {
+        let record = self.windows.get(&key.window_id)?;
+        let authority = DockViewportWindowAuthority::Surface(key.opening.lease());
+        if record.generation != key.ownership_generation
+            || record.authority != authority
+            || record.role != DockViewportWindowRole::ProvisionalViewport(key.opening)
+            || !matches!(
+                record.state,
+                DockViewportWindowOwnershipState::Retired {
+                    close_settled: false
+                }
+            )
+        {
+            return None;
+        }
+        Some(DockViewportWindowRetirementKey {
+            window_id: key.window_id,
+            ownership_generation: key.ownership_generation,
+            authority,
+        })
+    }
+
+    pub(crate) fn provisional_window_is_shutdown_owned(
+        &self,
+        key: DockProvisionalWindowOwnershipKey,
+    ) -> bool {
+        let authority = DockViewportWindowAuthority::Surface(key.opening.lease());
+        self.windows.get(&key.window_id).is_some_and(|record| {
+            record.generation == key.ownership_generation
+                && record.authority == authority
+                && record.role == DockViewportWindowRole::ProvisionalViewport(key.opening)
+                && matches!(
+                    record.state,
+                    DockViewportWindowOwnershipState::Retired {
+                        close_settled: true
+                    }
+                )
+        })
+    }
+
+    pub(crate) fn reclaim_shutdown_owned_provisional_window(
+        &mut self,
+        key: DockProvisionalWindowOwnershipKey,
+    ) -> Option<DockViewportWindowRetirementKey> {
+        let authority = DockViewportWindowAuthority::Surface(key.opening.lease());
+        let record = self.windows.get_mut(&key.window_id)?;
+        if record.generation != key.ownership_generation
+            || record.authority != authority
+            || record.role != DockViewportWindowRole::ProvisionalViewport(key.opening)
+            || !matches!(
+                record.state,
+                DockViewportWindowOwnershipState::Retired {
+                    close_settled: true
+                }
+            )
+        {
+            return None;
+        }
+        record.state = DockViewportWindowOwnershipState::Retired {
+            close_settled: false,
+        };
+        Some(DockViewportWindowRetirementKey {
+            window_id: key.window_id,
+            ownership_generation: key.ownership_generation,
+            authority,
+        })
     }
 
     pub(crate) fn prepare_provisional_window_promotion(
@@ -359,35 +465,6 @@ impl DockViewportWindowOwnership {
         record.state = DockViewportWindowOwnershipState::Owned;
     }
 
-    pub(crate) fn adopt_frozen_provisional_window(
-        &mut self,
-        window: AnyWindowHandle,
-        opening: DockLiveUndockOpeningKey,
-    ) -> Option<DockProvisionalWindowOwnershipKey> {
-        let window_id = window.window_id();
-        if self.windows.contains_key(&window_id) {
-            return None;
-        }
-        let ownership_generation = self.next_generation();
-        self.windows.insert(
-            window_id,
-            DockViewportWindowOwnershipRecord {
-                generation: ownership_generation,
-                window,
-                authority: DockViewportWindowAuthority::Surface(opening.lease()),
-                role: DockViewportWindowRole::ProvisionalViewport(opening),
-                state: DockViewportWindowOwnershipState::Retired {
-                    close_settled: true,
-                },
-            },
-        );
-        Some(DockProvisionalWindowOwnershipKey {
-            window_id,
-            ownership_generation,
-            opening,
-        })
-    }
-
     pub(crate) fn promote_primary_open_attempt(
         &mut self,
         key: DockViewportWindowOpenAttemptKey,
@@ -425,6 +502,30 @@ impl DockViewportWindowOwnership {
             record.generation == key.ownership_generation
                 && record.authority == key.authority
                 && record.state == DockViewportWindowOwnershipState::Opening
+        }) {
+            return false;
+        }
+        self.windows.remove(&key.window_id);
+        self.render_passthrough_windows.remove(&key.window_id);
+        true
+    }
+
+    pub(crate) fn abort_provisional_open_attempt(
+        &mut self,
+        key: DockViewportWindowOpenAttemptKey,
+        opening: DockLiveUndockOpeningKey,
+    ) -> bool {
+        let authority = DockViewportWindowAuthority::Surface(opening.lease());
+        if !self.windows.get(&key.window_id).is_some_and(|record| {
+            record.generation == key.ownership_generation
+                && key.authority == authority
+                && record.authority == authority
+                && record.role == DockViewportWindowRole::ProvisionalViewport(opening)
+                && matches!(
+                    record.state,
+                    DockViewportWindowOwnershipState::Opening
+                        | DockViewportWindowOwnershipState::Retired { .. }
+                )
         }) {
             return false;
         }
@@ -911,7 +1012,7 @@ mod tests {
         let window = test_window(WindowId::from(511));
 
         let attempt = ownership
-            .begin_provisional_open_attempt(window, opening)
+            .begin_provisional_open_attempt(window, opening, false)
             .expect("builder-time provisional opening should reserve one runtime generation");
         assert_eq!(
             ownership.windows_for_surface(lease),
@@ -938,7 +1039,7 @@ mod tests {
         let opening = DockLiveUndockOpeningKey::for_test(lease, 1);
         let window = test_window(WindowId::from(521));
         let attempt = ownership
-            .begin_provisional_open_attempt(window, opening)
+            .begin_provisional_open_attempt(window, opening, false)
             .expect("builder-time provisional opening should reserve one runtime generation");
 
         assert_eq!(
@@ -948,12 +1049,30 @@ mod tests {
         let completion = ownership.complete_provisional_open_attempt(attempt, opening, true);
         assert!(matches!(
             completion,
-            DockViewportProvisionalOpenAttemptCompletion::Retiring {
-                retirement,
-                close_settled: true,
-            } if retirement.window_id() == window.window_id()
+            DockViewportProvisionalOpenAttemptCompletion::ShutdownOwned(ownership_key)
+                if ownership_key.window_id() == window.window_id()
         ));
         assert!(ownership.is_retired(window.window_id()));
+    }
+
+    #[test]
+    fn provisional_attempt_started_after_freeze_is_shutdown_owned_and_abortable() {
+        let mut ownership = DockViewportWindowOwnership::default();
+        let lease = surface_lease(54, WindowId::from(540));
+        let opening = DockLiveUndockOpeningKey::for_test(lease, 1);
+        let window = test_window(WindowId::from(541));
+        let attempt = ownership
+            .begin_provisional_open_attempt(window, opening, true)
+            .expect("a late builder must still reserve one exact runtime generation");
+
+        let completion = ownership.complete_provisional_open_attempt(attempt, opening, false);
+        assert!(matches!(
+            completion,
+            DockViewportProvisionalOpenAttemptCompletion::ShutdownOwned(ownership_key)
+                if ownership_key.window_id() == window.window_id()
+        ));
+        assert!(ownership.abort_provisional_open_attempt(attempt, opening));
+        assert!(ownership.windows_for_surface(lease).is_empty());
     }
 
     #[test]
@@ -963,17 +1082,18 @@ mod tests {
         let opening = DockLiveUndockOpeningKey::for_test(lease, 1);
         let window = test_window(WindowId::from(531));
         let attempt = ownership
-            .begin_provisional_open_attempt(window, opening)
+            .begin_provisional_open_attempt(window, opening, false)
             .expect("builder-time provisional opening should reserve one runtime generation");
 
         let completion = ownership.complete_provisional_open_attempt(attempt, opening, false);
-        let DockViewportProvisionalOpenAttemptCompletion::Retiring {
-            retirement,
-            close_settled: false,
-        } = completion
+        let DockViewportProvisionalOpenAttemptCompletion::RetirementRequired(ownership_key) =
+            completion
         else {
             panic!("rejected provisional opening must enter exact retirement");
         };
+        let retirement = ownership
+            .provisional_window_retirement(ownership_key)
+            .expect("rejected provisional opening must retain its exact retirement ticket");
         assert!(ownership.settle_retirement(retirement));
         assert!(!ownership.settle_retirement(retirement));
     }
