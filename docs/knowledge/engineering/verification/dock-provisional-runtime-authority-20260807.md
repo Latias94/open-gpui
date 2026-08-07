@@ -3,7 +3,7 @@ type: Verification Evidence
 title: Dock provisional window runtime authority and shutdown retirement
 status: complete
 scope: U28-U29
-timestamp: 2026-08-06
+timestamp: 2026-08-07
 git_branch: refactor/ui-framework-authority-convergence
 git_commit: 2e611636
 verified_by:
