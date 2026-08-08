@@ -46,6 +46,32 @@ pub struct PreparedRelease {
     ticket: Ticket,
 }
 
+impl PreparedRelease {
+    /// Returns the exact retained-visual lease named by this preparation.
+    pub const fn ticket(&self) -> Ticket {
+        self.ticket
+    }
+
+    /// Returns the exact retained-visual lease named by this preparation.
+    pub const fn ticket_identity(&self) -> TicketIdentity {
+        self.ticket.identity()
+    }
+}
+
+/// Durable evidence that one exact retained-visual lease was released.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReleaseReceipt {
+    ticket: TicketIdentity,
+}
+
+impl ReleaseReceipt {
+    /// Returns the exact retained-visual lease settled by this receipt.
+    pub const fn ticket_identity(self) -> TicketIdentity {
+        self.ticket
+    }
+}
+
 /// Stable identity of one exact retained-visual lease.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -458,13 +484,28 @@ impl Registry {
         self.active(&prepared.ticket).is_ok()
     }
 
-    fn commit_prepared_release(&mut self, prepared: PreparedRelease) {
+    fn commit_prepared_release(&mut self, prepared: PreparedRelease) -> ReleaseReceipt {
+        let ticket = prepared.ticket.identity();
         assert!(
             self.can_commit_prepared_release(&prepared),
             "prepared retained-visual release must remain exact until commit"
         );
         self.release(&prepared.ticket)
             .expect("validated retained-visual release must commit");
+        ReleaseReceipt { ticket }
+    }
+
+    fn observe_release(&self, ticket: TicketIdentity) -> Option<ReleaseReceipt> {
+        if ticket.lease_generation == 0 || ticket.lease_generation > self.next_generation {
+            return None;
+        }
+        if self
+            .active_by_generation
+            .contains_key(&ticket.lease_generation)
+        {
+            return None;
+        }
+        Some(ReleaseReceipt { ticket })
     }
 
     fn release(&mut self, ticket: &Ticket) -> Result<(), Invalidation> {
@@ -624,8 +665,17 @@ pub fn can_commit_prepared_release(window: &mut Window, prepared: &PreparedRelea
 
 /// Commits one previously validated retained-visual release.
 #[doc(hidden)]
-pub fn commit_prepared_release(window: &mut Window, prepared: PreparedRelease) {
-    window.commit_prepared_retained_visual_release(prepared);
+pub fn commit_prepared_release(window: &mut Window, prepared: PreparedRelease) -> ReleaseReceipt {
+    window.commit_prepared_retained_visual_release(prepared)
+}
+
+/// Observes durable release of one exact retained-visual lease.
+#[doc(hidden)]
+pub fn observe_release(
+    window: &mut Window,
+    ticket: TicketIdentity,
+) -> Result<Option<ReleaseReceipt>, Invalidation> {
+    window.observe_retained_visual_release(ticket)
 }
 
 impl Window {
@@ -656,13 +706,30 @@ impl Window {
                 .can_commit_prepared_release(prepared)
     }
 
-    fn commit_prepared_retained_visual_release(&mut self, prepared: PreparedRelease) {
+    fn commit_prepared_retained_visual_release(
+        &mut self,
+        prepared: PreparedRelease,
+    ) -> ReleaseReceipt {
         assert!(
             self.can_commit_prepared_retained_visual_release(&prepared),
             "prepared retained-visual release must remain exact in its source window"
         );
         self.retained_visual_registry
-            .commit_prepared_release(prepared);
+            .commit_prepared_release(prepared)
+    }
+
+    fn observe_retained_visual_release(
+        &self,
+        ticket: TicketIdentity,
+    ) -> Result<Option<ReleaseReceipt>, Invalidation> {
+        let actual_window = self.handle.window_id();
+        if ticket.source_window != actual_window {
+            return Err(Invalidation::WrongWindow {
+                expected: ticket.source_window,
+                actual: actual_window,
+            });
+        }
+        Ok(self.retained_visual_registry.observe_release(ticket))
     }
 
     fn retained_visual_prepaint_index(&self) -> VisualPrepaintIndex {
@@ -1158,6 +1225,7 @@ mod tests {
         let prepared = cx.update(|window, _| {
             prepare_release(window, &first_ticket).expect("the exact active lease should prepare")
         });
+        let prepared_identity = prepared.ticket_identity();
 
         assert_eq!(
             cx.update(|window, _| lease_committed(window, &source_id)),
@@ -1168,8 +1236,19 @@ mod tests {
             cx.update(|window, _| can_commit_prepared_release(window, &prepared)),
             "the prepared release must remain exact before commit"
         );
+        assert_eq!(
+            cx.update(|window, _| observe_release(window, prepared_identity)),
+            Ok(None),
+            "an active prepared lease must not be reported as released"
+        );
 
-        cx.update(|window, _| commit_prepared_release(window, prepared));
+        let receipt = cx.update(|window, _| commit_prepared_release(window, prepared));
+        assert_eq!(receipt.ticket_identity(), prepared_identity);
+        assert_eq!(
+            cx.update(|window, _| observe_release(window, prepared_identity)),
+            Ok(Some(receipt)),
+            "the exact release must be replay-observable after the linear token is consumed"
+        );
         assert_eq!(
             cx.update(|window, _| release(window, &first_ticket)),
             Err(Invalidation::StaleGeneration),
@@ -1183,6 +1262,11 @@ mod tests {
         assert!(
             second_ticket.lease_generation() > first_generation,
             "a new lease must receive a later generation"
+        );
+        assert_eq!(
+            cx.update(|window, _| observe_release(window, prepared_identity)),
+            Ok(Some(receipt)),
+            "a later lease generation must not invalidate exact release evidence"
         );
         cx.update(|window, _| release(window, &second_ticket).unwrap());
     }

@@ -3,6 +3,24 @@ use crate::{
     DockItemId, DockNode, DockNodeId, DockOp, DockSpaceId,
     workspace_drop_transaction::DockWorkspaceDropPayload,
 };
+use std::collections::HashSet;
+
+/// Why a locked payload could not be projected forward from its current graph location.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DockLockedPayloadForwardProjectionError {
+    /// At least one item from the locked payload is no longer reachable in the graph.
+    PayloadMissing,
+    /// At least one item from the locked payload has more than one reachable graph location.
+    PayloadAmbiguous,
+    /// Rehoming the uniquely located payload would violate a graph invariant.
+    GraphMutation(DockGraphMutationError),
+}
+
+impl From<DockGraphMutationError> for DockLockedPayloadForwardProjectionError {
+    fn from(error: DockGraphMutationError) -> Self {
+        Self::GraphMutation(error)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DockLockedPayloadIdentity {
@@ -214,6 +232,103 @@ impl DockLockedPayloadIdentity {
             },
         }
     }
+
+    /// Projects this payload from its unique current locations into one empty target space.
+    ///
+    /// Unlike the exact locked operation, this projection intentionally ignores the captured
+    /// source node identity. It is reserved for forward-only settlement after another synchronous
+    /// graph mutation moved the payload while the original promotion was in flight.
+    pub(crate) fn project_forward_rebased_to_empty_space(
+        &self,
+        graph: &DockGraph,
+        target_space: &DockSpaceId,
+    ) -> Result<(DockGraph, bool), DockLockedPayloadForwardProjectionError> {
+        let items = self.ordered_items();
+        if items.is_empty() {
+            return Err(DockLockedPayloadForwardProjectionError::PayloadMissing);
+        }
+
+        let mut distinct_items = HashSet::with_capacity(items.len());
+        for item in items {
+            if !distinct_items.insert(item) {
+                return Err(DockLockedPayloadForwardProjectionError::PayloadAmbiguous);
+            }
+            unique_item_location(graph, item)?;
+        }
+
+        if graph.root(target_space).is_some() || !graph.floating_containers(target_space).is_empty()
+        {
+            return Err(DockGraphMutationError::TargetSpaceNotEmpty {
+                space: target_space.clone(),
+            }
+            .into());
+        }
+
+        let mut projected = graph.clone();
+        let mut target_tabs = None;
+        let mut changed = false;
+        for item in items {
+            let (source_space, _) = unique_item_location(&projected, item)?;
+            let target = match target_tabs {
+                Some(tabs) => {
+                    let Some(DockNode::Tabs { items, .. }) = projected.node(tabs) else {
+                        return Err(DockGraphMutationError::NodeIsNotTabs { node: tabs }.into());
+                    };
+                    DockGraphDropTarget::tab_bar(tabs, items.len())
+                }
+                None => DockGraphDropTarget::empty_space(),
+            };
+            changed |= projected.apply_op_checked(&DockOp::MoveItem {
+                source_space,
+                item: item.clone(),
+                target_space: target_space.clone(),
+                target,
+            })?;
+
+            if target_tabs.is_none() {
+                let (projected_space, tabs) = unique_item_location(&projected, item)?;
+                if projected_space != *target_space {
+                    return Err(DockLockedPayloadForwardProjectionError::PayloadMissing);
+                }
+                target_tabs = Some(tabs);
+            }
+        }
+
+        Ok((projected, changed))
+    }
+
+    fn ordered_items(&self) -> &[DockItemId] {
+        match self {
+            Self::Item { item, .. } => std::slice::from_ref(item),
+            Self::Tabs { ordered_items, .. } | Self::Floating { ordered_items, .. } => {
+                ordered_items
+            }
+        }
+    }
+}
+
+fn unique_item_location(
+    graph: &DockGraph,
+    item: &DockItemId,
+) -> Result<(DockSpaceId, DockNodeId), DockLockedPayloadForwardProjectionError> {
+    let mut location = None;
+    for space in graph.spaces() {
+        for tabs in graph.tabs_in_space(&space) {
+            let Some(DockNode::Tabs { items, .. }) = graph.node(tabs) else {
+                continue;
+            };
+            for candidate in items {
+                if candidate != item {
+                    continue;
+                }
+                if location.is_some() {
+                    return Err(DockLockedPayloadForwardProjectionError::PayloadAmbiguous);
+                }
+                location = Some((space.clone(), tabs));
+            }
+        }
+    }
+    location.ok_or(DockLockedPayloadForwardProjectionError::PayloadMissing)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,6 +607,51 @@ mod tests {
                 tabs: floating,
             })
         );
+    }
+
+    #[test]
+    fn forward_projection_reports_a_missing_payload_without_guessing() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(space(), source_tabs);
+        let identity = DockLockedPayloadIdentity::Item {
+            source_space: space(),
+            source_tabs,
+            item: item("a"),
+        };
+
+        assert!(matches!(
+            identity.project_forward_rebased_to_empty_space(&graph, &DockSpaceId::from("detached")),
+            Err(DockLockedPayloadForwardProjectionError::PayloadMissing)
+        ));
+    }
+
+    #[test]
+    fn forward_projection_reports_ambiguous_payload_locations_without_guessing() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let duplicate_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(space(), source_tabs);
+        graph.set_root(DockSpaceId::from("duplicate"), duplicate_tabs);
+        let identity = DockLockedPayloadIdentity::Item {
+            source_space: space(),
+            source_tabs,
+            item: item("a"),
+        };
+
+        assert!(matches!(
+            identity.project_forward_rebased_to_empty_space(&graph, &DockSpaceId::from("detached")),
+            Err(DockLockedPayloadForwardProjectionError::PayloadAmbiguous)
+        ));
     }
 
     #[test]

@@ -30,7 +30,7 @@ impl DockViewportRegistrationConflict {
 /// Route-facts generations describe coordinate freshness and may advance many times while a
 /// registration stays alive. This separate generation prevents delayed runtime effects from
 /// finalizing against a replacement that happens to reuse the same space or window id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DockViewportRegistrationKey {
     space: DockSpaceId,
     window_id: WindowId,
@@ -38,7 +38,7 @@ pub(crate) struct DockViewportRegistrationKey {
     lineage: DockViewportRuntimeLineage,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DockViewportPreparedVacantRegistration {
     registration: DockViewportRegistrationKey,
     window: AnyWindowHandle,

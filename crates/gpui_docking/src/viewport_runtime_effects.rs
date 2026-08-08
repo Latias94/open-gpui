@@ -5,9 +5,17 @@ use crate::{
         DockSurfaceChangeCategory, DockSurfaceTransactionId,
         window_session::DockSurfaceWindowSessionLease,
     },
+    viewport_runtime_handle::DockViewportRuntimeIdentity,
+    workspace_drop_transaction::DockWorkspaceLockedPayloadDropCommitId,
 };
 use open_gpui::{AnyWindowHandle, App, WindowId};
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    any::Any,
+    cell::RefCell,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
+    rc::Rc,
+    time::Duration,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DockViewportWindowCloseEffect {
@@ -135,7 +143,7 @@ impl DockViewportRuntimeCommitAuthority {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct DockViewportRuntimeUpdate {
     changed: bool,
     windows: Vec<AnyWindowHandle>,
@@ -416,9 +424,19 @@ fn settle_and_close_windows_quietly(
     cx: &mut App,
 ) {
     for effect in effects {
-        let should_close = runtime
-            .borrow_mut()
-            .settle_window_retirement(effect.retirement());
+        let should_close = match runtime.try_borrow_mut() {
+            Ok(mut runtime) => runtime.settle_window_retirement(effect.retirement()),
+            Err(error) => {
+                // Native closure is the fail-safe terminal action. Keeping a stale logical
+                // retirement is preferable to leaking the HWND or panicking during reentry; the
+                // runtime is discarded by shutdown or reconciled by the native terminal event.
+                log::error!(
+                    "dock viewport retirement was reentered while the runtime was borrowed; \
+                     closing the native window fail-safe: {error}"
+                );
+                true
+            }
+        };
         if should_close {
             close_window_quietly(effect.window(), cx);
         }
@@ -434,7 +452,227 @@ fn close_windows_after_current_effect(
         return;
     }
     let runtime = runtime.clone();
-    cx.defer(move |cx| settle_and_close_windows_quietly(&runtime, effects, cx));
+    cx.defer_shutdown_critical_before_window_registry_clear_or_run_now(move |cx| {
+        settle_and_close_windows_quietly(&runtime, effects, cx)
+    });
+}
+
+/// Exact proof that one committed host drop transferred its window effects to App-owned work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockViewportCommittedWindowEffectsReceipt {
+    runtime: DockViewportRuntimeIdentity,
+    commit_id: DockWorkspaceLockedPayloadDropCommitId,
+}
+
+impl DockViewportCommittedWindowEffectsReceipt {
+    pub(crate) const fn runtime(self) -> DockViewportRuntimeIdentity {
+        self.runtime
+    }
+
+    pub(crate) const fn commit_id(self) -> DockWorkspaceLockedPayloadDropCommitId {
+        self.commit_id
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockViewportCommittedWindowEffectsAcceptanceOutcome {
+    Accepted(DockViewportCommittedWindowEffectsReceipt),
+    InProgress,
+    Stale,
+}
+
+/// Replay-safe owner for the window effects produced by one committed host drop.
+///
+/// The shared state is intentional: the viewport runtime tombstone and every upper-layer journal
+/// clone observe the same exact acceptance. Reentry while dispatch is in progress sees `None` and
+/// retries after the current App turn instead of applying the same close effects recursively.
+#[derive(Clone, Debug)]
+pub(crate) struct DockViewportCommittedWindowEffects {
+    inner: Rc<RefCell<DockViewportCommittedWindowEffectsState>>,
+}
+
+#[derive(Debug)]
+struct DockViewportCommittedWindowEffectsState {
+    runtime: DockViewportRuntimeIdentity,
+    commit_id: DockWorkspaceLockedPayloadDropCommitId,
+    phase: DockViewportCommittedWindowEffectsPhase,
+}
+
+#[derive(Debug)]
+enum DockViewportCommittedWindowEffectsPhase {
+    Pending(DockViewportWindowEffects),
+    Dispatching,
+    Accepted(DockViewportCommittedWindowEffectsReceipt),
+}
+
+pub(crate) enum DockViewportCommittedWindowEffectsPreparation {
+    Accepted(DockViewportCommittedWindowEffectsReceipt),
+    InProgress,
+    Transfer(DockViewportCommittedWindowEffectsTransfer),
+    Stale,
+}
+
+pub(crate) struct DockViewportCommittedWindowEffectsTransfer {
+    effects: DockViewportCommittedWindowEffects,
+    pending: Option<DockViewportWindowEffects>,
+}
+
+impl DockViewportCommittedWindowEffectsTransfer {
+    pub(crate) fn accept(
+        mut self,
+        runtime: &Rc<RefCell<DockViewportRuntime>>,
+        cx: &mut App,
+    ) -> DockViewportCommittedWindowEffectsReceipt {
+        let pending = self
+            .pending
+            .as_ref()
+            .expect("a window-effects transfer must retain its pending batch");
+        if pending.has_effects() {
+            let runtime = runtime.clone();
+            let effects = pending.clone();
+            cx.defer_after_or_shutdown_critical_before_window_registry_clear(
+                Duration::ZERO,
+                move |cx| apply_committed_viewport_window_effects_job(&runtime, effects, cx),
+            );
+        }
+        let receipt = self.effects.finish_transfer();
+        self.pending = None;
+        receipt
+    }
+}
+
+impl Drop for DockViewportCommittedWindowEffectsTransfer {
+    fn drop(&mut self) {
+        if let Some(effects) = self.pending.take() {
+            self.effects.restore_interrupted_transfer(effects);
+        }
+    }
+}
+
+impl DockViewportCommittedWindowEffects {
+    pub(crate) fn new(
+        runtime: DockViewportRuntimeIdentity,
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+        effects: DockViewportWindowEffects,
+    ) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(DockViewportCommittedWindowEffectsState {
+                runtime,
+                commit_id,
+                phase: DockViewportCommittedWindowEffectsPhase::Pending(effects),
+            })),
+        }
+    }
+
+    pub(crate) fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    pub(crate) fn receipt(&self) -> Option<DockViewportCommittedWindowEffectsReceipt> {
+        match &self.inner.borrow().phase {
+            DockViewportCommittedWindowEffectsPhase::Accepted(receipt) => Some(*receipt),
+            DockViewportCommittedWindowEffectsPhase::Pending(_)
+            | DockViewportCommittedWindowEffectsPhase::Dispatching => None,
+        }
+    }
+
+    pub(crate) fn prepare_acceptance(
+        &self,
+        runtime: DockViewportRuntimeIdentity,
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+    ) -> DockViewportCommittedWindowEffectsPreparation {
+        let pending = {
+            let mut state = self.inner.borrow_mut();
+            if state.runtime != runtime || state.commit_id != commit_id {
+                return DockViewportCommittedWindowEffectsPreparation::Stale;
+            }
+            let phase = std::mem::replace(
+                &mut state.phase,
+                DockViewportCommittedWindowEffectsPhase::Dispatching,
+            );
+            match phase {
+                DockViewportCommittedWindowEffectsPhase::Accepted(receipt) => {
+                    state.phase = DockViewportCommittedWindowEffectsPhase::Accepted(receipt);
+                    return DockViewportCommittedWindowEffectsPreparation::Accepted(receipt);
+                }
+                DockViewportCommittedWindowEffectsPhase::Dispatching => {
+                    state.phase = DockViewportCommittedWindowEffectsPhase::Dispatching;
+                    return DockViewportCommittedWindowEffectsPreparation::InProgress;
+                }
+                DockViewportCommittedWindowEffectsPhase::Pending(effects) => effects,
+            }
+        };
+        DockViewportCommittedWindowEffectsPreparation::Transfer(
+            DockViewportCommittedWindowEffectsTransfer {
+                effects: self.clone(),
+                pending: Some(pending),
+            },
+        )
+    }
+
+    fn finish_transfer(&self) -> DockViewportCommittedWindowEffectsReceipt {
+        let mut state = self.inner.borrow_mut();
+        assert!(
+            matches!(
+                state.phase,
+                DockViewportCommittedWindowEffectsPhase::Dispatching
+            ),
+            "committed window effects must finish the exact in-flight transfer"
+        );
+        let receipt = DockViewportCommittedWindowEffectsReceipt {
+            runtime: state.runtime,
+            commit_id: state.commit_id,
+        };
+        state.phase = DockViewportCommittedWindowEffectsPhase::Accepted(receipt);
+        receipt
+    }
+
+    fn restore_interrupted_transfer(&self, effects: DockViewportWindowEffects) {
+        let mut state = self.inner.borrow_mut();
+        if matches!(
+            state.phase,
+            DockViewportCommittedWindowEffectsPhase::Dispatching
+        ) {
+            state.phase = DockViewportCommittedWindowEffectsPhase::Pending(effects);
+        }
+    }
+}
+
+fn record_window_effect_panic(
+    first_panic: &mut Option<Box<dyn Any + Send>>,
+    callback: impl FnOnce(),
+) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(callback))
+        && first_panic.is_none()
+    {
+        *first_panic = Some(payload);
+    }
+}
+
+fn apply_committed_viewport_window_effects_job(
+    runtime: &Rc<RefCell<DockViewportRuntime>>,
+    effects: DockViewportWindowEffects,
+    cx: &mut App,
+) {
+    let mut first_panic = None;
+    for effect in effects.close_now().iter().copied() {
+        record_window_effect_panic(&mut first_panic, || {
+            close_windows_after_current_effect(runtime, vec![effect], cx)
+        });
+    }
+    for window in unique_windows(effects.refresh().to_vec()) {
+        record_window_effect_panic(&mut first_panic, || {
+            let _ = window.update(cx, |_, window, _| window.refresh());
+        });
+    }
+    for effect in effects.close_after_current_effect().iter().copied() {
+        record_window_effect_panic(&mut first_panic, || {
+            close_windows_after_current_effect(runtime, vec![effect], cx)
+        });
+    }
+    if let Some(payload) = first_panic {
+        resume_unwind(payload);
+    }
 }
 
 pub(crate) fn apply_viewport_window_effects(
@@ -468,11 +706,80 @@ pub(crate) fn refresh_viewport_window_effects_excluding<C: open_gpui::AppContext
 
 #[cfg(test)]
 mod tests {
-    use super::{DockViewportRuntimeUpdate, unique_windows, unique_windows_excluding};
-    use crate::{
-        DockViewportRuntimeWorkContext, surface::DockSurfaceChangeCategory,
-        viewport_test_support::handle,
+    use super::{
+        DockViewportCommittedWindowEffects, DockViewportCommittedWindowEffectsPreparation,
+        DockViewportRuntimeUpdate, DockViewportWindowEffects, unique_windows,
+        unique_windows_excluding,
     };
+    use crate::{
+        DockViewportRuntimeIdentity, DockViewportRuntimeWorkContext,
+        surface::DockSurfaceChangeCategory, viewport_test_support::handle,
+        workspace_drop_transaction::DockWorkspaceLockedPayloadDropCommitId,
+    };
+
+    #[test]
+    fn committed_window_effects_replay_exact_acceptance_after_interrupted_transfer() {
+        let runtime = DockViewportRuntimeIdentity::for_test(3);
+        let commit_id = DockWorkspaceLockedPayloadDropCommitId::new(7);
+        let effects = DockViewportCommittedWindowEffects::new(
+            runtime,
+            commit_id,
+            DockViewportWindowEffects::default(),
+        );
+
+        let interrupted = match effects.prepare_acceptance(runtime, commit_id) {
+            DockViewportCommittedWindowEffectsPreparation::Transfer(transfer) => transfer,
+            _ => panic!("the first exact acceptance must prepare one transfer"),
+        };
+        drop(interrupted);
+        assert_eq!(effects.receipt(), None);
+
+        let mut replay = match effects.prepare_acceptance(runtime, commit_id) {
+            DockViewportCommittedWindowEffectsPreparation::Transfer(transfer) => transfer,
+            _ => panic!("an interrupted transfer must restore the pending batch"),
+        };
+        let receipt = replay.effects.finish_transfer();
+        replay.pending = None;
+        drop(replay);
+        assert_eq!(receipt.runtime(), runtime);
+        assert_eq!(receipt.commit_id(), commit_id);
+
+        assert!(matches!(
+            effects.prepare_acceptance(runtime, commit_id),
+            DockViewportCommittedWindowEffectsPreparation::Accepted(replayed)
+                if replayed == receipt
+        ));
+    }
+
+    #[test]
+    fn committed_window_effects_reentry_observes_dispatch_in_flight() {
+        let runtime = DockViewportRuntimeIdentity::for_test(5);
+        let commit_id = DockWorkspaceLockedPayloadDropCommitId::new(11);
+        let effects = DockViewportCommittedWindowEffects::new(
+            runtime,
+            commit_id,
+            DockViewportWindowEffects::default(),
+        );
+
+        let transfer = match effects.prepare_acceptance(runtime, commit_id) {
+            DockViewportCommittedWindowEffectsPreparation::Transfer(transfer) => transfer,
+            _ => panic!("the first exact acceptance must prepare one transfer"),
+        };
+        assert!(matches!(
+            effects.prepare_acceptance(runtime, commit_id),
+            DockViewportCommittedWindowEffectsPreparation::InProgress
+        ));
+        assert!(matches!(
+            effects.prepare_acceptance(DockViewportRuntimeIdentity::for_test(6), commit_id),
+            DockViewportCommittedWindowEffectsPreparation::Stale
+        ));
+
+        drop(transfer);
+        assert!(matches!(
+            effects.prepare_acceptance(runtime, commit_id),
+            DockViewportCommittedWindowEffectsPreparation::Transfer(_)
+        ));
+    }
 
     #[test]
     fn unique_windows_preserves_first_occurrence_order() {

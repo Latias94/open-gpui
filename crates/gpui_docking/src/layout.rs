@@ -256,9 +256,7 @@ impl DockGraph {
         }
 
         let mut graph = importer.graph;
-        for space in graph.spaces() {
-            graph.simplify_space(&space);
-        }
+        graph.canonicalize();
         Ok(graph)
     }
 }

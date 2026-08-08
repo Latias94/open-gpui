@@ -31,7 +31,7 @@ fn float_item_in_window_creates_floating_container() {
 }
 
 #[test]
-fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
+fn checked_floating_runtime_ops_report_errors_and_preserve_staged_nodes() {
     let (mut graph, _root) = root_tabs_graph(&["a"]);
     let missing = DockNodeId::null();
 
@@ -134,10 +134,13 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
     );
 
     assert_eq!(graph.collect_items_in_space(&space()), vec![item("a")]);
-    assert_eq!(
-        graph.collect_items_in_subtree(orphan_tabs),
-        vec![item("orphan")]
+    assert!(
+        graph.node(orphan_tabs).is_some(),
+        "an unrelated checked mutation must preserve a node staged for a later set_root call"
     );
+    graph
+        .validate()
+        .expect("reachable validation should ignore the staged node");
 }
 
 #[test]

@@ -417,9 +417,9 @@ impl DockControllerBuilder {
         DockController::new(workspace)
     }
 
-    /// Validates reachable graph state and builds the controller.
+    /// Validates complete graph state and builds the controller.
     pub fn try_build(self) -> Result<DockController, DockGraphValidationError> {
-        self.graph.validate()?;
+        self.graph.validate_canonical()?;
         Ok(self.build())
     }
 }

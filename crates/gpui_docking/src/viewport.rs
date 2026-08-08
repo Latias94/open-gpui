@@ -52,6 +52,12 @@ impl DockViewportAdapter {
         &mut self,
         prepared: DockViewportPreparedVacantRegistration,
     ) -> DockViewportRegistrationKey {
+        if self
+            .registry
+            .is_current_registration(prepared.registration())
+        {
+            return prepared.registration().clone();
+        }
         self.registry.commit_vacant_registration(prepared)
     }
 

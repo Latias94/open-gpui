@@ -6,6 +6,7 @@ pub(crate) struct DockViewportLockedDropRoute {
 }
 
 #[must_use = "a prepared live-undock host drop must complete commit preflight"]
+#[derive(Clone)]
 pub(crate) struct DockViewportPreparedLiveUndockHostDrop {
     drag_session: DockRuntimeDragSession,
     locked: crate::viewport_runtime::DockViewportLockedWorkspaceDrop,
@@ -13,14 +14,30 @@ pub(crate) struct DockViewportPreparedLiveUndockHostDrop {
 }
 
 #[must_use = "a preflighted live-undock host drop must commit exactly once"]
+#[derive(Clone)]
 pub(crate) struct DockViewportPreflightedLiveUndockHostDrop {
     prepared: crate::viewport_runtime::DockViewportPreflightedLockedPayloadDrop,
 }
 
 #[must_use = "a committed live-undock host drop must settle its returned window effects"]
+#[derive(Clone)]
 pub(crate) struct DockViewportCommittedLiveUndockHostDrop {
+    workspace: crate::workspace_drop_transaction::DockWorkspaceLockedPayloadDropCommitReceipt,
     outcome: DockViewportDropRouteOutcome,
-    window_effects: DockViewportWindowEffects,
+    runtime_update: DockViewportRuntimeUpdate,
+    window_effects: DockViewportCommittedWindowEffects,
+    controller: Entity<DockController>,
+    graph_changed: bool,
+}
+
+impl DockViewportPreflightedLiveUndockHostDrop {
+    pub(crate) fn committed_workspace(
+        &self,
+        cx: &App,
+    ) -> Option<crate::workspace_drop_transaction::DockWorkspaceLockedPayloadDropCommitReceipt>
+    {
+        self.prepared.committed_workspace(cx)
+    }
 }
 
 impl DockViewportCommittedLiveUndockHostDrop {
@@ -28,8 +45,28 @@ impl DockViewportCommittedLiveUndockHostDrop {
         &self.outcome
     }
 
-    pub(crate) fn into_parts(self) -> (DockViewportDropRouteOutcome, DockViewportWindowEffects) {
-        (self.outcome, self.window_effects)
+    pub(crate) fn window_effects_receipt(
+        &self,
+    ) -> Option<DockViewportCommittedWindowEffectsReceipt> {
+        self.window_effects.receipt()
+    }
+
+    pub(crate) fn runtime_update(&self) -> &DockViewportRuntimeUpdate {
+        &self.runtime_update
+    }
+
+    pub(crate) fn workspace_commit(
+        &self,
+    ) -> &crate::workspace_drop_transaction::DockWorkspaceLockedPayloadDropCommitReceipt {
+        &self.workspace
+    }
+
+    pub(crate) fn controller(&self) -> &Entity<DockController> {
+        &self.controller
+    }
+
+    pub(crate) const fn graph_changed(&self) -> bool {
+        self.graph_changed
     }
 }
 
@@ -106,23 +143,114 @@ impl DockViewportRuntimeHandle {
 
     pub(crate) fn commit_preflighted_live_undock_host_drop(
         &self,
-        preflighted: DockViewportPreflightedLiveUndockHostDrop,
-        commit_presentation_authority: impl FnOnce(&mut App),
+        preflighted: &DockViewportPreflightedLiveUndockHostDrop,
         cx: &mut App,
     ) -> DockViewportCommittedLiveUndockHostDrop {
-        self.with_surface_transaction(cx, |_surface_transaction, cx| {
-            let committed = self
-                .runtime
-                .borrow_mut()
-                .commit_preflighted_locked_payload_drop(preflighted.prepared, cx);
-            let (outcome, update, window_effects) = committed.into_parts();
-            commit_presentation_authority(cx);
-            self.publish_surface_commit(&update, cx);
-            DockViewportCommittedLiveUndockHostDrop {
-                outcome,
-                window_effects,
+        let workspace = preflighted.prepared.commit_workspace(cx);
+        let graph_changed = workspace.outcome().changed();
+        let controller = preflighted.prepared.controller().clone();
+        let committed = self
+            .runtime
+            .borrow_mut()
+            .commit_preflighted_locked_payload_drop(
+                self.identity,
+                &preflighted.prepared,
+                &workspace,
+            );
+        let (outcome, runtime_update, window_effects) = committed.into_parts();
+        DockViewportCommittedLiveUndockHostDrop {
+            workspace,
+            outcome,
+            runtime_update,
+            window_effects,
+            controller,
+            graph_changed,
+        }
+    }
+
+    pub(crate) fn publish_live_undock_host_drop_commit(
+        &self,
+        committed: &DockViewportCommittedLiveUndockHostDrop,
+        cx: &mut App,
+    ) {
+        self.publish_surface_commit(committed.runtime_update(), cx);
+    }
+
+    pub(crate) fn notify_live_undock_host_drop_commit(
+        &self,
+        committed: &DockViewportCommittedLiveUndockHostDrop,
+        cx: &mut App,
+    ) {
+        if committed.graph_changed() {
+            cx.update_entity(committed.controller(), |_, controller_cx| {
+                controller_cx.notify();
+            });
+        }
+    }
+
+    pub(crate) fn accept_live_undock_host_drop_window_effects(
+        &self,
+        committed: &DockViewportCommittedLiveUndockHostDrop,
+        cx: &mut App,
+    ) -> DockViewportCommittedWindowEffectsAcceptanceOutcome {
+        let prepared = self
+            .runtime
+            .borrow()
+            .prepare_locked_payload_drop_window_effects_acceptance(
+                self.identity,
+                committed.workspace_commit().commit_id(),
+                &committed.window_effects,
+            );
+        match prepared {
+            DockViewportCommittedWindowEffectsPreparation::Accepted(receipt) => {
+                DockViewportCommittedWindowEffectsAcceptanceOutcome::Accepted(receipt)
             }
-        })
+            DockViewportCommittedWindowEffectsPreparation::InProgress => {
+                DockViewportCommittedWindowEffectsAcceptanceOutcome::InProgress
+            }
+            DockViewportCommittedWindowEffectsPreparation::Transfer(transfer) => {
+                DockViewportCommittedWindowEffectsAcceptanceOutcome::Accepted(
+                    transfer.accept(&self.runtime, cx),
+                )
+            }
+            DockViewportCommittedWindowEffectsPreparation::Stale => {
+                DockViewportCommittedWindowEffectsAcceptanceOutcome::Stale
+            }
+        }
+    }
+
+    pub(crate) fn retire_live_undock_host_drop_commit(
+        &self,
+        committed: &DockViewportCommittedLiveUndockHostDrop,
+        acceptance: DockViewportCommittedWindowEffectsReceipt,
+        cx: &mut App,
+    ) -> bool {
+        let commit_id = committed.workspace_commit().commit_id();
+        if !self
+            .runtime
+            .borrow_mut()
+            .begin_retire_locked_payload_drop_commit(
+                self.identity,
+                commit_id,
+                &committed.window_effects,
+                acceptance,
+            )
+        {
+            return false;
+        }
+        committed.controller().update(cx, |controller, _| {
+            controller
+                .workspace_mut()
+                .retire_locked_payload_drop_commit(committed.workspace_commit())
+        });
+        self.runtime
+            .borrow_mut()
+            .finish_retire_locked_payload_drop_commit(
+                self.identity,
+                commit_id,
+                &committed.window_effects,
+                acceptance,
+            )
     }
 
     pub(crate) fn lock_payload_drop_from_screen(

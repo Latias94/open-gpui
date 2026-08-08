@@ -63,7 +63,7 @@ pub(crate) struct DockProvisionalWindowOwnershipKey {
     opening: DockLiveUndockOpeningKey,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DockPreparedProvisionalWindowPromotion {
     key: DockProvisionalWindowOwnershipKey,
     lease: DockSurfaceWindowSessionLease,
@@ -453,6 +453,9 @@ impl DockViewportWindowOwnership {
         &mut self,
         prepared: DockPreparedProvisionalWindowPromotion,
     ) {
+        if self.has_committed_provisional_window_promotion(&prepared) {
+            return;
+        }
         assert!(
             self.can_commit_provisional_window_promotion(&prepared),
             "prepared provisional ownership must remain exact until commit"
@@ -463,6 +466,20 @@ impl DockViewportWindowOwnership {
             .expect("prepared provisional ownership must remain registered until commit");
         record.role = DockViewportWindowRole::ManagedViewport;
         record.state = DockViewportWindowOwnershipState::Owned;
+    }
+
+    pub(crate) fn has_committed_provisional_window_promotion(
+        &self,
+        prepared: &DockPreparedProvisionalWindowPromotion,
+    ) -> bool {
+        self.windows
+            .get(&prepared.key.window_id)
+            .is_some_and(|record| {
+                record.generation == prepared.key.ownership_generation
+                    && record.authority == DockViewportWindowAuthority::Surface(prepared.lease)
+                    && record.role == DockViewportWindowRole::ManagedViewport
+                    && record.state == DockViewportWindowOwnershipState::Owned
+            })
     }
 
     pub(crate) fn promote_primary_open_attempt(

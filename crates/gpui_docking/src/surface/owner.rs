@@ -3,8 +3,9 @@ use super::{
     live_undock::{
         DockLiveUndockEffects, DockLiveUndockFact, DockLiveUndockIdentity,
         DockLiveUndockOpenFailureOutcome, DockLiveUndockOpenReturnOutcome,
-        DockLiveUndockOpeningKey, DockLiveUndockSession, DockLiveUndockShutdownSnapshot,
-        DockLiveUndockTransition, DockLiveUndockWindowTerminalOutcome,
+        DockLiveUndockOpeningKey, DockLiveUndockPromotionCommitDisposition, DockLiveUndockSession,
+        DockLiveUndockShutdownSnapshot, DockLiveUndockTransition,
+        DockLiveUndockWindowTerminalOutcome,
     },
     live_undock_runtime::DockLiveUndockRuntime,
     payload_recovery::{
@@ -28,13 +29,17 @@ use super::{
 use crate::{
     DockController, DockSpaceId, DockViewportProvisionalOpenAttemptCompletion,
     DockViewportRuntimeHandle, locked_drop_identity::DockLockedPayloadIdentity,
-    viewport_registry::DockViewportRegistrationKey,
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, EntityId, EventEmitter, Subscription,
-    WindowId, view_presentation_window,
+    WeakEntity, WindowId, view_presentation_window,
 };
-use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::{
+    cell::Cell,
+    collections::BTreeMap,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
+    rc::Rc,
+};
 
 /// A durable category of committed docking-surface change.
 ///
@@ -156,19 +161,165 @@ impl DockSurfaceChangeEvent {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DockSurfaceTransactionId(u64);
 
+/// Completion evidence for one exact root surface transaction.
+///
+/// The receipt is filled before event delivery. A caller that owns a larger commit journal can
+/// therefore distinguish an aborted transaction from a transaction whose event subscriber
+/// panicked after the revision became durable.
+#[derive(Clone, Debug)]
+pub(crate) struct DockSurfaceTransactionReceipt {
+    committed_revision: Rc<Cell<Option<u64>>>,
+    aborted: Rc<Cell<bool>>,
+}
+
+/// One committed surface event whose delivery is deferred to an enclosing authority boundary.
+///
+/// The surface revision and transaction receipt are already durable when this value is created.
+/// Consuming publication prevents the same event from being delivered twice by a retrying commit
+/// journal. Empty transactions carry no event and publish nothing.
+#[must_use = "a deferred surface publication must be settled after its enclosing authority commits"]
+#[derive(Clone, Debug)]
+pub(crate) struct DockSurfaceDeferredPublication {
+    inner: Rc<DockSurfaceDeferredPublicationInner>,
+}
+
+#[derive(Debug)]
+struct DockSurfaceDeferredPublicationInner {
+    owner: WeakEntity<DockSurfaceOwner>,
+    event: Option<DockSurfaceChangeEvent>,
+    state: Cell<DockSurfaceDeferredPublicationState>,
+}
+
+#[derive(Debug)]
+struct PendingDockSurfacePublication {
+    event: DockSurfaceChangeEvent,
+    ready: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockSurfaceDeferredPublicationState {
+    Pending,
+    Delivering,
+    Settled,
+}
+
+impl DockSurfaceDeferredPublication {
+    fn new(owner: Entity<DockSurfaceOwner>, event: Option<DockSurfaceChangeEvent>) -> Self {
+        let state = if event.is_some() {
+            DockSurfaceDeferredPublicationState::Pending
+        } else {
+            DockSurfaceDeferredPublicationState::Settled
+        };
+        Self {
+            inner: Rc::new(DockSurfaceDeferredPublicationInner {
+                owner: owner.downgrade(),
+                event,
+                state: Cell::new(state),
+            }),
+        }
+    }
+
+    pub(crate) fn has_event(&self) -> bool {
+        self.inner.event.is_some()
+    }
+
+    pub(crate) fn is_settled(&self) -> bool {
+        self.inner.state.get() == DockSurfaceDeferredPublicationState::Settled
+    }
+
+    /// Publishes the exact event committed by the tracked transaction.
+    ///
+    /// The shared receipt is idempotent. A borrow failure before delivery leaves it pending for a
+    /// retry. Once subscriber delivery begins it is settled even if a subscriber panics, preserving
+    /// at-most-once event delivery while the transaction receipt remains the durable authority.
+    pub(crate) fn publish(&self, cx: &mut App) -> bool {
+        if self.inner.state.get() != DockSurfaceDeferredPublicationState::Pending {
+            return false;
+        }
+        let Some(event) = self.inner.event.clone() else {
+            self.inner
+                .state
+                .set(DockSurfaceDeferredPublicationState::Settled);
+            return false;
+        };
+        let Some(owner) = self.inner.owner.upgrade() else {
+            self.inner
+                .state
+                .set(DockSurfaceDeferredPublicationState::Settled);
+            return false;
+        };
+
+        self.inner
+            .state
+            .set(DockSurfaceDeferredPublicationState::Delivering);
+        let delivery_started = Rc::new(Cell::new(false));
+        let started_in_delivery = delivery_started.clone();
+        let inner = self.inner.clone();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            cx.update_entity(&owner, move |_owner, owner_cx| {
+                started_in_delivery.set(true);
+                inner
+                    .state
+                    .set(DockSurfaceDeferredPublicationState::Settled);
+                _owner.publish_committed_event(event.revision(), owner_cx);
+            });
+        }));
+        match result {
+            Ok(()) => true,
+            Err(payload) => {
+                if !delivery_started.get() {
+                    self.inner
+                        .state
+                        .set(DockSurfaceDeferredPublicationState::Pending);
+                }
+                resume_unwind(payload)
+            }
+        }
+    }
+}
+
+impl DockSurfaceTransactionReceipt {
+    fn pending() -> Self {
+        Self {
+            committed_revision: Rc::new(Cell::new(None)),
+            aborted: Rc::new(Cell::new(false)),
+        }
+    }
+
+    pub(crate) fn committed_revision(&self) -> Option<u64> {
+        self.committed_revision.get()
+    }
+
+    pub(crate) fn is_aborted(&self) -> bool {
+        self.aborted.get()
+    }
+
+    fn commit(&self, revision: u64) {
+        debug_assert!(!self.aborted.get());
+        self.committed_revision.set(Some(revision));
+    }
+
+    fn abort(&self) {
+        debug_assert!(self.committed_revision.get().is_none());
+        self.aborted.set(true);
+    }
+}
+
 #[derive(Debug)]
 struct PendingDockSurfaceTransaction {
     id: DockSurfaceTransactionId,
     category_bits: u8,
     transition_bits: u8,
+    receipt: Option<DockSurfaceTransactionReceipt>,
 }
 
 impl PendingDockSurfaceTransaction {
-    fn new(id: DockSurfaceTransactionId) -> Self {
+    fn new(id: DockSurfaceTransactionId, receipt: Option<DockSurfaceTransactionReceipt>) -> Self {
         Self {
             id,
             category_bits: 0,
             transition_bits: 0,
+            receipt,
         }
     }
 
@@ -211,6 +362,9 @@ pub(crate) struct DockSurfaceOwner {
     payload_recovery_executor: DockPayloadRecoveryExecutor,
     activation: DockSurfaceActivationState,
     revision: u64,
+    last_published_revision: u64,
+    pending_publications: BTreeMap<u64, PendingDockSurfacePublication>,
+    publication_flush_active: bool,
     last_transaction_id: u64,
     pending_transaction: Option<PendingDockSurfaceTransaction>,
 }
@@ -240,6 +394,9 @@ impl DockSurfaceOwner {
             payload_recovery_executor: DockPayloadRecoveryExecutor::new(),
             activation: DockSurfaceActivationState::new(),
             revision: 0,
+            last_published_revision: 0,
+            pending_publications: BTreeMap::new(),
+            publication_flush_active: false,
             last_transaction_id: 0,
             pending_transaction: None,
         }
@@ -284,13 +441,13 @@ impl DockSurfaceOwner {
         self.live_undock_runtime.clone()
     }
 
-    pub(crate) fn live_undock_committed_destination_registration_for_logical_close(
+    pub(crate) fn live_undock_committed_destination_logical_close_authority(
         &self,
         window_id: WindowId,
-    ) -> Option<DockViewportRegistrationKey> {
+    ) -> Option<super::live_undock_runtime::DockLiveUndockLogicalCloseAuthority> {
         let identity = self.live_undock.current_identity()?;
         self.live_undock_runtime
-            .committed_destination_registration_for_logical_close(identity, window_id)
+            .committed_destination_logical_close_authority(identity, window_id)
     }
 
     pub(crate) fn accepts_live_undock_identity(&self, identity: DockLiveUndockIdentity) -> bool {
@@ -307,8 +464,10 @@ impl DockSurfaceOwner {
     pub(crate) fn freeze_live_undock_for_shutdown(
         &mut self,
         lease: DockSurfaceWindowSessionLease,
+        promotion_commit: DockLiveUndockPromotionCommitDisposition,
     ) -> DockLiveUndockTransition<Option<DockLiveUndockShutdownSnapshot>> {
-        self.live_undock.freeze_for_shutdown(lease)
+        self.live_undock
+            .freeze_for_shutdown(lease, promotion_commit)
     }
 
     pub(crate) fn complete_live_undock_opening(
@@ -1132,8 +1291,30 @@ impl DockSurfaceOwner {
             .checked_add(1)
             .expect("dock surface transaction identity space exhausted");
         let id = DockSurfaceTransactionId(self.last_transaction_id);
-        self.pending_transaction = Some(PendingDockSurfaceTransaction::new(id));
+        self.pending_transaction = Some(PendingDockSurfaceTransaction::new(id, None));
         id
+    }
+
+    /// Begins a root transaction whose exact commit result must outlive synchronous re-entry.
+    pub(crate) fn begin_tracked_root_transaction(
+        &mut self,
+    ) -> (DockSurfaceTransactionId, DockSurfaceTransactionReceipt) {
+        assert!(
+            self.pending_transaction.is_none(),
+            "cannot begin a tracked dock surface transaction while another transaction is active"
+        );
+
+        self.last_transaction_id = self
+            .last_transaction_id
+            .checked_add(1)
+            .expect("dock surface transaction identity space exhausted");
+        let id = DockSurfaceTransactionId(self.last_transaction_id);
+        let receipt = DockSurfaceTransactionReceipt::pending();
+        self.pending_transaction = Some(PendingDockSurfaceTransaction::new(
+            id,
+            Some(receipt.clone()),
+        ));
+        (id, receipt)
     }
 
     /// Records one committed change category against the active root transaction.
@@ -1173,22 +1354,21 @@ impl DockSurfaceOwner {
         pending.record_transition(transition);
     }
 
-    /// Finishes a root transaction and emits one metadata event when it recorded durable changes.
+    /// Commits a root transaction and returns its metadata event when it recorded durable changes.
     ///
-    /// Empty transactions do not advance the revision. The pending transaction is cleared before
-    /// event publication so an event subscriber can synchronously issue another root command.
-    pub(crate) fn finish_root_transaction(
+    /// Empty transactions do not advance the revision. The pending transaction is cleared and a
+    /// tracked receipt is filled before this method returns.
+    fn commit_root_transaction(
         &mut self,
         transaction: DockSurfaceTransactionId,
-        cx: &mut Context<Self>,
     ) -> Option<DockSurfaceChangeEvent> {
         let pending = self
             .pending_transaction
             .as_ref()
-            .expect("cannot finish a dock surface transaction that is not active");
+            .expect("cannot commit a dock surface transaction that is not active");
         assert_eq!(
             pending.id, transaction,
-            "attempted to finish a different dock surface transaction"
+            "attempted to commit a different dock surface transaction"
         );
         let pending = self
             .pending_transaction
@@ -1198,6 +1378,9 @@ impl DockSurfaceOwner {
         let categories = pending.categories();
         let transitions = pending.transitions();
         if categories.is_empty() {
+            if let Some(receipt) = pending.receipt {
+                receipt.commit(self.revision);
+            }
             return None;
         }
 
@@ -1206,7 +1389,84 @@ impl DockSurfaceOwner {
             .checked_add(1)
             .expect("dock surface revision space exhausted");
         let event = DockSurfaceChangeEvent::new(self.revision, categories, transitions);
-        cx.emit(event.clone());
+        assert!(
+            self.pending_publications
+                .insert(
+                    self.revision,
+                    PendingDockSurfacePublication {
+                        event: event.clone(),
+                        ready: false,
+                    },
+                )
+                .is_none(),
+            "a dock surface revision must own exactly one publication"
+        );
+        if let Some(receipt) = pending.receipt {
+            receipt.commit(self.revision);
+        }
+        Some(event)
+    }
+
+    fn publish_committed_event(&mut self, revision: u64, cx: &mut Context<Self>) {
+        let publication = self
+            .pending_publications
+            .get_mut(&revision)
+            .expect("a committed dock surface event must retain its publication slot");
+        publication.ready = true;
+        self.flush_ready_publications(cx);
+    }
+
+    fn flush_ready_publications(&mut self, cx: &mut Context<Self>) {
+        if self.publication_flush_active {
+            return;
+        }
+
+        self.publication_flush_active = true;
+        let mut first_panic = None;
+        loop {
+            let next_revision = self
+                .last_published_revision
+                .checked_add(1)
+                .expect("dock surface publication revision space exhausted");
+            let ready = self
+                .pending_publications
+                .get(&next_revision)
+                .is_some_and(|publication| publication.ready);
+            if !ready {
+                break;
+            }
+
+            let publication = self
+                .pending_publications
+                .remove(&next_revision)
+                .expect("a ready dock surface publication must remain queued");
+            self.last_published_revision = next_revision;
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| cx.emit(publication.event))) {
+                if first_panic.is_none() {
+                    first_panic = Some(payload);
+                } else {
+                    log::error!("suppressed a secondary dock surface subscriber panic");
+                }
+            }
+        }
+        self.publication_flush_active = false;
+
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
+    }
+
+    /// Finishes a root transaction and emits one metadata event when it recorded durable changes.
+    ///
+    /// Empty transactions do not advance the revision. The pending transaction is cleared before
+    /// event publication so an event subscriber can synchronously issue another root command.
+    pub(crate) fn finish_root_transaction(
+        &mut self,
+        transaction: DockSurfaceTransactionId,
+        cx: &mut Context<Self>,
+    ) -> Option<DockSurfaceChangeEvent> {
+        let event = self.commit_root_transaction(transaction)?;
+        self.publish_committed_event(event.revision(), cx);
         Some(event)
     }
 
@@ -1220,7 +1480,13 @@ impl DockSurfaceOwner {
             pending.id, transaction,
             "attempted to abort a different dock surface transaction"
         );
-        self.pending_transaction = None;
+        let pending = self
+            .pending_transaction
+            .take()
+            .expect("validated dock surface transaction must remain active");
+        if let Some(receipt) = pending.receipt {
+            receipt.abort();
+        }
     }
 
     fn assert_active_transaction(&self, transaction: DockSurfaceTransactionId) {
@@ -1297,6 +1563,41 @@ where
     }
 }
 
+/// Commits a tracked detached transaction without synchronously publishing its event.
+///
+/// The returned publication is a linear continuation for event delivery. Its paired receipt is
+/// committed before this function returns, allowing an enclosing runtime to install its own
+/// durable authority before subscribers can synchronously re-enter.
+pub(crate) fn with_detached_deferred_tracked_root_transaction<C, R>(
+    owner: &Entity<DockSurfaceOwner>,
+    cx: &mut C,
+    update: impl FnOnce(DockSurfaceTransactionId, DockSurfaceTransactionReceipt, &mut C) -> R,
+) -> (R, DockSurfaceDeferredPublication)
+where
+    C: AppContext,
+{
+    let (transaction, receipt) =
+        cx.update_entity(owner, |owner, _| owner.begin_tracked_root_transaction());
+    match catch_unwind(AssertUnwindSafe(|| {
+        update(transaction, receipt.clone(), cx)
+    })) {
+        Ok(result) => {
+            let event =
+                cx.update_entity(owner, |owner, _| owner.commit_root_transaction(transaction));
+            (
+                result,
+                DockSurfaceDeferredPublication::new(owner.clone(), event),
+            )
+        }
+        Err(payload) => {
+            cx.update_entity(owner, |owner, _| {
+                owner.abort_root_transaction(transaction);
+            });
+            resume_unwind(payload);
+        }
+    }
+}
+
 /// Subscribes to committed metadata events from a surface owner.
 pub(crate) fn subscribe(
     owner: &Entity<DockSurfaceOwner>,
@@ -1304,4 +1605,211 @@ pub(crate) fn subscribe(
     mut on_event: impl FnMut(&DockSurfaceChangeEvent, &mut App) + 'static,
 ) -> Subscription {
     cx.subscribe(owner, move |_owner, event, cx| on_event(event, cx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DockPanelPlacement, DockSurface};
+    use open_gpui::{IntoElement, Render, Window, div};
+    use std::{
+        cell::RefCell,
+        panic::{AssertUnwindSafe, catch_unwind},
+        rc::Rc,
+    };
+
+    struct TestPanel;
+
+    impl Render for TestPanel {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    fn test_panel(cx: &mut App) -> open_gpui::AnyView {
+        cx.new(|_| TestPanel).into()
+    }
+
+    fn test_surface(cx: &mut App) -> DockSurface {
+        DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .build(cx)
+            .expect("surface layout should validate")
+    }
+
+    #[open_gpui::test]
+    fn deferred_publication_commits_revision_and_receipt_before_delivery(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let observed_for_subscription = observed.clone();
+        let (surface, receipt, publication, subscription) = cx.update(|cx| {
+            let surface = test_surface(cx);
+            let subscription = surface.subscribe_changes(cx, move |event, _| {
+                observed_for_subscription
+                    .borrow_mut()
+                    .push(event.revision());
+            });
+            let owner = surface.owner().clone();
+            let (receipt, publication) = with_detached_deferred_tracked_root_transaction(
+                &owner,
+                cx,
+                |transaction, receipt, cx| {
+                    cx.update_entity(&owner, |owner, _| {
+                        owner.record_change(transaction, DockSurfaceChangeCategory::Layout);
+                    });
+                    receipt
+                },
+            );
+
+            assert_eq!(surface.revision(cx), 1);
+            assert_eq!(receipt.committed_revision(), Some(1));
+            assert!(!receipt.is_aborted());
+            assert!(publication.has_event());
+            assert!(observed.borrow().is_empty());
+            (surface, receipt, publication, subscription)
+        });
+
+        assert!(observed.borrow().is_empty());
+        assert!(cx.update(|cx| publication.publish(cx)));
+        assert!(publication.is_settled());
+        assert!(!cx.update(|cx| publication.publish(cx)));
+        assert_eq!(observed.borrow().as_slice(), &[1]);
+        assert_eq!(receipt.committed_revision(), Some(1));
+        assert_eq!(cx.read(|cx| surface.revision(cx)), 1);
+        drop(subscription);
+    }
+
+    #[open_gpui::test]
+    fn deferred_publication_orders_later_surface_events_by_revision(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let observed_for_subscription = observed.clone();
+        let (surface, publication, subscription) = cx.update(|cx| {
+            let surface = test_surface(cx);
+            let subscription = surface.subscribe_changes(cx, move |event, _| {
+                observed_for_subscription
+                    .borrow_mut()
+                    .push(event.revision());
+            });
+            let owner = surface.owner().clone();
+            let (_, publication) = with_detached_deferred_tracked_root_transaction(
+                &owner,
+                cx,
+                |transaction, _, cx| {
+                    cx.update_entity(&owner, |owner, _| {
+                        owner.record_change(transaction, DockSurfaceChangeCategory::Layout);
+                    });
+                },
+            );
+            with_root_transaction(&owner, cx, |owner, transaction, _| {
+                owner.record_change(transaction, DockSurfaceChangeCategory::Selection);
+            });
+
+            assert_eq!(surface.revision(cx), 2);
+            assert!(observed.borrow().is_empty());
+            (surface, publication, subscription)
+        });
+
+        assert!(cx.update(|cx| publication.publish(cx)));
+        assert_eq!(observed.borrow().as_slice(), &[1, 2]);
+        assert_eq!(cx.read(|cx| surface.revision(cx)), 2);
+        drop(subscription);
+    }
+
+    #[open_gpui::test]
+    fn empty_deferred_transaction_commits_receipt_without_publication(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let (surface, receipt, publication) = cx.update(|cx| {
+            let surface = test_surface(cx);
+            let owner = surface.owner().clone();
+            let (receipt, publication) = with_detached_deferred_tracked_root_transaction(
+                &owner,
+                cx,
+                |_transaction, receipt, _cx| receipt,
+            );
+            (surface, receipt, publication)
+        });
+
+        assert_eq!(receipt.committed_revision(), Some(0));
+        assert!(!receipt.is_aborted());
+        assert!(!publication.has_event());
+        assert!(publication.is_settled());
+        assert!(!cx.update(|cx| publication.publish(cx)));
+        assert_eq!(cx.read(|cx| surface.revision(cx)), 0);
+    }
+
+    #[open_gpui::test]
+    fn panic_before_deferred_commit_aborts_the_receipt(cx: &mut open_gpui::TestAppContext) {
+        let surface = cx.update(test_surface);
+        let receipt_slot = Rc::new(RefCell::new(None));
+        let receipt_for_update = receipt_slot.clone();
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|cx| {
+                let owner = surface.owner().clone();
+                let _: ((), DockSurfaceDeferredPublication) =
+                    with_detached_deferred_tracked_root_transaction(
+                        &owner,
+                        cx,
+                        |transaction, receipt, cx| {
+                            receipt_for_update.borrow_mut().replace(receipt);
+                            cx.update_entity(&owner, |owner, _| {
+                                owner.record_change(transaction, DockSurfaceChangeCategory::Layout);
+                            });
+                            panic!("injected deferred transaction panic");
+                        },
+                    );
+            });
+        }));
+
+        assert!(panic.is_err());
+        let receipt = receipt_slot
+            .borrow()
+            .clone()
+            .expect("the tracked receipt should escape before the injected panic");
+        assert!(receipt.is_aborted());
+        assert_eq!(receipt.committed_revision(), None);
+        assert_eq!(cx.read(|cx| surface.revision(cx)), 0);
+    }
+
+    #[open_gpui::test]
+    fn deferred_subscriber_panic_preserves_committed_receipt(cx: &mut open_gpui::TestAppContext) {
+        let subscriber_called = Rc::new(Cell::new(false));
+        let called_by_subscription = subscriber_called.clone();
+        let (surface, receipt, publication, subscription) = cx.update(|cx| {
+            let surface = test_surface(cx);
+            let subscription = surface.subscribe_changes(cx, move |_event, _| {
+                called_by_subscription.set(true);
+                panic!("injected deferred publication subscriber panic");
+            });
+            let owner = surface.owner().clone();
+            let (receipt, publication) = with_detached_deferred_tracked_root_transaction(
+                &owner,
+                cx,
+                |transaction, receipt, cx| {
+                    cx.update_entity(&owner, |owner, _| {
+                        owner.record_change(transaction, DockSurfaceChangeCategory::Layout);
+                    });
+                    receipt
+                },
+            );
+            (surface, receipt, publication, subscription)
+        });
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|cx| publication.publish(cx));
+        }));
+        assert!(subscriber_called.get());
+        assert!(panic.is_err());
+        assert!(publication.is_settled());
+        assert!(!cx.update(|cx| publication.publish(cx)));
+        assert_eq!(receipt.committed_revision(), Some(1));
+        assert!(!receipt.is_aborted());
+        drop(surface);
+        drop(subscription);
+    }
 }

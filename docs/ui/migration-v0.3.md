@@ -300,6 +300,22 @@ inference. Docking intentionally has no persistence timer, built-in debounce dur
 setting, or file writer. See
 [ADR 0028](../adr/0028-open-gpui-dock-surface-change-and-activation-authority.md).
 
+## Dock Graph Canonicalization Boundaries
+
+`DockGraph::insert_node` followed by `DockGraph::set_root` remains a staged construction API.
+`DockGraph::simplify_space` now performs only local structural simplification and preserves every
+stored `DockNodeId`, including nodes detached by that simplification. Call
+`DockGraph::canonicalize` only when the graph is complete and all unattached nodes may be discarded.
+`DockLayoutBuilder` and `DockControllerBuilder` perform that canonicalization at their
+complete-graph commit boundaries. Checked graph mutations reclaim only the nodes they detach while
+preserving unrelated staged roots and their transitive dependencies.
+
+Code that validates a complete graph should use `DockGraph::validate_canonical`. This method can
+return the new `DockGraphValidationError::UnreachableNode` variant. Because
+`DockGraphValidationError` remains publicly matchable, downstream exhaustive matches must add that
+case when migrating to v0.3. Use `DockGraph::validate` while assembling a graph; it validates only
+reachable roots and intentionally accepts unattached staging nodes.
+
 ## Dock Surface Window Sessions
 
 Facade-managed native Dock windows now belong to one exact-generation surface session. Rename

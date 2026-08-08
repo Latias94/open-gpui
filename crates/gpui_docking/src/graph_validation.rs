@@ -124,15 +124,33 @@ pub enum DockGraphValidationError {
         /// Central node id.
         node: DockNodeId,
     },
+    /// A runtime node is not reachable from any dock-space root or floating root.
+    #[error("dock graph contains unreachable node {node:?}")]
+    UnreachableNode {
+        /// Unreachable runtime node id.
+        node: DockNodeId,
+    },
 }
 
 impl DockGraph {
-    /// Validates all reachable runtime graph state.
+    /// Validates graph state reachable from dock-space and floating roots.
     ///
-    /// Orphaned nodes are ignored because graph mutations may leave old runtime node ids behind.
-    /// Layout export already drops those nodes; this method checks only roots and floating
-    /// containers that are still reachable from dock spaces.
+    /// Unattached nodes are allowed because [`DockGraph::insert_node`] and
+    /// [`DockGraph::set_root`] form a staged public construction API. Use
+    /// [`Self::validate_canonical`] at a complete graph commit boundary.
     pub fn validate(&self) -> Result<(), DockGraphValidationError> {
+        self.validate_with_unreachable_nodes(true)
+    }
+
+    /// Validates a fully assembled graph and rejects every unattached runtime node.
+    pub fn validate_canonical(&self) -> Result<(), DockGraphValidationError> {
+        self.validate_with_unreachable_nodes(false)
+    }
+
+    fn validate_with_unreachable_nodes(
+        &self,
+        allow_unreachable_nodes: bool,
+    ) -> Result<(), DockGraphValidationError> {
         let mut validator = DockGraphValidator::new(self);
 
         for (space, root) in &self.roots {
@@ -183,6 +201,15 @@ impl DockGraph {
                     node,
                 });
             }
+        }
+
+        if !allow_unreachable_nodes
+            && let Some(node) = self
+                .nodes
+                .keys()
+                .find(|node| !validator.marks.contains_key(node))
+        {
+            return Err(DockGraphValidationError::UnreachableNode { node });
         }
 
         Ok(())

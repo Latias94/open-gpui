@@ -348,10 +348,10 @@ impl DockLayoutBuilder {
         self.graph
     }
 
-    /// Finishes the builder, validates reachable graph state, and returns a canonical graph.
+    /// Finishes the builder, validates complete graph state, and returns a canonical graph.
     pub fn try_build(mut self) -> Result<DockGraph, DockGraphValidationError> {
         self.simplify_graph();
-        self.graph.validate()?;
+        self.graph.validate_canonical()?;
         Ok(self.graph)
     }
 
@@ -365,9 +365,7 @@ impl DockLayoutBuilder {
     }
 
     fn simplify_graph(&mut self) {
-        for space in self.graph.spaces() {
-            self.graph.simplify_space(&space);
-        }
+        self.graph.canonicalize();
     }
 }
 

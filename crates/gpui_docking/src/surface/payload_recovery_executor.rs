@@ -23,7 +23,8 @@ use crate::{
     viewport_registry::DockViewportRegistrationKey,
 };
 use open_gpui::{
-    AnyView, App, AppContext as _, Entity, WeakEntity, WindowHandle, view_presentation_window,
+    AnyView, AnyWindowHandle, App, AppContext as _, Entity, WeakEntity, WindowHandle,
+    view_presentation_window,
 };
 use std::{
     num::NonZeroU64,
@@ -1202,6 +1203,41 @@ fn start_prepared_payload_recovery_restore(
             (resolved_roots, source_session, destination_session)
         });
 
+    if let Some(leases) = origin.provider_terminal_leases() {
+        let origin_window: AnyWindowHandle = origin.window().into();
+        if cx.window_profile(origin_window).is_some() {
+            return Err(DockPayloadRecoveryRestoreError::PresentationEndpointUnavailable);
+        }
+        if !provider_terminal_roots_match_exactly(&resolved_roots, leases) {
+            return Err(DockPayloadRecoveryRestoreError::PresentationOriginUnavailable);
+        }
+
+        view_presentation_window::release_stable_batch_after_endpoint_loss(cx, leases);
+        return match view_presentation_window::prepare_resolved_view_rehost(
+            cx,
+            &resolved_roots,
+            origin.window().window_id(),
+            primary_window.window_id(),
+        )
+        .map_err(DockPayloadRecoveryRestoreError::PresentationPrepare)?
+        {
+            view_presentation_window::ResolvedViewRehostOutcome::NoTransfer => {
+                commit_payload_recovery_without_rehost(
+                    owner,
+                    &controller,
+                    &destination,
+                    execution,
+                    restore,
+                    cx,
+                )
+            }
+            view_presentation_window::ResolvedViewRehostOutcome::Prepared(session) => {
+                drop(session);
+                Err(DockPayloadRecoveryRestoreError::PresentationEndpointUnavailable)
+            }
+        };
+    }
+
     if resolved_roots.is_empty() || origin.window().window_id() == primary_window.window_id() {
         return commit_payload_recovery_without_rehost(
             owner,
@@ -1213,7 +1249,10 @@ fn start_prepared_payload_recovery_restore(
         );
     }
 
-    let source_registration = origin.registration().clone();
+    let (source_binding, source_registration) = origin
+        .registered_host()
+        .map(|(binding, registration)| (binding, registration.clone()))
+        .ok_or(DockPayloadRecoveryRestoreError::PresentationOriginUnavailable)?;
     let source_entity = origin.window().entity(cx).ok();
     let source_is_exact = source_entity.as_ref().is_some_and(|source_entity| {
         cx.read_entity(source_entity, |host, _| {
@@ -1221,7 +1260,7 @@ fn start_prepared_payload_recovery_restore(
                 && host.accepts_payload_recovery_source_endpoint(
                     owner.entity_id(),
                     restore.source_space(),
-                    origin.binding(),
+                    source_binding,
                     &source_registration,
                 )
                 && host.live_presentation_state().is_none()
@@ -1283,7 +1322,7 @@ fn start_prepared_payload_recovery_restore(
                 && host.accepts_payload_recovery_source_endpoint(
                     owner.entity_id(),
                     restore.source_space(),
-                    origin.binding(),
+                    source_binding,
                     &source_registration,
                 )
                 && host.live_presentation_state().is_none()
@@ -1295,9 +1334,9 @@ fn start_prepared_payload_recovery_restore(
         let source = DockPayloadRecoveryEndpoint::new(
             source_entity.downgrade(),
             origin.window(),
-            origin.binding(),
+            source_binding,
             restore.source_space().clone(),
-            Some(source_registration),
+            Some(source_registration.clone()),
         )
         .ok_or(DockPayloadRecoveryRestoreError::PresentationEndpointUnavailable)?;
         installation.set_source(source.clone());
@@ -1339,17 +1378,17 @@ fn start_prepared_payload_recovery_restore(
         let source_key = origin
             .window()
             .update(cx, |host, window, host_cx| {
-                (window.window_handle().window_id() == origin.binding().window_id()
+                (window.window_handle().window_id() == source_binding.window_id()
                     && host.controller_entity() == controller
                     && host.accepts_payload_recovery_source_endpoint(
                         owner.entity_id(),
                         restore.source_space(),
-                        origin.binding(),
-                        origin.registration(),
+                        source_binding,
+                        &source_registration,
                     ))
                 .then(|| {
                     host.install_payload_recovery_source_projection(
-                        origin.binding(),
+                        source_binding,
                         execution.action(),
                         source_session,
                         projection.clone(),
@@ -1427,6 +1466,21 @@ fn start_prepared_payload_recovery_restore(
     refresh_endpoint(transfer.destination(), cx);
     refresh_endpoint(transfer.source(), cx);
     Ok(())
+}
+
+fn provider_terminal_roots_match_exactly(
+    resolved_roots: &[AnyView],
+    leases: &view_presentation_window::LeaseBatch,
+) -> bool {
+    resolved_roots.len() == leases.leases().len()
+        && resolved_roots
+            .iter()
+            .all(|root| leases.lease_for(root.entity_id()).is_some())
+        && leases.leases().iter().all(|lease| {
+            resolved_roots
+                .iter()
+                .any(|root| root.entity_id() == lease.entity_id())
+        })
 }
 
 #[cfg(test)]

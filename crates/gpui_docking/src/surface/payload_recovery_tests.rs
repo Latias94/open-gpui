@@ -192,8 +192,8 @@ fn presentation_authority(live: LivePayloadProof) -> DockPayloadRecoveryAuthorit
     DockPayloadRecoveryAuthority::presentation_lease(live.lease)
 }
 
-fn durable_authority(live: LivePayloadProof) -> DockPayloadRecoveryAuthority {
-    DockPayloadRecoveryAuthority::durable_promotion(
+fn committed_destination_authority(live: LivePayloadProof) -> DockPayloadRecoveryAuthority {
+    DockPayloadRecoveryAuthority::committed_destination(
         live.identity,
         DockLiveUndockPromotionToken::new(1).expect("test promotion token should be non-zero"),
         DockLiveUndockPromotionDestination::SameWindowDesktop {
@@ -243,7 +243,7 @@ fn commit_lost_viewport_recovery(
         .prepare(
             &fixture.graph,
             OWNER_REVISION,
-            durable_authority(live),
+            committed_destination_authority(live),
             &fixture.payload,
             DockPayloadRecoveryReason::LostViewportRecovery,
         )
@@ -712,14 +712,14 @@ fn committed_receipt_has_registry_provenance_and_lost_viewport_reuses_protocol()
         .prepare(
             &fixture.graph,
             OWNER_REVISION,
-            durable_authority(live),
+            committed_destination_authority(live),
             &fixture.payload,
             DockPayloadRecoveryReason::LostViewportRecovery,
         )
         .expect("lost viewport should use the same preparation protocol");
     assert_eq!(prepared.owner_revision(), OWNER_REVISION);
     assert_eq!(prepared.live_identity(), live.identity);
-    assert_eq!(prepared.authority(), durable_authority(live));
+    assert_eq!(prepared.authority(), committed_destination_authority(live));
     assert_eq!(
         prepared.reason(),
         DockPayloadRecoveryReason::LostViewportRecovery
@@ -734,7 +734,7 @@ fn committed_receipt_has_registry_provenance_and_lost_viewport_reuses_protocol()
         )
         .expect("lost viewport recovery should commit");
     assert_eq!(receipt.live_identity(), live.identity);
-    assert_eq!(receipt.authority(), durable_authority(live));
+    assert_eq!(receipt.authority(), committed_destination_authority(live));
     let record = registry
         .record(receipt)
         .expect("only the committing registry should retain the receipt record");
@@ -752,7 +752,7 @@ fn committed_receipt_has_registry_provenance_and_lost_viewport_reuses_protocol()
         registry.prepare(
             &fixture.graph,
             OWNER_REVISION,
-            durable_authority(live),
+            committed_destination_authority(live),
             &fixture.payload,
             DockPayloadRecoveryReason::LostViewportRecovery,
         ),
@@ -779,7 +779,7 @@ fn recovery_authority_kind_must_match_the_recovery_phase() {
         registry.prepare(
             &fixture.graph,
             OWNER_REVISION,
-            durable_authority(first),
+            committed_destination_authority(first),
             &fixture.payload,
             DockPayloadRecoveryReason::PreCommitOrphan,
         ),
@@ -932,7 +932,7 @@ fn owner_lost_and_restore_transactions_publish_exact_named_transitions(
                 _ => None,
             })
             .expect("live undock should allocate one identity");
-        let authority = DockPayloadRecoveryAuthority::durable_promotion(
+        let authority = DockPayloadRecoveryAuthority::committed_destination(
             identity,
             DockLiveUndockPromotionToken::new(1).expect("test promotion token should be non-zero"),
             DockLiveUndockPromotionDestination::SameWindowDesktop {

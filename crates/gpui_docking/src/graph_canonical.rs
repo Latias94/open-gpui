@@ -1,13 +1,52 @@
 use crate::{DockNodeId, DockSpaceId};
 use open_gpui_ui_core::normalize_split_fractions;
-#[cfg(test)]
 use std::collections::HashSet;
 
 use super::{DockGraph, DockNode, SplitAxis};
 
 impl DockGraph {
     /// Simplifies every tree in one dock space into canonical form.
+    ///
+    /// This operation preserves every stored node identity. In particular, nodes detached by the
+    /// simplification and nodes inserted for a later [`DockGraph::set_root`] call remain available
+    /// to the caller. Use [`Self::canonicalize`] only at an explicit complete-graph commit boundary
+    /// when all unattached nodes may be discarded.
     pub fn simplify_space(&mut self, space: &DockSpaceId) {
+        self.simplify_space_structure(space);
+    }
+
+    /// Simplifies one space after a committed graph mutation and reclaims only nodes that the
+    /// mutation detached from that space.
+    ///
+    /// Unattached staging roots and their transitive dependencies remain authoritative. This keeps
+    /// the public insert-then-attach construction window intact while preventing ordinary runtime
+    /// mutations from accumulating the nodes they replace.
+    pub(crate) fn simplify_space_after_mutation(&mut self, space: &DockSpaceId) {
+        let globally_reachable_before = self.reachable_node_ids();
+        let staged_roots = self
+            .nodes
+            .keys()
+            .filter(|node| !globally_reachable_before.contains(node))
+            .collect::<Vec<_>>();
+        let staged_dependencies = self.reachable_node_ids_from(staged_roots);
+        let previously_reachable = self.reachable_node_ids_for_space(space);
+
+        self.simplify_space_structure(space);
+        self.remove_nodes_detached_from(previously_reachable, &staged_dependencies);
+    }
+
+    /// Canonicalizes a fully assembled graph and removes every unattached node.
+    ///
+    /// Call this only at builder, import, or equivalent commit boundaries where no staged node is
+    /// expected to remain unattached. Runtime mutations should use [`Self::simplify_space`].
+    pub fn canonicalize(&mut self) {
+        for space in self.spaces() {
+            self.simplify_space_structure(&space);
+        }
+        self.prune_unreachable_nodes();
+    }
+
+    fn simplify_space_structure(&mut self, space: &DockSpaceId) {
         let previous_root = self.root(space);
         let simplified_root = previous_root.and_then(|root| self.simplify_subtree(root));
         match simplified_root {
@@ -35,21 +74,108 @@ impl DockGraph {
             }
         }
 
-        let Some(mut floatings) = self.floatings.remove(space) else {
-            return;
-        };
+        if let Some(mut floatings) = self.floatings.remove(space) {
+            floatings.retain_mut(|floating| match self.simplify_subtree(floating.node) {
+                Some(node) => {
+                    floating.node = node;
+                    true
+                }
+                None => false,
+            });
 
-        floatings.retain_mut(|floating| match self.simplify_subtree(floating.node) {
-            Some(node) => {
-                floating.node = node;
-                true
+            if !floatings.is_empty() {
+                self.floatings.insert(space.clone(), floatings);
             }
-            None => false,
-        });
-
-        if !floatings.is_empty() {
-            self.floatings.insert(space.clone(), floatings);
         }
+    }
+
+    fn prune_unreachable_nodes(&mut self) {
+        let reachable = self.reachable_node_ids();
+        let unreachable = self
+            .nodes
+            .keys()
+            .filter(|node| !reachable.contains(node))
+            .collect::<Vec<_>>();
+
+        for node in unreachable {
+            self.nodes.remove(node);
+            self.tab_selection_history.remove(&node);
+        }
+        self.tab_selection_history
+            .retain(|node, _| self.nodes.contains_key(*node));
+    }
+
+    fn remove_nodes_detached_from(
+        &mut self,
+        candidates: HashSet<DockNodeId>,
+        staged_dependencies: &HashSet<DockNodeId>,
+    ) {
+        let still_reachable = self.reachable_node_ids();
+        for node in candidates
+            .difference(&still_reachable)
+            .filter(|node| !staged_dependencies.contains(node))
+            .copied()
+        {
+            self.nodes.remove(node);
+            self.tab_selection_history.remove(&node);
+        }
+    }
+
+    fn reachable_node_ids_for_space(&self, space: &DockSpaceId) -> HashSet<DockNodeId> {
+        self.reachable_node_ids_from(
+            self.root(space)
+                .into_iter()
+                .chain(
+                    self.floating_containers(space)
+                        .iter()
+                        .map(|floating| floating.node),
+                )
+                .collect(),
+        )
+    }
+
+    fn reachable_node_ids(&self) -> HashSet<DockNodeId> {
+        self.reachable_node_ids_from(
+            self.roots
+                .values()
+                .copied()
+                .chain(
+                    self.floatings
+                        .values()
+                        .flatten()
+                        .map(|floating| floating.node),
+                )
+                .collect(),
+        )
+    }
+
+    fn reachable_node_ids_from(&self, mut pending: Vec<DockNodeId>) -> HashSet<DockNodeId> {
+        let mut reachable = HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !reachable.insert(node) {
+                continue;
+            }
+            match self.nodes.get(node) {
+                Some(DockNode::Split { children, .. }) => pending.extend(children.iter().copied()),
+                Some(DockNode::Floating { child }) => pending.push(*child),
+                Some(DockNode::Tabs { .. }) | None => {}
+            }
+        }
+
+        reachable
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stored_node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reachable_node_count(&self) -> usize {
+        self.reachable_node_ids()
+            .into_iter()
+            .filter(|node| self.nodes.contains_key(*node))
+            .count()
     }
 
     fn simplify_subtree(&mut self, node: DockNodeId) -> Option<DockNodeId> {

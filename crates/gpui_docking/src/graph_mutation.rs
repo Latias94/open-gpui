@@ -99,7 +99,7 @@ impl DockGraph {
         {
             *selected = Some(preferred);
         }
-        self.simplify_space(space);
+        self.simplify_space_after_mutation(space);
         true
     }
 
@@ -160,9 +160,9 @@ impl DockGraph {
                 }
 
                 let ok = self.insert_item_into_tabs_at(tabs, item, None, None);
-                self.simplify_space(source_space);
+                self.simplify_space_after_mutation(source_space);
                 if source_space != target_space {
-                    self.simplify_space(target_space);
+                    self.simplify_space_after_mutation(target_space);
                 }
                 ok
             }
@@ -193,9 +193,9 @@ impl DockGraph {
                 }
 
                 let ok = self.insert_item_into_tabs_at(tabs, item, index, None);
-                self.simplify_space(source_space);
+                self.simplify_space_after_mutation(source_space);
                 if source_space != target_space {
-                    self.simplify_space(target_space);
+                    self.simplify_space_after_mutation(target_space);
                 }
                 ok
             }
@@ -211,9 +211,9 @@ impl DockGraph {
                 if !self.apply_edge_dock_plan(target_space, plan, new_tabs) {
                     return false;
                 }
-                self.simplify_space(source_space);
+                self.simplify_space_after_mutation(source_space);
                 if source_space != target_space {
-                    self.simplify_space(target_space);
+                    self.simplify_space_after_mutation(target_space);
                 }
                 true
             }
@@ -243,8 +243,8 @@ impl DockGraph {
             selected: Some(item),
         });
         self.set_root_for_empty_space(target_space, tabs);
-        self.simplify_space(source_space);
-        self.simplify_space(target_space);
+        self.simplify_space_after_mutation(source_space);
+        self.simplify_space_after_mutation(target_space);
         true
     }
 
@@ -283,9 +283,9 @@ impl DockGraph {
                     },
                     detached.selected.as_ref(),
                 );
-                self.simplify_space(source_space);
+                self.simplify_space_after_mutation(source_space);
                 if source_space != target_space {
-                    self.simplify_space(target_space);
+                    self.simplify_space_after_mutation(target_space);
                 }
                 ok
             }
@@ -300,9 +300,9 @@ impl DockGraph {
                 if !self.apply_edge_dock_plan(target_space, plan, new_tabs) {
                     return false;
                 }
-                self.simplify_space(source_space);
+                self.simplify_space_after_mutation(source_space);
                 if source_space != target_space {
-                    self.simplify_space(target_space);
+                    self.simplify_space_after_mutation(target_space);
                 }
                 true
             }
@@ -330,7 +330,7 @@ impl DockGraph {
         };
         let tabs = self.insert_detached_tabs(detached);
         self.set_root_for_empty_space(target_space, tabs);
-        self.simplify_space(target_space);
+        self.simplify_space_after_mutation(target_space);
         true
     }
 
@@ -351,8 +351,8 @@ impl DockGraph {
         };
 
         self.set_root_for_empty_space(target_space, source_root);
-        self.simplify_space(source_space);
-        self.simplify_space(target_space);
+        self.simplify_space_after_mutation(source_space);
+        self.simplify_space_after_mutation(target_space);
         true
     }
 
@@ -415,8 +415,8 @@ impl DockGraph {
             return false;
         }
         self.remove_subtree(source_root);
-        self.simplify_space(source_space);
-        self.simplify_space(target_space);
+        self.simplify_space_after_mutation(source_space);
+        self.simplify_space_after_mutation(target_space);
         true
     }
 }

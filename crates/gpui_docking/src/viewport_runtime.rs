@@ -16,15 +16,17 @@ use crate::{
     DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
     DockViewportAdapter, DockViewportBackendFocusState, DockViewportCloseCoordinator,
     DockViewportCloseOutcome, DockViewportClosePlanState, DockViewportClosePolicy,
-    DockViewportCloseStatus, DockViewportCommittedTearOffMove, DockViewportDropActionOutcome,
-    DockViewportDropPayload, DockViewportDropRouteOutcome, DockViewportFocusCoordinator,
-    DockViewportFocusRequest, DockViewportFrameCoordinator, DockViewportHostGeometry,
-    DockViewportIdentity, DockViewportMergeBackClosePlan, DockViewportPayloadDragState,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
-    DockViewportPlatformSyncRecord, DockViewportProvisionalOpenAttemptCompletion,
-    DockViewportRegisterOutcome, DockViewportRestoreReadiness, DockViewportRoutedDropPreviewState,
-    DockViewportRuntimeAdmission, DockViewportRuntimeHandle,
+    DockViewportCloseStatus, DockViewportCommittedTearOffMove, DockViewportCommittedWindowEffects,
+    DockViewportCommittedWindowEffectsPreparation, DockViewportCommittedWindowEffectsReceipt,
+    DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRouteOutcome,
+    DockViewportFocusCoordinator, DockViewportFocusRequest, DockViewportFrameCoordinator,
+    DockViewportHostGeometry, DockViewportIdentity, DockViewportMergeBackClosePlan,
+    DockViewportPayloadDragState, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
+    DockViewportPlatformFocusRestorePolicy, DockViewportPlatformSyncRecord,
+    DockViewportProvisionalOpenAttemptCompletion, DockViewportRegisterOutcome,
+    DockViewportRestoreReadiness, DockViewportRoutedDropPreviewState, DockViewportRuntimeAdmission,
+    DockViewportRuntimeHandle, DockViewportRuntimeIdentity,
     DockViewportRuntimeLineageActivationOutcome, DockViewportRuntimeLineageFreezeOutcome,
     DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportRuntimeWorkContext,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
@@ -59,6 +61,7 @@ use crate::{
     },
     workspace_drop_target::DockWorkspaceResolvedDropTarget,
     workspace_drop_transaction::{
+        DockWorkspaceLockedPayloadDropCommitId, DockWorkspaceLockedPayloadDropCommitReceipt,
         DockWorkspaceLockedPayloadDropPlan, DockWorkspaceLockedPayloadDropRequest,
         DockWorkspacePayloadDropOutcome, DockWorkspacePayloadDropRequest,
         DockWorkspacePreparedLockedPayloadDrop,
@@ -98,10 +101,14 @@ pub(crate) struct DockViewportRuntime {
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewState,
     status: DockViewportRuntimeStatus,
+    locked_payload_drop_commits:
+        HashMap<DockWorkspaceLockedPayloadDropCommitId, DockViewportCommittedLockedPayloadDrop>,
+    live_undock_promotion_commits:
+        HashMap<DockViewportRegistrationKey, DockViewportCommittedLiveUndockPromotion>,
     #[cfg(test)]
     reject_next_provisional_registration: bool,
     #[cfg(test)]
-    reject_next_live_undock_promotion_commit: Cell<bool>,
+    rejected_live_undock_promotion_commits: Cell<u8>,
 }
 
 #[derive(Debug)]
@@ -111,6 +118,7 @@ pub(crate) struct DockViewportRuntimeRegistration {
     runtime_update: DockViewportRuntimeUpdate,
 }
 
+#[derive(Clone)]
 pub(crate) struct DockViewportPreparedLiveUndockPromotion {
     target_space: DockSpaceId,
     window: AnyWindowHandle,
@@ -135,6 +143,7 @@ impl DockViewportPreparedLiveUndockPromotion {
     }
 }
 
+#[derive(Clone, Debug)]
 pub(crate) struct DockViewportCommittedLiveUndockPromotion {
     pub(crate) registration: DockViewportRegistrationKey,
     pub(crate) runtime_update: DockViewportRuntimeUpdate,
@@ -222,6 +231,7 @@ enum DockViewportPreparedPayloadDropTarget {
     Locked(DockWorkspaceLockedPayloadDropPlan),
 }
 
+#[derive(Clone)]
 pub(crate) struct DockViewportLockedWorkspaceDrop {
     plan: DockWorkspaceLockedPayloadDropPlan,
     drag_session: DockRuntimeDragSession,
@@ -255,6 +265,7 @@ pub(crate) struct DockViewportSampledAtomicLockedPayloadDrop {
     source_registration: Option<DockViewportRegistrationKey>,
 }
 
+#[derive(Clone)]
 #[must_use = "a preflighted locked payload drop must commit without further validation"]
 pub(crate) struct DockViewportPreflightedLockedPayloadDrop {
     work_context: DockViewportRuntimeWorkContext,
@@ -269,11 +280,13 @@ pub(crate) struct DockViewportPreflightedLockedPayloadDrop {
     source_is_empty: bool,
 }
 
+#[derive(Clone, Debug)]
 #[must_use = "a committed locked payload drop must publish its update and settle window effects"]
 pub(crate) struct DockViewportCommittedLockedPayloadDrop {
     outcome: DockViewportDropRouteOutcome,
     runtime_update: DockViewportRuntimeUpdate,
-    window_effects: DockViewportWindowEffects,
+    window_effects: DockViewportCommittedWindowEffects,
+    retirement_started: bool,
 }
 
 impl DockViewportCommittedLockedPayloadDrop {
@@ -282,9 +295,36 @@ impl DockViewportCommittedLockedPayloadDrop {
     ) -> (
         DockViewportDropRouteOutcome,
         DockViewportRuntimeUpdate,
-        DockViewportWindowEffects,
+        DockViewportCommittedWindowEffects,
     ) {
         (self.outcome, self.runtime_update, self.window_effects)
+    }
+}
+
+impl DockViewportPreflightedLockedPayloadDrop {
+    pub(crate) fn committed_workspace(
+        &self,
+        cx: &App,
+    ) -> Option<DockWorkspaceLockedPayloadDropCommitReceipt> {
+        self.controller
+            .read(cx)
+            .workspace()
+            .locked_payload_drop_commit(self.workspace.commit_id())
+    }
+
+    pub(crate) fn commit_workspace(
+        &self,
+        cx: &mut App,
+    ) -> DockWorkspaceLockedPayloadDropCommitReceipt {
+        self.controller.update(cx, |controller, _| {
+            self.workspace
+                .commit_or_replay(controller.workspace_mut())
+                .expect("preflighted locked payload drop must retain exact graph authority")
+        })
+    }
+
+    pub(crate) fn controller(&self) -> &Entity<DockController> {
+        &self.controller
     }
 }
 
@@ -948,10 +988,12 @@ impl DockViewportRuntime {
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
             status: DockViewportRuntimeStatus::default(),
+            locked_payload_drop_commits: HashMap::new(),
+            live_undock_promotion_commits: HashMap::new(),
             #[cfg(test)]
             reject_next_provisional_registration: false,
             #[cfg(test)]
-            reject_next_live_undock_promotion_commit: Cell::new(false),
+            rejected_live_undock_promotion_commits: Cell::new(0),
         }
     }
 
@@ -980,8 +1022,10 @@ impl DockViewportRuntime {
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
             status: DockViewportRuntimeStatus::default(),
+            locked_payload_drop_commits: HashMap::new(),
+            live_undock_promotion_commits: HashMap::new(),
             reject_next_provisional_registration: false,
-            reject_next_live_undock_promotion_commit: Cell::new(false),
+            rejected_live_undock_promotion_commits: Cell::new(0),
         }
     }
 
@@ -1732,8 +1776,13 @@ impl DockViewportRuntime {
         prepared: &DockViewportPreparedLiveUndockPromotion,
     ) -> bool {
         #[cfg(test)]
-        if self.reject_next_live_undock_promotion_commit.replace(false) {
-            return false;
+        {
+            let remaining = self.rejected_live_undock_promotion_commits.get();
+            if remaining > 0 {
+                self.rejected_live_undock_promotion_commits
+                    .set(remaining - 1);
+                return false;
+            }
         }
         prepared.host_geometry.is_some()
             && self.admits_work_context(prepared.context)
@@ -1750,8 +1799,30 @@ impl DockViewportRuntime {
         &mut self,
         prepared: DockViewportPreparedLiveUndockPromotion,
     ) -> DockViewportCommittedLiveUndockPromotion {
+        let prepared_registration = prepared.registration.registration().clone();
+        if let Some(committed) = self
+            .live_undock_promotion_commits
+            .get(&prepared_registration)
+        {
+            return committed.clone();
+        }
         assert!(
-            self.can_commit_live_undock_provisional_promotion(&prepared),
+            prepared.host_geometry.is_some()
+                && self.admits_work_context(prepared.context)
+                && !self.target_space_is_reserved(&prepared.target_space)
+                && (self
+                    .window_ownership
+                    .can_commit_provisional_window_promotion(&prepared.ownership)
+                    || self
+                        .window_ownership
+                        .has_committed_provisional_window_promotion(&prepared.ownership))
+                && (self
+                    .adapter
+                    .can_commit_vacant_registration(&prepared.registration)
+                    || self
+                        .adapter
+                        .registry
+                        .is_current_registration(prepared.registration.registration())),
             "prepared live-undock viewport promotion must remain exact until commit"
         );
         self.window_ownership
@@ -1777,10 +1848,33 @@ impl DockViewportRuntime {
         runtime_update
             .mark_observed_viewport_placement(facts_change.placement_changed, prepared.context);
         runtime_update.extend_windows([prepared.window]);
-        DockViewportCommittedLiveUndockPromotion {
+        let committed = DockViewportCommittedLiveUndockPromotion {
             registration,
             runtime_update,
+        };
+        self.live_undock_promotion_commits
+            .insert(prepared_registration, committed.clone());
+        committed
+    }
+
+    pub(crate) fn commit_or_replay_live_undock_provisional_promotion(
+        &mut self,
+        prepared: DockViewportPreparedLiveUndockPromotion,
+    ) -> Option<DockViewportCommittedLiveUndockPromotion> {
+        let registration = prepared.registration.registration();
+        if let Some(committed) = self.live_undock_promotion_commits.get(registration) {
+            return Some(committed.clone());
         }
+        self.can_commit_live_undock_provisional_promotion(&prepared)
+            .then(|| self.commit_live_undock_provisional_promotion(prepared))
+    }
+
+    pub(crate) fn retire_live_undock_provisional_promotion_commit(
+        &mut self,
+        committed: &DockViewportCommittedLiveUndockPromotion,
+    ) {
+        self.live_undock_promotion_commits
+            .remove(&committed.registration);
     }
 
     #[cfg(test)]
@@ -1790,7 +1884,12 @@ impl DockViewportRuntime {
 
     #[cfg(test)]
     pub(crate) fn reject_next_live_undock_promotion_commit_for_test(&self) {
-        self.reject_next_live_undock_promotion_commit.set(true);
+        self.reject_live_undock_promotion_commits_for_test(1);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reject_live_undock_promotion_commits_for_test(&self, attempts: u8) {
+        self.rejected_live_undock_promotion_commits.set(attempts);
     }
 
     pub(crate) fn promote_primary_anchor_open_attempt(
@@ -2953,42 +3052,28 @@ impl DockViewportRuntime {
 
     pub(crate) fn commit_preflighted_locked_payload_drop(
         &mut self,
-        prepared: DockViewportPreflightedLockedPayloadDrop,
-        cx: &mut App,
+        runtime_identity: DockViewportRuntimeIdentity,
+        prepared: &DockViewportPreflightedLockedPayloadDrop,
+        workspace: &DockWorkspaceLockedPayloadDropCommitReceipt,
     ) -> DockViewportCommittedLockedPayloadDrop {
+        if let Some(committed) = self.locked_payload_drop_commits.get(&workspace.commit_id()) {
+            return committed.clone();
+        }
         debug_assert!(
-            self.can_commit_preflighted_locked_payload_drop(&prepared),
+            self.can_commit_preflighted_locked_payload_drop(prepared),
             "preflighted locked payload drop must retain exact runtime authority until commit"
         );
-        let DockViewportPreflightedLockedPayloadDrop {
-            work_context,
-            controller,
-            source_space,
-            target_space,
-            drag_session,
-            workspace,
-            target_registration,
-            target_window,
-            source_registration,
-            source_is_empty,
-        } = prepared;
         let vacated_source = self.commit_preflighted_vacated_payload_drop_source(
-            &source_space,
-            &target_space,
-            source_registration,
-            source_is_empty,
+            &prepared.source_space,
+            &prepared.target_space,
+            prepared.source_registration.clone(),
+            prepared.source_is_empty,
         );
-        let reusable =
-            DockViewportReusableWindowOutcome::reused(target_registration, target_window);
-        let drop_outcome = controller.update(cx, |controller, cx| {
-            let outcome = controller
-                .workspace_mut()
-                .commit_prepared_locked_payload_drop(workspace);
-            if outcome.changed() {
-                cx.notify();
-            }
-            outcome
-        });
+        let reusable = DockViewportReusableWindowOutcome::reused(
+            prepared.target_registration.clone(),
+            prepared.target_window,
+        );
+        let drop_outcome = workspace.outcome();
         let focus_request = drop_outcome.focus_item().cloned().map_or_else(
             DockViewportFocusRequest::no_panel_focus,
             DockViewportFocusRequest::panel,
@@ -2996,9 +3081,9 @@ impl DockViewportRuntime {
         let (activation, reusable_effects) =
             DockViewportWindowLifecycleController::drop_activation(reusable, focus_request);
         let mut runtime_update = DockViewportRuntimeUpdate::default();
-        runtime_update.bind_work_context(work_context);
-        runtime_update.mark_graph_commit(drop_outcome.changed(), work_context);
-        runtime_update.mark_viewport_topology(vacated_source.changed(), work_context);
+        runtime_update.bind_work_context(prepared.work_context);
+        runtime_update.mark_graph_commit(drop_outcome.changed(), prepared.work_context);
+        runtime_update.mark_viewport_topology(vacated_source.changed(), prepared.work_context);
         let window_effects = reusable_effects.merge(DockViewportWindowEffects::new(
             Vec::new(),
             vacated_source.affected_windows,
@@ -3009,12 +3094,82 @@ impl DockViewportRuntime {
             activation,
         ));
         self.status.record_drop_result(&Ok(outcome.clone()));
-        runtime_update.merge(self.clear_routed_drop_preview_for_drag_session(Some(&drag_session)));
-        DockViewportCommittedLockedPayloadDrop {
+        runtime_update
+            .merge(self.clear_routed_drop_preview_for_drag_session(Some(&prepared.drag_session)));
+        let committed = DockViewportCommittedLockedPayloadDrop {
             outcome,
             runtime_update,
-            window_effects,
+            window_effects: DockViewportCommittedWindowEffects::new(
+                runtime_identity,
+                workspace.commit_id(),
+                window_effects,
+            ),
+            retirement_started: false,
+        };
+        self.locked_payload_drop_commits
+            .insert(workspace.commit_id(), committed.clone());
+        committed
+    }
+
+    pub(crate) fn prepare_locked_payload_drop_window_effects_acceptance(
+        &self,
+        runtime_identity: DockViewportRuntimeIdentity,
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+        candidate: &DockViewportCommittedWindowEffects,
+    ) -> DockViewportCommittedWindowEffectsPreparation {
+        let Some(committed) = self.locked_payload_drop_commits.get(&commit_id) else {
+            return DockViewportCommittedWindowEffectsPreparation::Stale;
+        };
+        if !committed.window_effects.matches(candidate) {
+            return DockViewportCommittedWindowEffectsPreparation::Stale;
         }
+        committed
+            .window_effects
+            .prepare_acceptance(runtime_identity, commit_id)
+    }
+
+    pub(crate) fn begin_retire_locked_payload_drop_commit(
+        &mut self,
+        runtime_identity: DockViewportRuntimeIdentity,
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+        candidate: &DockViewportCommittedWindowEffects,
+        acceptance: DockViewportCommittedWindowEffectsReceipt,
+    ) -> bool {
+        let Some(committed) = self.locked_payload_drop_commits.get_mut(&commit_id) else {
+            return false;
+        };
+        if acceptance.runtime() != runtime_identity
+            || acceptance.commit_id() != commit_id
+            || !committed.window_effects.matches(candidate)
+            || committed.window_effects.receipt() != Some(acceptance)
+        {
+            return false;
+        }
+        committed.retirement_started = true;
+        true
+    }
+
+    pub(crate) fn finish_retire_locked_payload_drop_commit(
+        &mut self,
+        runtime_identity: DockViewportRuntimeIdentity,
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+        candidate: &DockViewportCommittedWindowEffects,
+        acceptance: DockViewportCommittedWindowEffectsReceipt,
+    ) -> bool {
+        let can_retire = self
+            .locked_payload_drop_commits
+            .get(&commit_id)
+            .is_some_and(|committed| {
+                committed.retirement_started
+                    && acceptance.runtime() == runtime_identity
+                    && acceptance.commit_id() == commit_id
+                    && committed.window_effects.matches(candidate)
+                    && committed.window_effects.receipt() == Some(acceptance)
+            });
+        if can_retire {
+            self.locked_payload_drop_commits.remove(&commit_id);
+        }
+        can_retire
     }
 
     fn can_commit_preflighted_locked_payload_drop(
@@ -4080,6 +4235,7 @@ mod lineage_drop_tests {
         viewport_test_support::handle,
     };
     use open_gpui::{AppContext as _, EntityId, TestAppContext, WindowId};
+    use std::{cell::RefCell, rc::Rc};
 
     fn active_surface_lease(
         session: &mut DockSurfaceWindowSession,
@@ -4091,6 +4247,118 @@ mod lineage_drop_tests {
         session
             .commit_opening(opening, anchor)
             .expect("the reserved surface generation should activate")
+    }
+
+    #[open_gpui::test]
+    fn committed_window_effects_require_the_canonical_runtime_record(cx: &mut TestAppContext) {
+        let runtime_identity = DockViewportRuntimeIdentity::for_test(1001);
+        let foreign_runtime_identity = DockViewportRuntimeIdentity::for_test(1002);
+        let commit_id = DockWorkspaceLockedPayloadDropCommitId::new(1);
+        let space = DockSpaceId::from("window-effects-ledger");
+        let controller = cx.new(|_| {
+            DockController::new(crate::DockWorkspace::new(space, crate::DockGraph::new()))
+        });
+        let runtime = Rc::new(RefCell::new(DockViewportRuntime::new(controller)));
+        let window_effects = DockViewportCommittedWindowEffects::new(
+            runtime_identity,
+            commit_id,
+            DockViewportWindowEffects::default(),
+        );
+        runtime.borrow_mut().locked_payload_drop_commits.insert(
+            commit_id,
+            DockViewportCommittedLockedPayloadDrop {
+                outcome: DockViewportDropRouteOutcome::Action(DockViewportDropActionOutcome::new(
+                    DockActionOutcome::Unchanged,
+                    None,
+                )),
+                runtime_update: DockViewportRuntimeUpdate::default(),
+                window_effects: window_effects.clone(),
+                retirement_started: false,
+            },
+        );
+
+        assert!(matches!(
+            runtime
+                .borrow()
+                .prepare_locked_payload_drop_window_effects_acceptance(
+                    foreign_runtime_identity,
+                    commit_id,
+                    &window_effects,
+                ),
+            DockViewportCommittedWindowEffectsPreparation::Stale
+        ));
+
+        let foreign_effects = DockViewportCommittedWindowEffects::new(
+            foreign_runtime_identity,
+            commit_id,
+            DockViewportWindowEffects::default(),
+        );
+        let foreign_transfer =
+            match foreign_effects.prepare_acceptance(foreign_runtime_identity, commit_id) {
+                DockViewportCommittedWindowEffectsPreparation::Transfer(transfer) => transfer,
+                _ => panic!("the foreign empty batch should prepare its own exact transfer"),
+            };
+        let foreign_receipt = cx.update({
+            let runtime = runtime.clone();
+            move |app| foreign_transfer.accept(&runtime, app)
+        });
+        assert!(
+            !runtime
+                .borrow_mut()
+                .begin_retire_locked_payload_drop_commit(
+                    runtime_identity,
+                    commit_id,
+                    &window_effects,
+                    foreign_receipt,
+                ),
+            "a receipt from another runtime must not retire the canonical commit"
+        );
+
+        let transfer = match runtime
+            .borrow()
+            .prepare_locked_payload_drop_window_effects_acceptance(
+                runtime_identity,
+                commit_id,
+                &window_effects,
+            ) {
+            DockViewportCommittedWindowEffectsPreparation::Transfer(transfer) => transfer,
+            _ => panic!("the canonical pending batch should prepare one transfer"),
+        };
+        let receipt = cx.update({
+            let runtime = runtime.clone();
+            move |app| transfer.accept(&runtime, app)
+        });
+        assert_eq!(receipt.runtime(), runtime_identity);
+        assert!(
+            runtime
+                .borrow_mut()
+                .begin_retire_locked_payload_drop_commit(
+                    runtime_identity,
+                    commit_id,
+                    &window_effects,
+                    receipt,
+                )
+        );
+        assert!(
+            runtime
+                .borrow_mut()
+                .finish_retire_locked_payload_drop_commit(
+                    runtime_identity,
+                    commit_id,
+                    &window_effects,
+                    receipt,
+                )
+        );
+        assert!(matches!(
+            runtime
+                .borrow()
+                .prepare_locked_payload_drop_window_effects_acceptance(
+                    runtime_identity,
+                    commit_id,
+                    &window_effects,
+                ),
+            DockViewportCommittedWindowEffectsPreparation::Stale
+        ));
     }
 
     #[open_gpui::test]

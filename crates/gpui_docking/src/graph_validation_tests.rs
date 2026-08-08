@@ -29,6 +29,162 @@ fn graph_validation_accepts_reachable_canonical_graph() {
     );
 
     graph.validate().expect("default graph should validate");
+    assert_eq!(graph.stored_node_count(), graph.reachable_node_count());
+}
+
+#[test]
+fn canonical_graph_validation_rejects_unreachable_staged_nodes() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        selected: Some(item("root")),
+    });
+    let orphan = graph.insert_node(DockNode::Tabs {
+        items: vec![item("orphan")],
+        selected: Some(item("orphan")),
+    });
+    graph.set_root(space("main"), root);
+
+    graph
+        .validate()
+        .expect("reachable validation must allow the public insert-then-attach staging window");
+    assert_eq!(
+        graph.validate_canonical(),
+        Err(DockGraphValidationError::UnreachableNode { node: orphan })
+    );
+}
+
+#[test]
+fn canonicalize_removes_unattached_staged_nodes_at_an_explicit_commit_boundary() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        selected: Some(item("root")),
+    });
+    let staged = graph.insert_node(DockNode::Tabs {
+        items: vec![item("staged")],
+        selected: Some(item("staged")),
+    });
+    graph.set_root(space("main"), root);
+
+    graph.canonicalize();
+
+    assert!(graph.node(staged).is_none());
+    graph
+        .validate_canonical()
+        .expect("explicit canonicalization should leave no unattached nodes");
+}
+
+#[test]
+fn simplify_space_preserves_detached_node_identity_and_staging_authority() {
+    let mut graph = DockGraph::new();
+    let empty = graph.insert_node(DockNode::Tabs {
+        items: Vec::new(),
+        selected: None,
+    });
+    let survivor = graph.insert_node(DockNode::Tabs {
+        items: vec![item("survivor")],
+        selected: Some(item("survivor")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![empty, survivor],
+        fractions: vec![0.5, 0.5],
+    });
+    let staged = graph.insert_node(DockNode::Tabs {
+        items: vec![item("staged")],
+        selected: Some(item("staged")),
+    });
+    graph.set_root(space("main"), root);
+
+    graph.simplify_space(&space("main"));
+
+    assert_eq!(graph.root(&space("main")), Some(survivor));
+    assert!(
+        graph.node(empty).is_some(),
+        "local simplification must not invalidate a detached node identity"
+    );
+    assert!(
+        graph.node(root).is_some(),
+        "local simplification must not consume the previous root identity"
+    );
+    assert!(
+        graph.node(staged).is_some(),
+        "local simplification must not consume unrelated staging authority"
+    );
+
+    graph.set_root(space("secondary"), staged);
+    assert_eq!(graph.root(&space("secondary")), Some(staged));
+    graph.canonicalize();
+    graph
+        .validate_canonical()
+        .expect("the preserved staged node should attach before the explicit commit boundary");
+}
+
+#[test]
+fn checked_mutation_preserves_staged_dependencies_on_detached_nodes() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        selected: Some(item("left")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right")],
+        selected: Some(item("right")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space("main"), root);
+
+    let staged_leaf = graph.insert_node(DockNode::Tabs {
+        items: vec![item("staged")],
+        selected: Some(item("staged")),
+    });
+    let staged_wrapper = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![root, staged_leaf],
+        fractions: vec![0.5, 0.5],
+    });
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::CloseItem {
+                space: space("main"),
+                item: item("left"),
+            })
+            .expect("closing the reachable item should commit")
+    );
+
+    assert_eq!(graph.root(&space("main")), Some(right));
+    assert!(
+        graph.node(root).is_some() && graph.node(left).is_some(),
+        "the checked mutation must preserve detached nodes referenced by staging authority"
+    );
+    assert!(graph.node(staged_wrapper).is_some());
+    graph
+        .validate()
+        .expect("reachable validation must continue to ignore unattached staging authority");
+}
+
+#[test]
+fn layout_builder_prunes_nodes_removed_by_canonicalization() {
+    let mut builder = DockLayoutBuilder::new();
+    let left = builder.tabs(["left"]);
+    let middle = builder.tabs(["middle"]);
+    let right = builder.tabs(["right"]);
+    let nested = builder.split_horizontal(middle, right, 0.5);
+    let root = builder.split_horizontal(left, nested, 0.5);
+    builder.set_root(space("main"), root);
+
+    let graph = builder
+        .try_build()
+        .expect("canonical builder output should validate");
+
+    assert!(graph.node(nested).is_none());
+    assert_eq!(graph.stored_node_count(), graph.reachable_node_count());
 }
 
 #[test]

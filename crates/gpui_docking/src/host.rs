@@ -400,10 +400,36 @@ impl DockHostLiveSourceSemanticProxy {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DockHostPreparedLiveSourceRetirement {
     key: DockHostLivePresentationKey,
     source: view_presentation_window::LeaseBatch,
+}
+
+impl DockHostPreparedLiveSourceRetirement {
+    pub(crate) const fn key(&self) -> DockHostLivePresentationKey {
+        self.key
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DockHostLiveSourceRetirementReceipt {
+    key: DockHostLivePresentationKey,
+    source: view_presentation_window::LeaseBatch,
+}
+
+impl DockHostLiveSourceRetirementReceipt {
+    fn matches_prepared(&self, prepared: &DockHostPreparedLiveSourceRetirement) -> bool {
+        self.key == prepared.key
+            && self.source.window_id() == prepared.source.window_id()
+            && self.source.leases() == prepared.source.leases()
+    }
+
+    fn matches_exactly(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.source.window_id() == other.source.window_id()
+            && self.source.leases() == other.source.leases()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -412,7 +438,7 @@ pub(crate) struct DockHostPreparedLiveSourceSemanticRetirement {
     lease: DockLiveUndockPayloadLeaseReceipt,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DockHostPreparedLiveDestinationPromotion {
     key: DockHostLivePresentationKey,
     opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
@@ -431,6 +457,30 @@ impl DockHostPreparedLiveDestinationPromotion {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct DockHostLiveDestinationPromotionReceipt {
+    semantics: DockHostLiveDestinationSemantics,
+}
+
+impl DockHostLiveDestinationPromotionReceipt {
+    pub(crate) const fn semantics(&self) -> &DockHostLiveDestinationSemantics {
+        &self.semantics
+    }
+
+    fn matches_prepared(&self, prepared: &DockHostPreparedLiveDestinationPromotion) -> bool {
+        self.semantics.identity == prepared.key.identity
+            && self.semantics.token == prepared.token
+            && self.semantics.registration == prepared.registration
+            && self.semantics.surface_revision == prepared.committed_surface_revision
+            && self.semantics.destination.window_id() == prepared.destination.window_id()
+            && self.semantics.destination.leases() == prepared.destination.leases()
+    }
+
+    fn matches_exactly(&self, other: &Self) -> bool {
+        self.semantics.matches_exactly(&other.semantics)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DockHostLivePresentationStage {
     Source(DockHostLiveSourcePhase),
@@ -443,11 +493,17 @@ enum DockHostLivePresentationStage {
     SourceRestoration(DockHostLiveSourceRestorationPhase),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DockHostPreparedLivePresentationAbandonment {
     key: DockHostLivePresentationKey,
     stage: DockHostLivePresentationStage,
     publication: DockHostPresentationPublicationSnapshot,
+}
+
+impl DockHostPreparedLivePresentationAbandonment {
+    pub(crate) const fn key(&self) -> DockHostLivePresentationKey {
+        self.key
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -507,7 +563,7 @@ pub(crate) struct DockHostPreparedPayloadRecoveryPresentationAbandonment {
     publication: DockHostPresentationPublicationSnapshot,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DockHostPresentationPublicationSnapshot {
     logical: view_presentation_window::LeaseBatch,
     prior: Option<view_presentation_window::LeaseBatch>,
@@ -653,6 +709,9 @@ pub struct DockHost {
     surface_owner: Option<Entity<DockSurfaceOwner>>,
     role: DockHostRole,
     live_presentation: Option<DockHostPresentationState>,
+    committed_live_presentation_abandonment: Option<DockHostLivePresentationCleanupReceipt>,
+    committed_live_source_retirement: Option<DockHostLiveSourceRetirementReceipt>,
+    committed_live_destination_promotion: Option<DockHostLiveDestinationPromotionReceipt>,
     committed_payload_recovery_source_retirement:
         Option<DockHostCommittedPayloadRecoverySourceRetirement>,
     committed_payload_recovery_destination: Option<DockHostCommittedPayloadRecoveryDestination>,
@@ -832,6 +891,9 @@ impl DockHost {
             surface_owner,
             role,
             live_presentation: None,
+            committed_live_presentation_abandonment: None,
+            committed_live_source_retirement: None,
+            committed_live_destination_promotion: None,
             committed_payload_recovery_source_retirement: None,
             committed_payload_recovery_destination: None,
             live_source_semantic_proxy: None,
@@ -917,6 +979,13 @@ impl DockHost {
 
     pub(crate) const fn is_provisional_viewport(&self) -> bool {
         matches!(self.role, DockHostRole::ProvisionalViewport(_))
+    }
+
+    pub(crate) fn is_provisional_viewport_for(
+        &self,
+        opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
+    ) -> bool {
+        matches!(self.role, DockHostRole::ProvisionalViewport(current) if current == opening)
     }
 
     pub(crate) fn live_presentation_session(&self) -> Option<&DockHostPresentationSession> {
@@ -2477,11 +2546,31 @@ impl DockHost {
             && current.publication.matches_exactly(&prepared.publication)
     }
 
+    pub(crate) fn committed_live_presentation_abandonment(
+        &self,
+        key: DockHostLivePresentationKey,
+    ) -> Option<DockHostLivePresentationCleanupReceipt> {
+        self.committed_live_presentation_abandonment
+            .filter(|receipt| receipt.key() == key)
+    }
+
     pub(crate) fn commit_prepared_live_presentation_abandonment(
         &mut self,
         prepared: DockHostPreparedLivePresentationAbandonment,
         cx: &mut Context<Self>,
     ) -> DockHostLivePresentationCleanupReceipt {
+        let receipt = self.commit_prepared_live_presentation_abandonment_without_notify(prepared);
+        cx.notify();
+        receipt
+    }
+
+    pub(crate) fn commit_prepared_live_presentation_abandonment_without_notify(
+        &mut self,
+        prepared: DockHostPreparedLivePresentationAbandonment,
+    ) -> DockHostLivePresentationCleanupReceipt {
+        if let Some(receipt) = self.committed_live_presentation_abandonment(prepared.key()) {
+            return receipt;
+        }
         assert!(
             self.can_commit_prepared_live_presentation_abandonment(&prepared),
             "prepared live-presentation abandonment must remain exact until commit"
@@ -2493,8 +2582,9 @@ impl DockHost {
         publication.remove_observed_owned(&mut self.panel_presentation_leases);
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
-        cx.notify();
-        DockHostLivePresentationCleanupReceipt { key }
+        let receipt = DockHostLivePresentationCleanupReceipt { key };
+        self.committed_live_presentation_abandonment = Some(receipt);
+        receipt
     }
 
     pub(crate) fn prepare_live_source_retirement(
@@ -2543,21 +2633,51 @@ impl DockHost {
             && current.source.leases() == prepared.source.leases()
     }
 
-    pub(crate) fn commit_prepared_live_source_retirement(
+    pub(crate) fn committed_live_source_retirement(
+        &self,
+        prepared: &DockHostPreparedLiveSourceRetirement,
+    ) -> Option<DockHostLiveSourceRetirementReceipt> {
+        self.committed_live_source_retirement
+            .as_ref()
+            .filter(|committed| committed.matches_prepared(prepared))
+            .cloned()
+    }
+
+    pub(crate) fn commit_or_replay_prepared_live_source_retirement_without_notify(
         &mut self,
         prepared: DockHostPreparedLiveSourceRetirement,
-        cx: &mut Context<Self>,
-    ) {
-        assert!(
-            self.can_commit_prepared_live_source_retirement(&prepared),
-            "prepared live source authority must remain exact until commit"
-        );
+    ) -> Option<DockHostLiveSourceRetirementReceipt> {
+        if let Some(receipt) = self.committed_live_source_retirement(&prepared) {
+            return Some(receipt);
+        }
+        if !self.can_commit_prepared_live_source_retirement(&prepared) {
+            return None;
+        }
+        let receipt = DockHostLiveSourceRetirementReceipt {
+            key: prepared.key,
+            source: prepared.source.clone(),
+        };
+        self.committed_live_source_retirement = Some(receipt.clone());
         self.live_presentation = None;
         self.panel_presentation_leases
             .retain(|_, lease| !prepared.source.leases().contains(lease));
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
-        cx.notify();
+        Some(receipt)
+    }
+
+    pub(crate) fn retire_live_source_retirement(
+        &mut self,
+        receipt: &DockHostLiveSourceRetirementReceipt,
+    ) -> bool {
+        match self.committed_live_source_retirement.as_ref() {
+            None => true,
+            Some(committed) if committed.matches_exactly(receipt) => {
+                self.committed_live_source_retirement = None;
+                true
+            }
+            Some(_) => false,
+        }
     }
 
     pub(crate) fn prepare_live_destination_promotion(
@@ -2644,15 +2764,20 @@ impl DockHost {
             && current.host_geometry == prepared.host_geometry
     }
 
-    pub(crate) fn commit_prepared_live_destination_promotion(
+    pub(crate) fn commit_or_replay_prepared_live_destination_promotion_without_notify(
         &mut self,
         prepared: DockHostPreparedLiveDestinationPromotion,
-        cx: &mut Context<Self>,
-    ) {
-        assert!(
-            self.can_commit_prepared_live_destination_promotion(&prepared),
-            "prepared live destination authority must remain exact until commit"
-        );
+    ) -> Option<DockHostLiveDestinationPromotionReceipt> {
+        if let Some(receipt) = self
+            .committed_live_destination_promotion
+            .as_ref()
+            .filter(|receipt| receipt.matches_prepared(&prepared))
+        {
+            return Some(receipt.clone());
+        }
+        if !self.can_commit_prepared_live_destination_promotion(&prepared) {
+            return None;
+        }
 
         self.role = DockHostRole::ManagedViewport(prepared.opening.lease());
         self.bound_viewport_registration = Some(prepared.registration);
@@ -2666,7 +2791,7 @@ impl DockHost {
             .retain(|entity_id, lease| prepared.destination.lease_for(*entity_id) == Some(*lease));
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
-        self.live_destination_semantics = Some(DockHostLiveDestinationSemantics {
+        let semantics = DockHostLiveDestinationSemantics {
             identity: prepared.key.identity,
             token: prepared.token,
             binding,
@@ -2676,8 +2801,25 @@ impl DockHost {
                 .expect("promoted destination host must retain its exact registration"),
             surface_revision: prepared.committed_surface_revision,
             destination: prepared.destination,
-        });
-        cx.notify();
+        };
+        self.live_destination_semantics = Some(semantics.clone());
+        let receipt = DockHostLiveDestinationPromotionReceipt { semantics };
+        self.committed_live_destination_promotion = Some(receipt.clone());
+        Some(receipt)
+    }
+
+    pub(crate) fn retire_live_destination_promotion(
+        &mut self,
+        receipt: &DockHostLiveDestinationPromotionReceipt,
+    ) -> bool {
+        match self.committed_live_destination_promotion.as_ref() {
+            None => true,
+            Some(committed) if committed.matches_exactly(receipt) => {
+                self.committed_live_destination_promotion = None;
+                true
+            }
+            Some(_) => false,
+        }
     }
 
     pub(crate) fn live_destination_semantics(&self) -> Option<DockHostLiveDestinationSemantics> {
@@ -3139,6 +3281,11 @@ impl DockHost {
             window_id,
             generation: self.window_binding_generation,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_window_binding_for_test(&mut self) {
+        self.window_binding_generation = self.window_binding_generation.wrapping_add(1).max(1);
     }
 
     pub(crate) fn current_viewport_registration(&self) -> Option<DockViewportRegistrationKey> {

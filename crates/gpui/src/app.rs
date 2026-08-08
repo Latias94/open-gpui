@@ -2309,6 +2309,77 @@ impl App {
         }
     }
 
+    /// Runs delayed lifecycle work after the App borrow is available, or transfers it into the
+    /// active shutdown generation before the window registry is cleared.
+    ///
+    /// Native modal loops may poll foreground timers while their initiating update still owns the
+    /// App `RefCell`. This primitive keeps the callback in `AppCell` until either the delay expires
+    /// and a distinct borrow release occurs, or shutdown claims it as exact pre-clear work.
+    #[doc(hidden)]
+    pub fn defer_after_or_shutdown_critical_before_window_registry_clear(
+        &mut self,
+        delay: Duration,
+        callback: impl FnOnce(&mut App) + 'static,
+    ) {
+        let callback = Box::new(callback);
+        let Some(cell) = self.this.upgrade() else {
+            self.defer(move |cx| callback(cx));
+            return;
+        };
+        if cell.shutdown_fence_owns_effect_flush() {
+            match cell.enqueue_shutdown_critical(
+                cell::NativeShutdownCriticalPhase::BeforeWindowRegistryClear,
+                callback,
+            ) {
+                Ok(()) => {}
+                Err(cell::NativeShutdownCriticalEnqueueError::PhasePassed(callback)) => {
+                    match cell.enqueue_shutdown_critical(
+                        cell::NativeShutdownCriticalPhase::AfterWindowRegistryClear,
+                        callback,
+                    ) {
+                        Ok(()) => {}
+                        Err(
+                            cell::NativeShutdownCriticalEnqueueError::Inactive(callback)
+                            | cell::NativeShutdownCriticalEnqueueError::PhasePassed(callback),
+                        ) => self.defer(move |cx| callback(cx)),
+                    }
+                }
+                Err(cell::NativeShutdownCriticalEnqueueError::Inactive(callback)) => {
+                    self.defer(move |cx| callback(cx));
+                }
+            }
+            return;
+        }
+
+        let ticket = cell.protect_pre_shutdown_critical(callback);
+        let weak_cell = Rc::downgrade(&cell);
+        let background_executor = self.background_executor.clone();
+        self.foreground_executor
+            .spawn(async move {
+                background_executor.timer(delay).await;
+                loop {
+                    let Some(cell) = weak_cell.upgrade() else {
+                        return;
+                    };
+                    let borrow_released = match cell.try_borrow_mut() {
+                        Ok(mut app) => {
+                            let Some(callback) = cell.take_pre_shutdown_critical(ticket) else {
+                                return;
+                            };
+                            app.update(|cx| callback(cx));
+                            return;
+                        }
+                        Err(_) => cell.wait_for_app_borrow_release(),
+                    };
+                    drop(cell);
+                    if borrow_released.await.is_err() {
+                        return;
+                    }
+                }
+            })
+            .detach();
+    }
+
     /// Schedules lifecycle-critical work after the active shutdown clears the window registry.
     ///
     /// This is an exact-generation shutdown participant rather than an ordinary deferred effect.

@@ -28,8 +28,8 @@ impl DockGraph {
                 node: floating,
                 bounds,
             });
-        self.simplify_space(source_space);
-        self.simplify_space(target_space);
+        self.simplify_space_after_mutation(source_space);
+        self.simplify_space_after_mutation(target_space);
         true
     }
 
@@ -50,7 +50,7 @@ impl DockGraph {
                 node: floating,
                 bounds,
             });
-        self.simplify_space(target_space);
+        self.simplify_space_after_mutation(target_space);
         true
     }
 
@@ -166,9 +166,9 @@ impl DockGraph {
                 if !self.apply_edge_dock_plan(target_space, plan, child) {
                     return false;
                 }
-                self.simplify_space(source_space);
+                self.simplify_space_after_mutation(source_space);
                 if source_space != target_space {
-                    self.simplify_space(target_space);
+                    self.simplify_space_after_mutation(target_space);
                 }
                 true
             }
@@ -191,9 +191,9 @@ impl DockGraph {
             return false;
         };
         self.set_root_for_empty_space(target_space, child);
-        self.simplify_space(source_space);
+        self.simplify_space_after_mutation(source_space);
         if source_space != target_space {
-            self.simplify_space(target_space);
+            self.simplify_space_after_mutation(target_space);
         }
         true
     }
@@ -218,8 +218,8 @@ impl DockGraph {
             .entry(target_space.clone())
             .or_default()
             .append(&mut source_floatings);
-        self.simplify_space(source_space);
-        self.simplify_space(target_space);
+        self.simplify_space_after_mutation(source_space);
+        self.simplify_space_after_mutation(target_space);
         true
     }
 
@@ -261,9 +261,9 @@ impl DockGraph {
         }
         self.remove_subtree(floating);
 
-        self.simplify_space(source_space);
+        self.simplify_space_after_mutation(source_space);
         if source_space != target_space {
-            self.simplify_space(target_space);
+            self.simplify_space_after_mutation(target_space);
         }
         true
     }

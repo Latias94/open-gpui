@@ -1022,7 +1022,7 @@ fn logical_destination_close_settles_reveal_before_native_terminal(cx: &mut Test
     );
     assert!(
         cx.read_entity(fixture.surface.owner(), |owner, _| owner
-            .live_undock_committed_destination_registration_for_logical_close(
+            .live_undock_committed_destination_logical_close_authority(
                 destination_window.window_id(),
             ))
         .is_none(),
@@ -5970,6 +5970,476 @@ fn surface_owned_native_captured_desktop_release_promotes_exact_visible_provisio
 }
 
 #[open_gpui::test]
+fn same_window_graph_conflict_after_provider_commit_enters_committed_destination_recovery(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    live_runtime.after_same_window_provider_commit_for_test({
+        let controller = fixture.controller.clone();
+        let destination_space = destination_space.clone();
+        move |cx| {
+            cx.update_entity(&controller, |controller, controller_cx| {
+                let mut graph = controller.graph().clone();
+                let replacement = graph.insert_node(DockNode::Tabs {
+                    items: vec![item("c")],
+                    selected: Some(item("c")),
+                });
+                graph.set_root(destination_space, replacement);
+                controller.workspace_mut().set_graph(graph);
+                controller_cx.notify();
+            });
+        }
+    });
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "a committed destination that cannot publish its topology must close through recovery"
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")],
+            "recovery must not apply the stale promotion graph"
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("c")],
+            "recovery must preserve the graph mutation that superseded promotion"
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle,
+            "committed-destination recovery must publish one terminal outcome"
+        );
+        assert_eq!(
+            owner.live_undock_runtime().execution_count_for_test(),
+            0,
+            "terminal recovery must retire the exact promotion execution"
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "terminal recovery must release the exact payload drag session"
+    );
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(
+            host.live_presentation_state().is_none(),
+            "terminal recovery must retire the frozen source presentation"
+        );
+        assert!(host.live_source_semantic_proxy().is_none());
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
+}
+
+#[open_gpui::test]
+fn same_window_graph_commit_superseded_by_aba_enters_committed_destination_recovery(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    live_runtime.after_same_window_graph_commit_for_test({
+        let controller = fixture.controller.clone();
+        let destination_space = destination_space.clone();
+        move |cx| {
+            cx.update_entity(&controller, |controller, controller_cx| {
+                let committed = controller.graph().clone();
+                let mut intervening = committed.clone();
+                let replacement = intervening.insert_node(DockNode::Tabs {
+                    items: vec![item("c")],
+                    selected: Some(item("c")),
+                });
+                intervening.set_root(destination_space, replacement);
+                intervening.canonicalize();
+                intervening
+                    .validate()
+                    .expect("the intervening graph should remain valid");
+                controller.workspace_mut().set_graph(intervening);
+                controller.workspace_mut().set_graph(committed);
+                controller_cx.notify();
+            });
+        }
+    });
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "an ABA-superseded graph receipt must recover instead of publishing ordinary Durable"
+    );
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "ABA recovery must release the exact payload drag generation"
+    );
+}
+
+#[open_gpui::test]
+fn same_window_logical_close_after_viewport_commit_uses_forward_committed_authority(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+
+    let ordinary_close_applied = Rc::new(Cell::new(false));
+    fixture.runtime.install_window_close_apply_hook_for_test({
+        let ordinary_close_applied = ordinary_close_applied.clone();
+        move |_| ordinary_close_applied.set(true)
+    });
+    let forward_authority_observed = Rc::new(Cell::new(false));
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    live_runtime.after_same_window_viewport_commit_for_test({
+        let owner = fixture.surface.owner().clone();
+        let forward_authority_observed = forward_authority_observed.clone();
+        move |cx| {
+            let authority = cx.read_entity(&owner, |owner, _| {
+                owner.live_undock_committed_destination_logical_close_authority(
+                    destination_window.window_id(),
+                )
+            });
+            assert!(matches!(
+                authority,
+                Some(
+                    crate::surface::live_undock_runtime::DockLiveUndockLogicalCloseAuthority::ForwardCommitted(_)
+                )
+            ));
+            forward_authority_observed.set(true);
+            destination_window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("the forward-committed destination should begin logical close");
+        }
+    });
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert!(forward_authority_observed.get());
+    assert!(
+        !ordinary_close_applied.get(),
+        "a forward-committed destination must not enter the ordinary provisional close path"
+    );
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "committed-destination recovery must settle the closed destination"
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")],
+            "logical close after the forward boundary must not roll committed topology back"
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            1
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none()
+    );
+}
+
+#[open_gpui::test]
+fn same_window_lower_authority_loss_after_provider_commit_recovers_without_wall_clock_retry(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    live_runtime.after_same_window_provider_commit_for_test({
+        let controller = fixture.controller.clone();
+        let runtime = fixture.runtime.clone();
+        let destination_space = destination_space.clone();
+        move |cx| {
+            cx.update_entity(&controller, |controller, controller_cx| {
+                let mut graph = controller.graph().clone();
+                let replacement = graph.insert_node(DockNode::Tabs {
+                    items: vec![item("c")],
+                    selected: Some(item("c")),
+                });
+                graph.set_root(destination_space.clone(), replacement);
+                controller.workspace_mut().set_graph(graph);
+                controller_cx.notify();
+            });
+            runtime
+                .borrow()
+                .reject_live_undock_promotion_commits_for_test(1);
+        }
+    });
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    let (phase, execution_count, recovery_count) =
+        cx.read_entity(fixture.surface.owner(), |owner, _| {
+            (
+                owner.live_undock_phase(),
+                owner.live_undock_runtime().execution_count_for_test(),
+                owner.visible_payload_recovery_count_for_test(
+                    crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+                ),
+            )
+        });
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "provider-terminal recovery must retire the stale provisional destination; phase={phase:?}, executions={execution_count}, recoveries={recovery_count}"
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")],
+            "recovery must preserve the source topology when the lower commit never became durable"
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("c")],
+            "recovery must preserve the reentrant graph authority"
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "provider-terminal recovery must release the exact payload drag generation"
+    );
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_source_semantic_proxy().is_none());
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
+}
+
+#[open_gpui::test]
+fn same_window_promotion_settles_after_surface_subscriber_panic(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    let revision_before_release = cx.read(|app| fixture.surface.revision(app));
+    let subscriber_calls = Rc::new(Cell::new(0_u32));
+    let surface = fixture.surface.clone();
+    let _subscription = cx.update(|app| {
+        surface.subscribe_changes(app, {
+            let subscriber_calls = subscriber_calls.clone();
+            move |_event, _| {
+                subscriber_calls.set(subscriber_calls.get() + 1);
+                panic!("injected promotion surface subscriber panic");
+            }
+        })
+    });
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+        cx.run_until_parked();
+    }));
+    assert!(panic.is_err());
+    assert_eq!(subscriber_calls.get(), 1);
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_runtime().execution_count_for_test(),
+            0,
+            "post-commit receipt completion must settle terminal authority despite subscriber panic"
+        );
+    });
+
+    // A stale retry that was armed before post-commit completion must remain harmless.
+    cx.executor().advance_clock(Duration::from_millis(16));
+    cx.run_until_parked();
+
+    assert_eq!(
+        subscriber_calls.get(),
+        1,
+        "the committed event is at-most-once"
+    );
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision_before_release + 1
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")]
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none()
+    );
+}
+
+#[open_gpui::test]
 fn promoted_same_window_destination_adopts_dynamic_close_policy_and_merge_back_lifecycle(
     cx: &mut TestAppContext,
 ) {
@@ -6113,7 +6583,7 @@ fn destination_close_during_terminal_interaction_activation_uses_ordinary_close_
                 );
                 assert!(
                     owner
-                        .live_undock_committed_destination_registration_for_logical_close(
+                        .live_undock_committed_destination_logical_close_authority(
                             destination_window.window_id(),
                         )
                         .is_none(),
@@ -8044,7 +8514,7 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
 }
 
 #[open_gpui::test]
-fn runtime_native_captured_live_undock_release_to_existing_host_commits_transfer(
+fn runtime_native_captured_live_undock_host_transfer_replays_window_effects_after_panic(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source-live-host");
@@ -8159,7 +8629,22 @@ fn runtime_native_captured_live_undock_release_to_existing_host_commits_transfer
         "the existing target host must receive the live route preview before release",
     );
 
-    source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
+    let runtime = cx.read_entity(surface.owner(), |owner, _| owner.runtime());
+    let window_effect_attempts = Rc::new(Cell::new(0_u32));
+    runtime.install_window_close_apply_hook_for_test({
+        let window_effect_attempts = window_effect_attempts.clone();
+        move |_| {
+            window_effect_attempts.set(window_effect_attempts.get() + 1);
+            panic!("injected committed host window-effect panic");
+        }
+    });
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+    }));
+    assert!(panic.is_err());
+    assert_eq!(window_effect_attempts.get(), 1);
+    cx.executor().advance_clock(Duration::from_millis(16));
     cx.run_until_parked();
 
     cx.read_entity(&controller, |controller, _| {
@@ -8397,7 +8882,7 @@ fn managed_source_host_drop_into_primary_anchor_preserves_surface_shutdown_hook(
 }
 
 #[open_gpui::test]
-fn runtime_existing_host_interaction_failure_commits_recovery_and_terminates(
+fn runtime_existing_host_binding_loss_retries_recovery_after_panic_and_terminates(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source-live-host-recovery");
@@ -8510,10 +8995,46 @@ fn runtime_existing_host_interaction_failure_commits_recovery_and_terminates(
     source_visual.simulate_mouse_move(target_global, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let live_runtime = cx.read_entity(surface.owner(), |owner, _| owner.live_undock_runtime());
-    live_runtime.reject_next_destination_interaction_admission_for_test();
+    let forward_authority_observed = Rc::new(Cell::new(false));
+    live_runtime.after_host_drop_commit_for_test({
+        let owner = surface.owner().clone();
+        let target_host = target_host.clone();
+        let forward_authority_observed = forward_authority_observed.clone();
+        move |cx| {
+            let authority = cx.read_entity(&owner, |owner, _| {
+                owner.live_undock_committed_destination_logical_close_authority(
+                    target_window.window_id(),
+                )
+            });
+            assert!(matches!(
+                authority,
+                Some(
+                    crate::surface::live_undock_runtime::DockLiveUndockLogicalCloseAuthority::ForwardCommitted(_)
+                )
+            ));
+            forward_authority_observed.set(true);
+            cx.update_entity(&target_host, |host, _| {
+                host.invalidate_window_binding_for_test();
+            });
+        }
+    });
+    live_runtime.panic_next_committed_destination_recovery_attempt_for_test();
 
-    source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+    }));
+    assert!(
+        panic.is_err(),
+        "the first committed-destination recovery attempt should expose the injected panic"
+    );
+    cx.executor().advance_clock(Duration::from_millis(16));
     cx.run_until_parked();
+
+    assert!(
+        forward_authority_observed.get(),
+        "a committed Host drop must publish forward logical-close authority before Durable"
+    );
 
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -8531,7 +9052,7 @@ fn runtime_existing_host_interaction_failure_commits_recovery_and_terminates(
         assert_eq!(
             owner.live_undock_phase(),
             crate::surface::live_undock::DockLiveUndockPhase::Idle,
-            "Host recovery must reach a terminal live-undock phase",
+            "Host binding-loss recovery must reach a terminal live-undock phase",
         );
         assert_eq!(
             owner.live_undock_runtime().execution_count_for_test(),
@@ -10027,6 +10548,22 @@ fn prepare_payload_recovery_host_restore(
         source_registration,
     )
     .expect("the recovery origin should bind one exact source endpoint");
+    prepare_payload_recovery_host_restore_with_origin(fixture, origin, cx)
+}
+
+fn prepare_payload_recovery_host_restore_with_origin(
+    fixture: &PayloadRecoveryHostFixture,
+    origin: DockPayloadRecoveryPresentationOrigin,
+    cx: &mut TestAppContext,
+) -> PayloadRecoveryRestoreStart {
+    let source_window = fixture
+        .source_window
+        .downcast::<DockHost>()
+        .expect("the recovery source should retain its typed window");
+    let source_binding = cx.read_entity(&fixture.source_host, |host, _| {
+        host.current_window_binding()
+            .expect("the recovery source should retain its window binding")
+    });
     let anchor_lease = cx.read_entity(fixture.surface.owner(), |owner, _| {
         owner
             .window_session()
@@ -10051,12 +10588,12 @@ fn prepare_payload_recovery_host_restore(
             _ => None,
         })
         .expect("the synthetic trigger should mint one live-undock identity");
-    let authority = DockPayloadRecoveryAuthority::durable_promotion(
+    let authority = DockPayloadRecoveryAuthority::committed_destination(
         identity,
         DockLiveUndockPromotionToken::new(1)
             .expect("the synthetic promotion token should be non-zero"),
         DockLiveUndockPromotionDestination::SameWindowDesktop {
-            window_id: source_window.window_id(),
+            window_id: origin.window().window_id(),
         },
     );
     let owner = fixture.surface.owner().clone();
@@ -10111,6 +10648,163 @@ fn start_payload_recovery_host_restore(
         )
     })
     .expect("the recovery executor should accept the exact source and destination endpoints");
+}
+
+fn provider_terminal_payload_recovery_origin(
+    fixture: &PayloadRecoveryHostFixture,
+    cx: &mut TestAppContext,
+) -> (
+    AnyWindowHandle,
+    open_gpui::view_presentation_window::LeaseBatch,
+    DockPayloadRecoveryPresentationOrigin,
+) {
+    let endpoint: AnyWindowHandle = cx
+        .open_window(size(px(240.0), px(160.0)), |_, _| open_gpui::Empty)
+        .into();
+    let roots = [
+        AnyView::from(fixture.panel_a.clone()),
+        AnyView::from(fixture.panel_b.clone()),
+    ];
+    let leases = cx.update(|app| {
+        let source_leases = roots
+            .iter()
+            .filter_map(|root| {
+                open_gpui::view_presentation_window::stable_lease_for_window(
+                    app,
+                    root.entity_id(),
+                    fixture.source_window.window_id(),
+                )
+            })
+            .collect::<Vec<_>>();
+        open_gpui::view_presentation_window::release_stable_leases_after_endpoint_loss(
+            app,
+            &source_leases,
+        );
+        open_gpui::view_presentation_window::claim_batch(app, &roots, endpoint.window_id())
+            .expect("the synthetic provider endpoint should claim the exact recovered roots")
+    });
+    let origin = DockPayloadRecoveryPresentationOrigin::provider_terminal(
+        WindowHandle::<DockHost>::new(endpoint.window_id()),
+        leases.clone(),
+    )
+    .expect("the provider terminal must identify its exact lease window");
+    (endpoint, leases, origin)
+}
+
+#[open_gpui::test]
+fn provider_terminal_payload_recovery_rejects_a_live_old_endpoint(cx: &mut TestAppContext) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let (endpoint, leases, origin) = provider_terminal_payload_recovery_origin(&fixture, cx);
+    let start = prepare_payload_recovery_host_restore_with_origin(&fixture, origin, cx);
+
+    let result = cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    });
+
+    assert_eq!(
+        result,
+        Err(DockPayloadRecoveryRestoreError::PresentationEndpointUnavailable)
+    );
+    assert!(endpoint.update(cx, |_, _, _| ()).is_ok());
+    assert!(cx.read(|app| {
+        leases.leases().iter().all(|lease| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                lease.entity_id(),
+                endpoint.window_id(),
+            ) == Some(*lease)
+        })
+    }));
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1,
+        "a live old endpoint must leave the exact recovery action retryable"
+    );
+}
+
+#[open_gpui::test]
+fn provider_terminal_payload_recovery_preserves_third_window_replacement_authority(
+    cx: &mut TestAppContext,
+) {
+    let fixture = payload_recovery_host_fixture(cx);
+    let (endpoint, _leases, origin) = provider_terminal_payload_recovery_origin(&fixture, cx);
+    let start = prepare_payload_recovery_host_restore_with_origin(&fixture, origin, cx);
+
+    fixture
+        .source_window
+        .update(cx, |_, window, app| {
+            window.replace_root(app, |_, _| open_gpui::Empty);
+        })
+        .expect("the original Host should stop rendering before the provider endpoint closes");
+    endpoint
+        .update(cx, |_, window, app| window.remove_window(app))
+        .expect("the synthetic provider endpoint should close");
+    cx.run_until_parked();
+    assert!(endpoint.update(cx, |_, _, _| ()).is_err());
+
+    let replacement: AnyWindowHandle = cx
+        .open_window(size(px(240.0), px(160.0)), |_, _| open_gpui::Empty)
+        .into();
+    let replacement_root = AnyView::from(fixture.panel_a.clone());
+    let replacement_lease = cx.update(|app| {
+        open_gpui::view_presentation_window::claim(app, &replacement_root, replacement.window_id())
+            .expect("the third window should claim a replacement presentation generation")
+    });
+
+    let result = cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    });
+
+    assert!(matches!(
+        result,
+        Err(DockPayloadRecoveryRestoreError::PresentationPrepare(
+            open_gpui::view_presentation_window::ResolvedViewRehostError::UnexpectedWindow {
+                current,
+            },
+        )) if current == replacement_lease
+    ));
+    assert_eq!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                replacement.window_id(),
+            )
+        }),
+        Some(replacement_lease),
+        "exact old-lease cleanup must not release a replacement generation"
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.primary_window.window_id(),
+        )
+        .is_none()
+    }));
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .payload_recovery_committed_restore_count_for_test()),
+        0,
+        "third-window authority must prevent the no-rehost recovery commit"
+    );
 }
 
 #[open_gpui::test]

@@ -4,7 +4,8 @@ use super::{
     live_undock::{
         DockLiveUndockCancelReason, DockLiveUndockDragGeneration, DockLiveUndockEffect,
         DockLiveUndockFact, DockLiveUndockOpenFailureOutcome, DockLiveUndockOpenRequest,
-        DockLiveUndockOpenReturnOutcome, DockLiveUndockPhase, DockLiveUndockRouteFeedback,
+        DockLiveUndockOpenReturnOutcome, DockLiveUndockPhase,
+        DockLiveUndockPromotionCommitDisposition, DockLiveUndockRouteFeedback,
         DockLiveUndockSession, DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
     },
     prepare_surface_shutdown, reduce_live_undock_fact,
@@ -383,10 +384,17 @@ mod reducer_tests {
     fn committed_destination_recovery(
         authority: DockPayloadRecoveryAuthority,
     ) -> DockLiveUndockCommittedDestinationRecoveryReceipt {
-        DockLiveUndockCommittedDestinationRecoveryReceipt::new(committed_payload_recovery(
-            authority,
-            DockPayloadRecoveryReason::LostViewportRecovery,
-        ))
+        let same_window_terminal_required =
+            authority.promotion().is_some_and(|(_, _, destination)| {
+                matches!(
+                    destination,
+                    DockLiveUndockPromotionDestination::SameWindowDesktop { .. }
+                )
+            });
+        DockLiveUndockCommittedDestinationRecoveryReceipt::new(
+            committed_payload_recovery(authority, DockPayloadRecoveryReason::LostViewportRecovery),
+            same_window_terminal_required,
+        )
         .expect("committed recovery must retain durable promotion authority")
     }
 
@@ -1907,7 +1915,7 @@ mod reducer_tests {
                 .apply(DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
                     identity,
                     receipt: committed_destination_recovery(
-                        DockPayloadRecoveryAuthority::durable_promotion(
+                        DockPayloadRecoveryAuthority::committed_destination(
                             identity,
                             stale_token,
                             destination,
@@ -2292,7 +2300,7 @@ mod reducer_tests {
             })
             .expect("shutdown must retain exact committed-recovery cleanup authority");
         let authority =
-            DockPayloadRecoveryAuthority::durable_promotion(identity, token, destination);
+            DockPayloadRecoveryAuthority::committed_destination(identity, token, destination);
 
         let failure = DockLiveUndockCommittedDestinationRecoveryFailure::PreparationRejected;
         let failed = session.apply(
@@ -3648,6 +3656,158 @@ mod reducer_tests {
             }
         )));
     }
+
+    #[test]
+    fn shutdown_preserves_an_already_durable_destination_without_runtime_override() {
+        let (_, lease) = active_window_session(122, 222);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(323);
+        admit(&mut session, identity, window);
+        let token = prepare_desktop(&mut session, identity, window, placement_generation(26));
+        session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
+        session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
+
+        let (_, effects) = session
+            .freeze_for_shutdown(
+                lease,
+                DockLiveUndockPromotionCommitDisposition::RollbackAllowed,
+            )
+            .into_parts();
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                identity: current,
+                token: current_token,
+                destination: DockLiveUndockPromotionDestination::SameWindowDesktop {
+                    window_id,
+                },
+                ..
+            } if *current == identity && *current_token == token && *window_id == window.window_id()
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::CommitPreparedPromotion { .. }
+                | DockLiveUndockEffect::RestoreSource { .. }
+                | DockLiveUndockEffect::ShutdownSourceRestorationRequired { .. }
+        )));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
+
+    #[test]
+    fn shutdown_adopts_a_durable_runtime_commit_without_restarting_it() {
+        let (_, lease) = active_window_session(123, 223);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(324);
+        admit(&mut session, identity, window);
+        let token = prepare_desktop(&mut session, identity, window, placement_generation(27));
+        let destination = DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: window.window_id(),
+        };
+        session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
+
+        let (_, effects) = session
+            .freeze_for_shutdown(
+                lease,
+                DockLiveUndockPromotionCommitDisposition::Durable {
+                    identity,
+                    token,
+                    destination,
+                },
+            )
+            .into_parts();
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                identity: current,
+                token: current_token,
+                destination: current_destination,
+                ..
+            } if *current == identity
+                && *current_token == token
+                && *current_destination == destination
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::CommitPreparedPromotion { .. }
+                | DockLiveUndockEffect::RestoreSource { .. }
+                | DockLiveUndockEffect::ShutdownSourceRestorationRequired { .. }
+        )));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
+
+    #[test]
+    fn late_durable_swap_pivots_source_restoration_to_destination_recovery() {
+        let (_, lease) = active_window_session(124, 224);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(325);
+        admit(&mut session, identity, window);
+        let token = prepare_desktop(&mut session, identity, window, placement_generation(28));
+        session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
+        let restoration = session.apply(DockLiveUndockFact::DestinationTerminal {
+            identity,
+            window_id: window.window_id(),
+        });
+        restoration_request(&restoration);
+        assert_eq!(session.phase(), DockLiveUndockPhase::Restoring);
+
+        let stale_token = DockLiveUndockPromotionToken::new(token.get() + 1)
+            .expect("the stale token remains non-zero");
+        assert!(
+            session
+                .apply(DockLiveUndockFact::DurableSwapCommitted {
+                    identity,
+                    token: stale_token,
+                })
+                .is_empty()
+        );
+        assert_eq!(session.phase(), DockLiveUndockPhase::Restoring);
+
+        let effects = session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
+        let (_, recovered_token, destination) = committed_destination_recovery_request(&effects);
+        assert_eq!(recovered_token, token);
+        assert_eq!(destination.window_id(), window.window_id());
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
+
+    #[test]
+    fn late_durable_swap_pivots_orphan_recovery_to_destination_recovery() {
+        let (_, lease) = active_window_session(125, 225);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(326);
+        admit(&mut session, identity, window);
+        let token = prepare_desktop(&mut session, identity, window, placement_generation(29));
+        session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
+
+        let orphan = session.apply(DockLiveUndockFact::SourceWindowNativeTerminal {
+            receipt: source_native_terminal(identity, source_for(identity)),
+        });
+        orphan_recovery_request(&orphan);
+        assert_eq!(session.phase(), DockLiveUndockPhase::RecoveringOrphan);
+
+        let effects = session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
+        let (_, recovered_token, destination) = committed_destination_recovery_request(&effects);
+        assert_eq!(recovered_token, token);
+        assert_eq!(destination.window_id(), window.window_id());
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
 }
 
 #[test]
@@ -3677,7 +3837,12 @@ fn shutdown_dependency_survives_until_a_cancelled_pending_open_settles() {
     let mut live = DockLiveUndockSession::new();
     let request = reducer_tests::start_request(&mut live, lease, 1);
 
-    let (frozen, effects) = live.freeze_for_shutdown(lease).into_parts();
+    let (frozen, effects) = live
+        .freeze_for_shutdown(
+            lease,
+            DockLiveUndockPromotionCommitDisposition::RollbackAllowed,
+        )
+        .into_parts();
     let frozen = frozen.expect("the pending opening must freeze into shutdown");
     assert!(effects.as_slice().iter().any(
         |effect| matches!(effect, DockLiveUndockEffect::ShutdownFrozen(current) if *current == frozen)
@@ -3688,7 +3853,12 @@ fn shutdown_dependency_survives_until_a_cancelled_pending_open_settles() {
     );
     assert_eq!(frozen.window(), None);
     assert_eq!(live.phase(), DockLiveUndockPhase::Retiring);
-    let (second_frozen, second_effects) = live.freeze_for_shutdown(lease).into_parts();
+    let (second_frozen, second_effects) = live
+        .freeze_for_shutdown(
+            lease,
+            DockLiveUndockPromotionCommitDisposition::RollbackAllowed,
+        )
+        .into_parts();
     assert_eq!(second_frozen, Some(frozen));
     assert!(second_effects.as_slice().iter().any(
         |effect| matches!(effect, DockLiveUndockEffect::ShutdownFrozen(current) if *current == frozen)

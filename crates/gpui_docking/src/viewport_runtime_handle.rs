@@ -1,15 +1,17 @@
 #[cfg(test)]
 use crate::DockViewportActivationTransaction;
 use crate::surface::{
-    DockSurfaceActivationOutcome, DockSurfaceChangeCategory, DockSurfaceOwner,
-    DockSurfaceTransactionId,
+    DockSurfaceActivationOutcome, DockSurfaceChangeCategory, DockSurfaceDeferredPublication,
+    DockSurfaceOwner, DockSurfaceTransactionId, DockSurfaceTransactionReceipt,
     live_undock::DockLiveUndockOpeningKey,
     window_session::{DockSurfaceWindowSessionLease, DockSurfaceWindowSessionOpeningToken},
-    with_detached_root_transaction,
+    with_detached_deferred_tracked_root_transaction, with_detached_root_transaction,
 };
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockNodeId,
     DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
+    DockViewportCommittedWindowEffects, DockViewportCommittedWindowEffectsAcceptanceOutcome,
+    DockViewportCommittedWindowEffectsPreparation, DockViewportCommittedWindowEffectsReceipt,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
@@ -80,8 +82,8 @@ mod route_ops;
 mod scene_ops;
 
 pub(crate) use route_ops::{
-    DockViewportLockedDropRoute, DockViewportPreflightedLiveUndockHostDrop,
-    DockViewportPreparedLiveUndockHostDrop,
+    DockViewportCommittedLiveUndockHostDrop, DockViewportLockedDropRoute,
+    DockViewportPreflightedLiveUndockHostDrop, DockViewportPreparedLiveUndockHostDrop,
 };
 
 /// Cloneable application handle for the shared viewport runtime.
@@ -147,6 +149,12 @@ impl DockViewportRuntimeIdentity {
             identity, 0,
             "dock viewport runtime identity space exhausted"
         );
+        Self(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(identity: u64) -> Self {
+        assert!(identity != 0, "test runtime identity must be non-zero");
         Self(identity)
     }
 }
@@ -667,6 +675,28 @@ impl DockViewportRuntimeHandle {
         })
     }
 
+    /// Commits one tracked root transaction while deferring subscriber re-entry.
+    ///
+    /// The returned linear publication must be consumed only after the caller installs the
+    /// enclosing durable authority. The surface revision and receipt are already committed.
+    pub(crate) fn with_deferred_tracked_surface_transaction<R>(
+        &self,
+        cx: &mut App,
+        update: impl FnOnce(DockSurfaceTransactionId, DockSurfaceTransactionReceipt, &mut App) -> R,
+    ) -> (R, DockSurfaceDeferredPublication) {
+        assert!(
+            self.active_surface_transaction.get().is_none(),
+            "a deferred tracked viewport commit must own its root surface transaction"
+        );
+        let owner = self
+            .surface_owner()
+            .expect("a deferred tracked viewport commit requires one surface owner");
+        with_detached_deferred_tracked_root_transaction(&owner, cx, |transaction, receipt, cx| {
+            let _scope = self.enter_surface_transaction(transaction);
+            update(transaction, receipt, cx)
+        })
+    }
+
     fn settle_backend_focus_cancellation(&self, cx: &mut App) {
         self.settle_backend_focus_cancellations(cx);
     }
@@ -907,30 +937,46 @@ impl DockViewportRuntimeHandle {
             .reject_next_live_undock_promotion_commit_for_test();
     }
 
-    pub(crate) fn commit_live_undock_provisional_promotion(
+    pub(crate) fn commit_or_replay_live_undock_provisional_promotion(
         &self,
-        prepared: DockViewportPreparedLiveUndockPromotion,
-    ) -> DockViewportCommittedLiveUndockPromotion {
+        prepared: &DockViewportPreparedLiveUndockPromotion,
+    ) -> Option<DockViewportCommittedLiveUndockPromotion> {
         self.runtime
             .borrow_mut()
-            .commit_live_undock_provisional_promotion(prepared)
+            .commit_or_replay_live_undock_provisional_promotion(prepared.clone())
+    }
+
+    pub(crate) fn retire_live_undock_provisional_promotion_commit(
+        &self,
+        committed: &DockViewportCommittedLiveUndockPromotion,
+    ) {
+        self.runtime
+            .borrow_mut()
+            .retire_live_undock_provisional_promotion_commit(committed);
     }
 
     pub(crate) fn publish_live_undock_promotion_commit(
         &self,
-        mut committed: DockViewportCommittedLiveUndockPromotion,
+        committed: &DockViewportCommittedLiveUndockPromotion,
         graph_changed: bool,
         cx: &mut App,
     ) -> DockViewportRegistrationKey {
+        let mut update = committed.runtime_update.clone();
         let context = committed
             .runtime_update
             .work_context()
             .expect("prepared live-undock promotion must retain its exact work context");
-        committed
-            .runtime_update
-            .mark_graph_commit(graph_changed, context);
-        refresh_runtime_update_with_commit(self, committed.runtime_update, cx);
-        committed.registration
+        update.mark_graph_commit(graph_changed, context);
+        self.publish_surface_commit(&update, cx);
+        committed.registration.clone()
+    }
+
+    pub(crate) fn refresh_live_undock_promotion_commit(
+        &self,
+        committed: &DockViewportCommittedLiveUndockPromotion,
+        cx: &mut App,
+    ) -> bool {
+        refresh_runtime_update(committed.runtime_update.clone(), cx)
     }
 
     pub(crate) fn adopt_live_undock_committed_window_lifecycle(
@@ -993,14 +1039,6 @@ impl DockViewportRuntimeHandle {
 
     pub(crate) fn admits_work_context(&self, context: DockViewportRuntimeWorkContext) -> bool {
         self.runtime.borrow().admits_work_context(context)
-    }
-
-    pub(crate) fn apply_committed_window_effects(
-        &self,
-        effects: DockViewportWindowEffects,
-        cx: &mut App,
-    ) {
-        apply_viewport_window_effects(&self.runtime, effects, cx);
     }
 
     pub(crate) fn begin_primary_anchor_open_attempt(

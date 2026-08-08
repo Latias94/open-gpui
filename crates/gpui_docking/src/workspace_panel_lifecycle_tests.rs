@@ -47,7 +47,7 @@ fn workspace_close_item_transaction_respects_panel_policy(cx: &mut TestAppContex
 }
 
 #[open_gpui::test]
-fn workspace_close_item_transaction_uses_metadata_without_instantiating_lazy_panel(
+fn workspace_close_item_transaction_removes_empty_tabs_without_instantiating_lazy_panel(
     _cx: &mut TestAppContext,
 ) {
     let (graph, root) = tabs_graph(&["lazy"]);
@@ -72,14 +72,11 @@ fn workspace_close_item_transaction_uses_metadata_without_instantiating_lazy_pan
         workspace.panels().has_view_lifecycle(&item("lazy")),
         "closing from metadata should keep lazy view lifecycle available"
     );
-    let DockNode::Tabs { items, .. } = workspace
-        .graph()
-        .node(root)
-        .expect("source tabs should remain")
-    else {
-        panic!("source should be tabs");
-    };
-    assert!(items.is_empty());
+    assert_eq!(workspace.graph().root(&space()), None);
+    assert!(
+        workspace.graph().node(root).is_none(),
+        "an unreachable runtime node must not survive canonicalization"
+    );
 }
 
 #[open_gpui::test]

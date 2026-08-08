@@ -21,16 +21,75 @@ pub(crate) struct DockWorkspaceLockedPayloadDropRequest<'a> {
     pub(crate) frozen_focus_item: Option<&'a DockItemId>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[must_use = "a prepared locked payload drop must commit its projected graph"]
 pub(crate) struct DockWorkspacePreparedLockedPayloadDrop {
+    commit_id: DockWorkspaceLockedPayloadDropCommitId,
+    expected_graph: crate::DockGraph,
     graph: crate::DockGraph,
     outcome: DockWorkspacePayloadDropOutcome,
 }
 
 impl DockWorkspacePreparedLockedPayloadDrop {
+    pub(crate) const fn commit_id(&self) -> DockWorkspaceLockedPayloadDropCommitId {
+        self.commit_id
+    }
+
     pub(crate) fn space_is_empty(&self, space: &DockSpaceId) -> bool {
         self.graph.collect_items_in_space(space).is_empty()
+    }
+
+    pub(crate) fn commit_or_replay(
+        &self,
+        workspace: &mut DockWorkspace,
+    ) -> Option<DockWorkspaceLockedPayloadDropCommitReceipt> {
+        workspace.commit_or_replay_locked_payload_drop(
+            self.commit_id,
+            &self.expected_graph,
+            self.graph.clone(),
+            self.outcome.clone(),
+        )
+    }
+
+    pub(crate) fn commit(&self, workspace: &mut DockWorkspace) -> DockWorkspacePayloadDropOutcome {
+        let receipt = self
+            .commit_or_replay(workspace)
+            .expect("prepared locked payload drop must retain exact graph authority");
+        let outcome = receipt.outcome.clone();
+        workspace.retire_locked_payload_drop_commit(&receipt);
+        outcome
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct DockWorkspaceLockedPayloadDropCommitId(u64);
+
+impl DockWorkspaceLockedPayloadDropCommitId {
+    pub(crate) const fn new(generation: u64) -> Self {
+        Self(generation)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DockWorkspaceLockedPayloadDropCommitReceipt {
+    commit_id: DockWorkspaceLockedPayloadDropCommitId,
+    outcome: DockWorkspacePayloadDropOutcome,
+}
+
+impl DockWorkspaceLockedPayloadDropCommitReceipt {
+    pub(crate) const fn commit_id(&self) -> DockWorkspaceLockedPayloadDropCommitId {
+        self.commit_id
+    }
+
+    pub(crate) fn outcome(&self) -> &DockWorkspacePayloadDropOutcome {
+        &self.outcome
+    }
+
+    pub(crate) fn new(
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+        outcome: DockWorkspacePayloadDropOutcome,
+    ) -> Self {
+        Self { commit_id, outcome }
     }
 }
 
@@ -200,7 +259,8 @@ impl DockWorkspace {
                 frozen_focus_item.cloned()
             }
         };
-        let mut graph = self.graph().clone();
+        let expected_graph = self.graph().clone();
+        let mut graph = expected_graph.clone();
         let action = DockActionOutcome::from_changed(graph.apply_op_checked(&plan.graph_op())?);
         let focus_item = focus_item.filter(|item| {
             graph
@@ -208,6 +268,8 @@ impl DockWorkspace {
                 .is_some()
         });
         Ok(DockWorkspacePreparedLockedPayloadDrop {
+            commit_id: self.allocate_locked_payload_drop_commit_id(),
+            expected_graph,
             graph,
             outcome: DockWorkspacePayloadDropOutcome::new(action, focus_item),
         })
@@ -217,9 +279,7 @@ impl DockWorkspace {
         &mut self,
         prepared: DockWorkspacePreparedLockedPayloadDrop,
     ) -> DockWorkspacePayloadDropOutcome {
-        let DockWorkspacePreparedLockedPayloadDrop { graph, outcome } = prepared;
-        self.set_graph(graph);
-        outcome
+        prepared.commit(self)
     }
 
     fn commit_resolved_payload_graph_target_drop(
@@ -556,6 +616,7 @@ mod tests {
             workspace.graph().collect_items_in_space(&space()),
             vec![item("b"), item("a")]
         );
+        assert_eq!(workspace.locked_payload_drop_commit_count(), 0);
     }
 
     #[test]

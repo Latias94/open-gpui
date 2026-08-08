@@ -1,5 +1,5 @@
 use super::{
-    DockSurfaceOwner,
+    DockSurfaceDeferredPublication, DockSurfaceOwner, DockSurfaceTransactionReceipt,
     live_undock::{
         DockLiveUndockCommittedDestinationRecoveryFailure,
         DockLiveUndockCommittedDestinationRecoveryReceipt,
@@ -10,10 +10,10 @@ use super::{
         DockLiveUndockOrphanRecoveryReceipt, DockLiveUndockPayloadLeaseReceipt,
         DockLiveUndockPayloadPresentationReceipt, DockLiveUndockPlacementGeneration,
         DockLiveUndockPresentationAuthorityLossReceipt, DockLiveUndockPresentationFailure,
-        DockLiveUndockPromotionDestination, DockLiveUndockPromotionToken,
-        DockLiveUndockRehostCleanupEvidence, DockLiveUndockReleaseLock,
-        DockLiveUndockRetainedVisualCleanupEvidence, DockLiveUndockRevealObservation,
-        DockLiveUndockRevealOutcome, DockLiveUndockRevealReceipt,
+        DockLiveUndockPromotionCommitDisposition, DockLiveUndockPromotionDestination,
+        DockLiveUndockPromotionToken, DockLiveUndockRehostCleanupEvidence,
+        DockLiveUndockReleaseLock, DockLiveUndockRetainedVisualCleanupEvidence,
+        DockLiveUndockRevealObservation, DockLiveUndockRevealOutcome, DockLiveUndockRevealReceipt,
         DockLiveUndockSourceFocusSnapshot, DockLiveUndockSourceNativeTerminalReceipt,
         DockLiveUndockSourceRestorationFailure, DockLiveUndockSourceRestorationReceipt,
         DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
@@ -31,14 +31,16 @@ use super::{
 };
 use crate::{
     DockController, DockGraph, DockHost, DockHostWindowBinding, DockSpaceId,
+    DockViewportCommittedWindowEffectsAcceptanceOutcome, DockViewportCommittedWindowEffectsReceipt,
     DockViewportDropPayload, DockViewportLockedDropRoute,
     DockViewportPreflightedLiveUndockHostDrop, DockViewportPreparedLiveUndockHostDrop,
     DockViewportRuntimeHandle, DockViewportRuntimeWorkContext, DockViewportTearOffRequest,
     DockViewportWindowFacts,
     drag::DockDragPayload,
     host::{
-        DockHostLiveDestinationSemantics, DockHostLivePresentationKey,
-        DockHostLiveSourceRestorationInstallOutcome, DockHostPreparedLiveDestinationPromotion,
+        DockHostLiveDestinationPromotionReceipt, DockHostLiveDestinationSemantics,
+        DockHostLivePresentationKey, DockHostLiveSourceRestorationInstallOutcome,
+        DockHostLiveSourceRetirementReceipt, DockHostPreparedLiveDestinationPromotion,
         DockHostPreparedLivePresentationAbandonment, DockHostPreparedLiveSourceRetirement,
         DockHostPreparedLiveSourceSemanticRetirement,
     },
@@ -48,7 +50,12 @@ use crate::{
     surface::live_payload_carrier::{DockLivePayloadCarrier, resolve_live_payload_carrier},
     viewport_drop_scene::DockViewportHostSceneFrame,
     viewport_runtime::DockViewportPreparedLiveUndockPromotion,
+    viewport_runtime_handle::DockViewportCommittedLiveUndockHostDrop,
     viewport_tear_off_move::{DockViewportTearOffMovePlan, lock_tear_off_move},
+    workspace::{
+        DockWorkspaceGraphCommitId, DockWorkspaceGraphCommitObservation,
+        DockWorkspaceGraphCommitReceipt,
+    },
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext, Bounds, Entity, SharedString, Subscription, WeakEntity,
@@ -63,6 +70,7 @@ use open_gpui::{
     },
 };
 use std::{
+    any::Any,
     cell::{Cell, RefCell},
     collections::HashMap,
     fmt,
@@ -73,6 +81,312 @@ use std::{
 
 const LIVE_UNDOCK_RELEASE_DEADLINE: Duration = Duration::from_millis(500);
 const LIVE_UNDOCK_RETRY_CAP: Duration = Duration::from_millis(250);
+
+fn record_post_commit_panic<T>(
+    first_panic: &mut Option<Box<dyn Any + Send>>,
+    stage: impl FnOnce() -> T,
+) -> Option<T> {
+    match catch_unwind(AssertUnwindSafe(stage)) {
+        Ok(value) => Some(value),
+        Err(payload) => {
+            if first_panic.is_none() {
+                *first_panic = Some(payload);
+            } else {
+                log::error!("suppressed a secondary live-undock post-commit panic");
+            }
+            None
+        }
+    }
+}
+
+fn accept_host_drop_window_effects(
+    runtime: &DockViewportRuntimeHandle,
+    committed: &DockViewportCommittedLiveUndockHostDrop,
+    cx: &mut App,
+) -> Option<DockViewportCommittedWindowEffectsReceipt> {
+    match runtime.accept_live_undock_host_drop_window_effects(committed, cx) {
+        DockViewportCommittedWindowEffectsAcceptanceOutcome::Accepted(receipt) => Some(receipt),
+        DockViewportCommittedWindowEffectsAcceptanceOutcome::InProgress => None,
+        DockViewportCommittedWindowEffectsAcceptanceOutcome::Stale => {
+            panic!("committed Host window effects lost their canonical runtime receipt")
+        }
+    }
+}
+
+fn schedule_deferred_surface_publication(
+    publication: DockSurfaceDeferredPublication,
+    post_commit: DockLiveUndockPostCommitReceipt,
+    runtime: DockLiveUndockRuntime,
+    identity: DockLiveUndockIdentity,
+    cx: &mut App,
+) {
+    cx.defer_after_or_shutdown_critical_before_window_registry_clear(Duration::ZERO, move |cx| {
+        let result = catch_unwind(AssertUnwindSafe(|| publication.publish(cx)));
+        if !publication.is_settled() {
+            schedule_deferred_surface_publication(
+                publication.clone(),
+                post_commit.clone(),
+                runtime.clone(),
+                identity,
+                cx,
+            );
+        } else {
+            runtime.settle_post_commit_and_resume_terminal(identity, &post_commit, cx);
+        }
+        if let Err(payload) = result {
+            resume_unwind(payload);
+        }
+    });
+}
+
+#[derive(Clone)]
+struct DockLiveUndockRetainedVisualRelease {
+    inner: Rc<DockLiveUndockRetainedVisualReleaseInner>,
+}
+
+struct DockLiveUndockRetainedVisualReleaseInner {
+    source_window: AnyWindowHandle,
+    ticket: Ticket,
+    prepared: RefCell<Option<retained_visual::PreparedRelease>>,
+    receipt: Cell<Option<retained_visual::ReleaseReceipt>>,
+    source_window_terminal: Cell<bool>,
+    call_in_flight: Cell<bool>,
+}
+
+enum DockLiveUndockRetainedVisualReleaseRecovery {
+    Prepared(retained_visual::PreparedRelease),
+    Released(retained_visual::ReleaseReceipt),
+}
+
+impl DockLiveUndockRetainedVisualRelease {
+    fn new(source_window: AnyWindowHandle, prepared: retained_visual::PreparedRelease) -> Self {
+        let ticket = prepared.ticket();
+        assert_eq!(
+            source_window.window_id(),
+            ticket.source_window(),
+            "a retained-visual release must remain bound to its source window"
+        );
+        Self {
+            inner: Rc::new(DockLiveUndockRetainedVisualReleaseInner {
+                source_window,
+                ticket,
+                prepared: RefCell::new(Some(prepared)),
+                receipt: Cell::new(None),
+                source_window_terminal: Cell::new(false),
+                call_in_flight: Cell::new(false),
+            }),
+        }
+    }
+
+    fn is_settled(&self) -> bool {
+        self.inner.receipt.get().is_some() || self.inner.source_window_terminal.get()
+    }
+
+    fn can_commit(&self, cx: &mut App) -> bool {
+        if self.is_settled() {
+            return true;
+        }
+        if self.inner.call_in_flight.get() {
+            return false;
+        }
+        let prepared = self.inner.prepared.borrow();
+        let Some(prepared) = prepared.as_ref() else {
+            return false;
+        };
+        self.inner
+            .source_window
+            .update(cx, |_, window, _| {
+                retained_visual::can_commit_prepared_release(window, prepared)
+            })
+            .unwrap_or(false)
+    }
+
+    fn recover_interrupted_call(&self, cx: &mut App) -> bool {
+        let ticket = self.inner.ticket;
+        let identity = ticket.identity();
+        let recovered = self.inner.source_window.update(cx, |_, window, _| {
+            if let Some(receipt) = retained_visual::observe_release(window, identity)
+                .expect("a retained-visual release identity must remain bound to its source window")
+            {
+                DockLiveUndockRetainedVisualReleaseRecovery::Released(receipt)
+            } else {
+                DockLiveUndockRetainedVisualReleaseRecovery::Prepared(
+                    retained_visual::prepare_release(window, &ticket).expect(
+                        "an active retained-visual lease must remain preparable after an interrupted release",
+                    ),
+                )
+            }
+        });
+        match recovered {
+            Ok(DockLiveUndockRetainedVisualReleaseRecovery::Prepared(prepared)) => {
+                *self.inner.prepared.borrow_mut() = Some(prepared);
+                false
+            }
+            Ok(DockLiveUndockRetainedVisualReleaseRecovery::Released(receipt)) => {
+                self.inner.receipt.set(Some(receipt));
+                true
+            }
+            Err(_) => {
+                self.inner.source_window_terminal.set(true);
+                true
+            }
+        }
+    }
+
+    fn settle(&self, cx: &mut App) -> bool {
+        if self.is_settled() {
+            return true;
+        }
+        if self.inner.call_in_flight.replace(true) {
+            return false;
+        }
+        let Some(prepared) = self.inner.prepared.borrow_mut().take() else {
+            self.inner.call_in_flight.set(false);
+            return self.recover_interrupted_call(cx);
+        };
+        let source_window = self.inner.source_window;
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            source_window.update(cx, |_, window, _| {
+                retained_visual::commit_prepared_release(window, prepared)
+            })
+        }));
+        self.inner.call_in_flight.set(false);
+        match result {
+            Ok(Ok(receipt)) => {
+                self.inner.receipt.set(Some(receipt));
+                true
+            }
+            Ok(Err(_)) => {
+                self.inner.source_window_terminal.set(true);
+                true
+            }
+            Err(payload) => {
+                self.recover_interrupted_call(cx);
+                resume_unwind(payload)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DockLiveUndockPostCommitReceipt {
+    settled: Rc<Cell<bool>>,
+}
+
+impl DockLiveUndockPostCommitReceipt {
+    fn pending() -> Self {
+        Self {
+            settled: Rc::new(Cell::new(false)),
+        }
+    }
+
+    fn is_settled(&self) -> bool {
+        self.settled.get()
+    }
+
+    fn settle(&self) -> bool {
+        !self.settled.replace(true)
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.settled, &other.settled)
+    }
+}
+
+struct DockLiveUndockCompletedPromotionCommit {
+    durable: DockLiveUndockDurablePromotionExecution,
+    retained_released: bool,
+    post_commit: DockLiveUndockPostCommitPlan,
+}
+
+enum DockLiveUndockPostCommitPlan {
+    SameWindow {
+        identity: DockLiveUndockIdentity,
+        controller: Entity<DockController>,
+        source_host: Entity<DockHost>,
+        destination_host: Entity<DockHost>,
+        runtime: DockViewportRuntimeHandle,
+        committed_viewport: crate::viewport_runtime::DockViewportCommittedLiveUndockPromotion,
+        publication: Option<DockSurfaceDeferredPublication>,
+        receipt: DockLiveUndockPostCommitReceipt,
+    },
+    Host {
+        identity: DockLiveUndockIdentity,
+        runtime: DockViewportRuntimeHandle,
+        committed_drop: DockViewportCommittedLiveUndockHostDrop,
+        publication: Option<DockSurfaceDeferredPublication>,
+        receipt: DockLiveUndockPostCommitReceipt,
+    },
+}
+
+impl DockLiveUndockPostCommitPlan {
+    fn start(self, live_runtime: DockLiveUndockRuntime, cx: &mut App) {
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(
+            Duration::ZERO,
+            move |cx| {
+                let mut first_panic = None;
+                let (identity, publication, receipt) = match self {
+                    Self::SameWindow {
+                        identity,
+                        controller,
+                        source_host,
+                        destination_host,
+                        runtime,
+                        committed_viewport,
+                        publication,
+                        receipt,
+                    } => {
+                        record_post_commit_panic(&mut first_panic, || {
+                            cx.update_entity(&controller, |_, controller_cx| controller_cx.notify())
+                        });
+                        record_post_commit_panic(&mut first_panic, || {
+                            cx.update_entity(&source_host, |_, host_cx| host_cx.notify())
+                        });
+                        record_post_commit_panic(&mut first_panic, || {
+                            cx.update_entity(&destination_host, |_, host_cx| host_cx.notify())
+                        });
+                        record_post_commit_panic(&mut first_panic, || {
+                            runtime.refresh_live_undock_promotion_commit(&committed_viewport, cx)
+                        });
+                        (identity, publication, receipt)
+                    }
+                    Self::Host {
+                        identity,
+                        runtime,
+                        committed_drop,
+                        publication,
+                        receipt,
+                    } => {
+                        record_post_commit_panic(&mut first_panic, || {
+                            runtime.notify_live_undock_host_drop_commit(&committed_drop, cx)
+                        });
+                        (identity, publication, receipt)
+                    }
+                };
+
+                if let Some(publication) = publication {
+                    record_post_commit_panic(&mut first_panic, || publication.publish(cx));
+                    if !publication.is_settled() {
+                        schedule_deferred_surface_publication(
+                            publication,
+                            receipt.clone(),
+                            live_runtime.clone(),
+                            identity,
+                            cx,
+                        );
+                    } else {
+                        live_runtime.settle_post_commit_and_resume_terminal(identity, &receipt, cx);
+                    }
+                } else {
+                    live_runtime.settle_post_commit_and_resume_terminal(identity, &receipt, cx);
+                }
+                if let Some(payload) = first_panic {
+                    resume_unwind(payload);
+                }
+            },
+        );
+    }
+}
 
 enum DockLiveUndockQueuedFact {
     Reduce(DockLiveUndockFact),
@@ -172,6 +486,35 @@ impl DockPayloadDragFinalizer {
         self.claim(DockPayloadDragFinalizerAuthority::LiveUndock(identity))
     }
 
+    fn claim_terminal(
+        &self,
+        identity: DockLiveUndockIdentity,
+    ) -> Option<DockPayloadDragFinalizerClaim> {
+        let authority = self.authority.get();
+        match authority {
+            DockPayloadDragFinalizerAuthority::Route => self.claim(authority),
+            DockPayloadDragFinalizerAuthority::PendingLiveUndock(current)
+            | DockPayloadDragFinalizerAuthority::LiveUndock(current)
+                if current == identity =>
+            {
+                self.claim(authority)
+            }
+            DockPayloadDragFinalizerAuthority::PendingLiveUndock(_)
+            | DockPayloadDragFinalizerAuthority::LiveUndock(_)
+            | DockPayloadDragFinalizerAuthority::Finalizing
+            | DockPayloadDragFinalizerAuthority::SurfaceShutdown(_)
+            | DockPayloadDragFinalizerAuthority::Finalized => None,
+        }
+    }
+
+    fn is_terminally_settled(&self) -> bool {
+        matches!(
+            self.authority.get(),
+            DockPayloadDragFinalizerAuthority::SurfaceShutdown(_)
+                | DockPayloadDragFinalizerAuthority::Finalized
+        )
+    }
+
     fn claim_release_adoption(
         &self,
         identity: DockLiveUndockIdentity,
@@ -192,6 +535,7 @@ impl DockPayloadDragFinalizer {
         Some(DockPayloadDragSurfaceShutdownFinalizer {
             finalizer: self.clone(),
             lease,
+            completed: false,
         })
     }
 
@@ -252,6 +596,7 @@ impl Drop for DockPayloadDragFinalizerClaim {
 pub(crate) struct DockPayloadDragSurfaceShutdownFinalizer {
     finalizer: DockPayloadDragFinalizer,
     lease: super::window_session::DockSurfaceWindowSessionLease,
+    completed: bool,
 }
 
 impl DockPayloadDragSurfaceShutdownFinalizer {
@@ -259,7 +604,13 @@ impl DockPayloadDragSurfaceShutdownFinalizer {
         self.lease == other.lease && self.finalizer.same_token(&other.finalizer)
     }
 
-    pub(crate) fn complete(self) -> bool {
+    pub(crate) fn complete(mut self) -> bool {
+        let completed = self.complete_inner();
+        self.completed = true;
+        completed
+    }
+
+    fn complete_inner(&self) -> bool {
         if self.finalizer.authority.get()
             != DockPayloadDragFinalizerAuthority::SurfaceShutdown(self.lease)
         {
@@ -269,6 +620,14 @@ impl DockPayloadDragSurfaceShutdownFinalizer {
             .authority
             .set(DockPayloadDragFinalizerAuthority::Finalized);
         true
+    }
+}
+
+impl Drop for DockPayloadDragSurfaceShutdownFinalizer {
+    fn drop(&mut self) {
+        if !self.completed {
+            let _ = self.complete_inner();
+        }
     }
 }
 
@@ -458,6 +817,9 @@ struct DockLiveUndockExecution {
     source_restoration_retry: DockLiveUndockRetryBackoff,
     orphan_recovery_retry: DockLiveUndockRetryBackoff,
     committed_destination_recovery_retry: DockLiveUndockRetryBackoff,
+    committed_window_effects_retry: DockLiveUndockRetryBackoff,
+    terminal_requested: bool,
+    terminal_settlement_retry: DockLiveUndockRetryBackoff,
 }
 
 struct DockLiveUndockReleasePlacementExecution {
@@ -523,14 +885,14 @@ impl DockLiveUndockRehostSessionState {
     }
 
     fn retire_terminal(&mut self) -> bool {
-        let Self::Active(session) = self else {
-            return false;
-        };
-        if !session.is_terminal() {
-            return false;
+        match self {
+            Self::Active(session) if session.is_terminal() => {
+                *self = Self::Retired;
+                true
+            }
+            Self::Retired => true,
+            Self::Active(_) | Self::CheckedOut => false,
         }
-        *self = Self::Retired;
-        true
     }
 
     fn is_active(&self) -> bool {
@@ -592,6 +954,7 @@ pub(crate) enum DockLiveUndockSourceFinishOutcome {
     Retry,
 }
 
+#[derive(Clone)]
 enum DockLiveUndockPreparedHostPresentationAbandonment {
     Exact {
         host: Entity<DockHost>,
@@ -650,13 +1013,20 @@ struct DockLiveUndockPreparedOrphanRecoveryExecution {
 struct DockLiveUndockPreparedCommittedDestinationRecoveryExecution {
     identity: DockLiveUndockIdentity,
     authority: DockPayloadRecoveryAuthority,
+    promotion: DockLiveUndockCommittedDestinationPromotionAuthority,
     presentation_lease: Option<DockLiveUndockPayloadLeaseReceipt>,
+    same_window_terminal_required: bool,
     token: DockLiveUndockPromotionToken,
     destination: DockLiveUndockPromotionDestination,
     runtime: DockViewportRuntimeHandle,
     recovery: DockLiveUndockPreparedRecoveryRecord,
     source_semantic: Option<DockLiveUndockPreparedSourceSemanticRetirement>,
     destination_window: WindowHandle<DockHost>,
+}
+
+enum DockLiveUndockCommittedDestinationPromotionAuthority {
+    Durable,
+    Journal(Rc<DockLiveUndockPromotionCommitJournal>),
 }
 
 enum DockLiveUndockPreparedRecoveryRecord {
@@ -679,7 +1049,136 @@ enum DockLiveUndockPreparedSourceSemanticRetirement {
 
 enum DockLiveUndockPromotionExecution {
     Prepared(DockLiveUndockPreparedPromotionExecution),
+    Committing(Rc<DockLiveUndockPromotionCommitJournal>),
     Durable(DockLiveUndockDurablePromotionExecution),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DockLiveUndockLogicalCloseAuthority {
+    ForwardCommitted(crate::viewport_registry::DockViewportRegistrationKey),
+    Durable(crate::viewport_registry::DockViewportRegistrationKey),
+}
+
+impl DockLiveUndockLogicalCloseAuthority {
+    pub(crate) fn into_registration(self) -> crate::viewport_registry::DockViewportRegistrationKey {
+        match self {
+            Self::ForwardCommitted(registration) | Self::Durable(registration) => registration,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockLiveUndockPromotionCommitBoundary {
+    Reversible,
+    AbortClaimed,
+    InFlight,
+    Irreversible,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockLiveUndockPromotionCommitDriveState {
+    Idle,
+    Driving,
+    Terminal,
+}
+
+struct DockLiveUndockPromotionCommitJournal {
+    identity: DockLiveUndockIdentity,
+    token: DockLiveUndockPromotionToken,
+    destination: DockLiveUndockPromotionDestination,
+    surface_revision: u64,
+    boundary: Cell<DockLiveUndockPromotionCommitBoundary>,
+    drive: Cell<DockLiveUndockPromotionCommitDriveState>,
+    recovery_receipt: Cell<Option<DockPayloadRecoveryCommitReceipt>>,
+    recovery_requires_window_terminal: Cell<bool>,
+    execution: RefCell<DockLiveUndockPromotionCommitExecution>,
+}
+
+enum DockLiveUndockPromotionCommitExecution {
+    Pending(Option<DockLiveUndockPreparedPromotionExecution>),
+    SameWindow(DockLiveUndockSameWindowPromotionCommit),
+    Host(DockLiveUndockHostPromotionCommit),
+    Aborted,
+}
+
+#[derive(Clone)]
+enum DockLiveUndockSourceRetirementStage {
+    Pending,
+    Committed(DockHostLiveSourceRetirementReceipt),
+    AuthorityAbsent,
+    Retired,
+}
+
+struct DockLiveUndockSameWindowPromotionCommit {
+    identity: DockLiveUndockIdentity,
+    token: DockLiveUndockPromotionToken,
+    destination: DockLiveUndockPromotionDestination,
+    surface_revision: u64,
+    controller: Entity<DockController>,
+    prepared_graph: DockLiveUndockPreparedGraphCommit,
+    graph_commit: Option<DockWorkspaceGraphCommitReceipt>,
+    topology_recovery_required: bool,
+    runtime: DockViewportRuntimeHandle,
+    viewport: DockViewportPreparedLiveUndockPromotion,
+    committed_viewport: Option<crate::viewport_runtime::DockViewportCommittedLiveUndockPromotion>,
+    retained_release: DockLiveUndockRetainedVisualRelease,
+    source_host: Entity<DockHost>,
+    source: DockHostPreparedLiveSourceRetirement,
+    source_retirement: DockLiveUndockSourceRetirementStage,
+    destination_host: Entity<DockHost>,
+    destination_host_promotion: DockHostPreparedLiveDestinationPromotion,
+    destination_promotion: Option<DockHostLiveDestinationPromotionReceipt>,
+    presentation: Option<RehostTerminalPreparation>,
+    presentation_batch: Option<view_presentation_window::LeaseBatch>,
+    reveal: DockLiveUndockRevealReceipt,
+    provisional_session: WindowProvisionalSession,
+    semantics: WindowProvisionalSemanticsTicket,
+    surface: Option<DockSurfaceTransactionReceipt>,
+    publication: Option<DockSurfaceDeferredPublication>,
+    presentation_session_retired: bool,
+    controller_notified: bool,
+    source_host_notified: bool,
+    destination_host_notified: bool,
+    viewport_refreshed: bool,
+}
+
+#[derive(Clone)]
+struct DockLiveUndockPreparedGraphCommit {
+    commit_id: DockWorkspaceGraphCommitId,
+    expected: DockGraph,
+    projected: DockGraph,
+}
+
+struct DockLiveUndockHostPromotionCommit {
+    identity: DockLiveUndockIdentity,
+    token: DockLiveUndockPromotionToken,
+    destination: DockLiveUndockPromotionDestination,
+    surface_revision: u64,
+    runtime: DockViewportRuntimeHandle,
+    drop: DockViewportPreflightedLiveUndockHostDrop,
+    committed_drop: Option<DockViewportCommittedLiveUndockHostDrop>,
+    target_window: WindowHandle<DockHost>,
+    target_host: Entity<DockHost>,
+    target_binding: DockHostWindowBinding,
+    target_registration: crate::viewport_registry::DockViewportRegistrationKey,
+    presentation_cleanup: Option<DockLiveUndockHostPromotionCleanupCommit>,
+    surface: Option<DockSurfaceTransactionReceipt>,
+    publication: Option<DockSurfaceDeferredPublication>,
+    committed_destination_recovery_required: bool,
+    lower_receipt_retired: bool,
+}
+
+struct DockLiveUndockHostPromotionCleanupCommit {
+    payload_lease: DockLiveUndockPayloadLeaseReceipt,
+    presentation_generation: u64,
+    presentation: Option<DockLiveUndockPreparedPresentationCleanup>,
+    presentation_committed: bool,
+    source_host: DockLiveUndockPreparedHostPresentationAbandonment,
+    source_host_committed: bool,
+    provisional_host: DockLiveUndockPreparedHostPresentationAbandonment,
+    provisional_host_committed: bool,
+    retained_release: Option<DockLiveUndockRetainedVisualRelease>,
+    session_retired: bool,
 }
 
 enum DockLiveUndockPreparedPromotionExecution {
@@ -697,8 +1196,7 @@ struct DockLiveUndockPreparedSameWindowPromotionExecution {
     move_plan: DockViewportTearOffMovePlan,
     runtime: DockViewportRuntimeHandle,
     viewport: DockViewportPreparedLiveUndockPromotion,
-    source_window: AnyWindowHandle,
-    retained_release: retained_visual::PreparedRelease,
+    retained_release: DockLiveUndockRetainedVisualRelease,
     source_host: Entity<DockHost>,
     source: DockHostPreparedLiveSourceRetirement,
     destination_host: Entity<DockHost>,
@@ -731,7 +1229,6 @@ struct DockLiveUndockPreflightedHostPromotionExecution {
     identity: DockLiveUndockIdentity,
     token: DockLiveUndockPromotionToken,
     destination: DockLiveUndockPromotionDestination,
-    release: DockLiveUndockReleaseLock,
     surface_revision: u64,
     runtime: DockViewportRuntimeHandle,
     drop: DockViewportPreflightedLiveUndockHostDrop,
@@ -748,8 +1245,7 @@ struct DockLiveUndockPreparedHostPromotionPresentationCleanup {
     presentation: DockLiveUndockPreparedPresentationCleanup,
     source_host: DockLiveUndockPreparedHostPresentationAbandonment,
     provisional_host: DockLiveUndockPreparedHostPresentationAbandonment,
-    source_window: AnyWindowHandle,
-    retained_release: Option<retained_visual::PreparedRelease>,
+    retained_release: Option<DockLiveUndockRetainedVisualRelease>,
 }
 
 enum DockLiveUndockDurablePromotionExecution {
@@ -768,6 +1264,15 @@ struct DockLiveUndockDurableSameWindowPromotionExecution {
     reveal: DockLiveUndockRevealReceipt,
     provisional_session: WindowProvisionalSession,
     semantics: WindowProvisionalSemanticsTicket,
+    viewport_commit: crate::viewport_runtime::DockViewportCommittedLiveUndockPromotion,
+    controller: Entity<DockController>,
+    graph_commit: Option<DockWorkspaceGraphCommitReceipt>,
+    topology_recovery_required: bool,
+    source_host: WeakEntity<DockHost>,
+    source_retirement: DockHostLiveSourceRetirementReceipt,
+    destination_host: WeakEntity<DockHost>,
+    destination_promotion: DockHostLiveDestinationPromotionReceipt,
+    post_commit: DockLiveUndockPostCommitReceipt,
 }
 
 struct DockLiveUndockDurableHostPromotionExecution {
@@ -779,7 +1284,9 @@ struct DockLiveUndockDurableHostPromotionExecution {
     destination_binding: DockHostWindowBinding,
     registration: crate::viewport_registry::DockViewportRegistrationKey,
     activation: Option<crate::DockViewportActivationTransaction>,
-    pending_window_effects: Option<crate::DockViewportWindowEffects>,
+    committed_destination_recovery_required: bool,
+    host_drop_commit: DockViewportCommittedLiveUndockHostDrop,
+    post_commit: DockLiveUndockPostCommitReceipt,
 }
 
 impl DockLiveUndockPreparedPromotionExecution {
@@ -808,6 +1315,393 @@ impl DockLiveUndockPreparedPromotionExecution {
         match self {
             Self::SameWindow(prepared) => prepared.surface_revision,
             Self::Host(prepared) => prepared.surface_revision,
+        }
+    }
+
+    fn provider_destination_already_committed(&self) -> bool {
+        matches!(
+            self,
+            Self::SameWindow(DockLiveUndockPreparedSameWindowPromotionExecution {
+                presentation: RehostTerminalPreparation::AlreadyCommitted(
+                    view_presentation_window::RehostTerminalOutcome::DestinationCommitted(_),
+                ),
+                ..
+            })
+        )
+    }
+}
+
+impl DockLiveUndockPromotionCommitJournal {
+    fn pending(prepared: DockLiveUndockPreparedPromotionExecution) -> Self {
+        let boundary = if prepared.provider_destination_already_committed() {
+            DockLiveUndockPromotionCommitBoundary::Irreversible
+        } else {
+            DockLiveUndockPromotionCommitBoundary::Reversible
+        };
+        Self {
+            identity: prepared.identity(),
+            token: prepared.token(),
+            destination: prepared.destination(),
+            surface_revision: prepared.surface_revision(),
+            boundary: Cell::new(boundary),
+            drive: Cell::new(DockLiveUndockPromotionCommitDriveState::Idle),
+            recovery_receipt: Cell::new(None),
+            recovery_requires_window_terminal: Cell::new(false),
+            execution: RefCell::new(DockLiveUndockPromotionCommitExecution::Pending(Some(
+                prepared,
+            ))),
+        }
+    }
+
+    fn same_window(
+        prepared: DockLiveUndockPreparedSameWindowPromotionExecution,
+        prepared_graph: DockLiveUndockPreparedGraphCommit,
+    ) -> Self {
+        let DockLiveUndockPreparedSameWindowPromotionExecution {
+            identity,
+            token,
+            destination,
+            release: _,
+            surface_revision,
+            controller,
+            move_plan: _,
+            runtime,
+            viewport,
+            retained_release,
+            source_host,
+            source,
+            destination_host,
+            destination_host_promotion,
+            presentation,
+            reveal,
+            provisional_session,
+            semantics,
+        } = prepared;
+        let boundary = if matches!(
+            &presentation,
+            RehostTerminalPreparation::AlreadyCommitted(
+                view_presentation_window::RehostTerminalOutcome::DestinationCommitted(_)
+            )
+        ) {
+            DockLiveUndockPromotionCommitBoundary::Irreversible
+        } else {
+            DockLiveUndockPromotionCommitBoundary::Reversible
+        };
+        Self {
+            identity,
+            token,
+            destination,
+            surface_revision,
+            boundary: Cell::new(boundary),
+            drive: Cell::new(DockLiveUndockPromotionCommitDriveState::Idle),
+            recovery_receipt: Cell::new(None),
+            recovery_requires_window_terminal: Cell::new(false),
+            execution: RefCell::new(DockLiveUndockPromotionCommitExecution::SameWindow(
+                DockLiveUndockSameWindowPromotionCommit {
+                    identity,
+                    token,
+                    destination,
+                    surface_revision,
+                    controller,
+                    prepared_graph,
+                    graph_commit: None,
+                    topology_recovery_required: false,
+                    runtime,
+                    viewport,
+                    committed_viewport: None,
+                    retained_release,
+                    source_host,
+                    source,
+                    source_retirement: DockLiveUndockSourceRetirementStage::Pending,
+                    destination_host,
+                    destination_host_promotion,
+                    destination_promotion: None,
+                    presentation: Some(presentation),
+                    presentation_batch: None,
+                    reveal,
+                    provisional_session,
+                    semantics,
+                    surface: None,
+                    publication: None,
+                    presentation_session_retired: false,
+                    controller_notified: false,
+                    source_host_notified: false,
+                    destination_host_notified: false,
+                    viewport_refreshed: false,
+                },
+            )),
+        }
+    }
+
+    fn host(prepared: DockLiveUndockPreflightedHostPromotionExecution) -> Self {
+        let DockLiveUndockPreflightedHostPromotionExecution {
+            identity,
+            token,
+            destination,
+            surface_revision,
+            runtime,
+            drop,
+            target_window,
+            target_host,
+            target_binding,
+            target_registration,
+            presentation_cleanup,
+        } = prepared;
+        let presentation_cleanup = presentation_cleanup.map(|cleanup| {
+            let DockLiveUndockPreparedHostPromotionPresentationCleanup {
+                payload_lease,
+                presentation_generation,
+                presentation,
+                source_host,
+                provisional_host,
+                retained_release,
+            } = cleanup;
+            DockLiveUndockHostPromotionCleanupCommit {
+                payload_lease,
+                presentation_generation,
+                presentation: Some(presentation),
+                presentation_committed: false,
+                source_host,
+                source_host_committed: false,
+                provisional_host,
+                provisional_host_committed: false,
+                retained_release,
+                session_retired: false,
+            }
+        });
+        Self {
+            identity,
+            token,
+            destination,
+            surface_revision,
+            boundary: Cell::new(DockLiveUndockPromotionCommitBoundary::Reversible),
+            drive: Cell::new(DockLiveUndockPromotionCommitDriveState::Idle),
+            recovery_receipt: Cell::new(None),
+            recovery_requires_window_terminal: Cell::new(false),
+            execution: RefCell::new(DockLiveUndockPromotionCommitExecution::Host(
+                DockLiveUndockHostPromotionCommit {
+                    identity,
+                    token,
+                    destination,
+                    surface_revision,
+                    runtime,
+                    drop,
+                    committed_drop: None,
+                    target_window,
+                    target_host,
+                    target_binding,
+                    target_registration,
+                    presentation_cleanup,
+                    surface: None,
+                    publication: None,
+                    committed_destination_recovery_required: false,
+                    lower_receipt_retired: false,
+                },
+            )),
+        }
+    }
+
+    const fn identity(&self) -> DockLiveUndockIdentity {
+        self.identity
+    }
+
+    const fn token(&self) -> DockLiveUndockPromotionToken {
+        self.token
+    }
+
+    const fn destination(&self) -> DockLiveUndockPromotionDestination {
+        self.destination
+    }
+
+    const fn surface_revision(&self) -> u64 {
+        self.surface_revision
+    }
+
+    fn begin_commit_call(&self) -> bool {
+        match self.boundary.get() {
+            DockLiveUndockPromotionCommitBoundary::Reversible => {
+                self.boundary
+                    .set(DockLiveUndockPromotionCommitBoundary::InFlight);
+                true
+            }
+            DockLiveUndockPromotionCommitBoundary::InFlight
+            | DockLiveUndockPromotionCommitBoundary::Irreversible => true,
+            DockLiveUndockPromotionCommitBoundary::AbortClaimed => false,
+        }
+    }
+
+    fn confirm_irreversible(&self) {
+        assert!(matches!(
+            self.boundary.get(),
+            DockLiveUndockPromotionCommitBoundary::InFlight
+                | DockLiveUndockPromotionCommitBoundary::Irreversible
+        ));
+        self.boundary
+            .set(DockLiveUndockPromotionCommitBoundary::Irreversible);
+    }
+
+    fn resolve_in_flight_as_reversible(&self) {
+        if self.boundary.get() == DockLiveUndockPromotionCommitBoundary::InFlight {
+            self.boundary
+                .set(DockLiveUndockPromotionCommitBoundary::Reversible);
+        }
+    }
+
+    fn claim_abort(&self) -> bool {
+        if self.boundary.get() != DockLiveUndockPromotionCommitBoundary::Reversible {
+            return false;
+        }
+        self.boundary
+            .set(DockLiveUndockPromotionCommitBoundary::AbortClaimed);
+        true
+    }
+
+    fn crossed_commit_boundary(&self) -> bool {
+        matches!(
+            self.boundary.get(),
+            DockLiveUndockPromotionCommitBoundary::InFlight
+                | DockLiveUndockPromotionCommitBoundary::Irreversible
+        )
+    }
+
+    fn has_irreversible_authority(&self) -> bool {
+        matches!(
+            self.boundary.get(),
+            DockLiveUndockPromotionCommitBoundary::Irreversible
+        )
+    }
+
+    fn abort_was_claimed(&self) -> bool {
+        self.boundary.get() == DockLiveUndockPromotionCommitBoundary::AbortClaimed
+    }
+
+    fn take_pending_preparation(&self) -> Option<DockLiveUndockPreparedPromotionExecution> {
+        let mut execution = self.execution.borrow_mut();
+        let DockLiveUndockPromotionCommitExecution::Pending(prepared) = &mut *execution else {
+            return None;
+        };
+        prepared.take()
+    }
+
+    fn install_preflighted(&self, preflighted: Self) -> bool {
+        assert_eq!(preflighted.identity, self.identity);
+        assert_eq!(preflighted.token, self.token);
+        assert_eq!(preflighted.destination, self.destination);
+        assert_eq!(preflighted.surface_revision, self.surface_revision);
+        if self.abort_was_claimed() {
+            self.abort_execution();
+            return false;
+        }
+        let mut execution = self.execution.borrow_mut();
+        assert!(matches!(
+            &*execution,
+            DockLiveUndockPromotionCommitExecution::Pending(None)
+        ));
+        *execution = preflighted.execution.into_inner();
+        true
+    }
+
+    fn abort_execution(&self) -> bool {
+        if !matches!(
+            self.boundary.get(),
+            DockLiveUndockPromotionCommitBoundary::Reversible
+                | DockLiveUndockPromotionCommitBoundary::AbortClaimed
+        ) {
+            return false;
+        }
+        self.boundary
+            .set(DockLiveUndockPromotionCommitBoundary::AbortClaimed);
+        self.drive
+            .set(DockLiveUndockPromotionCommitDriveState::Terminal);
+        *self.execution.borrow_mut() = DockLiveUndockPromotionCommitExecution::Aborted;
+        true
+    }
+
+    fn restore_pending_preparation(&self, prepared: DockLiveUndockPreparedPromotionExecution) {
+        let mut execution = self.execution.borrow_mut();
+        assert!(matches!(
+            &*execution,
+            DockLiveUndockPromotionCommitExecution::Pending(None)
+        ));
+        *execution = DockLiveUndockPromotionCommitExecution::Pending(Some(prepared));
+    }
+
+    fn begin_drive(&self) -> bool {
+        match self.drive.get() {
+            DockLiveUndockPromotionCommitDriveState::Idle => {}
+            DockLiveUndockPromotionCommitDriveState::Driving
+            | DockLiveUndockPromotionCommitDriveState::Terminal => return false,
+        }
+        self.drive
+            .set(DockLiveUndockPromotionCommitDriveState::Driving);
+        true
+    }
+
+    fn finish_drive(&self) {
+        self.drive
+            .set(DockLiveUndockPromotionCommitDriveState::Terminal);
+    }
+
+    fn finish_drive_for_recovery(&self) {
+        assert!(matches!(
+            self.boundary.get(),
+            DockLiveUndockPromotionCommitBoundary::InFlight
+                | DockLiveUndockPromotionCommitBoundary::Irreversible
+        ));
+        self.boundary
+            .set(DockLiveUndockPromotionCommitBoundary::Irreversible);
+        self.finish_drive();
+    }
+
+    fn record_recovery(
+        &self,
+        receipt: DockPayloadRecoveryCommitReceipt,
+        requires_window_terminal: bool,
+    ) -> bool {
+        if let Some(current) = self.recovery_receipt.get() {
+            return current == receipt
+                && self.recovery_requires_window_terminal.get() == requires_window_terminal;
+        }
+        self.recovery_receipt.set(Some(receipt));
+        self.recovery_requires_window_terminal
+            .set(requires_window_terminal);
+        true
+    }
+
+    fn recovery_receipt(&self) -> Option<DockPayloadRecoveryCommitReceipt> {
+        self.recovery_receipt.get()
+    }
+
+    fn recovery_requires_window_terminal(&self) -> bool {
+        self.recovery_requires_window_terminal.get()
+    }
+
+    fn claim_abort_or_observe(&self) -> DockLiveUndockPromotionCommitDisposition {
+        match self.boundary.get() {
+            DockLiveUndockPromotionCommitBoundary::Reversible => {
+                assert!(self.claim_abort());
+                DockLiveUndockPromotionCommitDisposition::AbortClaimed
+            }
+            DockLiveUndockPromotionCommitBoundary::AbortClaimed => {
+                DockLiveUndockPromotionCommitDisposition::AbortClaimed
+            }
+            DockLiveUndockPromotionCommitBoundary::InFlight => {
+                DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                    identity: self.identity,
+                    token: self.token,
+                    destination: self.destination,
+                }
+            }
+            DockLiveUndockPromotionCommitBoundary::Irreversible => {
+                // Crossing the lower commit boundary is not the same as publishing the aggregate
+                // durable promotion. Shutdown must wait for the exact durable or failure fact
+                // while the journal still owns unfinished forward-settlement authority.
+                DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                    identity: self.identity,
+                    token: self.token,
+                    destination: self.destination,
+                }
+            }
         }
     }
 }
@@ -854,6 +1748,20 @@ impl DockLiveUndockDurablePromotionExecution {
             Self::Host(durable) => &durable.registration,
         }
     }
+
+    const fn committed_destination_recovery_required(&self) -> bool {
+        match self {
+            Self::SameWindow(durable) => durable.topology_recovery_required,
+            Self::Host(durable) => durable.committed_destination_recovery_required,
+        }
+    }
+
+    fn post_commit(&self) -> &DockLiveUndockPostCommitReceipt {
+        match self {
+            Self::SameWindow(durable) => &durable.post_commit,
+            Self::Host(durable) => &durable.post_commit,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -874,6 +1782,16 @@ struct DockLiveUndockRuntimeState {
     terminate_next_same_window_destination_before_semantics_ack: bool,
     #[cfg(test)]
     before_destination_interaction_activation_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
+    #[cfg(test)]
+    after_same_window_provider_commit_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
+    #[cfg(test)]
+    after_same_window_graph_commit_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
+    #[cfg(test)]
+    after_same_window_viewport_commit_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
+    #[cfg(test)]
+    after_host_drop_commit_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
+    #[cfg(test)]
+    panic_next_committed_destination_recovery_attempt: bool,
 }
 
 struct DockLiveUndockPreparedSeed {
@@ -983,6 +1901,73 @@ impl DockLiveUndockRuntime {
         }
     }
 
+    /// Linearizes shutdown against the exact in-flight promotion commit.
+    ///
+    /// A reversible journal is claimed for abort before the reducer can schedule source
+    /// restoration. An irreversible journal or an already durable runtime publication is returned
+    /// as exact committed-loss authority.
+    pub(crate) fn claim_promotion_commit_for_shutdown(
+        &self,
+        identity: DockLiveUndockIdentity,
+    ) -> DockLiveUndockPromotionCommitDisposition {
+        let state = self.state.borrow();
+        let Some(execution) = state.executions.get(&identity) else {
+            return DockLiveUndockPromotionCommitDisposition::RollbackAllowed;
+        };
+        match execution.promotion.as_ref() {
+            Some(DockLiveUndockPromotionExecution::Prepared(prepared))
+                if prepared.identity() == identity
+                    && prepared.provider_destination_already_committed() =>
+            {
+                DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                    identity,
+                    token: prepared.token(),
+                    destination: prepared.destination(),
+                }
+            }
+            Some(DockLiveUndockPromotionExecution::Committing(journal))
+                if journal.identity() == identity =>
+            {
+                journal.claim_abort_or_observe()
+            }
+            Some(DockLiveUndockPromotionExecution::Durable(durable))
+                if durable.identity() == identity =>
+            {
+                DockLiveUndockPromotionCommitDisposition::Durable {
+                    identity,
+                    token: durable.token(),
+                    destination: durable.destination(),
+                }
+            }
+            Some(
+                DockLiveUndockPromotionExecution::Prepared(_)
+                | DockLiveUndockPromotionExecution::Committing(_)
+                | DockLiveUndockPromotionExecution::Durable(_),
+            )
+            | None => DockLiveUndockPromotionCommitDisposition::RollbackAllowed,
+        }
+    }
+
+    fn promotion_commit_forbids_rollback(&self, identity: DockLiveUndockIdentity) -> bool {
+        self.state
+            .borrow()
+            .executions
+            .get(&identity)
+            .and_then(|execution| execution.promotion.as_ref())
+            .is_some_and(|promotion| match promotion {
+                DockLiveUndockPromotionExecution::Committing(journal) => {
+                    journal.identity() == identity && journal.crossed_commit_boundary()
+                }
+                DockLiveUndockPromotionExecution::Durable(durable) => {
+                    durable.identity() == identity
+                }
+                DockLiveUndockPromotionExecution::Prepared(prepared) => {
+                    prepared.identity() == identity
+                        && prepared.provider_destination_already_committed()
+                }
+            })
+    }
+
     #[cfg(test)]
     pub(crate) fn execution_count_for_test(&self) -> usize {
         self.state.borrow().executions.len()
@@ -1039,6 +2024,48 @@ impl DockLiveUndockRuntime {
     }
 
     #[cfg(test)]
+    pub(crate) fn after_same_window_provider_commit_for_test(
+        &self,
+        hook: impl FnOnce(&mut App) + 'static,
+    ) {
+        self.state
+            .borrow_mut()
+            .after_same_window_provider_commit_test_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn after_same_window_graph_commit_for_test(
+        &self,
+        hook: impl FnOnce(&mut App) + 'static,
+    ) {
+        self.state
+            .borrow_mut()
+            .after_same_window_graph_commit_test_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn after_same_window_viewport_commit_for_test(
+        &self,
+        hook: impl FnOnce(&mut App) + 'static,
+    ) {
+        self.state
+            .borrow_mut()
+            .after_same_window_viewport_commit_test_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn after_host_drop_commit_for_test(&self, hook: impl FnOnce(&mut App) + 'static) {
+        self.state.borrow_mut().after_host_drop_commit_test_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_next_committed_destination_recovery_attempt_for_test(&self) {
+        self.state
+            .borrow_mut()
+            .panic_next_committed_destination_recovery_attempt = true;
+    }
+
+    #[cfg(test)]
     pub(crate) fn orphan_cleanup_authority_for_test(
         &self,
     ) -> Option<(
@@ -1060,29 +2087,58 @@ impl DockLiveUndockRuntime {
             })
     }
 
-    pub(crate) fn committed_destination_registration_for_logical_close(
+    pub(crate) fn committed_destination_logical_close_authority(
         &self,
         identity: DockLiveUndockIdentity,
         window_id: open_gpui::WindowId,
-    ) -> Option<crate::viewport_registry::DockViewportRegistrationKey> {
-        let state = self.state.borrow();
-        let execution = state.executions.get(&identity)?;
-        match execution.promotion.as_ref()? {
+    ) -> Option<DockLiveUndockLogicalCloseAuthority> {
+        let mut state = self.state.borrow_mut();
+        let execution = state.executions.get_mut(&identity)?;
+        match execution.promotion.as_mut()? {
             DockLiveUndockPromotionExecution::Durable(
                 DockLiveUndockDurablePromotionExecution::SameWindow(durable),
             ) if durable.identity == identity
                 && durable.destination_window.window_id() == window_id =>
             {
-                Some(durable.registration.clone())
+                Some(DockLiveUndockLogicalCloseAuthority::Durable(
+                    durable.registration.clone(),
+                ))
             }
             DockLiveUndockPromotionExecution::Durable(
                 DockLiveUndockDurablePromotionExecution::Host(durable),
             ) if durable.identity == identity
                 && durable.destination_window.window_id() == window_id =>
             {
-                Some(durable.registration.clone())
+                Some(DockLiveUndockLogicalCloseAuthority::Durable(
+                    durable.registration.clone(),
+                ))
+            }
+            DockLiveUndockPromotionExecution::Committing(journal)
+                if journal.identity() == identity
+                    && journal.destination().window_id() == window_id =>
+            {
+                let mut journal_execution = journal.execution.borrow_mut();
+                match &mut *journal_execution {
+                    DockLiveUndockPromotionCommitExecution::SameWindow(commit) => {
+                        let registration = commit.committed_viewport.as_ref()?.registration.clone();
+                        commit.topology_recovery_required = true;
+                        Some(DockLiveUndockLogicalCloseAuthority::ForwardCommitted(
+                            registration,
+                        ))
+                    }
+                    DockLiveUndockPromotionCommitExecution::Host(commit) => {
+                        commit.committed_drop.as_ref()?;
+                        commit.committed_destination_recovery_required = true;
+                        Some(DockLiveUndockLogicalCloseAuthority::ForwardCommitted(
+                            commit.target_registration.clone(),
+                        ))
+                    }
+                    DockLiveUndockPromotionCommitExecution::Pending(_)
+                    | DockLiveUndockPromotionCommitExecution::Aborted => None,
+                }
             }
             DockLiveUndockPromotionExecution::Prepared(_)
+            | DockLiveUndockPromotionExecution::Committing(_)
             | DockLiveUndockPromotionExecution::Durable(_) => None,
         }
     }
@@ -1613,6 +2669,9 @@ impl DockLiveUndockRuntime {
                         source_restoration_retry: DockLiveUndockRetryBackoff::default(),
                         orphan_recovery_retry: DockLiveUndockRetryBackoff::default(),
                         committed_destination_recovery_retry: DockLiveUndockRetryBackoff::default(),
+                        committed_window_effects_retry: DockLiveUndockRetryBackoff::default(),
+                        terminal_requested: false,
+                        terminal_settlement_retry: DockLiveUndockRetryBackoff::default(),
                     },
                 );
                 assert!(
@@ -1887,15 +2946,12 @@ impl DockLiveUndockRuntime {
         }
 
         let runtime = self.clone();
-        cx.spawn(async move |cx| {
-            cx.background_executor()
-                .timer(LIVE_UNDOCK_RELEASE_DEADLINE)
-                .await;
-            cx.update(|cx| {
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(
+            LIVE_UNDOCK_RELEASE_DEADLINE,
+            move |cx| {
                 runtime.expire_release_deadline(identity, placement_generation, cx);
-            });
-        })
-        .detach();
+            },
+        );
     }
 
     fn expire_release_deadline(
@@ -1942,19 +2998,9 @@ impl DockLiveUndockRuntime {
             return;
         };
         let runtime = self.clone();
-        cx.spawn(async move |cx| {
-            cx.background_executor().timer(delay).await;
-            cx.update(|cx| {
-                runtime.retry_source_restoration(
-                    identity,
-                    source,
-                    payload_lease,
-                    retry_generation,
-                    cx,
-                );
-            });
-        })
-        .detach();
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(delay, move |cx| {
+            runtime.retry_source_restoration(identity, source, payload_lease, retry_generation, cx);
+        });
     }
 
     fn retry_source_restoration(
@@ -2009,19 +3055,15 @@ impl DockLiveUndockRuntime {
             return;
         };
         let runtime = self.clone();
-        cx.spawn(async move |cx| {
-            cx.background_executor().timer(delay).await;
-            cx.update(|cx| {
-                runtime.retry_orphan_recovery(
-                    identity,
-                    payload_lease,
-                    provisional,
-                    retry_generation,
-                    cx,
-                );
-            });
-        })
-        .detach();
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(delay, move |cx| {
+            runtime.retry_orphan_recovery(
+                identity,
+                payload_lease,
+                provisional,
+                retry_generation,
+                cx,
+            );
+        });
     }
 
     fn retry_orphan_recovery(
@@ -2079,20 +3121,16 @@ impl DockLiveUndockRuntime {
             return;
         };
         let runtime = self.clone();
-        cx.spawn(async move |cx| {
-            cx.background_executor().timer(delay).await;
-            cx.update(|cx| {
-                runtime.retry_committed_destination_recovery(
-                    identity,
-                    authority,
-                    token,
-                    destination,
-                    retry_generation,
-                    cx,
-                );
-            });
-        })
-        .detach();
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(delay, move |cx| {
+            runtime.retry_committed_destination_recovery(
+                identity,
+                authority,
+                token,
+                destination,
+                retry_generation,
+                cx,
+            );
+        });
     }
 
     fn retry_committed_destination_recovery(
@@ -2133,6 +3171,269 @@ impl DockLiveUndockRuntime {
     fn clear_committed_destination_recovery_retry(&self, identity: DockLiveUndockIdentity) {
         if let Some(execution) = self.state.borrow_mut().executions.get_mut(&identity) {
             execution.committed_destination_recovery_retry.clear();
+        }
+    }
+
+    fn schedule_committed_window_effects_retry(
+        &self,
+        identity: DockLiveUndockIdentity,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+        cx: &mut App,
+    ) {
+        let Some((retry_generation, delay)) = self
+            .state
+            .borrow_mut()
+            .executions
+            .get_mut(&identity)
+            .and_then(|execution| execution.committed_window_effects_retry.arm_if_idle())
+        else {
+            return;
+        };
+        let runtime = self.clone();
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(delay, move |cx| {
+            runtime.retry_committed_window_effects(
+                identity,
+                token,
+                destination,
+                retry_generation,
+                cx,
+            );
+        });
+    }
+
+    fn retry_committed_window_effects(
+        &self,
+        identity: DockLiveUndockIdentity,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+        retry_generation: u64,
+        cx: &mut App,
+    ) {
+        let current = self
+            .state
+            .borrow_mut()
+            .executions
+            .get_mut(&identity)
+            .is_some_and(|execution| {
+                execution
+                    .committed_window_effects_retry
+                    .claim(retry_generation)
+                    && matches!(
+                        execution.promotion.as_ref(),
+                        Some(DockLiveUndockPromotionExecution::Durable(
+                            DockLiveUndockDurablePromotionExecution::Host(durable),
+                        )) if durable.token == token
+                            && durable.destination == destination
+                            && durable.host_drop_commit.window_effects_receipt().is_none()
+                    )
+            });
+        if current {
+            self.enqueue_effects(
+                DockLiveUndockEffects::single(
+                    DockLiveUndockEffect::ApplyCommittedHostWindowEffects {
+                        identity,
+                        token,
+                        destination,
+                    },
+                ),
+                cx,
+            );
+        }
+    }
+
+    fn schedule_terminal_settlement_retry(&self, identity: DockLiveUndockIdentity, cx: &mut App) {
+        let Some((retry_generation, delay)) = self
+            .state
+            .borrow_mut()
+            .executions
+            .get_mut(&identity)
+            .filter(|execution| execution.terminal_requested)
+            .and_then(|execution| execution.terminal_settlement_retry.arm_if_idle())
+        else {
+            return;
+        };
+        let runtime = self.clone();
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(delay, move |cx| {
+            runtime.retry_terminal_settlement(identity, retry_generation, cx);
+        });
+    }
+
+    fn settle_post_commit_and_resume_terminal(
+        &self,
+        identity: DockLiveUndockIdentity,
+        receipt: &DockLiveUndockPostCommitReceipt,
+        cx: &mut App,
+    ) {
+        let receipt_is_current = self
+            .state
+            .borrow()
+            .executions
+            .get(&identity)
+            .and_then(|execution| execution.promotion.as_ref())
+            .is_some_and(|promotion| {
+                matches!(promotion, DockLiveUndockPromotionExecution::Durable(durable)
+                    if durable.post_commit().matches(receipt))
+            });
+        if !receipt_is_current {
+            return;
+        }
+        if !receipt.settle() {
+            return;
+        }
+        let terminal_requested = self
+            .state
+            .borrow()
+            .executions
+            .get(&identity)
+            .is_some_and(|execution| execution.terminal_requested);
+        if terminal_requested {
+            self.finalize_live_payload_drag(identity, cx);
+        }
+    }
+
+    fn retry_terminal_settlement(
+        &self,
+        identity: DockLiveUndockIdentity,
+        retry_generation: u64,
+        cx: &mut App,
+    ) {
+        let current = self
+            .state
+            .borrow_mut()
+            .executions
+            .get_mut(&identity)
+            .is_some_and(|execution| {
+                execution.terminal_requested
+                    && execution.terminal_settlement_retry.claim(retry_generation)
+            });
+        if current {
+            self.finalize_live_payload_drag(identity, cx);
+        }
+    }
+
+    fn promotion_commit_journal_is_current(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+    ) -> bool {
+        self.state
+            .borrow()
+            .executions
+            .get(&journal.identity())
+            .is_some_and(|execution| {
+                execution.request.key() == journal.identity().opening()
+                    && matches!(
+                        execution.promotion.as_ref(),
+                        Some(DockLiveUndockPromotionExecution::Committing(current))
+                            if Rc::ptr_eq(current, journal)
+                    )
+            })
+    }
+
+    fn resolve_in_flight_promotion_commit(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &App,
+    ) {
+        if journal.boundary.get() != DockLiveUndockPromotionCommitBoundary::InFlight {
+            return;
+        }
+        let same_window_identity = {
+            let execution = journal.execution.borrow();
+            match &*execution {
+                DockLiveUndockPromotionCommitExecution::SameWindow(commit)
+                    if commit.presentation_batch.is_some() =>
+                {
+                    journal.confirm_irreversible();
+                    return;
+                }
+                DockLiveUndockPromotionCommitExecution::SameWindow(commit) => Some((
+                    commit.identity,
+                    commit.reveal.preflight().mount().proxy().lease(),
+                )),
+                DockLiveUndockPromotionCommitExecution::Host(commit)
+                    if commit.committed_drop.is_some() =>
+                {
+                    journal.confirm_irreversible();
+                    return;
+                }
+                DockLiveUndockPromotionCommitExecution::Host(commit)
+                    if commit.drop.committed_workspace(cx).is_some() =>
+                {
+                    journal.confirm_irreversible();
+                    return;
+                }
+                DockLiveUndockPromotionCommitExecution::Host(_)
+                | DockLiveUndockPromotionCommitExecution::Pending(_)
+                | DockLiveUndockPromotionCommitExecution::Aborted => None,
+            }
+        };
+        let Some((identity, lease)) = same_window_identity else {
+            journal.resolve_in_flight_as_reversible();
+            return;
+        };
+        let terminal = self
+            .state
+            .borrow()
+            .executions
+            .get(&identity)
+            .and_then(|execution| execution.presentation.as_ref())
+            .filter(|presentation| presentation.lease == lease)
+            .and_then(|presentation| presentation.session.active())
+            .and_then(RehostSession::terminal_disposition);
+        if terminal
+            == Some(view_presentation_window::RehostTerminalDisposition::DestinationCommitted)
+        {
+            journal.confirm_irreversible();
+        } else {
+            journal.resolve_in_flight_as_reversible();
+        }
+    }
+
+    fn settle_promotion_commit_attempt_failure(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) {
+        if !self.promotion_commit_journal_is_current(journal) {
+            return;
+        }
+        self.resolve_in_flight_promotion_commit(journal, cx);
+        if journal.abort_was_claimed() {
+            let _ = journal.abort_execution();
+            self.clear_promotion_commit_journal(journal);
+            return;
+        }
+        match journal.boundary.get() {
+            DockLiveUndockPromotionCommitBoundary::Reversible
+            | DockLiveUndockPromotionCommitBoundary::AbortClaimed => {
+                if journal.abort_execution() {
+                    self.clear_promotion_commit_journal(journal);
+                    self.enqueue_fact(
+                        DockLiveUndockQueuedFact::Reduce(
+                            DockLiveUndockFact::PromotionPreparationFailed {
+                                identity: journal.identity(),
+                                token: journal.token(),
+                            },
+                        ),
+                        cx,
+                    );
+                }
+            }
+            DockLiveUndockPromotionCommitBoundary::InFlight
+            | DockLiveUndockPromotionCommitBoundary::Irreversible => {
+                journal.finish_drive_for_recovery();
+                self.enqueue_fact(
+                    DockLiveUndockQueuedFact::Reduce(
+                        DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+                            identity: journal.identity(),
+                            token: journal.token(),
+                            destination: journal.destination(),
+                        },
+                    ),
+                    cx,
+                );
+            }
         }
     }
 
@@ -2814,6 +4115,9 @@ impl DockLiveUndockRuntime {
         &self,
         identity: DockLiveUndockIdentity,
     ) -> Option<DockLiveUndockSourceRestorationExecution> {
+        if self.promotion_commit_forbids_rollback(identity) {
+            return None;
+        }
         let state = self.state.borrow();
         let execution = state.executions.get(&identity)?;
         let presentation = execution.presentation.as_ref()?;
@@ -2896,6 +4200,9 @@ impl DockLiveUndockRuntime {
         payload_lease: DockLiveUndockPayloadLeaseReceipt,
         cx: &mut App,
     ) {
+        if self.promotion_commit_forbids_rollback(identity) {
+            return;
+        }
         let authority = {
             let state = self.state.borrow();
             let Some(execution) = state.executions.get(&identity).filter(|execution| {
@@ -3313,6 +4620,10 @@ impl DockLiveUndockRuntime {
         restore_focus: bool,
         cx: &mut App,
     ) {
+        if self.promotion_commit_forbids_rollback(identity) {
+            self.clear_source_restoration_retry(identity);
+            return;
+        }
         if !self.record_source_restoration_focus_intent(
             identity,
             source,
@@ -3647,6 +4958,28 @@ impl DockLiveUndockRuntime {
         }
     }
 
+    fn commit_host_presentation_abandonment_without_notify(
+        prepared: &DockLiveUndockPreparedHostPresentationAbandonment,
+        cx: &mut App,
+    ) -> DockLiveUndockHostCleanupEvidence {
+        match prepared {
+            DockLiveUndockPreparedHostPresentationAbandonment::Exact { host, prepared } => {
+                let receipt = cx.update_entity(host, |host, _| {
+                    host.commit_prepared_live_presentation_abandonment_without_notify(
+                        prepared.clone(),
+                    )
+                });
+                DockLiveUndockHostCleanupEvidence::abandoned(receipt)
+            }
+            DockLiveUndockPreparedHostPresentationAbandonment::AlreadyAbsent {
+                window_id, ..
+            } => DockLiveUndockHostCleanupEvidence::already_absent(*window_id),
+            DockLiveUndockPreparedHostPresentationAbandonment::HostUnavailable { window_id } => {
+                DockLiveUndockHostCleanupEvidence::host_unavailable(*window_id)
+            }
+        }
+    }
+
     fn prepare_source_semantic_retirement(
         host: WeakEntity<DockHost>,
         key: DockHostLivePresentationKey,
@@ -3830,6 +5163,9 @@ impl DockLiveUndockRuntime {
         provisional: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> Option<DockLiveUndockPreparedOrphanCleanup> {
+        if self.promotion_commit_forbids_rollback(identity) {
+            return None;
+        }
         let (
             runtime,
             source_host,
@@ -3944,6 +5280,9 @@ impl DockLiveUndockRuntime {
         prepared: &DockLiveUndockPreparedOrphanCleanup,
         cx: &mut App,
     ) -> bool {
+        if self.promotion_commit_forbids_rollback(prepared.identity) {
+            return false;
+        }
         let execution_is_exact = self
             .state
             .borrow()
@@ -4049,6 +5388,9 @@ impl DockLiveUndockRuntime {
         provisional: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> Option<DockLiveUndockPreparedOrphanRecoveryExecution> {
+        if self.promotion_commit_forbids_rollback(identity) {
+            return None;
+        }
         let payload_identity = self
             .state
             .borrow()
@@ -4107,7 +5449,8 @@ impl DockLiveUndockRuntime {
         prepared: &DockLiveUndockPreparedOrphanRecoveryExecution,
         cx: &mut App,
     ) -> bool {
-        self.preflight_orphan_cleanup(&prepared.cleanup, cx)
+        !self.promotion_commit_forbids_rollback(prepared.cleanup.identity)
+            && self.preflight_orphan_cleanup(&prepared.cleanup, cx)
             && cx.update_entity(owner, |owner, owner_cx| {
                 owner.accepts_live_undock_identity(prepared.cleanup.identity)
                     && match &prepared.recovery {
@@ -4255,6 +5598,7 @@ impl DockLiveUndockRuntime {
             return None;
         }
         let (
+            promotion,
             runtime,
             payload_identity,
             recovery_focus,
@@ -4262,20 +5606,13 @@ impl DockLiveUndockRuntime {
             presentation_lease,
             source_semantic_seed,
             presentation_origin,
+            same_window_terminal_required,
+            provisional_terminal_candidate,
         ) = {
             let state = self.state.borrow();
             let execution = state.executions.get(&identity)?;
-            let DockLiveUndockPromotionExecution::Durable(durable) =
-                execution.promotion.as_ref()?
-            else {
-                return None;
-            };
             if execution.request.key() != identity.opening()
                 || authority.promotion() != Some((identity, token, destination))
-                || durable.identity() != identity
-                || durable.token() != token
-                || durable.destination() != destination
-                || durable.destination_window().window_id() != destination.window_id()
             {
                 return None;
             }
@@ -4300,24 +5637,152 @@ impl DockLiveUndockRuntime {
                     (None, None)
                 }
             };
-            let presentation_origin = DockPayloadRecoveryPresentationOrigin::new(
-                durable.destination_window(),
-                durable.destination_binding(),
-                durable.registration().clone(),
-            )?;
+            let (
+                promotion,
+                destination_window,
+                presentation_origin,
+                same_window_terminal_required,
+                provisional_terminal_candidate,
+            ) = match execution.promotion.as_ref()? {
+                DockLiveUndockPromotionExecution::Durable(durable)
+                    if durable.identity() == identity
+                        && durable.token() == token
+                        && durable.destination() == destination
+                        && durable.destination_window().window_id() == destination.window_id() =>
+                {
+                    (
+                        DockLiveUndockCommittedDestinationPromotionAuthority::Durable,
+                        durable.destination_window(),
+                        DockPayloadRecoveryPresentationOrigin::new(
+                            durable.destination_window(),
+                            durable.destination_binding(),
+                            durable.registration().clone(),
+                        )?,
+                        matches!(
+                            destination,
+                            DockLiveUndockPromotionDestination::SameWindowDesktop { .. }
+                        ),
+                        None,
+                    )
+                }
+                DockLiveUndockPromotionExecution::Committing(journal)
+                    if journal.identity() == identity
+                        && journal.token() == token
+                        && journal.destination() == destination
+                        && journal.crossed_commit_boundary() =>
+                {
+                    let destination_window = execution
+                        .destination_host
+                        .filter(|window| window.window_id() == destination.window_id())?;
+                    let journal_execution = journal.execution.borrow();
+                    match &*journal_execution {
+                        DockLiveUndockPromotionCommitExecution::SameWindow(commit) => {
+                            let presentation_origin = match (
+                                commit.committed_viewport.as_ref(),
+                                commit.destination_promotion.as_ref(),
+                            ) {
+                                (Some(viewport), Some(promotion)) => {
+                                    DockPayloadRecoveryPresentationOrigin::new(
+                                        destination_window,
+                                        promotion.semantics().binding(),
+                                        viewport.registration.clone(),
+                                    )?
+                                }
+                                _ => DockPayloadRecoveryPresentationOrigin::provider_terminal(
+                                    destination_window,
+                                    commit.presentation_batch.clone()?,
+                                )?,
+                            };
+                            let registered = presentation_origin.registered_host().is_some();
+                            (
+                                DockLiveUndockCommittedDestinationPromotionAuthority::Journal(
+                                    journal.clone(),
+                                ),
+                                destination_window,
+                                presentation_origin,
+                                registered,
+                                (!registered).then(|| commit.destination_host.clone()),
+                            )
+                        }
+                        DockLiveUndockPromotionCommitExecution::Pending(Some(
+                            DockLiveUndockPreparedPromotionExecution::SameWindow(prepared),
+                        )) if matches!(
+                            prepared.presentation,
+                            RehostTerminalPreparation::AlreadyCommitted(
+                                view_presentation_window::RehostTerminalOutcome::DestinationCommitted(_)
+                            )
+                        ) => {
+                            let RehostTerminalPreparation::AlreadyCommitted(
+                                view_presentation_window::RehostTerminalOutcome::DestinationCommitted(
+                                    batch,
+                                ),
+                            ) = &prepared.presentation
+                            else {
+                                return None;
+                            };
+                            (
+                                DockLiveUndockCommittedDestinationPromotionAuthority::Journal(
+                                    journal.clone(),
+                                ),
+                                destination_window,
+                                DockPayloadRecoveryPresentationOrigin::provider_terminal(
+                                    destination_window,
+                                    batch.clone(),
+                                )?,
+                                false,
+                                Some(prepared.destination_host.clone()),
+                            )
+                        }
+                        DockLiveUndockPromotionCommitExecution::Host(commit)
+                            if commit.committed_drop.is_some() =>
+                        {
+                            (
+                                DockLiveUndockCommittedDestinationPromotionAuthority::Journal(
+                                    journal.clone(),
+                                ),
+                                commit.target_window,
+                                DockPayloadRecoveryPresentationOrigin::new(
+                                    commit.target_window,
+                                    commit.target_binding,
+                                    commit.target_registration.clone(),
+                                )?,
+                                false,
+                                None,
+                            )
+                        }
+                        DockLiveUndockPromotionCommitExecution::Pending(_)
+                        | DockLiveUndockPromotionCommitExecution::Host(_)
+                        | DockLiveUndockPromotionCommitExecution::Aborted => return None,
+                    }
+                }
+                DockLiveUndockPromotionExecution::Prepared(_)
+                | DockLiveUndockPromotionExecution::Committing(_)
+                | DockLiveUndockPromotionExecution::Durable(_) => return None,
+            };
             (
+                promotion,
                 execution.seed.source.runtime.clone(),
                 execution.seed.move_plan.source_identity().clone(),
                 DockPayloadRecoveryFocus::new(
                     execution.seed.source.session.focus_item().cloned(),
                     execution.seed.source.source_focus.clone(),
                 ),
-                durable.destination_window(),
+                destination_window,
                 presentation_lease,
                 source_semantic_seed,
                 presentation_origin,
+                same_window_terminal_required,
+                provisional_terminal_candidate,
             )
         };
+        let same_window_terminal_required = same_window_terminal_required
+            || provisional_terminal_candidate.is_some_and(|host| {
+                cx.read_entity(&host, |host, _| {
+                    host.surface_owner_entity().as_ref() == Some(owner)
+                        && host.is_provisional_viewport_for(identity.opening())
+                        && host.current_viewport_registration().is_none()
+                })
+            });
         let source_semantic = match source_semantic_seed {
             Some((source_host, source_key, payload_lease)) => {
                 Some(Self::prepare_source_semantic_retirement(
@@ -4352,7 +5817,7 @@ impl DockLiveUndockRuntime {
                         &payload_identity,
                         DockPayloadRecoveryReason::LostViewportRecovery,
                         unresolved,
-                        presentation_origin,
+                        presentation_origin.clone(),
                         owner_cx,
                     )
                     .ok()
@@ -4371,7 +5836,9 @@ impl DockLiveUndockRuntime {
             DockLiveUndockPreparedCommittedDestinationRecoveryExecution {
                 identity,
                 authority,
+                promotion,
                 presentation_lease,
+                same_window_terminal_required,
                 token,
                 destination,
                 runtime,
@@ -4405,15 +5872,33 @@ impl DockLiveUndockRuntime {
                         ),
                         (Some(_), None) | (None, Some(_)) => false,
                     }
-                    && matches!(
-                        execution.promotion.as_ref(),
-                        Some(DockLiveUndockPromotionExecution::Durable(durable))
-                            if durable.identity() == prepared.identity
+                    && match (&prepared.promotion, execution.promotion.as_ref()) {
+                        (
+                            DockLiveUndockCommittedDestinationPromotionAuthority::Durable,
+                            Some(DockLiveUndockPromotionExecution::Durable(durable)),
+                        ) => {
+                            durable.identity() == prepared.identity
                                 && durable.token() == prepared.token
                                 && durable.destination() == prepared.destination
-                                && durable.destination_window()
-                                    == prepared.destination_window
-                    )
+                                && durable.destination_window() == prepared.destination_window
+                        }
+                        (
+                            DockLiveUndockCommittedDestinationPromotionAuthority::Journal(
+                                prepared_journal,
+                            ),
+                            Some(DockLiveUndockPromotionExecution::Committing(current_journal)),
+                        ) => {
+                            Rc::ptr_eq(prepared_journal, current_journal)
+                                && current_journal.identity() == prepared.identity
+                                && current_journal.token() == prepared.token
+                                && current_journal.destination() == prepared.destination
+                                && current_journal.crossed_commit_boundary()
+                        }
+                        (DockLiveUndockCommittedDestinationPromotionAuthority::Durable, _)
+                        | (DockLiveUndockCommittedDestinationPromotionAuthority::Journal(_), _) => {
+                            false
+                        }
+                    }
             });
         execution_is_exact
             && cx.update_entity(owner, |owner, owner_cx| {
@@ -4443,9 +5928,16 @@ impl DockLiveUndockRuntime {
         owner: &Entity<DockSurfaceOwner>,
         prepared: DockLiveUndockPreparedCommittedDestinationRecoveryExecution,
         cx: &mut App,
-    ) -> Option<super::payload_recovery::DockPayloadRecoveryCommitReceipt> {
+    ) -> Option<DockLiveUndockCommittedDestinationRecoveryReceipt> {
+        let journal = match &prepared.promotion {
+            DockLiveUndockCommittedDestinationPromotionAuthority::Durable => None,
+            DockLiveUndockCommittedDestinationPromotionAuthority::Journal(journal) => {
+                Some(journal.clone())
+            }
+        };
+        let same_window_terminal_required = prepared.same_window_terminal_required;
         let transaction_runtime = prepared.runtime.clone();
-        transaction_runtime.with_surface_transaction(cx, |transaction, cx| {
+        let recovery = transaction_runtime.with_surface_transaction(cx, |transaction, cx| {
             let transaction = transaction?;
             if !self.preflight_committed_destination_recovery(owner, &prepared, cx) {
                 return None;
@@ -4464,7 +5956,16 @@ impl DockLiveUndockRuntime {
                 Self::commit_source_semantic_retirement(source_semantic, cx);
             }
             Some(receipt)
-        })
+        })?;
+        if let Some(journal) = journal
+            && !journal.record_recovery(recovery, same_window_terminal_required)
+        {
+            return None;
+        }
+        DockLiveUndockCommittedDestinationRecoveryReceipt::new(
+            recovery,
+            same_window_terminal_required,
+        )
     }
 
     fn attempt_committed_destination_recovery(
@@ -4475,8 +5976,19 @@ impl DockLiveUndockRuntime {
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
         cx: &mut App,
-    ) -> Result<DockPayloadRecoveryCommitReceipt, DockLiveUndockCommittedDestinationRecoveryFailure>
-    {
+    ) -> Result<
+        DockLiveUndockCommittedDestinationRecoveryReceipt,
+        DockLiveUndockCommittedDestinationRecoveryFailure,
+    > {
+        #[cfg(test)]
+        if std::mem::take(
+            &mut self
+                .state
+                .borrow_mut()
+                .panic_next_committed_destination_recovery_attempt,
+        ) {
+            panic!("injected committed-destination recovery panic");
+        }
         let prepared = self
             .prepare_committed_destination_recovery(
                 owner,
@@ -4655,14 +6167,16 @@ impl DockLiveUndockRuntime {
             let retained_release = if retained_released {
                 None
             } else {
-                Some(
-                    source_window
-                        .update(cx, |_, window, _| {
-                            retained_visual::prepare_release(window, &retained)
-                        })
-                        .ok()?
-                        .ok()?,
-                )
+                let prepared = source_window
+                    .update(cx, |_, window, _| {
+                        retained_visual::prepare_release(window, &retained)
+                    })
+                    .ok()?
+                    .ok()?;
+                Some(DockLiveUndockRetainedVisualRelease::new(
+                    source_window,
+                    prepared,
+                ))
             };
             Some((
                 payload_lease,
@@ -4670,7 +6184,6 @@ impl DockLiveUndockRuntime {
                 presentation_generation,
                 source_host,
                 provisional_host,
-                source_window,
                 retained_release,
             ))
         } else {
@@ -4718,7 +6231,6 @@ impl DockLiveUndockRuntime {
             presentation_generation,
             source_host,
             provisional_host,
-            source_window,
             retained_release,
         )) = presentation_cleanup_seed
         {
@@ -4775,7 +6287,6 @@ impl DockLiveUndockRuntime {
                 presentation,
                 source_host,
                 provisional_host,
-                source_window,
                 retained_release,
             })
         } else {
@@ -4990,6 +6501,8 @@ impl DockLiveUndockRuntime {
             })
             .ok()?
             .ok()?;
+        let retained_release =
+            DockLiveUndockRetainedVisualRelease::new(source_window, retained_release);
 
         // Begin destination semantics before preparing the provider terminal. The unique session
         // remains in the runtime so any rejected aggregate preparation stays compensatable.
@@ -5003,8 +6516,10 @@ impl DockLiveUndockRuntime {
             })
             .ok()?
             .ok()?;
-
-        let destination_presentation = reveal.preflight().rehost_presentation()?;
+        let destination_presentation = self
+            .current_destination_presentation(destination_key, reveal.preflight().mount(), cx)?
+            .ok()?
+            .rehost_presentation()?;
         if !self.presentation_projection_matches(identity, payload_lease, &presentation) {
             return None;
         }
@@ -5031,7 +6546,6 @@ impl DockLiveUndockRuntime {
                 move_plan,
                 runtime,
                 viewport,
-                source_window,
                 retained_release,
                 source_host,
                 source,
@@ -5124,17 +6638,7 @@ impl DockLiveUndockRuntime {
                 && cleanup
                     .retained_release
                     .as_ref()
-                    .is_none_or(|retained_release| {
-                        cleanup
-                            .source_window
-                            .update(cx, |_, window, _| {
-                                retained_visual::can_commit_prepared_release(
-                                    window,
-                                    retained_release,
-                                )
-                            })
-                            .unwrap_or(false)
-                    })
+                    .is_none_or(|retained_release| retained_release.can_commit(cx))
         });
         if !(owner_is_exact
             && execution_is_exact
@@ -5162,7 +6666,6 @@ impl DockLiveUndockRuntime {
             identity,
             token,
             destination,
-            release,
             surface_revision,
             runtime,
             drop,
@@ -5174,125 +6677,791 @@ impl DockLiveUndockRuntime {
         })
     }
 
-    fn commit_host_promotion(
+    fn clear_promotion_commit_journal(&self, journal: &Rc<DockLiveUndockPromotionCommitJournal>) {
+        let mut state = self.state.borrow_mut();
+        let Some(execution) = state.executions.get_mut(&journal.identity()) else {
+            return;
+        };
+        if matches!(
+            execution.promotion.as_ref(),
+            Some(DockLiveUndockPromotionExecution::Committing(current))
+                if Rc::ptr_eq(current, journal)
+        ) {
+            execution.promotion = None;
+        }
+    }
+
+    fn preflight_promotion_commit_journal(
         &self,
         owner: &Entity<DockSurfaceOwner>,
-        prepared: DockLiveUndockPreflightedHostPromotionExecution,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
         cx: &mut App,
-    ) -> DockLiveUndockDurablePromotionExecution {
-        let DockLiveUndockPreflightedHostPromotionExecution {
-            identity,
-            token,
-            destination,
-            release,
-            surface_revision,
-            runtime,
-            drop,
-            target_window,
-            target_host,
-            target_binding,
-            target_registration,
-            presentation_cleanup,
-        } = prepared;
-        let DockLiveUndockPromotionDestination::Host(target) = destination else {
-            unreachable!("host promotion commit received a same-window destination");
-        };
-        assert_eq!(
-            release.hit(),
-            super::live_undock::DockLiveUndockRouteFeedback::Host(target)
-        );
-
-        let released_retained = presentation_cleanup
-            .as_ref()
-            .is_some_and(|cleanup| cleanup.retained_release.is_some());
-        let cleanup_payload_lease = presentation_cleanup
-            .as_ref()
-            .map(|cleanup| cleanup.payload_lease);
-        let cleanup_runtime = self.clone();
-        let committed = runtime.commit_preflighted_live_undock_host_drop(
-            drop,
-            move |cx| {
-                let Some(cleanup) = presentation_cleanup else {
-                    return;
-                };
-                let abandonment = Self::commit_presentation_cleanup(cleanup.presentation, cx);
-                assert_eq!(
-                    abandonment.authority().0,
-                    cleanup.presentation_generation,
-                    "host promotion must abandon the exact provisional presentation"
-                );
-                let _ = Self::commit_host_presentation_abandonment(cleanup.source_host, cx);
-                let _ = Self::commit_host_presentation_abandonment(cleanup.provisional_host, cx);
-                if let Some(retained_release) = cleanup.retained_release {
-                    cleanup
-                        .source_window
-                        .update(cx, |_, window, _| {
-                            retained_visual::commit_prepared_release(window, retained_release);
-                        })
-                        .expect("preflighted host promotion must retain its exact source window");
-                }
-                assert!(
-                    cleanup_runtime.retire_presentation_session_after_terminal_commit(
-                        identity,
-                        cleanup.payload_lease,
-                    ),
-                    "host promotion must retire its exact committed rehost session"
-                );
-            },
-            cx,
-        );
-        let crate::DockViewportDropRouteOutcome::Action(action) = committed.outcome() else {
-            unreachable!("an existing-host promotion must commit a workspace drop");
-        };
-        assert!(
-            action.action().changed(),
-            "an existing-host promotion must change the dock graph"
-        );
-        if released_retained && let Some(payload_lease) = cleanup_payload_lease {
-            let marked = self
-                .state
-                .borrow_mut()
-                .executions
-                .get_mut(&identity)
-                .and_then(|execution| execution.presentation.as_mut())
-                .filter(|presentation| presentation.lease == payload_lease)
-                .is_some_and(|presentation| {
-                    presentation.retained_released = true;
-                    true
-                });
-            assert!(
-                marked,
-                "host promotion must checkpoint its retained-visual release"
-            );
+    ) -> bool {
+        match &*journal.execution.borrow() {
+            DockLiveUndockPromotionCommitExecution::SameWindow(_)
+            | DockLiveUndockPromotionCommitExecution::Host(_) => return true,
+            DockLiveUndockPromotionCommitExecution::Pending(_)
+            | DockLiveUndockPromotionCommitExecution::Aborted => {}
         }
-        let target_is_exact = cx.read_entity(&target_host, |host, _| {
-            host.current_window_binding() == Some(target_binding)
-                && host.current_viewport_registration() == Some(target_registration.clone())
+        let Some(prepared) = journal.take_pending_preparation() else {
+            return false;
+        };
+        let preflight = match prepared {
+            DockLiveUndockPreparedPromotionExecution::SameWindow(prepared) => {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    self.preflight_same_window_promotion_commit(owner, &prepared, cx)
+                }));
+                match result {
+                    Ok(Some(prepared_graph)) => Ok(Some(
+                        DockLiveUndockPromotionCommitJournal::same_window(prepared, prepared_graph),
+                    )),
+                    Ok(None) if journal.has_irreversible_authority() => {
+                        journal.restore_pending_preparation(
+                            DockLiveUndockPreparedPromotionExecution::SameWindow(prepared),
+                        );
+                        Ok(None)
+                    }
+                    Ok(None) => {
+                        self.restore_prepared_promotion_session(
+                            DockLiveUndockPreparedPromotionExecution::SameWindow(prepared),
+                            cx,
+                        );
+                        Ok(None)
+                    }
+                    Err(payload) if journal.has_irreversible_authority() => {
+                        journal.restore_pending_preparation(
+                            DockLiveUndockPreparedPromotionExecution::SameWindow(prepared),
+                        );
+                        Err(payload)
+                    }
+                    Err(payload) => Err(payload),
+                }
+            }
+            DockLiveUndockPreparedPromotionExecution::Host(prepared) => {
+                catch_unwind(AssertUnwindSafe(|| {
+                    self.preflight_host_promotion_commit(owner, prepared, cx)
+                        .map(DockLiveUndockPromotionCommitJournal::host)
+                }))
+            }
+        };
+        let preflighted = match preflight {
+            Ok(Some(preflighted)) => preflighted,
+            Ok(None) if journal.has_irreversible_authority() => return false,
+            Ok(None) => {
+                if journal.abort_execution() {
+                    self.clear_promotion_commit_journal(journal);
+                    self.enqueue_fact(
+                        DockLiveUndockQueuedFact::Reduce(
+                            DockLiveUndockFact::PromotionPreparationFailed {
+                                identity: journal.identity(),
+                                token: journal.token(),
+                            },
+                        ),
+                        cx,
+                    );
+                }
+                return false;
+            }
+            Err(payload) if journal.has_irreversible_authority() => resume_unwind(payload),
+            Err(payload) => {
+                if journal.abort_execution() {
+                    self.clear_promotion_commit_journal(journal);
+                    self.enqueue_fact(
+                        DockLiveUndockQueuedFact::Reduce(
+                            DockLiveUndockFact::PromotionPreparationFailed {
+                                identity: journal.identity(),
+                                token: journal.token(),
+                            },
+                        ),
+                        cx,
+                    );
+                }
+                resume_unwind(payload);
+            }
+        };
+        if journal.install_preflighted(preflighted) {
+            true
+        } else {
+            self.clear_promotion_commit_journal(journal);
+            false
+        }
+    }
+
+    fn mark_same_window_topology_recovery_if_superseded(
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &App,
+    ) {
+        let observation = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return;
+            };
+            let Some(receipt) = commit.graph_commit else {
+                return;
+            };
+            cx.read_entity(&commit.controller, |controller, _| {
+                controller.workspace().observe_graph_commit(receipt)
+            })
+        };
+        if observation == Some(DockWorkspaceGraphCommitObservation::Exact) {
+            return;
+        }
+        if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+            &mut *journal.execution.borrow_mut()
+        {
+            commit.topology_recovery_required = true;
+        }
+    }
+
+    fn resume_same_window_promotion_commit(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) -> Option<DockLiveUndockCompletedPromotionCommit> {
+        let needs_presentation = matches!(
+            &*journal.execution.borrow(),
+            DockLiveUndockPromotionCommitExecution::SameWindow(commit)
+                if commit.presentation_batch.is_none()
+        );
+        if needs_presentation {
+            let (identity, reveal, presentation) = {
+                let mut execution = journal.execution.borrow_mut();
+                let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &mut *execution
+                else {
+                    return None;
+                };
+                (commit.identity, commit.reveal, commit.presentation.take())
+            };
+            let presentation = match presentation {
+                Some(presentation) => presentation,
+                None => {
+                    let payload_lease = reveal.preflight().mount().proxy().lease();
+                    let destination_key = self
+                        .state
+                        .borrow()
+                        .executions
+                        .get(&identity)?
+                        .presentation
+                        .as_ref()
+                        .filter(|presentation| presentation.lease == payload_lease)?
+                        .destination_key?;
+                    let destination = self
+                        .current_destination_presentation(
+                            destination_key,
+                            reveal.preflight().mount(),
+                            cx,
+                        )?
+                        .ok()?
+                        .rehost_presentation()?;
+                    self.prepare_presentation_terminal(
+                        identity,
+                        payload_lease,
+                        view_presentation_window::RehostTerminalIntent::CommitDestination(
+                            &destination,
+                        ),
+                        cx,
+                    )?
+                    .ok()?
+                }
+            };
+            if !journal.begin_commit_call() {
+                return None;
+            }
+            let view_presentation_window::RehostTerminalOutcome::DestinationCommitted(batch) =
+                presentation.try_commit(cx).ok()?
+            else {
+                return None;
+            };
+            journal.confirm_irreversible();
+            let mut execution = journal.execution.borrow_mut();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &mut *execution else {
+                return None;
+            };
+            if batch.window_id() != commit.destination.window_id() {
+                return None;
+            }
+            commit.presentation_batch = Some(batch);
+        }
+
+        #[cfg(test)]
+        if let Some(hook) = {
+            self.state
+                .borrow_mut()
+                .after_same_window_provider_commit_test_hook
+                .take()
+        } {
+            hook(cx);
+        }
+
+        let graph_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return None;
+            };
+            commit
+                .graph_commit
+                .is_none()
+                .then(|| (commit.controller.clone(), commit.prepared_graph.clone()))
+        };
+        if let Some((controller, prepared_graph)) = graph_stage {
+            let committed = cx.update_entity(&controller, |controller, _| {
+                if let Some(receipt) = controller
+                    .workspace()
+                    .graph_commit(prepared_graph.commit_id)
+                {
+                    return Some(receipt);
+                }
+                controller.workspace_mut().commit_or_replay_graph(
+                    prepared_graph.commit_id,
+                    &prepared_graph.expected,
+                    prepared_graph.projected,
+                )
+            });
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.graph_commit = committed;
+                commit.topology_recovery_required = committed.is_none();
+            }
+        }
+
+        #[cfg(test)]
+        {
+            let graph_committed = matches!(
+                &*journal.execution.borrow(),
+                DockLiveUndockPromotionCommitExecution::SameWindow(commit)
+                    if commit.graph_commit.is_some()
+            );
+            let hook = graph_committed.then(|| {
+                self.state
+                    .borrow_mut()
+                    .after_same_window_graph_commit_test_hook
+                    .take()
+            });
+            if let Some(Some(hook)) = hook {
+                hook(cx);
+            }
+        }
+        Self::mark_same_window_topology_recovery_if_superseded(journal, cx);
+
+        let viewport_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return None;
+            };
+            commit
+                .committed_viewport
+                .is_none()
+                .then(|| (commit.runtime.clone(), commit.viewport.clone()))
+        };
+        if let Some((runtime, viewport)) = viewport_stage {
+            let committed =
+                runtime.commit_or_replay_live_undock_provisional_promotion(&viewport)?;
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.committed_viewport = Some(committed);
+            }
+        }
+
+        #[cfg(test)]
+        {
+            let viewport_committed = matches!(
+                &*journal.execution.borrow(),
+                DockLiveUndockPromotionCommitExecution::SameWindow(commit)
+                    if commit.committed_viewport.is_some()
+            );
+            let hook = viewport_committed.then(|| {
+                self.state
+                    .borrow_mut()
+                    .after_same_window_viewport_commit_test_hook
+                    .take()
+            });
+            if let Some(Some(hook)) = hook {
+                hook(cx);
+            }
+        }
+
+        let source_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return None;
+            };
+            matches!(
+                commit.source_retirement,
+                DockLiveUndockSourceRetirementStage::Pending
+            )
+            .then(|| (commit.source_host.clone(), commit.source.clone()))
+        };
+        if let Some((source_host, source)) = source_stage {
+            let source_retirement = cx.update_entity(&source_host, |host, _| {
+                host.commit_or_replay_prepared_live_source_retirement_without_notify(source)
+            })?;
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.source_retirement =
+                    DockLiveUndockSourceRetirementStage::Committed(source_retirement);
+            }
+        }
+
+        let destination_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return None;
+            };
+            commit.destination_promotion.is_none().then(|| {
+                (
+                    commit.destination_host.clone(),
+                    commit.destination_host_promotion.clone(),
+                )
+            })
+        };
+        if let Some((destination_host, promotion)) = destination_stage {
+            let promotion = cx.update_entity(&destination_host, |host, _| {
+                host.commit_or_replay_prepared_live_destination_promotion_without_notify(promotion)
+            })?;
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.destination_promotion = Some(promotion);
+            }
+        }
+
+        let retained_release = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return None;
+            };
+            commit.retained_release.clone()
+        };
+        if !retained_release.settle(cx) {
+            return None;
+        }
+
+        Self::mark_same_window_topology_recovery_if_superseded(journal, cx);
+
+        let surface_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return None;
+            };
+            commit.surface.is_none().then(|| {
+                (
+                    commit.runtime.clone(),
+                    commit
+                        .committed_viewport
+                        .clone()
+                        .expect("promotion viewport must commit before surface publication"),
+                    !commit.topology_recovery_required,
+                )
+            })
+        };
+        if let Some((runtime, committed_viewport, graph_changed)) = surface_stage {
+            let (receipt, publication) =
+                runtime.with_deferred_tracked_surface_transaction(cx, |_, receipt, cx| {
+                    runtime.publish_live_undock_promotion_commit(
+                        &committed_viewport,
+                        graph_changed,
+                        cx,
+                    );
+                    receipt
+                });
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.surface = Some(receipt);
+                commit.publication = Some(publication);
+            }
+        }
+
+        let presentation_session_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return None;
+            };
+            (!commit.presentation_session_retired).then_some((
+                commit.identity,
+                commit.reveal.preflight().mount().proxy().lease(),
+            ))
+        };
+        if let Some((identity, payload_lease)) = presentation_session_stage {
+            if !self.retire_presentation_session_after_terminal_commit(identity, payload_lease) {
+                return None;
+            }
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.presentation_session_retired = true;
+            }
+        }
+
+        Self::mark_same_window_topology_recovery_if_superseded(journal, cx);
+
+        let execution = journal.execution.borrow();
+        let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+            return None;
+        };
+        let committed_revision = commit.surface.as_ref()?.committed_revision()?;
+        if committed_revision <= commit.surface_revision {
+            return None;
+        }
+        let viewport = commit.committed_viewport.as_ref()?;
+        let graph_commit = commit.graph_commit;
+        if graph_commit.is_none() && !commit.topology_recovery_required {
+            return None;
+        }
+        let destination_promotion = commit.destination_promotion.as_ref()?;
+        let destination_semantics = destination_promotion.semantics();
+        let DockLiveUndockSourceRetirementStage::Committed(source_retirement) =
+            &commit.source_retirement
+        else {
+            return None;
+        };
+        let destination_window = self
+            .state
+            .borrow()
+            .executions
+            .get(&commit.identity)?
+            .destination_host
+            .filter(|window| window.window_id() == commit.destination.window_id())?;
+        let post_commit_receipt = DockLiveUndockPostCommitReceipt::pending();
+        let post_commit = DockLiveUndockPostCommitPlan::SameWindow {
+            identity: commit.identity,
+            controller: commit.controller.clone(),
+            source_host: commit.source_host.clone(),
+            destination_host: commit.destination_host.clone(),
+            runtime: commit.runtime.clone(),
+            committed_viewport: viewport.clone(),
+            publication: commit.publication.clone(),
+            receipt: post_commit_receipt.clone(),
+        };
+        let retained_released = commit.retained_release.is_settled();
+        let durable = DockLiveUndockDurablePromotionExecution::SameWindow(
+            DockLiveUndockDurableSameWindowPromotionExecution {
+                identity: commit.identity,
+                token: commit.token,
+                destination: commit.destination,
+                surface_revision: committed_revision,
+                destination_window,
+                destination_binding: destination_semantics.binding(),
+                registration: viewport.registration.clone(),
+                reveal: commit.reveal,
+                provisional_session: commit.provisional_session.clone(),
+                semantics: commit.semantics.clone(),
+                viewport_commit: viewport.clone(),
+                controller: commit.controller.clone(),
+                graph_commit,
+                topology_recovery_required: commit.topology_recovery_required,
+                source_host: commit.source_host.downgrade(),
+                source_retirement: source_retirement.clone(),
+                destination_host: commit.destination_host.downgrade(),
+                destination_promotion: destination_promotion.clone(),
+                post_commit: post_commit_receipt,
+            },
+        );
+        drop(execution);
+        Some(DockLiveUndockCompletedPromotionCommit {
+            durable,
+            retained_released,
+            post_commit,
+        })
+    }
+
+    fn resume_host_promotion_cleanup(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) -> Option<()> {
+        let presentation_stage = {
+            let mut execution = journal.execution.borrow_mut();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &mut *execution else {
+                return None;
+            };
+            commit.presentation_cleanup.as_mut().and_then(|cleanup| {
+                (!cleanup.presentation_committed).then(|| {
+                    (
+                        commit.identity,
+                        cleanup.payload_lease,
+                        cleanup.presentation.take(),
+                    )
+                })
+            })
+        };
+        if let Some((identity, payload_lease, prepared)) = presentation_stage {
+            let prepared = match prepared {
+                Some(prepared) => prepared,
+                None => match self
+                    .prepare_presentation_terminal(
+                        identity,
+                        payload_lease,
+                        view_presentation_window::RehostTerminalIntent::AbandonAfterSourceLoss,
+                        cx,
+                    )?
+                    .ok()?
+                {
+                    RehostTerminalPreparation::Prepared(prepared) => {
+                        DockLiveUndockPreparedPresentationCleanup::Exact(prepared)
+                    }
+                    RehostTerminalPreparation::AlreadyCommitted(
+                        view_presentation_window::RehostTerminalOutcome::Abandoned(receipt),
+                    ) => DockLiveUndockPreparedPresentationCleanup::AlreadyTerminal(
+                        DockLiveUndockRehostCleanupEvidence::already_absent(
+                            receipt.generation(),
+                            receipt.source_window(),
+                            receipt.destination_window(),
+                        ),
+                    ),
+                    RehostTerminalPreparation::AlreadyCommitted(
+                        view_presentation_window::RehostTerminalOutcome::DestinationCommitted(_),
+                    ) => return None,
+                },
+            };
+            let abandonment = Self::commit_presentation_cleanup(prepared, cx);
+            let mut execution = journal.execution.borrow_mut();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &mut *execution else {
+                return None;
+            };
+            let cleanup = commit.presentation_cleanup.as_mut()?;
+            if abandonment.authority().0 != cleanup.presentation_generation {
+                return None;
+            }
+            cleanup.presentation_committed = true;
+        }
+
+        let source_host_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return None;
+            };
+            commit.presentation_cleanup.as_ref().and_then(|cleanup| {
+                (!cleanup.source_host_committed).then(|| cleanup.source_host.clone())
+            })
+        };
+        if let Some(source_host) = source_host_stage {
+            let _ = Self::commit_host_presentation_abandonment_without_notify(&source_host, cx);
+            if let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                &mut *journal.execution.borrow_mut()
+                && let Some(cleanup) = commit.presentation_cleanup.as_mut()
+            {
+                cleanup.source_host_committed = true;
+            }
+        }
+
+        let provisional_host_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return None;
+            };
+            commit.presentation_cleanup.as_ref().and_then(|cleanup| {
+                (!cleanup.provisional_host_committed).then(|| cleanup.provisional_host.clone())
+            })
+        };
+        if let Some(provisional_host) = provisional_host_stage {
+            let _ =
+                Self::commit_host_presentation_abandonment_without_notify(&provisional_host, cx);
+            if let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                &mut *journal.execution.borrow_mut()
+                && let Some(cleanup) = commit.presentation_cleanup.as_mut()
+            {
+                cleanup.provisional_host_committed = true;
+            }
+        }
+
+        let retained_release = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return None;
+            };
+            commit
+                .presentation_cleanup
+                .as_ref()
+                .and_then(|cleanup| cleanup.retained_release.clone())
+        };
+        if let Some(retained_release) = retained_release
+            && !retained_release.settle(cx)
+        {
+            return None;
+        }
+
+        let retirement_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return None;
+            };
+            commit.presentation_cleanup.as_ref().and_then(|cleanup| {
+                (!cleanup.session_retired).then_some((commit.identity, cleanup.payload_lease))
+            })
+        };
+        if let Some((identity, payload_lease)) = retirement_stage {
+            if !self.retire_presentation_session_after_terminal_commit(identity, payload_lease) {
+                return None;
+            }
+            if let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                &mut *journal.execution.borrow_mut()
+                && let Some(cleanup) = commit.presentation_cleanup.as_mut()
+            {
+                cleanup.session_retired = true;
+            }
+        }
+
+        Some(())
+    }
+
+    fn resume_host_promotion_commit(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) -> Option<DockLiveUndockCompletedPromotionCommit> {
+        let drop_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return None;
+            };
+            commit
+                .committed_drop
+                .is_none()
+                .then(|| (commit.runtime.clone(), commit.drop.clone()))
+        };
+        if let Some((runtime, drop)) = drop_stage {
+            if !journal.begin_commit_call() {
+                return None;
+            }
+            let committed = runtime.commit_preflighted_live_undock_host_drop(&drop, cx);
+            journal.confirm_irreversible();
+            if let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.committed_drop = Some(committed);
+            }
+        }
+
+        #[cfg(test)]
+        if let Some(hook) = {
+            self.state
+                .borrow_mut()
+                .after_host_drop_commit_test_hook
+                .take()
+        } {
+            hook(cx);
+        }
+
+        self.resume_host_promotion_cleanup(journal, cx)?;
+
+        let surface_stage = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return None;
+            };
+            commit.surface.is_none().then(|| {
+                (
+                    commit.runtime.clone(),
+                    commit
+                        .committed_drop
+                        .clone()
+                        .expect("host drop must commit before surface publication"),
+                )
+            })
+        };
+        if let Some((runtime, committed_drop)) = surface_stage {
+            let (receipt, publication) =
+                runtime.with_deferred_tracked_surface_transaction(cx, |_, receipt, cx| {
+                    runtime.publish_live_undock_host_drop_commit(&committed_drop, cx);
+                    receipt
+                });
+            if let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.surface = Some(receipt);
+                commit.publication = Some(publication);
+            }
+        }
+
+        let execution = journal.execution.borrow();
+        let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+            return None;
+        };
+        let committed_revision = commit.surface.as_ref()?.committed_revision()?;
+        if committed_revision <= commit.surface_revision {
+            return None;
+        }
+        let target_is_exact = cx.read_entity(&commit.target_host, |host, _| {
+            host.current_window_binding() == Some(commit.target_binding)
+                && host.current_viewport_registration() == Some(commit.target_registration.clone())
         });
-        assert!(
-            target_is_exact,
-            "committed host promotion must retain its exact target registration"
+        let committed = commit.committed_drop.clone()?;
+        let outcome = committed.outcome();
+        let crate::DockViewportDropRouteOutcome::Action(action) = &outcome else {
+            return None;
+        };
+        if !action.action().changed() {
+            return None;
+        }
+        let post_commit_receipt = DockLiveUndockPostCommitReceipt::pending();
+        let post_commit = DockLiveUndockPostCommitPlan::Host {
+            identity: commit.identity,
+            runtime: commit.runtime.clone(),
+            committed_drop: committed.clone(),
+            publication: commit.publication.clone(),
+            receipt: post_commit_receipt.clone(),
+        };
+        let retained_released = commit.presentation_cleanup.as_ref().is_some_and(|cleanup| {
+            cleanup
+                .retained_release
+                .as_ref()
+                .is_none_or(DockLiveUndockRetainedVisualRelease::is_settled)
+        });
+        let durable = DockLiveUndockDurablePromotionExecution::Host(
+            DockLiveUndockDurableHostPromotionExecution {
+                identity: commit.identity,
+                token: commit.token,
+                destination: commit.destination,
+                destination_window: commit.target_window,
+                destination_host: commit.target_host.downgrade(),
+                destination_binding: commit.target_binding,
+                registration: commit.target_registration.clone(),
+                activation: outcome.activation_transaction(),
+                committed_destination_recovery_required: commit
+                    .committed_destination_recovery_required
+                    || !target_is_exact,
+                host_drop_commit: committed,
+                post_commit: post_commit_receipt,
+            },
         );
-        let committed_revision = cx.read_entity(owner, |owner, _| owner.revision());
-        assert_eq!(
-            committed_revision,
-            surface_revision
-                .checked_add(1)
-                .expect("live-undock surface revision space exhausted"),
-            "one host promotion must publish exactly one surface revision"
-        );
-        let (outcome, pending_window_effects) = committed.into_parts();
-        let activation = outcome.activation_transaction();
-        DockLiveUndockDurablePromotionExecution::Host(DockLiveUndockDurableHostPromotionExecution {
-            identity,
-            token,
-            destination,
-            destination_window: target_window,
-            destination_host: target_host.downgrade(),
-            destination_binding: target_binding,
-            registration: target_registration,
-            activation,
-            pending_window_effects: Some(pending_window_effects),
+        drop(execution);
+        Some(DockLiveUndockCompletedPromotionCommit {
+            durable,
+            retained_released,
+            post_commit,
+        })
+    }
+
+    fn prepare_same_window_graph_commit(
+        controller: &Entity<DockController>,
+        move_plan: &DockViewportTearOffMovePlan,
+        allow_forward_rebase: bool,
+        cx: &App,
+    ) -> Option<DockLiveUndockPreparedGraphCommit> {
+        cx.read_entity(controller, |controller, _| {
+            let commit_id = controller.workspace().allocate_graph_commit_id();
+            let expected = controller.graph().clone();
+            let projected = move_plan
+                .project_graph(controller.workspace())
+                .or_else(|error| {
+                    if allow_forward_rebase {
+                        move_plan
+                            .project_graph_forward_rebased(controller.workspace())
+                            .map_err(|_| error)
+                    } else {
+                        Err(error)
+                    }
+                });
+            let (projected, changed) = projected.ok()?;
+            (changed && projected.validate().is_ok()).then_some(DockLiveUndockPreparedGraphCommit {
+                commit_id,
+                expected,
+                projected,
+            })
         })
     }
 
@@ -5301,7 +7470,7 @@ impl DockLiveUndockRuntime {
         owner: &Entity<DockSurfaceOwner>,
         prepared: &DockLiveUndockPreparedSameWindowPromotionExecution,
         cx: &mut App,
-    ) -> Option<DockGraph> {
+    ) -> Option<DockLiveUndockPreparedGraphCommit> {
         let DockLiveUndockPromotionDestination::SameWindowDesktop { window_id } =
             prepared.destination
         else {
@@ -5313,6 +7482,56 @@ impl DockLiveUndockRuntime {
                 | super::live_undock::DockLiveUndockRouteFeedback::OpaqueBarrier
         ) {
             return None;
+        }
+
+        let provider_already_committed = matches!(
+            &prepared.presentation,
+            RehostTerminalPreparation::AlreadyCommitted(
+                view_presentation_window::RehostTerminalOutcome::DestinationCommitted(_)
+            )
+        );
+        if provider_already_committed {
+            let payload_lease = prepared.reveal.preflight().mount().proxy().lease();
+            let owner_is_current = cx.read_entity(owner, |current, _| {
+                current.controller() == prepared.controller
+                    && current.accepts_live_undock_identity(prepared.identity)
+                    && current
+                        .window_session()
+                        .admits(prepared.identity.opening().lease())
+            });
+            let execution_is_current = self
+                .state
+                .borrow()
+                .executions
+                .get(&prepared.identity)
+                .is_some_and(|execution| {
+                    execution.request.key() == prepared.identity.opening()
+                        && execution.surface_revision == prepared.surface_revision
+                        && execution.destination_host.is_some_and(|destination| {
+                            destination.window_id() == prepared.destination.window_id()
+                        })
+                        && execution.presentation.as_ref().is_some_and(|presentation| {
+                            presentation.lease == payload_lease
+                                && presentation.reveal == Some(prepared.reveal)
+                        })
+                });
+            let session = prepared.provisional_session.snapshot();
+            let semantics = prepared.semantics.snapshot();
+            let semantics_is_current = session.window_id() == Some(window_id)
+                && session.projects_destination_semantics()
+                && semantics.window_id() == window_id
+                && semantics.session_generation() == session.generation()
+                && semantics.destination_generation() == prepared.token.get()
+                && semantics.outcome() != WindowProvisionalSemanticsOutcome::WindowTerminal;
+            if !(owner_is_current && execution_is_current && semantics_is_current) {
+                return None;
+            }
+            return Self::prepare_same_window_graph_commit(
+                &prepared.controller,
+                &prepared.move_plan,
+                true,
+                cx,
+            );
         }
 
         let owner_is_exact = cx.read_entity(owner, |current, _| {
@@ -5340,26 +7559,26 @@ impl DockLiveUndockRuntime {
                             && presentation.reveal == Some(prepared.reveal)
                     })
             });
-        if !owner_is_exact
-            || !execution_is_exact
-            || !prepared
-                .runtime
-                .can_commit_live_undock_provisional_promotion(&prepared.viewport)
-            || !cx.read_entity(&prepared.source_host, |host, _| {
-                host.can_commit_prepared_live_source_retirement(&prepared.source)
-            })
-            || !cx.read_entity(&prepared.destination_host, |host, _| {
-                host.can_commit_prepared_live_destination_promotion(
-                    &prepared.destination_host_promotion,
-                )
-            })
-            || !prepared.presentation.can_commit(cx)
-            || !prepared
-                .source_window
-                .update(cx, |_, window, _| {
-                    retained_visual::can_commit_prepared_release(window, &prepared.retained_release)
-                })
-                .unwrap_or(false)
+        let viewport_is_exact = prepared
+            .runtime
+            .can_commit_live_undock_provisional_promotion(&prepared.viewport);
+        let source_host_is_exact = cx.read_entity(&prepared.source_host, |host, _| {
+            host.can_commit_prepared_live_source_retirement(&prepared.source)
+        });
+        let destination_host_is_exact = cx.read_entity(&prepared.destination_host, |host, _| {
+            host.can_commit_prepared_live_destination_promotion(
+                &prepared.destination_host_promotion,
+            )
+        });
+        let presentation_is_exact = prepared.presentation.can_commit(cx);
+        let retained_is_exact = prepared.retained_release.can_commit(cx);
+        if !(owner_is_exact
+            && execution_is_exact
+            && viewport_is_exact
+            && source_host_is_exact
+            && destination_host_is_exact
+            && presentation_is_exact
+            && retained_is_exact)
         {
             return None;
         }
@@ -5376,145 +7595,7 @@ impl DockLiveUndockRuntime {
             return None;
         }
 
-        let (next_graph, changed) = cx
-            .read_entity(&prepared.controller, |controller, _| {
-                prepared.move_plan.project_graph(controller.workspace())
-            })
-            .ok()?;
-        (changed && next_graph.validate().is_ok()).then_some(next_graph)
-    }
-
-    fn commit_same_window_promotion(
-        &self,
-        owner: &Entity<DockSurfaceOwner>,
-        prepared: DockLiveUndockPreparedSameWindowPromotionExecution,
-        next_graph: DockGraph,
-        cx: &mut App,
-    ) -> DockLiveUndockDurablePromotionExecution {
-        let DockLiveUndockPreparedSameWindowPromotionExecution {
-            identity,
-            token,
-            destination,
-            release,
-            surface_revision,
-            controller,
-            move_plan: _,
-            runtime,
-            viewport,
-            source_window,
-            retained_release,
-            source_host,
-            source,
-            destination_host,
-            destination_host_promotion,
-            presentation,
-            reveal,
-            provisional_session,
-            semantics,
-        } = prepared;
-        let DockLiveUndockPromotionDestination::SameWindowDesktop { window_id } = destination
-        else {
-            unreachable!("same-window promotion commit received a host destination");
-        };
-        assert!(matches!(
-            release.hit(),
-            super::live_undock::DockLiveUndockRouteFeedback::Desktop
-                | super::live_undock::DockLiveUndockRouteFeedback::OpaqueBarrier
-        ));
-        let payload_lease = reveal.preflight().mount().proxy().lease();
-
-        let destination_window = self
-            .state
-            .borrow()
-            .executions
-            .get(&identity)
-            .and_then(|execution| execution.destination_host)
-            .filter(|window| window.window_id() == window_id)
-            .expect("prepared same-window promotion must retain its destination window");
-        let view_presentation_window::RehostTerminalOutcome::DestinationCommitted(batch) =
-            presentation
-                .try_commit(cx)
-                .expect("preflighted destination terminal must remain exact")
-        else {
-            unreachable!("destination terminal preparation abandoned its rehost")
-        };
-        assert_eq!(batch.window_id(), window_id);
-
-        let commit_runtime = runtime.clone();
-        let (registration, destination_binding) = runtime.with_surface_transaction(cx, |_, cx| {
-            cx.update_entity(&controller, |controller, controller_cx| {
-                controller.workspace_mut().set_graph(next_graph);
-                controller_cx.notify();
-            });
-            let committed_viewport =
-                commit_runtime.commit_live_undock_provisional_promotion(viewport);
-            cx.update_entity(&source_host, |host, host_cx| {
-                host.commit_prepared_live_source_retirement(source, host_cx);
-            });
-            cx.update_entity(&destination_host, |host, host_cx| {
-                host.commit_prepared_live_destination_promotion(
-                    destination_host_promotion,
-                    host_cx,
-                );
-            });
-            let registration =
-                commit_runtime.publish_live_undock_promotion_commit(committed_viewport, true, cx);
-            let binding = cx.read_entity(&destination_host, |host, _| {
-                assert_eq!(
-                    host.current_viewport_registration().as_ref(),
-                    Some(&registration)
-                );
-                host.current_window_binding()
-                    .expect("promoted destination host must retain its exact window binding")
-            });
-            source_window
-                .update(cx, |_, window, _| {
-                    retained_visual::commit_prepared_release(window, retained_release);
-                })
-                .expect("prepared retained visual must keep its exact source window");
-            let retained_marked = self
-                .state
-                .borrow_mut()
-                .executions
-                .get_mut(&identity)
-                .and_then(|execution| execution.presentation.as_mut())
-                .is_some_and(|presentation| {
-                    presentation.retained_released = true;
-                    true
-                });
-            assert!(
-                retained_marked,
-                "durable promotion must checkpoint its retained-visual release"
-            );
-            assert!(
-                self.retire_presentation_session_after_terminal_commit(identity, payload_lease),
-                "same-window promotion must retire its exact committed rehost session"
-            );
-            (registration, binding)
-        });
-
-        let committed_revision = cx.read_entity(owner, |owner, _| owner.revision());
-        assert_eq!(
-            committed_revision,
-            surface_revision
-                .checked_add(1)
-                .expect("live-undock surface revision space exhausted"),
-            "one prepared live-undock promotion must publish exactly one surface revision"
-        );
-        DockLiveUndockDurablePromotionExecution::SameWindow(
-            DockLiveUndockDurableSameWindowPromotionExecution {
-                identity,
-                token,
-                destination,
-                surface_revision: committed_revision,
-                destination_window,
-                destination_binding,
-                registration,
-                reveal,
-                provisional_session,
-                semantics,
-            },
-        )
+        Self::prepare_same_window_graph_commit(&prepared.controller, &prepared.move_plan, false, cx)
     }
 
     fn execute_effect(
@@ -5976,7 +8057,13 @@ impl DockLiveUndockRuntime {
                     execution.release_deadline.clear();
                     assert!(execution.promotion.is_none());
                     execution.promotion =
-                        Some(DockLiveUndockPromotionExecution::Prepared(prepared));
+                        Some(if prepared.provider_destination_already_committed() {
+                            DockLiveUndockPromotionExecution::Committing(Rc::new(
+                                DockLiveUndockPromotionCommitJournal::pending(prepared),
+                            ))
+                        } else {
+                            DockLiveUndockPromotionExecution::Prepared(prepared)
+                        });
                     DockLiveUndockFact::PromotionPrepared { identity, token }
                 } else {
                     if let Some(execution) = self.state.borrow_mut().executions.get_mut(&identity) {
@@ -5991,136 +8078,147 @@ impl DockLiveUndockRuntime {
                 token,
                 destination,
             } => {
-                let commit_plan = {
-                    let state = self.state.borrow();
-                    let Some(execution) = state.executions.get(&identity) else {
-                        return;
-                    };
-                    let Some(DockLiveUndockPromotionExecution::Prepared(prepared)) =
-                        execution.promotion.as_ref()
-                    else {
-                        return;
-                    };
-                    if prepared.identity() != identity
-                        || prepared.token() != token
-                        || prepared.destination() != destination
-                        || execution.surface_revision != prepared.surface_revision()
-                        || execution.request.key() != identity.opening()
-                    {
-                        return;
-                    }
-                    match prepared {
-                        DockLiveUndockPreparedPromotionExecution::SameWindow(prepared) => {
-                            if execution
-                                .destination_host
-                                .is_none_or(|window| window.window_id() != destination.window_id())
-                                || execution.presentation.as_ref().is_none_or(|presentation| {
-                                    presentation.lease.identity() != identity
-                                        || presentation.reveal != Some(prepared.reveal)
-                                })
-                            {
-                                None
-                            } else {
-                                self.preflight_same_window_promotion_commit(owner, prepared, cx)
-                                    .map(Some)
-                            }
-                        }
-                        DockLiveUndockPreparedPromotionExecution::Host(_) => Some(None),
-                    }
-                };
-                let Some(next_graph) = commit_plan else {
-                    let prepared = {
-                        let mut state = self.state.borrow_mut();
-                        state
-                            .executions
-                            .get_mut(&identity)
-                            .and_then(|execution| {
-                                let is_exact = matches!(
-                                    execution.promotion.as_ref(),
-                                    Some(DockLiveUndockPromotionExecution::Prepared(prepared))
-                                        if prepared.identity() == identity
-                                            && prepared.token() == token
-                                            && prepared.destination() == destination
-                                );
-                                is_exact.then(|| execution.promotion.take()).flatten()
-                            })
-                            .and_then(|promotion| match promotion {
-                                DockLiveUndockPromotionExecution::Prepared(prepared) => {
-                                    Some(prepared)
-                                }
-                                DockLiveUndockPromotionExecution::Durable(_) => None,
-                            })
-                    };
-                    if let Some(prepared) = prepared {
-                        self.restore_prepared_promotion_session(prepared, cx);
-                    }
-                    self.enqueue_fact(
-                        DockLiveUndockQueuedFact::Reduce(
-                            DockLiveUndockFact::PromotionPreparationFailed { identity, token },
-                        ),
-                        cx,
-                    );
-                    return;
-                };
-                let prepared = {
+                let (journal, committed_recovery_required) = {
                     let mut state = self.state.borrow_mut();
                     let Some(execution) = state.executions.get_mut(&identity) else {
                         return;
                     };
-                    let matches = matches!(
-                        execution.promotion.as_ref(),
+                    if execution.request.key() != identity.opening() {
+                        return;
+                    }
+                    match execution.promotion.as_ref() {
                         Some(DockLiveUndockPromotionExecution::Prepared(prepared))
                             if prepared.identity() == identity
                                 && prepared.token() == token
                                 && prepared.destination() == destination
-                    );
-                    if !matches {
+                                && execution.surface_revision == prepared.surface_revision() =>
+                        {
+                            let Some(DockLiveUndockPromotionExecution::Prepared(prepared)) =
+                                execution.promotion.take()
+                            else {
+                                unreachable!("validated prepared promotion changed before commit")
+                            };
+                            let journal =
+                                Rc::new(DockLiveUndockPromotionCommitJournal::pending(prepared));
+                            execution.promotion = Some(
+                                DockLiveUndockPromotionExecution::Committing(journal.clone()),
+                            );
+                            (Some(journal), None)
+                        }
+                        Some(DockLiveUndockPromotionExecution::Committing(current))
+                            if {
+                                current.identity() == identity
+                                    && current.token() == token
+                                    && current.destination() == destination
+                                    && current.surface_revision() == execution.surface_revision
+                            } =>
+                        {
+                            (Some(current.clone()), None)
+                        }
+                        Some(DockLiveUndockPromotionExecution::Durable(durable))
+                            if durable.identity() == identity
+                                && durable.token() == token
+                                && durable.destination() == destination =>
+                        {
+                            (
+                                None,
+                                Some(durable.committed_destination_recovery_required()),
+                            )
+                        }
+                        Some(
+                            DockLiveUndockPromotionExecution::Prepared(_)
+                            | DockLiveUndockPromotionExecution::Committing(_)
+                            | DockLiveUndockPromotionExecution::Durable(_),
+                        )
+                        | None => return,
+                    }
+                };
+
+                if let Some(recovery_required) = committed_recovery_required {
+                    let fact = if recovery_required {
+                        DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+                            identity,
+                            token,
+                            destination,
+                        }
+                    } else {
+                        DockLiveUndockFact::DurableSwapCommitted { identity, token }
+                    };
+                    self.enqueue_fact(DockLiveUndockQueuedFact::Reduce(fact), cx);
+                    return;
+                }
+
+                let journal = journal.expect("promotion commit must retain its exact journal");
+                if !journal.begin_drive() {
+                    return;
+                }
+                let durable = catch_unwind(AssertUnwindSafe(|| {
+                    if !self.preflight_promotion_commit_journal(owner, &journal, cx) {
+                        return None;
+                    }
+                    let same_window = match &*journal.execution.borrow() {
+                        DockLiveUndockPromotionCommitExecution::SameWindow(_) => true,
+                        DockLiveUndockPromotionCommitExecution::Host(_) => false,
+                        DockLiveUndockPromotionCommitExecution::Pending(_)
+                        | DockLiveUndockPromotionCommitExecution::Aborted => return None,
+                    };
+                    if same_window {
+                        self.resume_same_window_promotion_commit(&journal, cx)
+                    } else {
+                        self.resume_host_promotion_commit(&journal, cx)
+                    }
+                }));
+                let completed = match durable {
+                    Ok(Some(completed)) => completed,
+                    Ok(None) => {
+                        self.settle_promotion_commit_attempt_failure(&journal, cx);
                         return;
                     }
-                    let Some(DockLiveUndockPromotionExecution::Prepared(prepared)) =
-                        execution.promotion.take()
-                    else {
-                        unreachable!("validated prepared promotion changed before consumption");
-                    };
-                    prepared
-                };
-                let durable = match (prepared, next_graph) {
-                    (
-                        DockLiveUndockPreparedPromotionExecution::SameWindow(prepared),
-                        Some(graph),
-                    ) => Some(self.commit_same_window_promotion(owner, prepared, graph, cx)),
-                    (DockLiveUndockPreparedPromotionExecution::Host(prepared), None) => self
-                        .preflight_host_promotion_commit(owner, prepared, cx)
-                        .map(|prepared| self.commit_host_promotion(owner, prepared, cx)),
-                    (prepared @ DockLiveUndockPreparedPromotionExecution::SameWindow(_), None)
-                    | (prepared @ DockLiveUndockPreparedPromotionExecution::Host(_), Some(_)) => {
-                        self.restore_prepared_promotion_session(prepared, cx);
-                        None
+                    Err(payload) => {
+                        self.settle_promotion_commit_attempt_failure(&journal, cx);
+                        resume_unwind(payload);
                     }
                 };
-                let Some(durable) = durable else {
-                    self.enqueue_fact(
-                        DockLiveUndockQueuedFact::Reduce(
-                            DockLiveUndockFact::PromotionPreparationFailed { identity, token },
-                        ),
-                        cx,
+
+                let DockLiveUndockCompletedPromotionCommit {
+                    durable,
+                    retained_released,
+                    post_commit,
+                } = completed;
+                let committed_destination_recovery_required =
+                    durable.committed_destination_recovery_required();
+                {
+                    let mut state = self.state.borrow_mut();
+                    let execution = state
+                        .executions
+                        .get_mut(&identity)
+                        .expect("durable live-undock promotion must retain its execution");
+                    let current_is_exact = matches!(
+                        execution.promotion.as_ref(),
+                        Some(DockLiveUndockPromotionExecution::Committing(current))
+                            if Rc::ptr_eq(current, &journal)
                     );
-                    return;
-                };
-                let mut state = self.state.borrow_mut();
-                let execution = state
-                    .executions
-                    .get_mut(&identity)
-                    .expect("durable live-undock promotion must retain its execution");
-                execution.promotion = Some(DockLiveUndockPromotionExecution::Durable(durable));
-                drop(state);
-                self.enqueue_fact(
-                    DockLiveUndockQueuedFact::Reduce(DockLiveUndockFact::DurableSwapCommitted {
+                    if !current_is_exact {
+                        return;
+                    }
+                    if retained_released && let Some(presentation) = execution.presentation.as_mut()
+                    {
+                        presentation.retained_released = true;
+                    }
+                    execution.promotion = Some(DockLiveUndockPromotionExecution::Durable(durable));
+                }
+                journal.finish_drive();
+                post_commit.start(self.clone(), cx);
+                let fact = if committed_destination_recovery_required {
+                    DockLiveUndockFact::CommittedDestinationRecoveryRequired {
                         identity,
                         token,
-                    }),
-                    cx,
-                );
+                        destination,
+                    }
+                } else {
+                    DockLiveUndockFact::DurableSwapCommitted { identity, token }
+                };
+                self.enqueue_fact(DockLiveUndockQueuedFact::Reduce(fact), cx);
             }
             DockLiveUndockEffect::RestoreSource {
                 identity,
@@ -6147,26 +8245,53 @@ impl DockLiveUndockRuntime {
                 destination,
             } => {
                 let pending = {
-                    let mut state = self.state.borrow_mut();
-                    let Some(execution) = state.executions.get_mut(&identity) else {
+                    let state = self.state.borrow();
+                    let Some(execution) = state.executions.get(&identity) else {
                         return;
                     };
                     let runtime = execution.seed.source.runtime.clone();
-                    let effects = match execution.promotion.as_mut() {
+                    let committed = match execution.promotion.as_ref() {
                         Some(DockLiveUndockPromotionExecution::Durable(
                             DockLiveUndockDurablePromotionExecution::Host(durable),
                         )) if durable.identity == identity
                             && durable.token == token
-                            && durable.destination == destination =>
+                            && durable.destination == destination
+                            && durable.host_drop_commit.window_effects_receipt().is_none() =>
                         {
-                            durable.pending_window_effects.take()
+                            Some(durable.host_drop_commit.clone())
                         }
                         _ => None,
                     };
-                    effects.map(|effects| (runtime, effects))
+                    committed.map(|committed| (runtime, committed))
                 };
-                if let Some((runtime, effects)) = pending {
-                    runtime.apply_committed_window_effects(effects, cx);
+                if let Some((runtime, committed)) = pending {
+                    let applied = catch_unwind(AssertUnwindSafe(|| {
+                        accept_host_drop_window_effects(&runtime, &committed, cx)
+                    }));
+                    match applied {
+                        Ok(Some(_acceptance)) => {
+                            if let Some(execution) =
+                                self.state.borrow_mut().executions.get_mut(&identity)
+                            {
+                                execution.committed_window_effects_retry.clear();
+                            }
+                        }
+                        Ok(None) => self.schedule_committed_window_effects_retry(
+                            identity,
+                            token,
+                            destination,
+                            cx,
+                        ),
+                        Err(payload) => {
+                            self.schedule_committed_window_effects_retry(
+                                identity,
+                                token,
+                                destination,
+                                cx,
+                            );
+                            resume_unwind(payload);
+                        }
+                    }
                 }
             }
             DockLiveUndockEffect::DestinationSemanticsCommitRequired {
@@ -6505,6 +8630,10 @@ impl DockLiveUndockRuntime {
                 provisional,
             } => {
                 self.clear_source_restoration_retry(identity);
+                if self.promotion_commit_forbids_rollback(identity) {
+                    self.clear_orphan_recovery_retry(identity);
+                    return;
+                }
                 if let Some(fact) = self.recover_orphaned_payload_topology(
                     owner,
                     identity,
@@ -6514,7 +8643,7 @@ impl DockLiveUndockRuntime {
                 ) {
                     self.clear_orphan_recovery_retry(identity);
                     self.enqueue_fact(DockLiveUndockQueuedFact::Reduce(fact), cx);
-                } else {
+                } else if !self.promotion_commit_forbids_rollback(identity) {
                     self.schedule_orphan_recovery_retry(identity, payload_lease, provisional, cx);
                 }
             }
@@ -6524,6 +8653,9 @@ impl DockLiveUndockRuntime {
                 provisional,
             } => {
                 self.clear_orphan_recovery_retry(identity);
+                if self.promotion_commit_forbids_rollback(identity) {
+                    return;
+                }
                 let fact = self
                     .recover_orphaned_payload_topology(
                         owner,
@@ -6557,39 +8689,46 @@ impl DockLiveUndockRuntime {
                 token,
                 destination,
             } => {
-                match self.attempt_committed_destination_recovery(
-                    owner,
-                    identity,
-                    authority,
-                    token,
-                    destination,
-                    cx,
-                ) {
-                    Ok(recovery) => {
+                let attempt = catch_unwind(AssertUnwindSafe(|| {
+                    self.attempt_committed_destination_recovery(
+                        owner,
+                        identity,
+                        authority,
+                        token,
+                        destination,
+                        cx,
+                    )
+                }));
+                match attempt {
+                    Ok(Ok(recovery)) => {
                         self.clear_committed_destination_recovery_retry(identity);
                         self.enqueue_fact(
                             DockLiveUndockQueuedFact::Reduce(
                                 DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
                                     identity,
-                                    receipt:
-                                        DockLiveUndockCommittedDestinationRecoveryReceipt::new(
-                                            recovery,
-                                        )
-                                        .expect(
-                                            "committed destination recovery must retain durable authority",
-                                        ),
+                                    receipt: recovery,
                                 },
                             ),
                             cx,
                         );
                     }
-                    Err(_) => self.schedule_committed_destination_recovery_retry(
+                    Ok(Err(_)) => self.schedule_committed_destination_recovery_retry(
                         identity,
                         authority,
                         token,
                         destination,
                         cx,
                     ),
+                    Err(payload) => {
+                        self.schedule_committed_destination_recovery_retry(
+                            identity,
+                            authority,
+                            token,
+                            destination,
+                            cx,
+                        );
+                        resume_unwind(payload);
+                    }
                 }
             }
             DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
@@ -6599,70 +8738,179 @@ impl DockLiveUndockRuntime {
                 destination,
             } => {
                 self.clear_committed_destination_recovery_retry(identity);
-                let fact = match self.attempt_committed_destination_recovery(
-                    owner,
-                    identity,
-                    authority,
-                    token,
-                    destination,
-                    cx,
-                ) {
-                    Ok(recovery) => DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
+                let attempt = catch_unwind(AssertUnwindSafe(|| {
+                    self.attempt_committed_destination_recovery(
+                        owner,
                         identity,
-                        receipt: DockLiveUndockCommittedDestinationRecoveryReceipt::new(recovery)
-                            .expect("committed destination recovery must retain durable authority"),
-                    },
-                    Err(failure) => {
+                        authority,
+                        token,
+                        destination,
+                        cx,
+                    )
+                }));
+                let (fact, panic) = match attempt {
+                    Ok(Ok(recovery)) => (
+                        DockLiveUndockFact::CommittedDestinationRecoveryCommitted {
+                            identity,
+                            receipt: recovery,
+                        },
+                        None,
+                    ),
+                    Ok(Err(failure)) => (
                         DockLiveUndockFact::ShutdownCommittedDestinationRecoveryFailed {
                             identity,
                             authority,
                             token,
                             destination,
                             failure,
-                        }
-                    }
+                        },
+                        None,
+                    ),
+                    Err(payload) => (
+                        DockLiveUndockFact::ShutdownCommittedDestinationRecoveryFailed {
+                            identity,
+                            authority,
+                            token,
+                            destination,
+                            failure: DockLiveUndockCommittedDestinationRecoveryFailure::Panicked,
+                        },
+                        Some(payload),
+                    ),
                 };
                 self.enqueue_fact(DockLiveUndockQueuedFact::Reduce(fact), cx);
+                if let Some(payload) = panic {
+                    resume_unwind(payload);
+                }
             }
             DockLiveUndockEffect::RetireCommittedSameWindowDestination {
                 identity,
                 token,
                 window_id,
             } => {
+                enum RetirementAuthority {
+                    Durable(WindowHandle<DockHost>),
+                    ProviderTerminal {
+                        window: WindowHandle<DockHost>,
+                        host: Entity<DockHost>,
+                    },
+                    RegisteredHost {
+                        window: WindowHandle<DockHost>,
+                        host: Entity<DockHost>,
+                        semantics: DockHostLiveDestinationSemantics,
+                    },
+                }
+
+                let destination =
+                    DockLiveUndockPromotionDestination::SameWindowDesktop { window_id };
                 let retirement =
                     self.state
                         .borrow()
                         .executions
                         .get(&identity)
                         .and_then(|execution| {
-                            let DockLiveUndockPromotionExecution::Durable(
-                                DockLiveUndockDurablePromotionExecution::SameWindow(durable),
-                            ) = execution.promotion.as_ref()?
-                            else {
-                                return None;
-                            };
-                            let destination =
-                                DockLiveUndockPromotionDestination::SameWindowDesktop { window_id };
-                            (execution.request.key() == identity.opening()
-                                && durable.identity == identity
-                                && durable.token == token
-                                && durable.destination == destination
-                                && durable.destination_window.window_id() == window_id
-                                && durable.destination_binding.window_id() == window_id
-                                && durable.destination_binding.generation() != 0
-                                && durable.registration.window_id() == window_id
-                                && durable.registration.lineage()
-                                    == crate::DockViewportRuntimeLineage::Surface(
-                                        identity.opening().lease(),
-                                    )
-                                && execution.destination_host == Some(durable.destination_window)
-                                && execution.presentation.as_ref().is_some_and(|presentation| {
+                            if execution.request.key() != identity.opening()
+                                || execution.destination_host?.window_id() != window_id
+                                || !execution.presentation.as_ref().is_some_and(|presentation| {
                                     presentation.lease.identity() == identity
                                         && presentation.lease.destination_window() == window_id
-                                }))
-                            .then_some(durable.destination_window)
+                                })
+                            {
+                                return None;
+                            }
+                            match execution.promotion.as_ref()? {
+                                DockLiveUndockPromotionExecution::Durable(
+                                    DockLiveUndockDurablePromotionExecution::SameWindow(durable),
+                                ) if durable.identity == identity
+                                    && durable.token == token
+                                    && durable.destination == destination
+                                    && durable.destination_window.window_id() == window_id
+                                    && durable.destination_binding.window_id() == window_id
+                                    && durable.destination_binding.generation() != 0
+                                    && durable.registration.window_id() == window_id
+                                    && durable.registration.lineage()
+                                        == crate::DockViewportRuntimeLineage::Surface(
+                                            identity.opening().lease(),
+                                        ) =>
+                                {
+                                    Some(RetirementAuthority::Durable(durable.destination_window))
+                                }
+                                DockLiveUndockPromotionExecution::Committing(journal)
+                                    if journal.identity() == identity
+                                        && journal.token() == token
+                                        && journal.destination() == destination
+                                        && journal.recovery_receipt().is_some()
+                                        && journal.recovery_requires_window_terminal() =>
+                                {
+                                    let journal_execution = journal.execution.borrow();
+                                    match &*journal_execution {
+                                        DockLiveUndockPromotionCommitExecution::Pending(Some(
+                                            DockLiveUndockPreparedPromotionExecution::SameWindow(
+                                                prepared,
+                                            ),
+                                        )) => Some(RetirementAuthority::ProviderTerminal {
+                                            window: execution.destination_host?,
+                                            host: prepared.destination_host.clone(),
+                                        }),
+                                        DockLiveUndockPromotionCommitExecution::SameWindow(
+                                            commit,
+                                        ) => {
+                                            if let Some(semantics) = commit
+                                                .destination_promotion
+                                                .as_ref()
+                                                .map(|promotion| promotion.semantics().clone())
+                                            {
+                                                Some(RetirementAuthority::RegisteredHost {
+                                                    window: execution.destination_host?,
+                                                    host: commit.destination_host.clone(),
+                                                    semantics,
+                                                })
+                                            } else {
+                                                Some(RetirementAuthority::ProviderTerminal {
+                                                    window: execution.destination_host?,
+                                                    host: commit.destination_host.clone(),
+                                                })
+                                            }
+                                        }
+                                        DockLiveUndockPromotionCommitExecution::Pending(_)
+                                        | DockLiveUndockPromotionCommitExecution::Host(_)
+                                        | DockLiveUndockPromotionCommitExecution::Aborted => None,
+                                    }
+                                }
+                                DockLiveUndockPromotionExecution::Prepared(_)
+                                | DockLiveUndockPromotionExecution::Committing(_)
+                                | DockLiveUndockPromotionExecution::Durable(_) => None,
+                            }
                         });
-                let Some(destination_window) = retirement else {
+                let destination_window = match retirement {
+                    Some(RetirementAuthority::Durable(window)) => Some(window),
+                    Some(RetirementAuthority::ProviderTerminal { window, host }) => window
+                        .entity(cx)
+                        .ok()
+                        .filter(|current| current == &host)
+                        .filter(|current| {
+                            cx.read_entity(current, |host, _| {
+                                host.is_provisional_viewport_for(identity.opening())
+                                    && host.current_viewport_registration().is_none()
+                            })
+                        })
+                        .map(|_| window),
+                    Some(RetirementAuthority::RegisteredHost {
+                        window,
+                        host,
+                        semantics,
+                    }) => window
+                        .entity(cx)
+                        .ok()
+                        .filter(|current| current == &host)
+                        .filter(|current| {
+                            cx.read_entity(current, |host, _| {
+                                host.accepts_live_destination_semantics(&semantics)
+                            })
+                        })
+                        .map(|_| window),
+                    None => None,
+                };
+                let Some(destination_window) = destination_window else {
                     return;
                 };
                 super::close_live_undock_window_quietly(destination_window.into(), cx);
@@ -6719,6 +8967,18 @@ impl DockLiveUndockRuntime {
     }
 
     fn finalize_live_payload_drag(&self, identity: DockLiveUndockIdentity, cx: &mut App) {
+        let terminal_is_current = self
+            .state
+            .borrow_mut()
+            .executions
+            .get_mut(&identity)
+            .is_some_and(|execution| {
+                execution.terminal_requested = true;
+                true
+            });
+        if !terminal_is_current {
+            return;
+        }
         let session_checked_out = self
             .state
             .borrow()
@@ -6727,29 +8987,756 @@ impl DockLiveUndockRuntime {
             .and_then(|execution| execution.presentation.as_ref())
             .is_some_and(|presentation| presentation.session.is_checked_out());
         if session_checked_out {
-            let runtime = self.clone();
-            cx.defer(move |cx| runtime.finalize_live_payload_drag(identity, cx));
+            self.schedule_terminal_settlement_retry(identity, cx);
             return;
         }
-        let execution = self.state.borrow_mut().executions.remove(&identity);
-        let Some(execution) = execution else {
+
+        let settlement = catch_unwind(AssertUnwindSafe(|| {
+            self.settle_terminal_promotion_authority(identity, cx)
+        }));
+        match settlement {
+            Ok(true) => {}
+            Ok(false) => {
+                self.schedule_terminal_settlement_retry(identity, cx);
+                return;
+            }
+            Err(payload) => {
+                self.schedule_terminal_settlement_retry(identity, cx);
+                resume_unwind(payload);
+            }
+        }
+
+        let finalization = self
+            .state
+            .borrow()
+            .executions
+            .get(&identity)
+            .map(|execution| {
+                (
+                    execution.seed.source.payload_finalizer.clone(),
+                    execution.seed.source.runtime.clone(),
+                    execution.seed.source.work_context,
+                    execution.seed.source.session.clone(),
+                )
+            });
+        let Some((finalizer, runtime, work_context, session)) = finalization else {
             return;
         };
-        if execution.seed.source.identity_slot.get() == Some(identity) {
+        let finalization = catch_unwind(AssertUnwindSafe(|| {
+            finalize_payload_drag_after_terminal(
+                &finalizer,
+                identity,
+                cx,
+                |_| {},
+                |claim, cx| {
+                    settle_payload_drag_finalizer_claim(claim, &runtime, work_context, &session, cx)
+                },
+            )
+        }));
+        let settled = match finalization {
+            Ok(
+                DockPayloadDragFinalization::Finalized
+                | DockPayloadDragFinalization::TransferredToSurfaceShutdown,
+            ) => true,
+            Ok(DockPayloadDragFinalization::NotClaimed) => finalizer.is_terminally_settled(),
+            Err(payload) => {
+                self.schedule_terminal_settlement_retry(identity, cx);
+                resume_unwind(payload);
+            }
+        };
+        if !settled {
+            self.schedule_terminal_settlement_retry(identity, cx);
+            return;
+        }
+
+        let execution = self.state.borrow_mut().executions.remove(&identity);
+        if let Some(execution) = execution
+            && execution.seed.source.identity_slot.get() == Some(identity)
+        {
             execution.seed.source.identity_slot.set(None);
         }
-        let finalizer = execution.seed.source.payload_finalizer;
-        let runtime = execution.seed.source.runtime;
-        let work_context = execution.seed.source.work_context;
-        let session = execution.seed.source.session;
-        let _ = settle_payload_drag_finalizer_claim(
-            finalizer.claim_live_undock(identity),
-            &runtime,
-            work_context,
-            &session,
-            cx,
-        );
     }
+
+    fn settle_terminal_promotion_authority(
+        &self,
+        identity: DockLiveUndockIdentity,
+        cx: &mut App,
+    ) -> bool {
+        enum Authority {
+            None,
+            Prepared,
+            Committing(Rc<DockLiveUndockPromotionCommitJournal>),
+            DurableSameWindow {
+                runtime: DockViewportRuntimeHandle,
+                committed: crate::viewport_runtime::DockViewportCommittedLiveUndockPromotion,
+                controller: Entity<DockController>,
+                graph_commit: Option<DockWorkspaceGraphCommitReceipt>,
+                source_host: WeakEntity<DockHost>,
+                source_retirement: DockHostLiveSourceRetirementReceipt,
+                destination_host: WeakEntity<DockHost>,
+                destination_promotion: DockHostLiveDestinationPromotionReceipt,
+                post_commit: DockLiveUndockPostCommitReceipt,
+            },
+            DurableHost {
+                runtime: DockViewportRuntimeHandle,
+                committed: DockViewportCommittedLiveUndockHostDrop,
+                post_commit: DockLiveUndockPostCommitReceipt,
+            },
+        }
+
+        let authority = {
+            let state = self.state.borrow();
+            let Some(execution) = state.executions.get(&identity) else {
+                return true;
+            };
+            match execution.promotion.as_ref() {
+                None => Authority::None,
+                Some(DockLiveUndockPromotionExecution::Prepared(_)) => Authority::Prepared,
+                Some(DockLiveUndockPromotionExecution::Committing(journal)) => {
+                    Authority::Committing(journal.clone())
+                }
+                Some(DockLiveUndockPromotionExecution::Durable(
+                    DockLiveUndockDurablePromotionExecution::SameWindow(durable),
+                )) => Authority::DurableSameWindow {
+                    runtime: execution.seed.source.runtime.clone(),
+                    committed: durable.viewport_commit.clone(),
+                    controller: durable.controller.clone(),
+                    graph_commit: durable.graph_commit,
+                    source_host: durable.source_host.clone(),
+                    source_retirement: durable.source_retirement.clone(),
+                    destination_host: durable.destination_host.clone(),
+                    destination_promotion: durable.destination_promotion.clone(),
+                    post_commit: durable.post_commit.clone(),
+                },
+                Some(DockLiveUndockPromotionExecution::Durable(
+                    DockLiveUndockDurablePromotionExecution::Host(durable),
+                )) => Authority::DurableHost {
+                    runtime: execution.seed.source.runtime.clone(),
+                    committed: durable.host_drop_commit.clone(),
+                    post_commit: durable.post_commit.clone(),
+                },
+            }
+        };
+
+        match authority {
+            Authority::None | Authority::Prepared => true,
+            Authority::Committing(journal) => {
+                let route = {
+                    let execution = journal.execution.borrow();
+                    match &*execution {
+                        DockLiveUndockPromotionCommitExecution::SameWindow(_) => 0,
+                        DockLiveUndockPromotionCommitExecution::Host(_) => 1,
+                        DockLiveUndockPromotionCommitExecution::Pending(_) => 2,
+                        DockLiveUndockPromotionCommitExecution::Aborted => 3,
+                    }
+                };
+                if journal.recovery_receipt().is_some() {
+                    match route {
+                        0 | 2 => {
+                            return self.settle_recovered_same_window_promotion(&journal, cx);
+                        }
+                        1 => return self.settle_recovered_host_promotion(&journal, cx),
+                        _ => {}
+                    }
+                }
+                let completed = match route {
+                    0 => self.resume_same_window_promotion_commit(&journal, cx),
+                    1 => self.resume_host_promotion_commit(&journal, cx),
+                    2 => return self.settle_failed_promotion_commit_journal(&journal, cx),
+                    3 => return true,
+                    _ => unreachable!(),
+                };
+                if let Some(DockLiveUndockCompletedPromotionCommit {
+                    durable,
+                    retained_released,
+                    post_commit,
+                }) = completed
+                {
+                    let mut state = self.state.borrow_mut();
+                    let Some(execution) = state.executions.get_mut(&identity) else {
+                        return true;
+                    };
+                    if matches!(
+                        execution.promotion.as_ref(),
+                        Some(DockLiveUndockPromotionExecution::Committing(current))
+                            if Rc::ptr_eq(current, &journal)
+                    ) {
+                        if retained_released
+                            && let Some(presentation) = execution.presentation.as_mut()
+                        {
+                            presentation.retained_released = true;
+                        }
+                        execution.promotion =
+                            Some(DockLiveUndockPromotionExecution::Durable(durable));
+                    }
+                    drop(state);
+                    journal.finish_drive();
+                    post_commit.start(self.clone(), cx);
+                    return self.settle_terminal_promotion_authority(identity, cx);
+                }
+                self.settle_failed_promotion_commit_journal(&journal, cx)
+            }
+            Authority::DurableSameWindow {
+                runtime,
+                committed,
+                controller,
+                graph_commit,
+                source_host,
+                source_retirement,
+                destination_host,
+                destination_promotion,
+                post_commit,
+            } => {
+                if !post_commit.is_settled() {
+                    return false;
+                }
+                runtime.retire_live_undock_provisional_promotion_commit(&committed);
+                if let Some(graph_commit) = graph_commit {
+                    cx.update_entity(&controller, |controller, _| {
+                        controller.workspace_mut().retire_graph_commit(graph_commit);
+                    });
+                }
+                if let Some(source_host) = source_host.upgrade()
+                    && !cx.update_entity(&source_host, |host, _| {
+                        host.retire_live_source_retirement(&source_retirement)
+                    })
+                {
+                    return false;
+                }
+                if let Some(destination_host) = destination_host.upgrade()
+                    && !cx.update_entity(&destination_host, |host, _| {
+                        host.retire_live_destination_promotion(&destination_promotion)
+                    })
+                {
+                    return false;
+                }
+                true
+            }
+            Authority::DurableHost {
+                runtime,
+                committed,
+                post_commit,
+            } => {
+                if !post_commit.is_settled() {
+                    return false;
+                }
+                let Some(acceptance) = accept_host_drop_window_effects(&runtime, &committed, cx)
+                else {
+                    return false;
+                };
+                runtime.retire_live_undock_host_drop_commit(&committed, acceptance, cx)
+            }
+        }
+    }
+
+    fn settle_failed_promotion_commit_journal(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) -> bool {
+        if let Some(settled) = self.settle_provider_terminal_pending_promotion(journal, cx) {
+            return settled;
+        }
+
+        enum ForwardSettlement {
+            SameWindow {
+                runtime: DockViewportRuntimeHandle,
+                committed: crate::viewport_runtime::DockViewportCommittedLiveUndockPromotion,
+                controller: Entity<DockController>,
+                graph_commit: DockWorkspaceGraphCommitReceipt,
+                source_host: Entity<DockHost>,
+                source_retirement: DockHostLiveSourceRetirementReceipt,
+                destination_host: Entity<DockHost>,
+                destination_promotion: DockHostLiveDestinationPromotionReceipt,
+            },
+            Host {
+                runtime: DockViewportRuntimeHandle,
+                committed: DockViewportCommittedLiveUndockHostDrop,
+                retire_lower_receipt: bool,
+            },
+            Pending,
+            Settled,
+        }
+
+        let settlement = {
+            let execution = journal.execution.borrow();
+            match &*execution {
+                DockLiveUndockPromotionCommitExecution::SameWindow(commit) => {
+                    let post_commit_settled = commit.presentation_session_retired
+                        && commit.controller_notified
+                        && commit.source_host_notified
+                        && commit.destination_host_notified
+                        && commit.viewport_refreshed
+                        && commit
+                            .publication
+                            .as_ref()
+                            .is_some_and(DockSurfaceDeferredPublication::is_settled)
+                        && commit
+                            .surface
+                            .as_ref()
+                            .and_then(DockSurfaceTransactionReceipt::committed_revision)
+                            .is_some();
+                    match (
+                        post_commit_settled,
+                        commit.committed_viewport.clone(),
+                        commit.graph_commit,
+                        &commit.source_retirement,
+                        commit.destination_promotion.clone(),
+                    ) {
+                        (
+                            true,
+                            Some(committed),
+                            Some(graph_commit),
+                            DockLiveUndockSourceRetirementStage::Committed(source_retirement),
+                            Some(destination_promotion),
+                        ) => ForwardSettlement::SameWindow {
+                            runtime: commit.runtime.clone(),
+                            committed,
+                            controller: commit.controller.clone(),
+                            graph_commit,
+                            source_host: commit.source_host.clone(),
+                            source_retirement: source_retirement.clone(),
+                            destination_host: commit.destination_host.clone(),
+                            destination_promotion,
+                        },
+                        _ => ForwardSettlement::Pending,
+                    }
+                }
+                DockLiveUndockPromotionCommitExecution::Host(commit) => {
+                    let cleanup_settled =
+                        commit.presentation_cleanup.as_ref().is_none_or(|cleanup| {
+                            cleanup.presentation_committed
+                                && cleanup.source_host_committed
+                                && cleanup.provisional_host_committed
+                                && cleanup
+                                    .retained_release
+                                    .as_ref()
+                                    .is_none_or(DockLiveUndockRetainedVisualRelease::is_settled)
+                                && cleanup.session_retired
+                        });
+                    let post_commit_settled = cleanup_settled
+                        && commit
+                            .publication
+                            .as_ref()
+                            .is_some_and(DockSurfaceDeferredPublication::is_settled)
+                        && commit
+                            .surface
+                            .as_ref()
+                            .and_then(DockSurfaceTransactionReceipt::committed_revision)
+                            .is_some();
+                    match (post_commit_settled, commit.committed_drop.clone()) {
+                        (true, Some(committed)) => ForwardSettlement::Host {
+                            runtime: commit.runtime.clone(),
+                            committed,
+                            retire_lower_receipt: !commit.lower_receipt_retired,
+                        },
+                        _ => ForwardSettlement::Pending,
+                    }
+                }
+                DockLiveUndockPromotionCommitExecution::Pending(_) => ForwardSettlement::Pending,
+                DockLiveUndockPromotionCommitExecution::Aborted => ForwardSettlement::Settled,
+            }
+        };
+
+        match settlement {
+            ForwardSettlement::SameWindow {
+                runtime,
+                committed,
+                controller,
+                graph_commit,
+                source_host,
+                source_retirement,
+                destination_host,
+                destination_promotion,
+            } => {
+                runtime.retire_live_undock_provisional_promotion_commit(&committed);
+                cx.update_entity(&controller, |controller, _| {
+                    controller.workspace_mut().retire_graph_commit(graph_commit);
+                });
+                if !cx.update_entity(&source_host, |host, _| {
+                    host.retire_live_source_retirement(&source_retirement)
+                }) {
+                    return false;
+                }
+                if !cx.update_entity(&destination_host, |host, _| {
+                    host.retire_live_destination_promotion(&destination_promotion)
+                }) {
+                    return false;
+                }
+                true
+            }
+            ForwardSettlement::Host {
+                runtime,
+                committed,
+                retire_lower_receipt,
+            } => {
+                let Some(acceptance) = accept_host_drop_window_effects(&runtime, &committed, cx)
+                else {
+                    return false;
+                };
+                if retire_lower_receipt {
+                    if !runtime.retire_live_undock_host_drop_commit(&committed, acceptance, cx) {
+                        return false;
+                    }
+                    if let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                        &mut *journal.execution.borrow_mut()
+                    {
+                        commit.lower_receipt_retired = true;
+                    }
+                }
+                true
+            }
+            ForwardSettlement::Pending => false,
+            ForwardSettlement::Settled => true,
+        }
+    }
+
+    fn settle_recovered_host_promotion(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) -> bool {
+        if journal.recovery_receipt().is_none()
+            || self.resume_host_promotion_cleanup(journal, cx).is_none()
+        {
+            return false;
+        }
+
+        let publication = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return false;
+            };
+            commit.publication.clone()
+        };
+        if let Some(publication) = publication
+            && !publication.is_settled()
+        {
+            publication.publish(cx);
+            if !publication.is_settled() {
+                return false;
+            }
+        }
+
+        enum Settlement {
+            ApplyWindowEffects {
+                runtime: DockViewportRuntimeHandle,
+                committed: DockViewportCommittedLiveUndockHostDrop,
+            },
+            RetireLowerReceipt {
+                runtime: DockViewportRuntimeHandle,
+                committed: DockViewportCommittedLiveUndockHostDrop,
+            },
+            Settled,
+            Pending,
+        }
+
+        loop {
+            let settlement = {
+                let execution = journal.execution.borrow();
+                let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                    return false;
+                };
+                let cleanup_settled = commit.presentation_cleanup.as_ref().is_none_or(|cleanup| {
+                    cleanup.presentation_committed
+                        && cleanup.source_host_committed
+                        && cleanup.provisional_host_committed
+                        && cleanup
+                            .retained_release
+                            .as_ref()
+                            .is_none_or(DockLiveUndockRetainedVisualRelease::is_settled)
+                        && cleanup.session_retired
+                });
+                let surface_settled = commit
+                    .surface
+                    .as_ref()
+                    .is_none_or(|receipt| receipt.committed_revision().is_some());
+                let publication_settled = commit
+                    .publication
+                    .as_ref()
+                    .is_none_or(DockSurfaceDeferredPublication::is_settled);
+                let Some(committed) = commit.committed_drop.clone() else {
+                    return false;
+                };
+                if !(cleanup_settled && surface_settled && publication_settled) {
+                    Settlement::Pending
+                } else if committed.window_effects_receipt().is_none() {
+                    Settlement::ApplyWindowEffects {
+                        runtime: commit.runtime.clone(),
+                        committed,
+                    }
+                } else if !commit.lower_receipt_retired {
+                    Settlement::RetireLowerReceipt {
+                        runtime: commit.runtime.clone(),
+                        committed,
+                    }
+                } else {
+                    Settlement::Settled
+                }
+            };
+
+            match settlement {
+                Settlement::ApplyWindowEffects { runtime, committed } => {
+                    if accept_host_drop_window_effects(&runtime, &committed, cx).is_none() {
+                        return false;
+                    }
+                }
+                Settlement::RetireLowerReceipt { runtime, committed } => {
+                    let Some(acceptance) = committed.window_effects_receipt() else {
+                        return false;
+                    };
+                    if !runtime.retire_live_undock_host_drop_commit(&committed, acceptance, cx) {
+                        return false;
+                    }
+                    if let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                        &mut *journal.execution.borrow_mut()
+                    {
+                        commit.lower_receipt_retired = true;
+                    }
+                }
+                Settlement::Settled => return true,
+                Settlement::Pending => return false,
+            }
+        }
+    }
+
+    fn settle_provider_terminal_pending_promotion(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) -> Option<bool> {
+        let (batch, source_host, source, retained_release, payload_lease) = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Pending(Some(
+                DockLiveUndockPreparedPromotionExecution::SameWindow(prepared),
+            )) = &*execution
+            else {
+                return None;
+            };
+            let RehostTerminalPreparation::AlreadyCommitted(
+                view_presentation_window::RehostTerminalOutcome::DestinationCommitted(batch),
+            ) = &prepared.presentation
+            else {
+                return Some(false);
+            };
+            (
+                batch.clone(),
+                prepared.source_host.clone(),
+                prepared.source.clone(),
+                prepared.retained_release.clone(),
+                prepared.reveal.preflight().mount().proxy().lease(),
+            )
+        };
+        if journal.recovery_receipt().is_none() {
+            return Some(false);
+        }
+
+        view_presentation_window::release_stable_leases_after_endpoint_loss(cx, batch.leases());
+        let source_key = source.key();
+        let source_retired = cx.update_entity(&source_host, |host, host_cx| {
+            if let Some(receipt) =
+                host.commit_or_replay_prepared_live_source_retirement_without_notify(source)
+            {
+                host_cx.notify();
+                return host.retire_live_source_retirement(&receipt);
+            }
+            !host.accepts_live_presentation_key(source_key)
+        });
+        if !source_retired {
+            return Some(false);
+        }
+
+        if !retained_release.settle(cx) {
+            return Some(false);
+        }
+        if !self
+            .retire_presentation_session_after_terminal_commit(journal.identity(), payload_lease)
+        {
+            return Some(false);
+        }
+
+        let mut execution = journal.execution.borrow_mut();
+        if matches!(
+            &*execution,
+            DockLiveUndockPromotionCommitExecution::Pending(Some(
+                DockLiveUndockPreparedPromotionExecution::SameWindow(_)
+            ))
+        ) {
+            *execution = DockLiveUndockPromotionCommitExecution::Aborted;
+            Some(true)
+        } else {
+            Some(false)
+        }
+    }
+
+    fn settle_recovered_same_window_promotion(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+    ) -> bool {
+        if let Some(settled) = self.settle_provider_terminal_pending_promotion(journal, cx) {
+            return settled;
+        }
+
+        let (
+            batch,
+            source_host,
+            source,
+            source_retirement,
+            destination_host,
+            destination_promotion,
+            retained_release,
+            payload_lease,
+            publication,
+            committed_viewport,
+            runtime,
+            controller,
+            graph_commit,
+        ) = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return false;
+            };
+            (
+                commit.presentation_batch.clone(),
+                commit.source_host.clone(),
+                commit.source.clone(),
+                commit.source_retirement.clone(),
+                commit.destination_host.clone(),
+                commit.destination_promotion.clone(),
+                commit.retained_release.clone(),
+                commit.reveal.preflight().mount().proxy().lease(),
+                commit.publication.clone(),
+                commit.committed_viewport.clone(),
+                commit.runtime.clone(),
+                commit.controller.clone(),
+                commit.graph_commit,
+            )
+        };
+        let Some(batch) = batch else {
+            return false;
+        };
+
+        view_presentation_window::release_stable_leases_after_endpoint_loss(cx, batch.leases());
+
+        if matches!(
+            source_retirement,
+            DockLiveUndockSourceRetirementStage::Pending
+        ) {
+            let source_key = source.key();
+            let retirement = cx.update_entity(&source_host, |host, host_cx| {
+                if let Some(receipt) =
+                    host.commit_or_replay_prepared_live_source_retirement_without_notify(source)
+                {
+                    host_cx.notify();
+                    return Some(DockLiveUndockSourceRetirementStage::Committed(receipt));
+                }
+                (!host.accepts_live_presentation_key(source_key))
+                    .then_some(DockLiveUndockSourceRetirementStage::AuthorityAbsent)
+            });
+            let Some(retirement) = retirement else {
+                return false;
+            };
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.source_retirement = retirement;
+            }
+        }
+
+        if !retained_release.settle(cx) {
+            return false;
+        }
+
+        let presentation_session_retired = {
+            let execution = journal.execution.borrow();
+            matches!(
+                &*execution,
+                DockLiveUndockPromotionCommitExecution::SameWindow(commit)
+                    if commit.presentation_session_retired
+            )
+        };
+        if !presentation_session_retired {
+            if !self.retire_presentation_session_after_terminal_commit(
+                journal.identity(),
+                payload_lease,
+            ) {
+                return false;
+            }
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.presentation_session_retired = true;
+            }
+        }
+
+        if let Some(publication) = publication
+            && !publication.is_settled()
+        {
+            publication.publish(cx);
+            if !publication.is_settled() {
+                return false;
+            }
+        }
+
+        if let Some(committed_viewport) = committed_viewport {
+            runtime.retire_live_undock_provisional_promotion_commit(&committed_viewport);
+        }
+        if let Some(graph_commit) = graph_commit {
+            cx.update_entity(&controller, |controller, _| {
+                controller.workspace_mut().retire_graph_commit(graph_commit);
+            });
+        }
+
+        let source_retirement = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return false;
+            };
+            commit.source_retirement.clone()
+        };
+        if let DockLiveUndockSourceRetirementStage::Committed(receipt) = source_retirement {
+            if !cx.update_entity(&source_host, |host, _| {
+                host.retire_live_source_retirement(&receipt)
+            }) {
+                return false;
+            }
+            if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+            {
+                commit.source_retirement = DockLiveUndockSourceRetirementStage::Retired;
+            }
+        }
+        if let Some(destination_promotion) = destination_promotion
+            && !cx.update_entity(&destination_host, |host, _| {
+                host.retire_live_destination_promotion(&destination_promotion)
+            })
+        {
+            return false;
+        }
+
+        let mut execution = journal.execution.borrow_mut();
+        if matches!(
+            &*execution,
+            DockLiveUndockPromotionCommitExecution::SameWindow(_)
+        ) {
+            *execution = DockLiveUndockPromotionCommitExecution::Aborted;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn finalize_payload_drag_after_terminal<C, T>(
+    finalizer: &DockPayloadDragFinalizer,
+    identity: DockLiveUndockIdentity,
+    cx: &mut C,
+    cleanup: impl FnOnce(&mut C),
+    settle: impl FnOnce(Option<DockPayloadDragFinalizerClaim>, &mut C) -> T,
+) -> T {
+    cleanup(cx);
+    settle(finalizer.claim_terminal(identity), cx)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -6851,6 +9838,76 @@ mod tests {
     }
 
     #[test]
+    fn terminal_finalizer_can_claim_unadopted_route_authority() {
+        let identity = identity(11);
+        let finalizer = DockPayloadDragFinalizer::new();
+
+        finalizer
+            .claim_terminal(identity)
+            .expect("the exact terminal execution must be able to settle route-owned payload work")
+            .complete();
+
+        assert_eq!(
+            finalizer.authority.get(),
+            DockPayloadDragFinalizerAuthority::Finalized
+        );
+        assert!(finalizer.claim_route().is_none());
+    }
+
+    #[test]
+    fn terminal_cleanup_panic_preserves_retryable_payload_authority() {
+        let identity = identity(12);
+        let finalizer = DockPayloadDragFinalizer::new();
+        assert!(finalizer.begin_live_undock(identity));
+        assert!(finalizer.commit_live_undock(identity));
+        let settlement_ran = Cell::new(false);
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            finalize_payload_drag_after_terminal(
+                &finalizer,
+                identity,
+                &mut (),
+                |_| panic!("injected lower-receipt retirement panic"),
+                |claim, _| {
+                    settlement_ran.set(true);
+                    claim
+                        .expect("the terminal must retain its finalizer claim")
+                        .complete();
+                },
+            );
+        }));
+
+        assert!(panic.is_err());
+        assert!(!settlement_ran.get());
+        assert_eq!(
+            finalizer.authority.get(),
+            DockPayloadDragFinalizerAuthority::LiveUndock(identity)
+        );
+    }
+
+    #[test]
+    fn terminal_settlement_panic_restores_retryable_payload_authority() {
+        let identity = identity(13);
+        let finalizer = DockPayloadDragFinalizer::new();
+        assert!(finalizer.begin_live_undock(identity));
+        assert!(finalizer.commit_live_undock(identity));
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            finalize_payload_drag_after_terminal(
+                &finalizer,
+                identity,
+                &mut (),
+                |_| {},
+                |_claim, _| panic!("injected payload settlement panic"),
+            );
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(
+            finalizer.authority.get(),
+            DockPayloadDragFinalizerAuthority::LiveUndock(identity)
+        );
+    }
+
+    #[test]
     fn finalizer_handoff_is_exact_and_route_cannot_finalize_live_work() {
         let first = identity(1);
         let second = identity(2);
@@ -6887,6 +9944,96 @@ mod tests {
         assert!(!deadline.claim_expiration(first));
         assert!(deadline.claim_expiration(replacement));
         assert!(!deadline.claim_expiration(replacement));
+    }
+
+    #[test]
+    fn shutdown_abort_claim_wins_before_the_promotion_commit_boundary() {
+        let identity = identity(9);
+        let token = DockLiveUndockPromotionToken::new(1)
+            .expect("the test promotion token must be non-zero");
+        let destination = DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: WindowId::from(10),
+        };
+        let journal = DockLiveUndockPromotionCommitJournal {
+            identity,
+            token,
+            destination,
+            surface_revision: 3,
+            boundary: Cell::new(DockLiveUndockPromotionCommitBoundary::Reversible),
+            drive: Cell::new(DockLiveUndockPromotionCommitDriveState::Idle),
+            recovery_receipt: Cell::new(None),
+            recovery_requires_window_terminal: Cell::new(false),
+            execution: RefCell::new(DockLiveUndockPromotionCommitExecution::Aborted),
+        };
+
+        assert_eq!(
+            journal.claim_abort_or_observe(),
+            DockLiveUndockPromotionCommitDisposition::AbortClaimed
+        );
+        assert!(journal.abort_was_claimed());
+        assert!(!journal.begin_commit_call());
+    }
+
+    #[test]
+    fn shutdown_waits_after_the_promotion_commit_boundary_until_durable_publication() {
+        let identity = identity(10);
+        let token = DockLiveUndockPromotionToken::new(2)
+            .expect("the test promotion token must be non-zero");
+        let destination = DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: WindowId::from(11),
+        };
+        let journal = DockLiveUndockPromotionCommitJournal {
+            identity,
+            token,
+            destination,
+            surface_revision: 4,
+            boundary: Cell::new(DockLiveUndockPromotionCommitBoundary::Irreversible),
+            drive: Cell::new(DockLiveUndockPromotionCommitDriveState::Idle),
+            recovery_receipt: Cell::new(None),
+            recovery_requires_window_terminal: Cell::new(false),
+            execution: RefCell::new(DockLiveUndockPromotionCommitExecution::Aborted),
+        };
+
+        assert_eq!(
+            journal.claim_abort_or_observe(),
+            DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                identity,
+                token,
+                destination,
+            }
+        );
+        assert!(journal.begin_commit_call());
+    }
+
+    #[test]
+    fn recovery_required_authority_remains_forward_replayable() {
+        let identity = identity(11);
+        let token = DockLiveUndockPromotionToken::new(3)
+            .expect("the test promotion token must be non-zero");
+        let destination = DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: WindowId::from(12),
+        };
+        let journal = DockLiveUndockPromotionCommitJournal {
+            identity,
+            token,
+            destination,
+            surface_revision: 5,
+            boundary: Cell::new(DockLiveUndockPromotionCommitBoundary::Irreversible),
+            drive: Cell::new(DockLiveUndockPromotionCommitDriveState::Terminal),
+            recovery_receipt: Cell::new(None),
+            recovery_requires_window_terminal: Cell::new(false),
+            execution: RefCell::new(DockLiveUndockPromotionCommitExecution::Aborted),
+        };
+
+        assert_eq!(
+            journal.claim_abort_or_observe(),
+            DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                identity,
+                token,
+                destination,
+            }
+        );
+        assert!(journal.begin_commit_call());
     }
 
     #[test]
@@ -6937,6 +10084,26 @@ mod tests {
         assert!(finalizer.claim_route().is_none());
         assert!(finalizer.claim_live_undock(identity).is_none());
         assert!(record.complete());
+        assert_eq!(
+            finalizer.authority.get(),
+            DockPayloadDragFinalizerAuthority::Finalized
+        );
+    }
+
+    #[test]
+    fn dropped_surface_shutdown_record_completes_payload_authority() {
+        let identity = identity(14);
+        let lease = identity.opening().lease();
+        let finalizer = DockPayloadDragFinalizer::new();
+        assert!(finalizer.begin_live_undock(identity));
+        assert!(finalizer.commit_live_undock(identity));
+        let record = finalizer
+            .claim_live_undock(identity)
+            .expect("the live generation should own finalization")
+            .transfer_to_surface_shutdown(lease);
+
+        drop(record);
+
         assert_eq!(
             finalizer.authority.get(),
             DockPayloadDragFinalizerAuthority::Finalized

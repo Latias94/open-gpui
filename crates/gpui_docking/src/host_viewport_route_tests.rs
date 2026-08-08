@@ -1611,10 +1611,7 @@ mod handle_suite {
         assert_eq!(
             first_result,
             Err(DockActionApplyError::Graph(
-                crate::DockGraphMutationError::SourceNodeNotInSpace {
-                    space: source_space.clone(),
-                    node: source_tabs,
-                }
+                crate::DockGraphMutationError::TabsNodeNotFound { tabs: source_tabs }
             )),
             "a second direct delivery must reject the source node consumed by the first commit"
         );

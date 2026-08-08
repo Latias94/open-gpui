@@ -3457,6 +3457,58 @@ mod tests {
     }
 
     #[crate::test]
+    fn late_delayed_lifecycle_work_yields_to_a_new_post_clear_wave(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let nested_ran = Rc::new(Cell::new(false));
+        let outer_returned = Rc::new(Cell::new(false));
+        cx.update({
+            let nested_ran = nested_ran.clone();
+            let outer_returned = outer_returned.clone();
+            move |app| {
+                app.on_app_quit(move |app| {
+                    let outer_returned = outer_returned.clone();
+                    app.defer_shutdown_critical_after_window_registry_clear({
+                        let nested_ran = nested_ran.clone();
+                        move |app| {
+                            assert!(app.windows().is_empty());
+                            app.defer_after_or_shutdown_critical_before_window_registry_clear(
+                                Duration::ZERO,
+                                {
+                                    let nested_ran = nested_ran.clone();
+                                    let outer_returned = outer_returned.clone();
+                                    move |app| {
+                                        assert!(app.windows().is_empty());
+                                        assert!(
+                                            outer_returned.get(),
+                                            "phase-passed delayed work must yield the current callback stack"
+                                        );
+                                        nested_ran.set(true);
+                                    }
+                                },
+                            );
+                            assert!(
+                                !nested_ran.get(),
+                                "phase-passed delayed work must not run synchronously"
+                            );
+                            outer_returned.set(true);
+                        }
+                    });
+                    std::future::ready(())
+                })
+                .detach();
+            }
+        });
+
+        cx.quit();
+
+        assert!(nested_ran.get());
+        assert!(outer_returned.get());
+        assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
     fn pre_shutdown_critical_work_survives_later_effect_abandonment(cx: &mut TestAppContext) {
         let _: AnyWindowHandle = cx
             .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
@@ -3494,6 +3546,57 @@ mod tests {
         assert!(shutdown.is_err());
         assert_eq!(attempts.get(), SHUTDOWN_EFFECT_FLUSH_PANIC_BUDGET);
         assert!(critical_ran.get());
+        assert!(cx.windows().is_empty());
+    }
+
+    #[crate::test]
+    fn delayed_shutdown_critical_work_waits_for_the_outer_app_borrow(cx: &mut TestAppContext) {
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update({
+            let callback_ran = callback_ran.clone();
+            move |app| {
+                let callback_ran_after_borrow = callback_ran.clone();
+                app.defer_after_or_shutdown_critical_before_window_registry_clear(
+                    Duration::ZERO,
+                    move |_| callback_ran_after_borrow.set(true),
+                );
+                app.background_executor.run_until_parked();
+                assert!(
+                    !callback_ran.get(),
+                    "a foreground timer must not reborrow App while the outer update is active"
+                );
+            }
+        });
+
+        cx.run_until_parked();
+        assert!(callback_ran.get());
+    }
+
+    #[crate::test]
+    fn delayed_shutdown_critical_work_transfers_into_active_shutdown(cx: &mut TestAppContext) {
+        let _: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update({
+            let callback_ran = callback_ran.clone();
+            move |app| {
+                app.defer_after_or_shutdown_critical_before_window_registry_clear(
+                    Duration::from_secs(60),
+                    move |app| {
+                        assert!(
+                            !app.windows().is_empty(),
+                            "transferred delayed work must run before registry clear"
+                        );
+                        callback_ran.set(true);
+                    },
+                );
+                app.shutdown();
+            }
+        });
+        cx.run_until_parked();
+
+        assert!(callback_ran.get());
         assert!(cx.windows().is_empty());
     }
 

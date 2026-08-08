@@ -1,9 +1,14 @@
 use crate::{
     DockGraph, DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockPanel,
     DockPanelDescriptor, DockPanelRegistry, DockPolicy, DockSpaceId, DockViewportDropPayload,
-    drag::DockDragPayload, host::DockHostOptions,
-    workspace_drop_transaction::DockWorkspaceDropPayload,
+    drag::DockDragPayload,
+    host::DockHostOptions,
+    workspace_drop_transaction::{
+        DockWorkspaceDropPayload, DockWorkspaceLockedPayloadDropCommitId,
+        DockWorkspaceLockedPayloadDropCommitReceipt, DockWorkspacePayloadDropOutcome,
+    },
 };
+use std::{cell::Cell, collections::HashMap};
 
 /// Owner for one logical docking workspace.
 ///
@@ -14,11 +19,41 @@ use crate::{
 #[derive(Debug)]
 pub struct DockWorkspace {
     graph: DockGraph,
+    graph_revision: u64,
     space: DockSpaceId,
     panels: DockPanelRegistry,
     options: DockHostOptions,
     policy: DockPolicy,
+    next_locked_payload_drop_commit_generation: Cell<u64>,
+    locked_payload_drop_commits: HashMap<
+        DockWorkspaceLockedPayloadDropCommitId,
+        DockWorkspaceLockedPayloadDropCommitReceipt,
+    >,
+    next_graph_commit_generation: Cell<u64>,
+    graph_commits: HashMap<DockWorkspaceGraphCommitId, DockWorkspaceGraphCommitReceipt>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct DockWorkspaceGraphCommitId(u64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockWorkspaceGraphCommitReceipt {
+    commit_id: DockWorkspaceGraphCommitId,
+    graph_revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockWorkspaceGraphCommitObservation {
+    Exact,
+    Superseded,
+}
+
+impl DockWorkspaceGraphCommitReceipt {
+    pub(crate) const fn commit_id(self) -> DockWorkspaceGraphCommitId {
+        self.commit_id
+    }
+}
+
 impl DockWorkspace {
     /// Creates a workspace for one dock space and graph.
     pub fn new(space: impl Into<DockSpaceId>, graph: DockGraph) -> Self {
@@ -33,11 +68,128 @@ impl DockWorkspace {
     ) -> Self {
         Self {
             graph,
+            graph_revision: 0,
             space: space.into(),
             panels: DockPanelRegistry::new(),
             options,
             policy: DockPolicy::default(),
+            next_locked_payload_drop_commit_generation: Cell::new(0),
+            locked_payload_drop_commits: HashMap::new(),
+            next_graph_commit_generation: Cell::new(0),
+            graph_commits: HashMap::new(),
         }
+    }
+
+    pub(crate) fn allocate_graph_commit_id(&self) -> DockWorkspaceGraphCommitId {
+        let generation = self
+            .next_graph_commit_generation
+            .get()
+            .checked_add(1)
+            .expect("dock workspace graph commit identity space exhausted");
+        self.next_graph_commit_generation.set(generation);
+        DockWorkspaceGraphCommitId(generation)
+    }
+
+    pub(crate) fn commit_or_replay_graph(
+        &mut self,
+        commit_id: DockWorkspaceGraphCommitId,
+        expected_graph: &DockGraph,
+        projected_graph: DockGraph,
+    ) -> Option<DockWorkspaceGraphCommitReceipt> {
+        if let Some(receipt) = self.graph_commits.get(&commit_id) {
+            return Some(*receipt);
+        }
+        if !self.graph.matches_exactly(expected_graph) {
+            return None;
+        }
+
+        self.replace_graph(projected_graph);
+        let receipt = DockWorkspaceGraphCommitReceipt {
+            commit_id,
+            graph_revision: self.graph_revision,
+        };
+        self.graph_commits.insert(commit_id, receipt);
+        Some(receipt)
+    }
+
+    pub(crate) fn graph_commit(
+        &self,
+        commit_id: DockWorkspaceGraphCommitId,
+    ) -> Option<DockWorkspaceGraphCommitReceipt> {
+        self.graph_commits.get(&commit_id).copied()
+    }
+
+    pub(crate) fn observe_graph_commit(
+        &self,
+        receipt: DockWorkspaceGraphCommitReceipt,
+    ) -> Option<DockWorkspaceGraphCommitObservation> {
+        let committed = self.graph_commits.get(&receipt.commit_id())?;
+        if *committed != receipt {
+            return None;
+        }
+        Some(if self.graph_revision == receipt.graph_revision {
+            DockWorkspaceGraphCommitObservation::Exact
+        } else {
+            DockWorkspaceGraphCommitObservation::Superseded
+        })
+    }
+
+    pub(crate) fn retire_graph_commit(&mut self, receipt: DockWorkspaceGraphCommitReceipt) {
+        self.graph_commits.remove(&receipt.commit_id());
+    }
+
+    pub(crate) fn allocate_locked_payload_drop_commit_id(
+        &self,
+    ) -> DockWorkspaceLockedPayloadDropCommitId {
+        let generation = self
+            .next_locked_payload_drop_commit_generation
+            .get()
+            .checked_add(1)
+            .expect("dock workspace drop commit identity space exhausted");
+        self.next_locked_payload_drop_commit_generation
+            .set(generation);
+        DockWorkspaceLockedPayloadDropCommitId::new(generation)
+    }
+
+    pub(crate) fn commit_or_replay_locked_payload_drop(
+        &mut self,
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+        expected_graph: &DockGraph,
+        projected_graph: DockGraph,
+        outcome: DockWorkspacePayloadDropOutcome,
+    ) -> Option<DockWorkspaceLockedPayloadDropCommitReceipt> {
+        if let Some(receipt) = self.locked_payload_drop_commits.get(&commit_id) {
+            return Some(receipt.clone());
+        }
+        if !self.graph.matches_exactly(expected_graph) {
+            return None;
+        }
+
+        let receipt = DockWorkspaceLockedPayloadDropCommitReceipt::new(commit_id, outcome);
+        self.replace_graph(projected_graph);
+        self.locked_payload_drop_commits
+            .insert(commit_id, receipt.clone());
+        Some(receipt)
+    }
+
+    pub(crate) fn locked_payload_drop_commit(
+        &self,
+        commit_id: DockWorkspaceLockedPayloadDropCommitId,
+    ) -> Option<DockWorkspaceLockedPayloadDropCommitReceipt> {
+        self.locked_payload_drop_commits.get(&commit_id).cloned()
+    }
+
+    pub(crate) fn retire_locked_payload_drop_commit(
+        &mut self,
+        receipt: &DockWorkspaceLockedPayloadDropCommitReceipt,
+    ) {
+        self.locked_payload_drop_commits
+            .remove(&receipt.commit_id());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn locked_payload_drop_commit_count(&self) -> usize {
+        self.locked_payload_drop_commits.len()
     }
 
     /// Returns the logical dock space owned by this workspace.
@@ -52,11 +204,27 @@ impl DockWorkspace {
 
     /// Replaces the workspace graph.
     pub fn set_graph(&mut self, graph: DockGraph) {
-        self.graph = graph;
+        self.replace_graph(graph);
     }
 
     pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockGraphMutationError> {
-        self.graph.apply_op_checked(op)
+        let changed = self.graph.apply_op_checked(op)?;
+        if changed {
+            self.advance_graph_revision();
+        }
+        Ok(changed)
+    }
+
+    fn replace_graph(&mut self, graph: DockGraph) {
+        self.graph = graph;
+        self.advance_graph_revision();
+    }
+
+    fn advance_graph_revision(&mut self) {
+        self.graph_revision = self
+            .graph_revision
+            .checked_add(1)
+            .expect("dock workspace graph revision space exhausted");
     }
 
     /// Returns the panel registry.
@@ -228,5 +396,66 @@ impl DockWorkspace {
                 .iter()
                 .any(|candidate| candidate == item),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph_test_support::{main_space, root_tabs_graph};
+
+    #[test]
+    fn graph_commit_replay_does_not_overwrite_a_newer_graph() {
+        let (initial, _) = root_tabs_graph(&["initial"]);
+        let (projected, _) = root_tabs_graph(&["projected"]);
+        let (newer, _) = root_tabs_graph(&["newer"]);
+        let mut workspace = DockWorkspace::new(main_space(), initial.clone());
+        let commit_id = workspace.allocate_graph_commit_id();
+
+        let receipt = workspace
+            .commit_or_replay_graph(commit_id, &initial, projected.clone())
+            .expect("the exact initial graph should accept the commit");
+        assert!(workspace.graph().matches_exactly(&projected));
+
+        workspace.set_graph(newer.clone());
+        let replay = workspace
+            .commit_or_replay_graph(commit_id, &initial, projected)
+            .expect("the same commit id should replay its receipt");
+
+        assert_eq!(replay, receipt);
+        assert!(workspace.graph().matches_exactly(&newer));
+        assert_eq!(
+            workspace.observe_graph_commit(receipt),
+            Some(DockWorkspaceGraphCommitObservation::Superseded)
+        );
+        workspace.retire_graph_commit(receipt);
+        assert!(workspace.graph_commit(commit_id).is_none());
+    }
+
+    #[test]
+    fn graph_commit_observation_rejects_an_equal_shape_after_aba_replacement() {
+        let (initial, _) = root_tabs_graph(&["initial"]);
+        let (projected, _) = root_tabs_graph(&["projected"]);
+        let (intervening, _) = root_tabs_graph(&["intervening"]);
+        let mut workspace = DockWorkspace::new(main_space(), initial.clone());
+        let commit_id = workspace.allocate_graph_commit_id();
+
+        let receipt = workspace
+            .commit_or_replay_graph(commit_id, &initial, projected.clone())
+            .expect("the exact initial graph should accept the commit");
+        assert_eq!(
+            workspace.observe_graph_commit(receipt),
+            Some(DockWorkspaceGraphCommitObservation::Exact)
+        );
+
+        workspace.set_graph(intervening);
+        workspace.set_graph(projected.clone());
+
+        assert!(workspace.graph().matches_exactly(&projected));
+        assert_eq!(
+            workspace.observe_graph_commit(receipt),
+            Some(DockWorkspaceGraphCommitObservation::Superseded),
+            "shape equality must not restore superseded transaction authority"
+        );
     }
 }

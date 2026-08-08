@@ -34,12 +34,13 @@ impl DockViewportRuntimeHandle {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockViewportCloseOutcome {
-        let live_undock_registration = self
+        let live_undock_authority = self
             .surface_owner()
             .and_then(|owner| crate::surface::handle_surface_window_closed(&owner, window_id, cx));
-        if let Some(registration) = live_undock_registration {
+        if let Some(authority) = live_undock_authority {
             #[cfg(test)]
             self.run_live_undock_logical_close_selection_hook_for_test(cx);
+            let registration = authority.into_registration();
             let closed = self
                 .runtime
                 .borrow_mut()

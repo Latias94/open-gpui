@@ -365,7 +365,6 @@ impl DockWorkspace {
                 policy_validation,
             );
         }
-
         next.validate().map_err(|error| {
             DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
                 op: "MergeSpaceIntoNonEmptySpace",

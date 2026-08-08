@@ -58,7 +58,6 @@ use crate::{
     DockViewportRuntimeCommitAuthority, DockViewportRuntimeHandle, DockViewportRuntimeLineage,
     DockViewportSurfaceShutdownReservation, DockViewportWindowRole, DockVisualStyleResolver,
     native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome,
-    viewport_registry::DockViewportRegistrationKey,
 };
 pub(crate) use activation::{
     DockSurfaceActivationBinding, DockSurfaceActivationHostRegistration,
@@ -73,8 +72,9 @@ use open_gpui::{
     WindowOptions,
 };
 pub(crate) use owner::{
-    DockSurfaceOwner, DockSurfaceTransactionId, with_detached_root_transaction,
-    with_root_transaction,
+    DockSurfaceDeferredPublication, DockSurfaceOwner, DockSurfaceTransactionId,
+    DockSurfaceTransactionReceipt, with_detached_deferred_tracked_root_transaction,
+    with_detached_root_transaction, with_root_transaction,
 };
 use std::{
     any::Any,
@@ -879,7 +879,9 @@ fn prepare_surface_shutdown(
     reason: DockSurfaceWindowSessionShutdownReason,
     cx: &mut App,
 ) -> Option<DockSurfaceShutdownCloseEffects> {
-    let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
+    let (runtime, live_runtime) = cx.read_entity(owner, |owner, _| {
+        (owner.runtime(), owner.live_undock_runtime())
+    });
     let snapshot = runtime.windows_for_surface(lease);
     let (begin, activation_settlements, live_effects) =
         cx.update_entity(owner, |owner, owner_cx| {
@@ -898,7 +900,15 @@ fn prepare_surface_shutdown(
                 begin,
                 window_session::DockSurfaceWindowSessionBeginShutdownOutcome::Started { .. }
             ) {
-                let (frozen, effects) = owner.freeze_live_undock_for_shutdown(lease).into_parts();
+                let promotion_commit = live_shutdown.map_or(
+                    live_undock::DockLiveUndockPromotionCommitDisposition::RollbackAllowed,
+                    |snapshot| {
+                        live_runtime.claim_promotion_commit_for_shutdown(snapshot.identity())
+                    },
+                );
+                let (frozen, effects) = owner
+                    .freeze_live_undock_for_shutdown(lease, promotion_commit)
+                    .into_parts();
                 assert_eq!(
                     frozen, live_shutdown,
                     "live-undock shutdown snapshot must remain exact inside one owner update"
@@ -911,7 +921,6 @@ fn prepare_surface_shutdown(
             (begin, activation_settlements, live_effects)
         });
     if let Some(effects) = live_effects {
-        let live_runtime = cx.read_entity(owner, |owner, _| owner.live_undock_runtime());
         live_runtime.enqueue_effects(effects, cx);
     }
 
@@ -1171,7 +1180,7 @@ pub(crate) fn handle_surface_window_closed(
     owner: &Entity<DockSurfaceOwner>,
     window_id: WindowId,
     cx: &mut App,
-) -> Option<DockViewportRegistrationKey> {
+) -> Option<live_undock_runtime::DockLiveUndockLogicalCloseAuthority> {
     payload_recovery_executor::payload_recovery_source_window_closed(owner, window_id, cx);
     let lease = cx.read_entity(owner, |owner, _| {
         owner.window_session().active_lease_for_anchor(window_id)
@@ -1193,11 +1202,11 @@ pub(crate) fn handle_surface_window_closed(
         return None;
     }
 
-    let committed_registration = cx.read_entity(owner, |owner, _| {
-        owner.live_undock_committed_destination_registration_for_logical_close(window_id)
+    let committed_authority = cx.read_entity(owner, |owner, _| {
+        owner.live_undock_committed_destination_logical_close_authority(window_id)
     });
-    if committed_registration.is_some() {
-        return committed_registration;
+    if committed_authority.is_some() {
+        return committed_authority;
     }
 
     // Logical removal is the terminal boundary for an uncommitted provisional destination. The

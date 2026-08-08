@@ -1,7 +1,7 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockGraph, DockGraphDropTarget, DockNode, DockOp,
-    DockSpaceId, DockViewportDropPayload, DockViewportTearOffPending, DockViewportTearOffRequest,
-    DockWorkspace, locked_drop_identity::DockLockedPayloadIdentity,
+    DockActionApplyError, DockActionOutcome, DockGraph, DockGraphDropTarget, DockNode, DockSpaceId,
+    DockViewportDropPayload, DockViewportTearOffPending, DockViewportTearOffRequest, DockWorkspace,
+    locked_drop_identity::{DockLockedPayloadForwardProjectionError, DockLockedPayloadIdentity},
     workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 
@@ -114,7 +114,7 @@ pub(crate) fn lock_tear_off_move(
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffMovePlan {
     source: DockLockedPayloadIdentity,
-    op: DockOp,
+    target_space: DockSpaceId,
 }
 
 impl DockViewportTearOffMovePlan {
@@ -124,9 +124,10 @@ impl DockViewportTearOffMovePlan {
         target_space: &DockSpaceId,
     ) -> Result<Self, DockActionApplyError> {
         let source = capture_tear_off_payload_identity(workspace.graph(), request)?;
+        validate_tear_off_move(workspace, request, target_space)?;
         Ok(Self {
             source,
-            op: build_tear_off_move_op(workspace, request, target_space)?,
+            target_space: target_space.clone(),
         })
     }
 
@@ -149,8 +150,25 @@ impl DockViewportTearOffMovePlan {
     ) -> Result<(DockGraph, bool), DockActionApplyError> {
         self.source.validate(workspace.graph())?;
         let mut next = workspace.graph().clone();
-        let changed = next.apply_op_checked(&self.op)?;
+        let changed = next.apply_op_checked(
+            &self
+                .source
+                .graph_op(&self.target_space, DockGraphDropTarget::empty_space()),
+        )?;
         Ok((next, changed))
+    }
+
+    /// Builds a forward-only projection from the payload's unique current graph locations.
+    ///
+    /// Callers must try `project_graph` first. This seam is only for crossing an already
+    /// irreversible promotion boundary after synchronous reentry made the locked source identity
+    /// stale while leaving every payload item uniquely reachable.
+    pub(crate) fn project_graph_forward_rebased(
+        &self,
+        workspace: &DockWorkspace,
+    ) -> Result<(DockGraph, bool), DockLockedPayloadForwardProjectionError> {
+        self.source
+            .project_forward_rebased_to_empty_space(workspace.graph(), &self.target_space)
     }
 
     pub(crate) fn source_identity(&self) -> &DockLockedPayloadIdentity {
@@ -162,7 +180,10 @@ impl DockViewportTearOffMovePlan {
         workspace: &mut DockWorkspace,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.source.validate(workspace.graph())?;
-        workspace.commit_graph_op(self.op)
+        workspace.commit_graph_op(
+            self.source
+                .graph_op(&self.target_space, DockGraphDropTarget::empty_space()),
+        )
     }
 
     fn source_status(&self, graph: &DockGraph) -> DockViewportTearOffSourceStatus {
@@ -187,11 +208,11 @@ pub(crate) fn commit_tear_off_move(
     plan.commit(workspace)
 }
 
-fn build_tear_off_move_op(
+fn validate_tear_off_move(
     workspace: &DockWorkspace,
     request: &DockViewportTearOffRequest,
     target_space: &DockSpaceId,
-) -> Result<DockOp, DockActionApplyError> {
+) -> Result<(), DockActionApplyError> {
     workspace.policy().validate_platform_viewports()?;
 
     match request.payload() {
@@ -199,36 +220,19 @@ fn build_tear_off_move_op(
             workspace
                 .move_validation()
                 .validate_item_target_space(target_space, item)?;
-            Ok(DockOp::MoveItem {
-                source_space: request.source_space().clone(),
-                item: item.clone(),
-                target_space: target_space.clone(),
-                target: DockGraphDropTarget::empty_space(),
-            })
         }
         DockViewportDropPayload::Tabs => {
             workspace
                 .move_validation()
                 .validate_tabs_target_space(target_space, request.source_node())?;
-            Ok(DockOp::MoveTabs {
-                source_space: request.source_space().clone(),
-                source_tabs: request.source_node(),
-                target_space: target_space.clone(),
-                target: DockGraphDropTarget::empty_space(),
-            })
         }
         DockViewportDropPayload::Floating(floating) => {
             workspace
                 .move_validation()
                 .validate_floating_target_space(target_space, *floating)?;
-            Ok(DockOp::MoveFloating {
-                source_space: request.source_space().clone(),
-                floating: *floating,
-                target_space: target_space.clone(),
-                target: DockGraphDropTarget::empty_space(),
-            })
         }
     }
+    Ok(())
 }
 
 fn tear_off_payload_mismatch(
@@ -245,7 +249,7 @@ fn tear_off_payload_mismatch(
 mod tests {
     use super::*;
     use crate::{
-        DockClassId, DockFloatingContainer, DockGraphMutationError, DockItemId,
+        DockClassId, DockFloatingContainer, DockGraphMutationError, DockItemId, DockOp,
         DockPanelDescriptor, DockPolicyError, DockViewportTearOffBeginOutcome,
         DockViewportTearOffMachine,
     };
@@ -531,6 +535,114 @@ mod tests {
             workspace.graph().collect_items_in_space(&source_space),
             vec![item("b"), item("a")]
         );
+    }
+
+    #[test]
+    fn forward_rebased_item_projection_follows_unique_reentered_location() {
+        let source_space = DockSpaceId::from("source");
+        let reentered_space = DockSpaceId::from("listener");
+        let target_space = DockSpaceId::from("detached");
+        let (mut workspace, source_tabs) = item_workspace(vec![item("a"), item("b")]);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let request = request(source_space.clone(), source_tabs, item("a"));
+        let plan = lock_tear_off_move(&workspace, &request, &target_space)
+            .expect("the original item tear-off should lock");
+
+        workspace
+            .commit_graph_op(DockOp::MoveItem {
+                source_space: source_space.clone(),
+                item: item("a"),
+                target_space: reentered_space.clone(),
+                target: DockGraphDropTarget::empty_space(),
+            })
+            .expect("listener-time item rehome should commit");
+        workspace
+            .commit_graph_op(DockOp::OpenItem {
+                space: source_space.clone(),
+                target_tabs: Some(source_tabs),
+                item: item("x"),
+                insert_index: None,
+            })
+            .expect("an unrelated listener-time graph change should commit");
+
+        assert!(plan.project_graph(&workspace).is_err());
+        let (projected, changed) = plan
+            .project_graph_forward_rebased(&workspace)
+            .expect("the unique current item location should allow forward rebase");
+
+        assert!(changed);
+        assert_eq!(
+            projected.collect_items_in_space(&source_space),
+            vec![item("b"), item("x")]
+        );
+        assert_eq!(projected.collect_items_in_space(&reentered_space), []);
+        assert_eq!(
+            projected.collect_items_in_space(&target_space),
+            vec![item("a")]
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&reentered_space),
+            vec![item("a")],
+            "forward projection must not mutate the current authoritative graph"
+        );
+        assert_eq!(workspace.graph().root(&target_space), None);
+    }
+
+    #[test]
+    fn forward_rebased_tabs_projection_preserves_unrelated_reentry_changes() {
+        let source_space = DockSpaceId::from("source");
+        let reentered_space = DockSpaceId::from("listener");
+        let target_space = DockSpaceId::from("detached");
+        let (mut workspace, source_tabs) = item_workspace(vec![item("a"), item("b")]);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let request = DockViewportTearOffRequest::new(
+            source_space.clone(),
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            point(px(900.0), px(900.0)),
+            None,
+        );
+        let plan = lock_tear_off_move(&workspace, &request, &target_space)
+            .expect("the original tabs tear-off should lock");
+
+        workspace
+            .commit_graph_op(DockOp::MoveTabs {
+                source_space: source_space.clone(),
+                source_tabs,
+                target_space: reentered_space.clone(),
+                target: DockGraphDropTarget::empty_space(),
+            })
+            .expect("listener-time tabs rehome should commit");
+        workspace
+            .commit_graph_op(DockOp::OpenItem {
+                space: source_space.clone(),
+                target_tabs: None,
+                item: item("x"),
+                insert_index: None,
+            })
+            .expect("an unrelated listener-time source change should commit");
+
+        assert!(plan.project_graph(&workspace).is_err());
+        let (projected, changed) = plan
+            .project_graph_forward_rebased(&workspace)
+            .expect("the uniquely rehomed tabs items should allow forward rebase");
+
+        assert!(changed);
+        assert_eq!(
+            projected.collect_items_in_space(&source_space),
+            vec![item("x")]
+        );
+        assert_eq!(projected.collect_items_in_space(&reentered_space), []);
+        assert_eq!(
+            projected.collect_items_in_space(&target_space),
+            vec![item("a"), item("b")]
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&reentered_space),
+            vec![item("a"), item("b")],
+            "forward projection must retain the authoritative reentry graph"
+        );
+        assert_eq!(workspace.graph().root(&target_space), None);
     }
 
     #[test]

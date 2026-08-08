@@ -191,6 +191,7 @@ pub(crate) enum DockLiveUndockPhase {
     Compensating,
     Restoring,
     RecoveringOrphan,
+    WaitingForPromotionCommit,
     ShutdownCleanupFailed,
     RecoveringCommittedDestination,
     Retiring,
@@ -1022,6 +1023,7 @@ pub(crate) enum DockLiveUndockOrphanCleanupFailure {
 pub(crate) enum DockLiveUndockCommittedDestinationRecoveryFailure {
     PreparationRejected,
     PreflightRejected,
+    Panicked,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1038,16 +1040,29 @@ pub(crate) struct DockLiveUndockCommittedDestinationRecoveryReceipt {
     token: DockLiveUndockPromotionToken,
     destination: DockLiveUndockPromotionDestination,
     recovery: DockPayloadRecoveryCommitReceipt,
+    same_window_terminal_required: bool,
 }
 
 impl DockLiveUndockCommittedDestinationRecoveryReceipt {
-    pub(crate) fn new(recovery: DockPayloadRecoveryCommitReceipt) -> Option<Self> {
+    pub(crate) fn new(
+        recovery: DockPayloadRecoveryCommitReceipt,
+        same_window_terminal_required: bool,
+    ) -> Option<Self> {
         let (identity, token, destination) = recovery.authority().promotion()?;
+        if same_window_terminal_required
+            && !matches!(
+                destination,
+                DockLiveUndockPromotionDestination::SameWindowDesktop { .. }
+            )
+        {
+            return None;
+        }
         Some(Self {
             identity,
             token,
             destination,
             recovery,
+            same_window_terminal_required,
         })
     }
 
@@ -1065,6 +1080,10 @@ impl DockLiveUndockCommittedDestinationRecoveryReceipt {
 
     pub(crate) const fn destination(self) -> DockLiveUndockPromotionDestination {
         self.destination
+    }
+
+    pub(crate) const fn same_window_terminal_required(self) -> bool {
+        self.same_window_terminal_required
     }
 }
 
@@ -1459,6 +1478,69 @@ impl DockLiveUndockPromotionToken {
     }
 }
 
+/// Runtime evidence used to linearize a surface shutdown against a promotion commit.
+///
+/// A reversible commit may be claimed for rollback exactly once. A forward-only commit must keep
+/// the reducer waiting until the runtime publishes a durable outcome; only an already durable
+/// runtime execution is committed-loss authority during shutdown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockLiveUndockPromotionCommitDisposition {
+    RollbackAllowed,
+    AbortClaimed,
+    ForwardOnly {
+        identity: DockLiveUndockIdentity,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+    },
+    Durable {
+        identity: DockLiveUndockIdentity,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+    },
+}
+
+impl DockLiveUndockPromotionCommitDisposition {
+    fn durable_for(
+        self,
+        identity: DockLiveUndockIdentity,
+    ) -> Option<(
+        DockLiveUndockPromotionToken,
+        DockLiveUndockPromotionDestination,
+    )> {
+        match self {
+            Self::Durable {
+                identity: current,
+                token,
+                destination,
+            } if current == identity => Some((token, destination)),
+            Self::RollbackAllowed
+            | Self::AbortClaimed
+            | Self::ForwardOnly { .. }
+            | Self::Durable { .. } => None,
+        }
+    }
+
+    fn forward_only_for(
+        self,
+        identity: DockLiveUndockIdentity,
+    ) -> Option<(
+        DockLiveUndockPromotionToken,
+        DockLiveUndockPromotionDestination,
+    )> {
+        match self {
+            Self::ForwardOnly {
+                identity: current,
+                token,
+                destination,
+            } if current == identity => Some((token, destination)),
+            Self::RollbackAllowed
+            | Self::AbortClaimed
+            | Self::ForwardOnly { .. }
+            | Self::Durable { .. } => None,
+        }
+    }
+}
+
 /// Exact accepted destination-semantics projection for one durable promotion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DockLiveUndockDestinationSemanticsReceipt {
@@ -1736,6 +1818,11 @@ pub(crate) enum DockLiveUndockFact {
         identity: DockLiveUndockIdentity,
         token: DockLiveUndockPromotionToken,
     },
+    CommittedDestinationRecoveryRequired {
+        identity: DockLiveUndockIdentity,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+    },
     DestinationSemanticsCommitted {
         identity: DockLiveUndockIdentity,
         receipt: DockLiveUndockDestinationSemanticsReceipt,
@@ -1840,6 +1927,7 @@ impl DockLiveUndockFact {
             | Self::PromotionPrepared { identity, .. }
             | Self::PromotionPreparationFailed { identity, .. }
             | Self::DurableSwapCommitted { identity, .. }
+            | Self::CommittedDestinationRecoveryRequired { identity, .. }
             | Self::DestinationSemanticsCommitted { identity, .. }
             | Self::DestinationSemanticsCommitFailed { identity, .. }
             | Self::DestinationInteractionAdmitted { identity, .. }
@@ -2181,6 +2269,10 @@ enum DockLiveUndockPromotionState {
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
     },
+    RecoveryRequired {
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+    },
     SemanticsCommitted {
         receipt: DockLiveUndockDestinationSemanticsReceipt,
     },
@@ -2301,6 +2393,9 @@ impl DockLiveUndockActive {
             } | DockLiveUndockPromotionState::Durable {
                 destination: DockLiveUndockPromotionDestination::Host(_),
                 ..
+            } | DockLiveUndockPromotionState::RecoveryRequired {
+                destination: DockLiveUndockPromotionDestination::Host(_),
+                ..
             } | DockLiveUndockPromotionState::SemanticsCommitted {
                 receipt: DockLiveUndockDestinationSemanticsReceipt {
                     destination: DockLiveUndockPromotionDestination::Host(_),
@@ -2310,8 +2405,8 @@ impl DockLiveUndockActive {
         )
     }
 
-    const fn durable_destination(&self) -> Option<DockLiveUndockPromotionDestination> {
-        match self.durable_promotion() {
+    const fn committed_destination(&self) -> Option<DockLiveUndockPromotionDestination> {
+        match self.committed_destination_recovery_promotion() {
             Some((_, destination)) => Some(destination),
             None => None,
         }
@@ -2332,8 +2427,121 @@ impl DockLiveUndockActive {
             }
             DockLiveUndockPromotionState::None
             | DockLiveUndockPromotionState::Preparing { .. }
+            | DockLiveUndockPromotionState::Prepared { .. }
+            | DockLiveUndockPromotionState::RecoveryRequired { .. } => None,
+        }
+    }
+
+    const fn committed_destination_recovery_promotion(
+        &self,
+    ) -> Option<(
+        DockLiveUndockPromotionToken,
+        DockLiveUndockPromotionDestination,
+    )> {
+        match self.promotion {
+            DockLiveUndockPromotionState::Durable { token, destination }
+            | DockLiveUndockPromotionState::RecoveryRequired { token, destination } => {
+                Some((token, destination))
+            }
+            DockLiveUndockPromotionState::SemanticsCommitted { receipt } => {
+                Some((receipt.token(), receipt.destination()))
+            }
+            DockLiveUndockPromotionState::None
+            | DockLiveUndockPromotionState::Preparing { .. }
             | DockLiveUndockPromotionState::Prepared { .. } => None,
         }
+    }
+
+    fn unproven_promotion_matches(
+        &self,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+    ) -> bool {
+        matches!(
+            self.promotion,
+            DockLiveUndockPromotionState::Preparing {
+                token: current_token,
+                destination: current_destination,
+            } | DockLiveUndockPromotionState::Prepared {
+                token: current_token,
+                destination: current_destination,
+            } if current_token == token && current_destination == destination
+        )
+    }
+
+    fn adopt_durable_promotion(
+        &mut self,
+        token: DockLiveUndockPromotionToken,
+        expected_destination: Option<DockLiveUndockPromotionDestination>,
+    ) -> Option<DockLiveUndockPromotionDestination> {
+        let destination = match self.promotion {
+            DockLiveUndockPromotionState::Preparing {
+                token: current,
+                destination,
+            }
+            | DockLiveUndockPromotionState::Prepared {
+                token: current,
+                destination,
+            }
+            | DockLiveUndockPromotionState::Durable {
+                token: current,
+                destination,
+            } if current == token => destination,
+            DockLiveUndockPromotionState::SemanticsCommitted { receipt }
+                if receipt.token() == token =>
+            {
+                receipt.destination()
+            }
+            DockLiveUndockPromotionState::None
+            | DockLiveUndockPromotionState::Preparing { .. }
+            | DockLiveUndockPromotionState::Prepared { .. }
+            | DockLiveUndockPromotionState::Durable { .. }
+            | DockLiveUndockPromotionState::RecoveryRequired { .. }
+            | DockLiveUndockPromotionState::SemanticsCommitted { .. } => return None,
+        };
+        if expected_destination.is_some_and(|expected| expected != destination) {
+            return None;
+        }
+        if matches!(
+            self.promotion,
+            DockLiveUndockPromotionState::Preparing { .. }
+                | DockLiveUndockPromotionState::Prepared { .. }
+        ) {
+            self.promotion = DockLiveUndockPromotionState::Durable { token, destination };
+        }
+        Some(destination)
+    }
+
+    fn adopt_committed_destination_recovery(
+        &mut self,
+        token: DockLiveUndockPromotionToken,
+        expected_destination: Option<DockLiveUndockPromotionDestination>,
+    ) -> Option<DockLiveUndockPromotionDestination> {
+        let destination = match self.promotion {
+            DockLiveUndockPromotionState::Preparing {
+                token: current,
+                destination,
+            }
+            | DockLiveUndockPromotionState::Prepared {
+                token: current,
+                destination,
+            }
+            | DockLiveUndockPromotionState::RecoveryRequired {
+                token: current,
+                destination,
+            } if current == token => destination,
+            DockLiveUndockPromotionState::None
+            | DockLiveUndockPromotionState::Preparing { .. }
+            | DockLiveUndockPromotionState::Prepared { .. }
+            | DockLiveUndockPromotionState::Durable { .. }
+            | DockLiveUndockPromotionState::RecoveryRequired { .. }
+            | DockLiveUndockPromotionState::SemanticsCommitted { .. } => return None,
+        };
+        if expected_destination.is_some_and(|expected| expected != destination) {
+            return None;
+        }
+        self.promotion = DockLiveUndockPromotionState::RecoveryRequired { token, destination };
+        Some(destination)
     }
 
     fn request_release_placement_if_needed(&mut self, effects: &mut DockLiveUndockEffects) {
@@ -2396,6 +2604,20 @@ struct DockLiveUndockCommittedDestinationRecovery {
     recovery_receipt: Option<DockLiveUndockCommittedDestinationRecoveryReceipt>,
     cleanup: DockLiveUndockCommittedDestinationCleanup,
     shutdown_dependency: DockLiveUndockShutdownDependency,
+}
+
+#[derive(Debug)]
+struct DockLiveUndockShutdownPromotionCommitWait {
+    active: DockLiveUndockActive,
+    token: DockLiveUndockPromotionToken,
+    destination: DockLiveUndockPromotionDestination,
+    shutdown_dependency: DockLiveUndockShutdownDependency,
+}
+
+impl DockLiveUndockShutdownPromotionCommitWait {
+    const fn identity(&self) -> DockLiveUndockIdentity {
+        self.active.identity()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2467,7 +2689,8 @@ impl DockLiveUndockCommittedDestinationRecovery {
             && receipt.authority() == self.authority
             && receipt.token() == self.token
             && receipt.destination() == self.destination
-            && self.active.durable_promotion() == Some((self.token, self.destination))
+            && self.active.committed_destination_recovery_promotion()
+                == Some((self.token, self.destination))
     }
 }
 
@@ -2501,6 +2724,7 @@ enum DockLiveUndockState {
     Compensating(DockLiveUndockSourceRestoration),
     Restoring(DockLiveUndockSourceRestoration),
     RecoveringOrphan(DockLiveUndockOrphanRecovery),
+    WaitingForPromotionCommit(DockLiveUndockShutdownPromotionCommitWait),
     RecoveringCommittedDestination(DockLiveUndockCommittedDestinationRecovery),
     ShutdownFailed {
         identity: DockLiveUndockIdentity,
@@ -2542,7 +2766,10 @@ impl DockLiveUndockSession {
     pub(crate) fn apply(&mut self, fact: DockLiveUndockFact) -> DockLiveUndockEffects {
         match fact {
             DockLiveUndockFact::Trigger { lease, trigger } => self.apply_trigger(lease, trigger),
-            DockLiveUndockFact::ShutdownRequested { lease } => self.apply_shutdown(lease),
+            DockLiveUndockFact::ShutdownRequested { lease } => self.apply_shutdown(
+                lease,
+                DockLiveUndockPromotionCommitDisposition::RollbackAllowed,
+            ),
             fact => self.apply_generation_fact(fact),
         }
     }
@@ -2630,6 +2857,11 @@ impl DockLiveUndockSession {
             }
             DockLiveUndockState::RecoveringOrphan(recovery) if recovery.identity() == identity => {
                 self.reduce_orphan_recovery(recovery, fact)
+            }
+            DockLiveUndockState::WaitingForPromotionCommit(waiting)
+                if waiting.identity() == identity =>
+            {
+                self.reduce_shutdown_promotion_commit_wait(waiting, fact)
             }
             DockLiveUndockState::RecoveringCommittedDestination(recovery)
                 if recovery.identity() == identity =>
@@ -2974,6 +3206,16 @@ impl DockLiveUndockSession {
                     });
                 }
             }
+            DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+                token, destination, ..
+            } => {
+                if active
+                    .adopt_committed_destination_recovery(token, Some(destination))
+                    .is_some()
+                {
+                    return Some(DockLiveUndockSettlement::DestinationLost(destination));
+                }
+            }
             DockLiveUndockFact::DestinationSemanticsCommitted { receipt, .. } => {
                 if let DockLiveUndockPromotionState::Durable {
                     token: current,
@@ -3038,6 +3280,7 @@ impl DockLiveUndockSession {
                     ));
                 }
                 DockLiveUndockPromotionState::Durable { destination, .. }
+                | DockLiveUndockPromotionState::RecoveryRequired { destination, .. }
                     if destination.window_id() == window_id =>
                 {
                     return Some(DockLiveUndockSettlement::DestinationLost(destination));
@@ -3052,10 +3295,11 @@ impl DockLiveUndockSession {
                 | DockLiveUndockPromotionState::Preparing { .. }
                 | DockLiveUndockPromotionState::Prepared { .. }
                 | DockLiveUndockPromotionState::Durable { .. }
+                | DockLiveUndockPromotionState::RecoveryRequired { .. }
                 | DockLiveUndockPromotionState::SemanticsCommitted { .. } => {}
             },
             DockLiveUndockFact::Cancel { reason, .. } => {
-                let precommit = active.durable_destination().is_none();
+                let precommit = active.committed_destination().is_none();
                 let accepted = active.transport == DockLiveUndockTransportState::Moving
                     || matches!(active.transport, DockLiveUndockTransportState::Released(_))
                         && reason.aborts_after_release_before_commit();
@@ -3068,13 +3312,13 @@ impl DockLiveUndockSession {
                 ));
             }
             DockLiveUndockFact::SourceWindowNativeTerminal { receipt }
-                if active.durable_destination().is_none()
+                if active.committed_destination().is_none()
                     && active.accepts_source(receipt.source()) =>
             {
                 return Some(DockLiveUndockSettlement::SourceLostBeforeCommit);
             }
             DockLiveUndockFact::PresentationAuthorityLost { receipt }
-                if active.durable_destination().is_none()
+                if active.committed_destination().is_none()
                     && active.payload.lease() == Some(receipt.payload_lease) =>
             {
                 return Some(
@@ -3092,7 +3336,7 @@ impl DockLiveUndockSession {
                         dependency: None,
                     },
                 ));
-                if let Some(destination) = active.durable_destination()
+                if let Some(destination) = active.committed_destination()
                     && destination.window_id() == window_id
                 {
                     active.provisional = DockLiveUndockProvisionalLifecycle::Terminal(window_id);
@@ -3345,12 +3589,15 @@ impl DockLiveUndockSession {
         shutdown_dependency: DockLiveUndockShutdownDependency,
         effects: &mut DockLiveUndockEffects,
     ) -> DockLiveUndockState {
-        let (token, durable_destination) = active
-            .durable_promotion()
-            .expect("a committed destination recovery must follow a durable promotion");
-        debug_assert_eq!(durable_destination, destination);
-        let authority =
-            DockPayloadRecoveryAuthority::durable_promotion(active.identity(), token, destination);
+        let (token, committed_destination) = active
+            .committed_destination_recovery_promotion()
+            .expect("a committed destination recovery must follow committed destination authority");
+        debug_assert_eq!(committed_destination, destination);
+        let authority = DockPayloadRecoveryAuthority::committed_destination(
+            active.identity(),
+            token,
+            destination,
+        );
         let cleanup = match destination {
             DockLiveUndockPromotionDestination::SameWindowDesktop { window_id } => {
                 DockLiveUndockCommittedDestinationCleanup::SameWindow {
@@ -3569,6 +3816,103 @@ impl DockLiveUndockSession {
         DockLiveUndockState::ShutdownFailed { identity, failure }
     }
 
+    fn reduce_shutdown_promotion_commit_wait(
+        &mut self,
+        mut waiting: DockLiveUndockShutdownPromotionCommitWait,
+        fact: DockLiveUndockFact,
+    ) -> (DockLiveUndockState, DockLiveUndockEffects) {
+        let mut effects = DockLiveUndockEffects::default();
+        match fact {
+            DockLiveUndockFact::DurableSwapCommitted { token, .. } if token == waiting.token => {
+                let Some(destination) = waiting
+                    .active
+                    .adopt_durable_promotion(token, Some(waiting.destination))
+                else {
+                    return (
+                        DockLiveUndockState::WaitingForPromotionCommit(waiting),
+                        effects,
+                    );
+                };
+                let state = Self::begin_committed_destination_recovery(
+                    waiting.active,
+                    destination,
+                    waiting.shutdown_dependency,
+                    &mut effects,
+                );
+                (state, effects)
+            }
+            DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+                token, destination, ..
+            } if token == waiting.token && destination == waiting.destination => {
+                let Some(destination) = waiting
+                    .active
+                    .adopt_committed_destination_recovery(token, Some(destination))
+                else {
+                    return (
+                        DockLiveUndockState::WaitingForPromotionCommit(waiting),
+                        effects,
+                    );
+                };
+                let state = Self::begin_committed_destination_recovery(
+                    waiting.active,
+                    destination,
+                    waiting.shutdown_dependency,
+                    &mut effects,
+                );
+                (state, effects)
+            }
+            DockLiveUndockFact::PromotionPreparationFailed { token, .. }
+                if token == waiting.token =>
+            {
+                waiting.active.promotion = DockLiveUndockPromotionState::None;
+                let state = if waiting.active.payload.lease().is_some() {
+                    Self::begin_source_restoration(
+                        waiting.active,
+                        DockLiveUndockRestoreReason::Shutdown,
+                        false,
+                        waiting.shutdown_dependency,
+                        &mut effects,
+                    )
+                } else {
+                    self.finish_active(
+                        waiting.active,
+                        DockLiveUndockTerminalResult::Restored(
+                            DockLiveUndockRestoreReason::Shutdown,
+                        ),
+                        Some(DockLiveUndockRetirementReason::Shutdown),
+                        waiting.shutdown_dependency,
+                        &mut effects,
+                    )
+                };
+                (state, effects)
+            }
+            DockLiveUndockFact::WindowTerminal { window_id, .. }
+                if waiting
+                    .active
+                    .owned_window()
+                    .map(|window| window.window_id())
+                    == Some(window_id) =>
+            {
+                effects.push(DockLiveUndockEffect::WindowTerminalSettled(
+                    DockLiveUndockWindowTerminalOutcome {
+                        lease: waiting.identity().opening.lease,
+                        dependency: None,
+                    },
+                ));
+                waiting.active.provisional =
+                    DockLiveUndockProvisionalLifecycle::Terminal(window_id);
+                (
+                    DockLiveUndockState::WaitingForPromotionCommit(waiting),
+                    effects,
+                )
+            }
+            _ => (
+                DockLiveUndockState::WaitingForPromotionCommit(waiting),
+                effects,
+            ),
+        }
+    }
+
     fn reduce_source_restoration(
         &mut self,
         mut restoration: DockLiveUndockSourceRestoration,
@@ -3578,6 +3922,44 @@ impl DockLiveUndockSession {
         let identity = restoration.identity();
         let mut effects = DockLiveUndockEffects::default();
         match fact {
+            DockLiveUndockFact::DurableSwapCommitted { token, .. } => {
+                let Some(destination) = restoration.active.adopt_durable_promotion(token, None)
+                else {
+                    return (
+                        Self::source_restoration_state(restoration, source_released),
+                        effects,
+                    );
+                };
+                let shutdown_dependency = restoration.shutdown_dependency;
+                let state = Self::begin_committed_destination_recovery(
+                    restoration.active,
+                    destination,
+                    shutdown_dependency,
+                    &mut effects,
+                );
+                (state, effects)
+            }
+            DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+                token, destination, ..
+            } => {
+                let Some(destination) = restoration
+                    .active
+                    .adopt_committed_destination_recovery(token, Some(destination))
+                else {
+                    return (
+                        Self::source_restoration_state(restoration, source_released),
+                        effects,
+                    );
+                };
+                let shutdown_dependency = restoration.shutdown_dependency;
+                let state = Self::begin_committed_destination_recovery(
+                    restoration.active,
+                    destination,
+                    shutdown_dependency,
+                    &mut effects,
+                );
+                (state, effects)
+            }
             DockLiveUndockFact::SourceRestorationCommitted { receipt, .. }
                 if restoration.accepts_receipt(receipt)
                     && if source_released {
@@ -3696,6 +4078,37 @@ impl DockLiveUndockSession {
         let identity = recovery.identity();
         let mut effects = DockLiveUndockEffects::default();
         match fact {
+            DockLiveUndockFact::DurableSwapCommitted { token, .. } => {
+                let Some(destination) = recovery.active.adopt_durable_promotion(token, None) else {
+                    return (DockLiveUndockState::RecoveringOrphan(recovery), effects);
+                };
+                let shutdown_dependency = recovery.shutdown_dependency;
+                let state = Self::begin_committed_destination_recovery(
+                    recovery.active,
+                    destination,
+                    shutdown_dependency,
+                    &mut effects,
+                );
+                (state, effects)
+            }
+            DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+                token, destination, ..
+            } => {
+                let Some(destination) = recovery
+                    .active
+                    .adopt_committed_destination_recovery(token, Some(destination))
+                else {
+                    return (DockLiveUndockState::RecoveringOrphan(recovery), effects);
+                };
+                let shutdown_dependency = recovery.shutdown_dependency;
+                let state = Self::begin_committed_destination_recovery(
+                    recovery.active,
+                    destination,
+                    shutdown_dependency,
+                    &mut effects,
+                );
+                (state, effects)
+            }
             DockLiveUndockFact::OrphanRecoveryCommitted { receipt, .. }
             | DockLiveUndockFact::OrphanRecoveryFailed { receipt, .. }
                 if recovery.accepts(receipt) =>
@@ -3805,14 +4218,25 @@ impl DockLiveUndockSession {
                     terminal: false,
                     retirement_requested,
                 } = &mut recovery.cleanup
-                    && !*retirement_requested
                 {
-                    *retirement_requested = true;
-                    effects.push(DockLiveUndockEffect::RetireCommittedSameWindowDestination {
-                        identity,
-                        token: recovery.token,
-                        window_id: *window_id,
-                    });
+                    if receipt.same_window_terminal_required() {
+                        if !*retirement_requested {
+                            *retirement_requested = true;
+                            effects.push(
+                                DockLiveUndockEffect::RetireCommittedSameWindowDestination {
+                                    identity,
+                                    token: recovery.token,
+                                    window_id: *window_id,
+                                },
+                            );
+                        }
+                    } else {
+                        recovery.cleanup = DockLiveUndockCommittedDestinationCleanup::SameWindow {
+                            window_id: *window_id,
+                            terminal: true,
+                            retirement_requested: *retirement_requested,
+                        };
+                    }
                 }
             }
             DockLiveUndockFact::ShutdownCommittedDestinationRecoveryFailed {
@@ -3824,7 +4248,8 @@ impl DockLiveUndockSession {
             } if recovery.authority == authority
                 && recovery.token == token
                 && recovery.destination == destination
-                && recovery.active.durable_promotion() == Some((token, destination))
+                && recovery.active.committed_destination_recovery_promotion()
+                    == Some((token, destination))
                 && !matches!(
                     recovery.shutdown_dependency,
                     DockLiveUndockShutdownDependency::Unclaimed
@@ -3975,66 +4400,225 @@ impl DockLiveUndockSession {
         }
     }
 
-    fn apply_shutdown(&mut self, lease: DockSurfaceWindowSessionLease) -> DockLiveUndockEffects {
+    fn apply_shutdown(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        promotion_commit: DockLiveUndockPromotionCommitDisposition,
+    ) -> DockLiveUndockEffects {
         let state = std::mem::replace(&mut self.state, DockLiveUndockState::Idle);
         let mut effects = DockLiveUndockEffects::default();
         self.state = match state {
-            DockLiveUndockState::Active(active) if active.identity().opening.lease == lease => {
+            DockLiveUndockState::Active(mut active) if active.identity().opening.lease == lease => {
                 let identity = active.identity();
-                let dependency =
-                    DockSurfaceWindowSessionDependencyId::live_undock(identity.opening.generation);
-                effects.push(DockLiveUndockEffect::ShutdownFrozen(
-                    DockLiveUndockShutdownSnapshot {
+                let mut shutdown_dependency = DockLiveUndockShutdownDependency::Unclaimed;
+                Self::freeze_active_shutdown_dependency(
+                    &active,
+                    &mut shutdown_dependency,
+                    &mut effects,
+                );
+                if let Some((token, destination)) = promotion_commit.forward_only_for(identity)
+                    && active.unproven_promotion_matches(token, destination)
+                {
+                    effects.push(DockLiveUndockEffect::CommitPreparedPromotion {
                         identity,
-                        dependency,
-                        window: active.owned_window(),
-                    },
-                ));
-                let shutdown_dependency = DockLiveUndockShutdownDependency::Claimed(dependency);
-                if let Some(destination) = active.durable_destination() {
-                    Self::begin_committed_destination_recovery(
-                        active,
+                        token,
                         destination,
-                        shutdown_dependency,
-                        &mut effects,
-                    )
-                } else if active.payload.lease().is_some() {
-                    Self::begin_source_restoration(
-                        active,
-                        DockLiveUndockRestoreReason::Shutdown,
-                        false,
-                        shutdown_dependency,
-                        &mut effects,
+                    });
+                    DockLiveUndockState::WaitingForPromotionCommit(
+                        DockLiveUndockShutdownPromotionCommitWait {
+                            active,
+                            token,
+                            destination,
+                            shutdown_dependency,
+                        },
                     )
                 } else {
-                    self.finish_active(
-                        active,
-                        DockLiveUndockTerminalResult::Restored(
+                    let runtime_durable = promotion_commit.durable_for(identity);
+                    let reducer_durable = active.durable_promotion();
+                    let committed = runtime_durable.or(reducer_durable);
+                    if let Some((token, destination)) = committed {
+                        active
+                            .adopt_durable_promotion(token, Some(destination))
+                            .expect("runtime promotion commit must match the reducer promotion");
+                        Self::begin_committed_destination_recovery(
+                            active,
+                            destination,
+                            shutdown_dependency,
+                            &mut effects,
+                        )
+                    } else if active.payload.lease().is_some() {
+                        Self::begin_source_restoration(
+                            active,
                             DockLiveUndockRestoreReason::Shutdown,
-                        ),
-                        Some(DockLiveUndockRetirementReason::Shutdown),
-                        shutdown_dependency,
-                        &mut effects,
-                    )
+                            false,
+                            shutdown_dependency,
+                            &mut effects,
+                        )
+                    } else {
+                        self.finish_active(
+                            active,
+                            DockLiveUndockTerminalResult::Restored(
+                                DockLiveUndockRestoreReason::Shutdown,
+                            ),
+                            Some(DockLiveUndockRetirementReason::Shutdown),
+                            shutdown_dependency,
+                            &mut effects,
+                        )
+                    }
                 }
             }
             DockLiveUndockState::Compensating(mut restoration)
                 if restoration.identity().opening.lease == lease =>
             {
-                Self::freeze_source_restoration_for_shutdown(&mut restoration, &mut effects);
-                DockLiveUndockState::Compensating(restoration)
+                if let Some((token, destination)) =
+                    promotion_commit.forward_only_for(restoration.identity())
+                    && restoration
+                        .active
+                        .unproven_promotion_matches(token, destination)
+                {
+                    Self::freeze_active_shutdown_dependency(
+                        &restoration.active,
+                        &mut restoration.shutdown_dependency,
+                        &mut effects,
+                    );
+                    effects.push(DockLiveUndockEffect::CommitPreparedPromotion {
+                        identity: restoration.identity(),
+                        token,
+                        destination,
+                    });
+                    DockLiveUndockState::WaitingForPromotionCommit(
+                        DockLiveUndockShutdownPromotionCommitWait {
+                            active: restoration.active,
+                            token,
+                            destination,
+                            shutdown_dependency: restoration.shutdown_dependency,
+                        },
+                    )
+                } else if let Some((token, destination)) =
+                    promotion_commit.durable_for(restoration.identity())
+                {
+                    Self::freeze_active_shutdown_dependency(
+                        &restoration.active,
+                        &mut restoration.shutdown_dependency,
+                        &mut effects,
+                    );
+                    restoration
+                        .active
+                        .adopt_durable_promotion(token, Some(destination))
+                        .expect("runtime promotion commit must match source compensation");
+                    let shutdown_dependency = restoration.shutdown_dependency;
+                    Self::begin_committed_destination_recovery(
+                        restoration.active,
+                        destination,
+                        shutdown_dependency,
+                        &mut effects,
+                    )
+                } else {
+                    Self::freeze_source_restoration_for_shutdown(&mut restoration, &mut effects);
+                    DockLiveUndockState::Compensating(restoration)
+                }
             }
             DockLiveUndockState::Restoring(mut restoration)
                 if restoration.identity().opening.lease == lease =>
             {
-                Self::freeze_source_restoration_for_shutdown(&mut restoration, &mut effects);
-                DockLiveUndockState::Restoring(restoration)
+                if let Some((token, destination)) =
+                    promotion_commit.forward_only_for(restoration.identity())
+                    && restoration
+                        .active
+                        .unproven_promotion_matches(token, destination)
+                {
+                    Self::freeze_active_shutdown_dependency(
+                        &restoration.active,
+                        &mut restoration.shutdown_dependency,
+                        &mut effects,
+                    );
+                    effects.push(DockLiveUndockEffect::CommitPreparedPromotion {
+                        identity: restoration.identity(),
+                        token,
+                        destination,
+                    });
+                    DockLiveUndockState::WaitingForPromotionCommit(
+                        DockLiveUndockShutdownPromotionCommitWait {
+                            active: restoration.active,
+                            token,
+                            destination,
+                            shutdown_dependency: restoration.shutdown_dependency,
+                        },
+                    )
+                } else if let Some((token, destination)) =
+                    promotion_commit.durable_for(restoration.identity())
+                {
+                    Self::freeze_active_shutdown_dependency(
+                        &restoration.active,
+                        &mut restoration.shutdown_dependency,
+                        &mut effects,
+                    );
+                    restoration
+                        .active
+                        .adopt_durable_promotion(token, Some(destination))
+                        .expect("runtime promotion commit must match source restoration");
+                    let shutdown_dependency = restoration.shutdown_dependency;
+                    Self::begin_committed_destination_recovery(
+                        restoration.active,
+                        destination,
+                        shutdown_dependency,
+                        &mut effects,
+                    )
+                } else {
+                    Self::freeze_source_restoration_for_shutdown(&mut restoration, &mut effects);
+                    DockLiveUndockState::Restoring(restoration)
+                }
             }
             DockLiveUndockState::RecoveringOrphan(mut recovery)
                 if recovery.identity().opening.lease == lease =>
             {
-                Self::freeze_orphan_recovery_for_shutdown(&mut recovery, &mut effects);
-                DockLiveUndockState::RecoveringOrphan(recovery)
+                if let Some((token, destination)) =
+                    promotion_commit.forward_only_for(recovery.identity())
+                    && recovery
+                        .active
+                        .unproven_promotion_matches(token, destination)
+                {
+                    Self::freeze_active_shutdown_dependency(
+                        &recovery.active,
+                        &mut recovery.shutdown_dependency,
+                        &mut effects,
+                    );
+                    effects.push(DockLiveUndockEffect::CommitPreparedPromotion {
+                        identity: recovery.identity(),
+                        token,
+                        destination,
+                    });
+                    DockLiveUndockState::WaitingForPromotionCommit(
+                        DockLiveUndockShutdownPromotionCommitWait {
+                            active: recovery.active,
+                            token,
+                            destination,
+                            shutdown_dependency: recovery.shutdown_dependency,
+                        },
+                    )
+                } else if let Some((token, destination)) =
+                    promotion_commit.durable_for(recovery.identity())
+                {
+                    Self::freeze_active_shutdown_dependency(
+                        &recovery.active,
+                        &mut recovery.shutdown_dependency,
+                        &mut effects,
+                    );
+                    recovery
+                        .active
+                        .adopt_durable_promotion(token, Some(destination))
+                        .expect("runtime promotion commit must match orphan recovery");
+                    let shutdown_dependency = recovery.shutdown_dependency;
+                    Self::begin_committed_destination_recovery(
+                        recovery.active,
+                        destination,
+                        shutdown_dependency,
+                        &mut effects,
+                    )
+                } else {
+                    Self::freeze_orphan_recovery_for_shutdown(&mut recovery, &mut effects);
+                    DockLiveUndockState::RecoveringOrphan(recovery)
+                }
             }
             DockLiveUndockState::RecoveringCommittedDestination(mut recovery)
                 if recovery.identity().opening.lease == lease =>
@@ -4044,6 +4628,16 @@ impl DockLiveUndockSession {
                     &mut effects,
                 );
                 DockLiveUndockState::RecoveringCommittedDestination(recovery)
+            }
+            DockLiveUndockState::WaitingForPromotionCommit(mut waiting)
+                if waiting.identity().opening.lease == lease =>
+            {
+                Self::freeze_active_shutdown_dependency(
+                    &waiting.active,
+                    &mut waiting.shutdown_dependency,
+                    &mut effects,
+                );
+                DockLiveUndockState::WaitingForPromotionCommit(waiting)
             }
             DockLiveUndockState::Retiring(mut retiring)
                 if retiring.identity().opening.lease == lease =>
@@ -4081,6 +4675,31 @@ impl DockLiveUndockSession {
             state => state,
         };
         effects
+    }
+
+    fn freeze_active_shutdown_dependency(
+        active: &DockLiveUndockActive,
+        shutdown_dependency: &mut DockLiveUndockShutdownDependency,
+        effects: &mut DockLiveUndockEffects,
+    ) {
+        let identity = active.identity();
+        let dependency = match *shutdown_dependency {
+            DockLiveUndockShutdownDependency::Unclaimed => {
+                let dependency =
+                    DockSurfaceWindowSessionDependencyId::live_undock(identity.opening.generation);
+                *shutdown_dependency = DockLiveUndockShutdownDependency::Claimed(dependency);
+                dependency
+            }
+            DockLiveUndockShutdownDependency::Claimed(dependency) => dependency,
+            DockLiveUndockShutdownDependency::Transferred => return,
+        };
+        effects.push(DockLiveUndockEffect::ShutdownFrozen(
+            DockLiveUndockShutdownSnapshot {
+                identity,
+                dependency,
+                window: active.owned_window(),
+            },
+        ));
     }
 
     fn freeze_source_restoration_for_shutdown(
@@ -4186,8 +4805,9 @@ impl DockLiveUndockSession {
     pub(crate) fn freeze_for_shutdown(
         &mut self,
         lease: DockSurfaceWindowSessionLease,
+        promotion_commit: DockLiveUndockPromotionCommitDisposition,
     ) -> DockLiveUndockTransition<Option<DockLiveUndockShutdownSnapshot>> {
-        let effects = self.apply(DockLiveUndockFact::ShutdownRequested { lease });
+        let effects = self.apply_shutdown(lease, promotion_commit);
         let outcome = effects.as_slice().iter().find_map(|effect| match effect {
             DockLiveUndockEffect::ShutdownFrozen(snapshot) => Some(*snapshot),
             _ => None,
@@ -4249,6 +4869,18 @@ impl DockLiveUndockSession {
                     window: recovery.active.owned_window(),
                 })
             }
+            DockLiveUndockState::WaitingForPromotionCommit(waiting)
+                if waiting.identity().opening.lease == lease =>
+            {
+                Some(DockLiveUndockShutdownSnapshot {
+                    identity: waiting.identity(),
+                    dependency: waiting
+                        .shutdown_dependency
+                        .claimed()
+                        .expect("promotion commit wait must retain its shutdown dependency"),
+                    window: waiting.active.owned_window(),
+                })
+            }
             DockLiveUndockState::RecoveringCommittedDestination(recovery)
                 if recovery.identity().opening.lease == lease =>
             {
@@ -4292,6 +4924,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Compensating(_)
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
+            | DockLiveUndockState::WaitingForPromotionCommit(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
             | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => None,
@@ -4368,6 +5001,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Compensating(_)
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
+            | DockLiveUndockState::WaitingForPromotionCommit(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
             | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => None,
@@ -4405,6 +5039,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Compensating(_)
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
+            | DockLiveUndockState::WaitingForPromotionCommit(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
             | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => {
@@ -4511,6 +5146,15 @@ impl DockLiveUndockSession {
             {
                 Some(recovery.identity().opening.lease)
             }
+            DockLiveUndockState::WaitingForPromotionCommit(waiting)
+                if waiting
+                    .active
+                    .owned_window()
+                    .map(|window| window.window_id())
+                    == Some(window_id) =>
+            {
+                Some(waiting.identity().opening.lease)
+            }
             DockLiveUndockState::RecoveringCommittedDestination(recovery)
                 if recovery
                     .active
@@ -4530,6 +5174,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Compensating(_)
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
+            | DockLiveUndockState::WaitingForPromotionCommit(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
             | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => None,
@@ -4565,6 +5210,15 @@ impl DockLiveUndockSession {
             {
                 recovery.identity()
             }
+            DockLiveUndockState::WaitingForPromotionCommit(waiting)
+                if waiting
+                    .active
+                    .owned_window()
+                    .map(|window| window.window_id())
+                    == Some(window_id) =>
+            {
+                waiting.identity()
+            }
             DockLiveUndockState::RecoveringCommittedDestination(recovery)
                 if recovery
                     .active
@@ -4584,6 +5238,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockState::Compensating(_)
             | DockLiveUndockState::Restoring(_)
             | DockLiveUndockState::RecoveringOrphan(_)
+            | DockLiveUndockState::WaitingForPromotionCommit(_)
             | DockLiveUndockState::RecoveringCommittedDestination(_)
             | DockLiveUndockState::ShutdownFailed { .. }
             | DockLiveUndockState::Retiring(_) => {
@@ -4613,6 +5268,9 @@ impl DockLiveUndockSession {
             DockLiveUndockState::Compensating(_) => DockLiveUndockPhase::Compensating,
             DockLiveUndockState::Restoring(_) => DockLiveUndockPhase::Restoring,
             DockLiveUndockState::RecoveringOrphan(_) => DockLiveUndockPhase::RecoveringOrphan,
+            DockLiveUndockState::WaitingForPromotionCommit(_) => {
+                DockLiveUndockPhase::WaitingForPromotionCommit
+            }
             DockLiveUndockState::RecoveringCommittedDestination(_) => {
                 DockLiveUndockPhase::RecoveringCommittedDestination
             }
@@ -4630,6 +5288,7 @@ impl DockLiveUndockSession {
             DockLiveUndockState::Compensating(restoration)
             | DockLiveUndockState::Restoring(restoration) => Some(restoration.identity()),
             DockLiveUndockState::RecoveringOrphan(recovery) => Some(recovery.identity()),
+            DockLiveUndockState::WaitingForPromotionCommit(waiting) => Some(waiting.identity()),
             DockLiveUndockState::RecoveringCommittedDestination(recovery) => {
                 Some(recovery.identity())
             }
@@ -4681,5 +5340,535 @@ impl DockLiveUndockSession {
 impl Default for DockLiveUndockSession {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod promotion_commit_wait_tests {
+    use super::*;
+    use open_gpui::{Empty, EntityId, WindowHandle};
+
+    fn prepared_session() -> (
+        DockLiveUndockSession,
+        DockLiveUndockIdentity,
+        DockSurfaceWindowSessionLease,
+        DockLiveUndockPromotionToken,
+        DockLiveUndockPromotionDestination,
+    ) {
+        let mut window_session =
+            super::super::window_session::DockSurfaceWindowSession::new(EntityId::from(41));
+        let opening = window_session.reserve_opening().expect("G1 should reserve");
+        let lease = window_session
+            .commit_opening(opening, WindowId::from(42))
+            .expect("G1 should activate");
+        let identity = DockLiveUndockIdentity {
+            opening: DockLiveUndockOpeningKey {
+                lease,
+                generation: 1,
+            },
+            drag_generation: DockLiveUndockDragGeneration::new(1)
+                .expect("test drag generation is non-zero"),
+        };
+        let token = DockLiveUndockPromotionToken::new(1).expect("test promotion token is non-zero");
+        let destination = DockLiveUndockPromotionDestination::SameWindowDesktop {
+            window_id: WindowId::from(43),
+        };
+        let active = DockLiveUndockActive {
+            opening: DockLiveUndockOpening {
+                identity,
+                provisional_session: WindowProvisionalSession::new(1)
+                    .expect("test provisional generation is valid"),
+            },
+            source: DockLiveUndockSourceSnapshot::new(WindowId::from(44), 1),
+            provisional: DockLiveUndockProvisionalLifecycle::Opening,
+            transport: DockLiveUndockTransportState::Released(DockLiveUndockReleaseLock::new(
+                DockLiveUndockPhysicalPoint::new(10, 10),
+                DockLiveUndockRouteFeedback::Desktop,
+                DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(0, 0), 100, 100)
+                    .expect("test release bounds are non-empty"),
+                DockLiveUndockPlacementGeneration::new(1)
+                    .expect("test placement generation is non-zero"),
+            )),
+            source_transport_proxy_active: false,
+            route: Some(DockLiveUndockRouteFeedback::Desktop),
+            payload: DockLiveUndockPayloadState::Unclaimed,
+            presentation: DockLiveUndockPresentationObservation::default(),
+            placement: None,
+            placement_request_generation: None,
+            promotion: DockLiveUndockPromotionState::Prepared { token, destination },
+        };
+        let session = DockLiveUndockSession {
+            last_opening_generation: 1,
+            last_triggered_drag_generation: 1,
+            last_promotion_token: 1,
+            last_terminal_drag_generation: 0,
+            state: DockLiveUndockState::Active(active),
+        };
+        (session, identity, lease, token, destination)
+    }
+
+    fn bound_prepared_session() -> (
+        DockLiveUndockSession,
+        DockLiveUndockIdentity,
+        DockSurfaceWindowSessionLease,
+        DockLiveUndockPromotionToken,
+        DockLiveUndockPromotionDestination,
+    ) {
+        let (mut session, identity, lease, token, destination) = prepared_session();
+        let window: AnyWindowHandle = WindowHandle::<Empty>::new(destination.window_id()).into();
+        let DockLiveUndockState::Active(active) = &mut session.state else {
+            unreachable!("the prepared test session must be active");
+        };
+        active.provisional = DockLiveUndockProvisionalLifecycle::Bound {
+            window,
+            runtime: DockViewportProvisionalOpenAttemptCompletion::admitted_for_test(
+                window.window_id(),
+                identity.opening(),
+            ),
+        };
+        (session, identity, lease, token, destination)
+    }
+
+    fn freeze_in_flight(
+        session: &mut DockLiveUndockSession,
+        identity: DockLiveUndockIdentity,
+        lease: DockSurfaceWindowSessionLease,
+        token: DockLiveUndockPromotionToken,
+        destination: DockLiveUndockPromotionDestination,
+    ) -> DockLiveUndockEffects {
+        session
+            .freeze_for_shutdown(
+                lease,
+                DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                    identity,
+                    token,
+                    destination,
+                },
+            )
+            .into_parts()
+            .1
+    }
+
+    #[test]
+    fn active_shutdown_in_flight_only_freezes_and_commits() {
+        let (mut session, identity, lease, token, destination) = prepared_session();
+        let effects = freeze_in_flight(&mut session, identity, lease, token, destination);
+
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                DockLiveUndockEffect::ShutdownFrozen(_),
+                DockLiveUndockEffect::CommitPreparedPromotion {
+                    identity: current_identity,
+                    token: current_token,
+                    destination: current_destination,
+                },
+            ] if *current_identity == identity
+                && *current_token == token
+                && *current_destination == destination
+        ));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::WaitingForPromotionCommit
+        );
+    }
+
+    #[test]
+    fn repeated_shutdown_freeze_replays_snapshot_without_restarting_commit() {
+        let (mut session, identity, lease, token, destination) = prepared_session();
+        let (first_snapshot, first_effects) = session
+            .freeze_for_shutdown(
+                lease,
+                DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                    identity,
+                    token,
+                    destination,
+                },
+            )
+            .into_parts();
+        assert!(
+            first_effects.as_slice().iter().any(|effect| matches!(
+                effect,
+                DockLiveUndockEffect::CommitPreparedPromotion { .. }
+            ))
+        );
+
+        let (repeated_snapshot, repeated_effects) = session
+            .freeze_for_shutdown(
+                lease,
+                DockLiveUndockPromotionCommitDisposition::ForwardOnly {
+                    identity,
+                    token,
+                    destination,
+                },
+            )
+            .into_parts();
+
+        assert_eq!(repeated_snapshot, first_snapshot);
+        assert!(matches!(
+            repeated_effects.as_slice(),
+            [DockLiveUndockEffect::ShutdownFrozen(snapshot)]
+                if Some(*snapshot) == first_snapshot
+        ));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::WaitingForPromotionCommit
+        );
+    }
+
+    #[test]
+    fn terminal_window_before_durable_is_preserved_for_committed_recovery() {
+        let (mut session, identity, lease, token, destination) = bound_prepared_session();
+        freeze_in_flight(&mut session, identity, lease, token, destination);
+
+        let (terminal, terminal_effects) = session
+            .settle_window_terminal(destination.window_id())
+            .into_parts();
+        assert!(terminal.is_some_and(|terminal| {
+            terminal.lease() == lease && terminal.dependency().is_none()
+        }));
+        assert!(matches!(
+            terminal_effects.as_slice(),
+            [DockLiveUndockEffect::WindowTerminalSettled(_)]
+        ));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::WaitingForPromotionCommit
+        );
+
+        let effects = session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired { .. }
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RetireCommittedSameWindowDestination { .. }
+                | DockLiveUndockEffect::WindowTerminalSettled(_)
+        )));
+        let DockLiveUndockState::RecoveringCommittedDestination(recovery) = &session.state else {
+            panic!("durable promotion must begin committed destination recovery");
+        };
+        assert!(matches!(
+            recovery.cleanup,
+            DockLiveUndockCommittedDestinationCleanup::SameWindow {
+                window_id,
+                terminal: true,
+                retirement_requested: false,
+            } if window_id == destination.window_id()
+        ));
+    }
+
+    #[test]
+    fn terminal_window_before_forward_recovery_preserves_shutdown_dependency() {
+        let (mut session, identity, lease, token, destination) = bound_prepared_session();
+        freeze_in_flight(&mut session, identity, lease, token, destination);
+        let (terminal, _) = session
+            .settle_window_terminal(destination.window_id())
+            .into_parts();
+        assert!(terminal.is_some());
+
+        let effects = session.apply(DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+            identity,
+            token,
+            destination,
+        });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                identity: current_identity,
+                token: current_token,
+                destination: current_destination,
+                ..
+            } if *current_identity == identity
+                && *current_token == token
+                && *current_destination == destination
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ProvisionalRetirementRequired { .. }
+                | DockLiveUndockEffect::WindowTerminalSettled(_)
+        )));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+        let DockLiveUndockState::RecoveringCommittedDestination(recovery) = &session.state else {
+            panic!("forward-only promotion must begin committed destination recovery");
+        };
+        assert!(matches!(
+            recovery.cleanup,
+            DockLiveUndockCommittedDestinationCleanup::SameWindow {
+                window_id,
+                terminal: true,
+                retirement_requested: false,
+            } if window_id == destination.window_id()
+        ));
+    }
+
+    #[test]
+    fn terminal_window_before_preparation_failure_settles_shutdown_without_retirement() {
+        let (mut session, identity, lease, token, destination) = bound_prepared_session();
+        freeze_in_flight(&mut session, identity, lease, token, destination);
+        let (terminal, _) = session
+            .settle_window_terminal(destination.window_id())
+            .into_parts();
+        assert!(terminal.is_some());
+
+        let effects =
+            session.apply(DockLiveUndockFact::PromotionPreparationFailed { identity, token });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::SettleShutdownDependency { .. }
+        )));
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::PublishTerminal {
+                result: DockLiveUndockTerminalResult::Restored(
+                    DockLiveUndockRestoreReason::Shutdown,
+                ),
+                ..
+            }
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ProvisionalRetirementRequired { .. }
+                | DockLiveUndockEffect::WindowTerminalSettled(_)
+        )));
+        assert_eq!(session.phase(), DockLiveUndockPhase::Idle);
+    }
+
+    #[test]
+    fn durable_fact_pivots_wait_to_committed_destination_recovery() {
+        let (mut session, identity, lease, token, destination) = prepared_session();
+        freeze_in_flight(&mut session, identity, lease, token, destination);
+
+        let effects = session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                identity: current_identity,
+                token: current_token,
+                destination: current_destination,
+                ..
+            } if *current_identity == identity
+                && *current_token == token
+                && *current_destination == destination
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RestoreSource { .. }
+                | DockLiveUndockEffect::RecoverOrphanedPayloadTopology { .. }
+        )));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
+
+    #[test]
+    fn forward_recovery_pivots_wait_without_source_restore() {
+        let (mut session, identity, lease, token, destination) = prepared_session();
+        freeze_in_flight(&mut session, identity, lease, token, destination);
+
+        let effects = session.apply(DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+            identity,
+            token,
+            destination,
+        });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                identity: current_identity,
+                token: current_token,
+                destination: current_destination,
+                ..
+            } if *current_identity == identity
+                && *current_token == token
+                && *current_destination == destination
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RestoreSource { .. }
+                | DockLiveUndockEffect::ShutdownSourceRestorationRequired { .. }
+                | DockLiveUndockEffect::RecoverOrphanedPayloadTopology { .. }
+                | DockLiveUndockEffect::PublishTerminal { .. }
+                | DockLiveUndockEffect::FailShutdownDependency { .. }
+        )));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
+
+    #[test]
+    fn stale_token_does_not_resolve_promotion_commit_wait() {
+        let (mut session, identity, lease, token, destination) = prepared_session();
+        freeze_in_flight(&mut session, identity, lease, token, destination);
+        let stale_token = DockLiveUndockPromotionToken::new(token.get() + 1)
+            .expect("stale test token is non-zero");
+
+        assert!(
+            session
+                .apply(DockLiveUndockFact::DurableSwapCommitted {
+                    identity,
+                    token: stale_token,
+                })
+                .is_empty()
+        );
+        assert!(
+            session
+                .apply(DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+                    identity,
+                    token: stale_token,
+                    destination,
+                })
+                .is_empty()
+        );
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::WaitingForPromotionCommit
+        );
+    }
+
+    #[test]
+    fn active_forward_recovery_begins_committed_destination_recovery() {
+        let (mut session, identity, _, token, destination) = prepared_session();
+
+        let effects = session.apply(DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+            identity,
+            token,
+            destination,
+        });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RecoverCommittedDestinationTopology {
+                identity: current_identity,
+                token: current_token,
+                destination: current_destination,
+                ..
+            } if *current_identity == identity
+                && *current_token == token
+                && *current_destination == destination
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RestoreSource { .. }
+                | DockLiveUndockEffect::RecoverOrphanedPayloadTopology { .. }
+                | DockLiveUndockEffect::PublishTerminal { .. }
+        )));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
+
+    #[test]
+    fn source_restoration_pivots_to_committed_destination_recovery() {
+        let (mut session, identity, _, token, destination) = prepared_session();
+        let DockLiveUndockState::Active(active) =
+            std::mem::replace(&mut session.state, DockLiveUndockState::Idle)
+        else {
+            unreachable!("the prepared test session must be active");
+        };
+        session.state = DockLiveUndockState::Restoring(DockLiveUndockSourceRestoration {
+            active,
+            reason: DockLiveUndockRestoreReason::Cancelled(DockLiveUndockCancelReason::Escape),
+            restore_focus: false,
+            shutdown_dependency: DockLiveUndockShutdownDependency::Unclaimed,
+        });
+
+        let effects = session.apply(DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+            identity,
+            token,
+            destination,
+        });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RecoverCommittedDestinationTopology {
+                identity: current_identity,
+                token: current_token,
+                destination: current_destination,
+                ..
+            } if *current_identity == identity
+                && *current_token == token
+                && *current_destination == destination
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RestoreSource { .. }
+                | DockLiveUndockEffect::RecoverOrphanedPayloadTopology { .. }
+                | DockLiveUndockEffect::PublishTerminal { .. }
+        )));
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
+    }
+
+    #[test]
+    fn shutdown_orphan_recovery_pivots_to_committed_destination_recovery() {
+        let (mut session, identity, _, token, destination) = prepared_session();
+        let DockLiveUndockState::Active(mut active) =
+            std::mem::replace(&mut session.state, DockLiveUndockState::Idle)
+        else {
+            unreachable!("the prepared test session must be active");
+        };
+        let payload_lease = DockLiveUndockPayloadLeaseReceipt::for_test(
+            identity,
+            active.source,
+            DockLiveUndockPresentationLeaseGeneration::new(1)
+                .expect("test presentation generation is non-zero"),
+            destination.window_id(),
+        );
+        active.payload = DockLiveUndockPayloadState::AwaitingSourceProxy(payload_lease);
+        let dependency = DockSurfaceWindowSessionDependencyId::live_undock(7);
+        session.state = DockLiveUndockState::RecoveringOrphan(DockLiveUndockOrphanRecovery {
+            active,
+            payload_lease,
+            cause: DockLiveUndockPayloadRecoveryCause::SourceNativeTerminal,
+            shutdown_dependency: DockLiveUndockShutdownDependency::Claimed(dependency),
+        });
+
+        let effects = session.apply(DockLiveUndockFact::CommittedDestinationRecoveryRequired {
+            identity,
+            token,
+            destination,
+        });
+
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::ShutdownCommittedDestinationRecoveryRequired {
+                identity: current_identity,
+                token: current_token,
+                destination: current_destination,
+                ..
+            } if *current_identity == identity
+                && *current_token == token
+                && *current_destination == destination
+        )));
+        assert!(!effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::FailShutdownDependency { .. }
+                | DockLiveUndockEffect::PublishTerminal { .. }
+        )));
+        let DockLiveUndockState::RecoveringCommittedDestination(recovery) = &session.state else {
+            panic!("forward-only promotion must replace orphan recovery");
+        };
+        assert_eq!(
+            recovery.shutdown_dependency,
+            DockLiveUndockShutdownDependency::Claimed(dependency)
+        );
+        assert_eq!(
+            session.phase(),
+            DockLiveUndockPhase::RecoveringCommittedDestination
+        );
     }
 }

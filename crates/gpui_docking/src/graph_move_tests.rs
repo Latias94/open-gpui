@@ -334,6 +334,9 @@ fn checked_close_item_rebinds_collapsed_central_region() {
     graph
         .validate()
         .expect("collapsed central region should validate");
+    assert!(graph.node(left).is_none());
+    assert!(graph.node(root).is_none());
+    assert_eq!(graph.stored_node_count(), graph.reachable_node_count());
 }
 
 #[test]

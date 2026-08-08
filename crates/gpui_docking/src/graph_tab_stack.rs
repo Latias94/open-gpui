@@ -49,7 +49,7 @@ impl DockGraph {
             self.remove_root(space);
         }
         if simplify {
-            self.simplify_space(space);
+            self.simplify_space_after_mutation(space);
         }
         Some(DetachedTabs {
             items,

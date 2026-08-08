@@ -14,7 +14,7 @@ use crate::{
     locked_drop_identity::DockLockedPayloadIdentity,
     viewport_registry::DockViewportRegistrationKey,
 };
-use open_gpui::{FocusHandle, WindowHandle};
+use open_gpui::{FocusHandle, WindowHandle, view_presentation_window};
 
 /// Why a live payload needs a durable surface-owned recovery entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,13 +28,13 @@ pub(crate) enum DockPayloadRecoveryReason {
 /// Exact authority for one surface-owned payload recovery record.
 ///
 /// Pre-commit orphan recovery is authorized by the presentation lease which moved the payload
-/// out of its source presentation. Post-commit recovery is instead authorized by the durable
-/// promotion identity, because an existing-host transfer may commit before a provisional
-/// presentation lease ever exists.
+/// out of its source presentation. Post-boundary recovery is instead authorized by the committed
+/// destination identity. That identity may come from a complete Dock promotion or directly from
+/// the GPUI presentation provider after it crossed its irreversible commit boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockPayloadRecoveryAuthority {
     PresentationLease(DockLiveUndockPayloadLeaseReceipt),
-    DurablePromotion {
+    CommittedDestination {
         identity: DockLiveUndockIdentity,
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
@@ -46,12 +46,12 @@ impl DockPayloadRecoveryAuthority {
         Self::PresentationLease(lease)
     }
 
-    pub(crate) const fn durable_promotion(
+    pub(crate) const fn committed_destination(
         identity: DockLiveUndockIdentity,
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
     ) -> Self {
-        Self::DurablePromotion {
+        Self::CommittedDestination {
             identity,
             token,
             destination,
@@ -61,14 +61,14 @@ impl DockPayloadRecoveryAuthority {
     pub(crate) const fn live_identity(self) -> DockLiveUndockIdentity {
         match self {
             Self::PresentationLease(lease) => lease.identity(),
-            Self::DurablePromotion { identity, .. } => identity,
+            Self::CommittedDestination { identity, .. } => identity,
         }
     }
 
     pub(crate) const fn presentation(self) -> Option<DockLiveUndockPayloadLeaseReceipt> {
         match self {
             Self::PresentationLease(lease) => Some(lease),
-            Self::DurablePromotion { .. } => None,
+            Self::CommittedDestination { .. } => None,
         }
     }
 
@@ -81,7 +81,7 @@ impl DockPayloadRecoveryAuthority {
     )> {
         match self {
             Self::PresentationLease(_) => None,
-            Self::DurablePromotion {
+            Self::CommittedDestination {
                 identity,
                 token,
                 destination,
@@ -96,7 +96,7 @@ impl DockPayloadRecoveryAuthority {
                 Self::PresentationLease(_),
                 DockPayloadRecoveryReason::PreCommitOrphan
             ) | (
-                Self::DurablePromotion { .. },
+                Self::CommittedDestination { .. },
                 DockPayloadRecoveryReason::LostViewportRecovery
             )
         )
@@ -126,16 +126,22 @@ pub(crate) enum DockPayloadRecoveryDisposition {
     Unresolved,
 }
 
-/// Exact presentation host that owned one durable payload when recovery was committed.
+/// Exact presentation authority that owned one committed payload when recovery was recorded.
 ///
-/// The handle does not keep the window alive. Restore must revalidate the root Host, binding, and
-/// viewport registration before using it as a presentation source. A missing root is therefore an
-/// exact terminal fact rather than permission to guess another source window.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DockPayloadRecoveryPresentationOrigin {
-    window: WindowHandle<DockHost>,
-    binding: DockHostWindowBinding,
-    registration: DockViewportRegistrationKey,
+/// A registered Host origin must revalidate its root Host, binding, and viewport registration. A
+/// provider-terminal origin instead carries the exact immutable lease batch that crossed GPUI's
+/// commit boundary. Neither variant keeps the window alive or permits guessing another source.
+#[derive(Clone, Debug)]
+pub(crate) enum DockPayloadRecoveryPresentationOrigin {
+    RegisteredHost {
+        window: WindowHandle<DockHost>,
+        binding: DockHostWindowBinding,
+        registration: DockViewportRegistrationKey,
+    },
+    ProviderTerminal {
+        window: WindowHandle<DockHost>,
+        leases: view_presentation_window::LeaseBatch,
+    },
 }
 
 impl DockPayloadRecoveryPresentationOrigin {
@@ -146,7 +152,7 @@ impl DockPayloadRecoveryPresentationOrigin {
     ) -> Option<Self> {
         let window_id = window.window_id();
         (binding.window_id() == window_id && registration.window_id() == window_id).then_some(
-            Self {
+            Self::RegisteredHost {
                 window,
                 binding,
                 registration,
@@ -154,18 +160,77 @@ impl DockPayloadRecoveryPresentationOrigin {
         )
     }
 
+    pub(crate) fn provider_terminal(
+        window: WindowHandle<DockHost>,
+        leases: view_presentation_window::LeaseBatch,
+    ) -> Option<Self> {
+        (window.window_id() == leases.window_id())
+            .then_some(Self::ProviderTerminal { window, leases })
+    }
+
     pub(crate) const fn window(&self) -> WindowHandle<DockHost> {
-        self.window
+        match self {
+            Self::RegisteredHost { window, .. } | Self::ProviderTerminal { window, .. } => *window,
+        }
     }
 
-    pub(crate) const fn binding(&self) -> DockHostWindowBinding {
-        self.binding
+    pub(crate) fn registered_host(
+        &self,
+    ) -> Option<(DockHostWindowBinding, &DockViewportRegistrationKey)> {
+        match self {
+            Self::RegisteredHost {
+                binding,
+                registration,
+                ..
+            } => Some((*binding, registration)),
+            Self::ProviderTerminal { .. } => None,
+        }
     }
 
-    pub(crate) fn registration(&self) -> &DockViewportRegistrationKey {
-        &self.registration
+    pub(crate) fn provider_terminal_leases(&self) -> Option<&view_presentation_window::LeaseBatch> {
+        match self {
+            Self::ProviderTerminal { leases, .. } => Some(leases),
+            Self::RegisteredHost { .. } => None,
+        }
     }
 }
+
+impl PartialEq for DockPayloadRecoveryPresentationOrigin {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::RegisteredHost {
+                    window: left_window,
+                    binding: left_binding,
+                    registration: left_registration,
+                },
+                Self::RegisteredHost {
+                    window: right_window,
+                    binding: right_binding,
+                    registration: right_registration,
+                },
+            ) => {
+                left_window == right_window
+                    && left_binding == right_binding
+                    && left_registration == right_registration
+            }
+            (
+                Self::ProviderTerminal {
+                    window: left_window,
+                    leases: left_leases,
+                },
+                Self::ProviderTerminal {
+                    window: right_window,
+                    leases: right_leases,
+                },
+            ) => left_window == right_window && left_leases.matches_exactly(right_leases),
+            (Self::RegisteredHost { .. }, Self::ProviderTerminal { .. })
+            | (Self::ProviderTerminal { .. }, Self::RegisteredHost { .. }) => false,
+        }
+    }
+}
+
+impl Eq for DockPayloadRecoveryPresentationOrigin {}
 
 /// Opaque, generation-bound authorization to attempt one recovery commit.
 ///
