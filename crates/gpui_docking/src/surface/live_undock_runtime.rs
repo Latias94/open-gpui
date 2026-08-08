@@ -99,6 +99,21 @@ fn record_post_commit_panic<T>(
     }
 }
 
+fn notify_post_commit_entity<T: 'static>(
+    first_panic: &mut Option<Box<dyn Any + Send>>,
+    entity: &Entity<T>,
+    cx: &mut App,
+) -> bool {
+    let entered = Cell::new(false);
+    let completed = record_post_commit_panic(first_panic, || {
+        cx.update_entity(entity, |_, entity_cx| {
+            entered.set(true);
+            entity_cx.notify();
+        });
+    });
+    completed.is_some() || entered.get()
+}
+
 fn accept_host_drop_window_effects(
     runtime: &DockViewportRuntimeHandle,
     committed: &DockViewportCommittedLiveUndockHostDrop,
@@ -111,32 +126,6 @@ fn accept_host_drop_window_effects(
             panic!("committed Host window effects lost their canonical runtime receipt")
         }
     }
-}
-
-fn schedule_deferred_surface_publication(
-    publication: DockSurfaceDeferredPublication,
-    post_commit: DockLiveUndockPostCommitReceipt,
-    runtime: DockLiveUndockRuntime,
-    identity: DockLiveUndockIdentity,
-    cx: &mut App,
-) {
-    cx.defer_after_or_shutdown_critical_before_window_registry_clear(Duration::ZERO, move |cx| {
-        let result = catch_unwind(AssertUnwindSafe(|| publication.publish(cx)));
-        if !publication.is_settled() {
-            schedule_deferred_surface_publication(
-                publication.clone(),
-                post_commit.clone(),
-                runtime.clone(),
-                identity,
-                cx,
-            );
-        } else {
-            runtime.settle_post_commit_and_resume_terminal(identity, &post_commit, cx);
-        }
-        if let Err(payload) = result {
-            resume_unwind(payload);
-        }
-    });
 }
 
 #[derive(Clone)]
@@ -271,12 +260,14 @@ impl DockLiveUndockRetainedVisualRelease {
 #[derive(Clone, Debug)]
 struct DockLiveUndockPostCommitReceipt {
     settled: Rc<Cell<bool>>,
+    retry_delay: Rc<Cell<Duration>>,
 }
 
 impl DockLiveUndockPostCommitReceipt {
     fn pending() -> Self {
         Self {
             settled: Rc::new(Cell::new(false)),
+            retry_delay: Rc::new(Cell::new(Duration::from_millis(16))),
         }
     }
 
@@ -286,6 +277,17 @@ impl DockLiveUndockPostCommitReceipt {
 
     fn settle(&self) -> bool {
         !self.settled.replace(true)
+    }
+
+    fn next_retry_delay(&self) -> Duration {
+        let delay = self.retry_delay.get();
+        self.retry_delay.set(
+            delay
+                .checked_mul(2)
+                .unwrap_or(LIVE_UNDOCK_RETRY_CAP)
+                .min(LIVE_UNDOCK_RETRY_CAP),
+        );
+        delay
     }
 
     fn matches(&self, other: &Self) -> bool {
@@ -299,92 +301,68 @@ struct DockLiveUndockCompletedPromotionCommit {
     post_commit: DockLiveUndockPostCommitPlan,
 }
 
+#[derive(Clone)]
 enum DockLiveUndockPostCommitPlan {
     SameWindow {
         identity: DockLiveUndockIdentity,
-        controller: Entity<DockController>,
-        source_host: Entity<DockHost>,
-        destination_host: Entity<DockHost>,
-        runtime: DockViewportRuntimeHandle,
-        committed_viewport: crate::viewport_runtime::DockViewportCommittedLiveUndockPromotion,
-        publication: Option<DockSurfaceDeferredPublication>,
+        journal: Rc<DockLiveUndockPromotionCommitJournal>,
         receipt: DockLiveUndockPostCommitReceipt,
     },
     Host {
         identity: DockLiveUndockIdentity,
-        runtime: DockViewportRuntimeHandle,
-        committed_drop: DockViewportCommittedLiveUndockHostDrop,
-        publication: Option<DockSurfaceDeferredPublication>,
+        journal: Rc<DockLiveUndockPromotionCommitJournal>,
         receipt: DockLiveUndockPostCommitReceipt,
     },
 }
 
 impl DockLiveUndockPostCommitPlan {
     fn start(self, live_runtime: DockLiveUndockRuntime, cx: &mut App) {
-        cx.defer_after_or_shutdown_critical_before_window_registry_clear(
-            Duration::ZERO,
-            move |cx| {
-                let mut first_panic = None;
-                let (identity, publication, receipt) = match self {
-                    Self::SameWindow {
-                        identity,
-                        controller,
-                        source_host,
-                        destination_host,
-                        runtime,
-                        committed_viewport,
-                        publication,
-                        receipt,
-                    } => {
-                        record_post_commit_panic(&mut first_panic, || {
-                            cx.update_entity(&controller, |_, controller_cx| controller_cx.notify())
-                        });
-                        record_post_commit_panic(&mut first_panic, || {
-                            cx.update_entity(&source_host, |_, host_cx| host_cx.notify())
-                        });
-                        record_post_commit_panic(&mut first_panic, || {
-                            cx.update_entity(&destination_host, |_, host_cx| host_cx.notify())
-                        });
-                        record_post_commit_panic(&mut first_panic, || {
-                            runtime.refresh_live_undock_promotion_commit(&committed_viewport, cx)
-                        });
-                        (identity, publication, receipt)
-                    }
-                    Self::Host {
-                        identity,
-                        runtime,
-                        committed_drop,
-                        publication,
-                        receipt,
-                    } => {
-                        record_post_commit_panic(&mut first_panic, || {
-                            runtime.notify_live_undock_host_drop_commit(&committed_drop, cx)
-                        });
-                        (identity, publication, receipt)
-                    }
-                };
+        self.schedule(live_runtime, Duration::ZERO, cx);
+    }
 
-                if let Some(publication) = publication {
-                    record_post_commit_panic(&mut first_panic, || publication.publish(cx));
-                    if !publication.is_settled() {
-                        schedule_deferred_surface_publication(
-                            publication,
-                            receipt.clone(),
-                            live_runtime.clone(),
-                            identity,
-                            cx,
-                        );
-                    } else {
-                        live_runtime.settle_post_commit_and_resume_terminal(identity, &receipt, cx);
-                    }
-                } else {
-                    live_runtime.settle_post_commit_and_resume_terminal(identity, &receipt, cx);
-                }
-                if let Some(payload) = first_panic {
-                    resume_unwind(payload);
-                }
-            },
-        );
+    fn schedule(self, live_runtime: DockLiveUndockRuntime, delay: Duration, cx: &mut App) {
+        cx.defer_after_or_shutdown_critical_before_window_registry_clear(delay, move |cx| {
+            let mut first_panic = None;
+            let (identity, settled, receipt) = match &self {
+                Self::SameWindow {
+                    identity,
+                    journal,
+                    receipt,
+                } => (
+                    *identity,
+                    live_runtime.drive_same_window_post_commit_journal(
+                        journal,
+                        cx,
+                        &mut first_panic,
+                    ),
+                    receipt,
+                ),
+                Self::Host {
+                    identity,
+                    journal,
+                    receipt,
+                } => (
+                    *identity,
+                    live_runtime.drive_host_post_commit_journal(
+                        journal,
+                        true,
+                        cx,
+                        &mut first_panic,
+                    ),
+                    receipt,
+                ),
+            };
+
+            if settled {
+                live_runtime.settle_post_commit_and_resume_terminal(identity, receipt, cx);
+            } else {
+                let retry = self.clone();
+                retry.schedule(live_runtime.clone(), receipt.next_retry_delay(), cx);
+            }
+            if let Some(payload) = first_panic {
+                resume_unwind(payload);
+            }
+        });
     }
 }
 
@@ -1164,6 +1142,7 @@ struct DockLiveUndockHostPromotionCommit {
     presentation_cleanup: Option<DockLiveUndockHostPromotionCleanupCommit>,
     surface: Option<DockSurfaceTransactionReceipt>,
     publication: Option<DockSurfaceDeferredPublication>,
+    host_drop_notified: bool,
     committed_destination_recovery_required: bool,
     lower_receipt_retired: bool,
 }
@@ -1494,6 +1473,7 @@ impl DockLiveUndockPromotionCommitJournal {
                     presentation_cleanup,
                     surface: None,
                     publication: None,
+                    host_drop_notified: false,
                     committed_destination_recovery_required: false,
                     lower_receipt_retired: false,
                 },
@@ -1792,6 +1772,10 @@ struct DockLiveUndockRuntimeState {
     after_host_drop_commit_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
     #[cfg(test)]
     panic_next_committed_destination_recovery_attempt: bool,
+    #[cfg(test)]
+    panic_next_same_window_post_commit_refresh: bool,
+    #[cfg(test)]
+    same_window_post_commit_refresh_attempts: u32,
 }
 
 struct DockLiveUndockPreparedSeed {
@@ -2063,6 +2047,18 @@ impl DockLiveUndockRuntime {
         self.state
             .borrow_mut()
             .panic_next_committed_destination_recovery_attempt = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_next_same_window_post_commit_refresh_for_test(&self) {
+        self.state
+            .borrow_mut()
+            .panic_next_same_window_post_commit_refresh = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn same_window_post_commit_refresh_attempts_for_test(&self) -> u32 {
+        self.state.borrow().same_window_post_commit_refresh_attempts
     }
 
     #[cfg(test)]
@@ -3257,6 +3253,189 @@ impl DockLiveUndockRuntime {
         cx.defer_after_or_shutdown_critical_before_window_registry_clear(delay, move |cx| {
             runtime.retry_terminal_settlement(identity, retry_generation, cx);
         });
+    }
+
+    fn drive_same_window_post_commit_journal(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        cx: &mut App,
+        first_panic: &mut Option<Box<dyn Any + Send>>,
+    ) -> bool {
+        let controller = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return false;
+            };
+            (!commit.controller_notified).then(|| commit.controller.clone())
+        };
+        if let Some(controller) = controller
+            && notify_post_commit_entity(first_panic, &controller, cx)
+            && let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+        {
+            commit.controller_notified = true;
+        }
+
+        let source_host = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return false;
+            };
+            (!commit.source_host_notified).then(|| commit.source_host.clone())
+        };
+        if let Some(source_host) = source_host
+            && notify_post_commit_entity(first_panic, &source_host, cx)
+            && let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+        {
+            commit.source_host_notified = true;
+        }
+
+        let destination_host = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return false;
+            };
+            (!commit.destination_host_notified).then(|| commit.destination_host.clone())
+        };
+        if let Some(destination_host) = destination_host
+            && notify_post_commit_entity(first_panic, &destination_host, cx)
+            && let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                &mut *journal.execution.borrow_mut()
+        {
+            commit.destination_host_notified = true;
+        }
+
+        let viewport = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return false;
+            };
+            (!commit.viewport_refreshed)
+                .then(|| {
+                    commit
+                        .committed_viewport
+                        .clone()
+                        .map(|committed| (commit.runtime.clone(), committed))
+                })
+                .flatten()
+        };
+        if let Some((runtime, committed_viewport)) = viewport {
+            let completed = record_post_commit_panic(first_panic, || {
+                #[cfg(test)]
+                {
+                    let mut state = self.state.borrow_mut();
+                    state.same_window_post_commit_refresh_attempts += 1;
+                    if std::mem::take(&mut state.panic_next_same_window_post_commit_refresh) {
+                        panic!("injected same-window post-commit refresh panic");
+                    }
+                }
+                runtime.refresh_live_undock_promotion_commit(&committed_viewport, cx)
+            });
+            if completed.is_some()
+                && let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
+                    &mut *journal.execution.borrow_mut()
+            {
+                commit.viewport_refreshed = true;
+            }
+        }
+
+        let publication = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::SameWindow(commit) = &*execution else {
+                return false;
+            };
+            commit.publication.clone()
+        };
+        if let Some(publication) = publication
+            && !publication.is_settled()
+        {
+            record_post_commit_panic(first_panic, || publication.publish(cx));
+        }
+
+        let execution = journal.execution.borrow();
+        matches!(
+            &*execution,
+            DockLiveUndockPromotionCommitExecution::SameWindow(commit)
+                if commit.presentation_session_retired
+                    && commit.controller_notified
+                    && commit.source_host_notified
+                    && commit.destination_host_notified
+                    && commit.viewport_refreshed
+                    && commit
+                        .surface
+                        .as_ref()
+                        .and_then(DockSurfaceTransactionReceipt::committed_revision)
+                        .is_some()
+                    && commit
+                        .publication
+                        .as_ref()
+                        .is_none_or(DockSurfaceDeferredPublication::is_settled)
+        )
+    }
+
+    fn drive_host_post_commit_journal(
+        &self,
+        journal: &Rc<DockLiveUndockPromotionCommitJournal>,
+        require_surface_publication: bool,
+        cx: &mut App,
+        first_panic: &mut Option<Box<dyn Any + Send>>,
+    ) -> bool {
+        let host_drop = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return false;
+            };
+            (!commit.host_drop_notified)
+                .then(|| {
+                    commit
+                        .committed_drop
+                        .clone()
+                        .map(|committed| (commit.runtime.clone(), committed))
+                })
+                .flatten()
+        };
+        if let Some((runtime, committed_drop)) = host_drop {
+            let completed = record_post_commit_panic(first_panic, || {
+                runtime.notify_live_undock_host_drop_commit(&committed_drop, cx)
+            });
+            if completed.is_some()
+                && let DockLiveUndockPromotionCommitExecution::Host(commit) =
+                    &mut *journal.execution.borrow_mut()
+            {
+                commit.host_drop_notified = true;
+            }
+        }
+
+        let publication = {
+            let execution = journal.execution.borrow();
+            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
+                return false;
+            };
+            commit.publication.clone()
+        };
+        if let Some(publication) = publication
+            && !publication.is_settled()
+        {
+            record_post_commit_panic(first_panic, || publication.publish(cx));
+        }
+
+        let execution = journal.execution.borrow();
+        matches!(
+            &*execution,
+            DockLiveUndockPromotionCommitExecution::Host(commit)
+                if commit.host_drop_notified
+                    && (!require_surface_publication
+                        || commit
+                            .surface
+                            .as_ref()
+                            .and_then(DockSurfaceTransactionReceipt::committed_revision)
+                            .is_some())
+                    && commit
+                        .publication
+                        .as_ref()
+                        .is_none_or(DockSurfaceDeferredPublication::is_settled)
+        )
     }
 
     fn settle_post_commit_and_resume_terminal(
@@ -7128,12 +7307,7 @@ impl DockLiveUndockRuntime {
         let post_commit_receipt = DockLiveUndockPostCommitReceipt::pending();
         let post_commit = DockLiveUndockPostCommitPlan::SameWindow {
             identity: commit.identity,
-            controller: commit.controller.clone(),
-            source_host: commit.source_host.clone(),
-            destination_host: commit.destination_host.clone(),
-            runtime: commit.runtime.clone(),
-            committed_viewport: viewport.clone(),
-            publication: commit.publication.clone(),
+            journal: journal.clone(),
             receipt: post_commit_receipt.clone(),
         };
         let retained_released = commit.retained_release.is_settled();
@@ -7400,9 +7574,7 @@ impl DockLiveUndockRuntime {
         let post_commit_receipt = DockLiveUndockPostCommitReceipt::pending();
         let post_commit = DockLiveUndockPostCommitPlan::Host {
             identity: commit.identity,
-            runtime: commit.runtime.clone(),
-            committed_drop: committed.clone(),
-            publication: commit.publication.clone(),
+            journal: journal.clone(),
             receipt: post_commit_receipt.clone(),
         };
         let retained_released = commit.presentation_cleanup.as_ref().is_some_and(|cleanup| {
@@ -9238,6 +9410,29 @@ impl DockLiveUndockRuntime {
             return settled;
         }
 
+        let route = {
+            let execution = journal.execution.borrow();
+            match &*execution {
+                DockLiveUndockPromotionCommitExecution::SameWindow(_) => 0,
+                DockLiveUndockPromotionCommitExecution::Host(_) => 1,
+                DockLiveUndockPromotionCommitExecution::Pending(_) => 2,
+                DockLiveUndockPromotionCommitExecution::Aborted => 3,
+            }
+        };
+        let mut first_panic = None;
+        let post_commit_settled = match route {
+            0 => self.drive_same_window_post_commit_journal(journal, cx, &mut first_panic),
+            1 => self.drive_host_post_commit_journal(journal, false, cx, &mut first_panic),
+            2 | 3 => true,
+            _ => unreachable!(),
+        };
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
+        if !post_commit_settled {
+            return false;
+        }
+
         enum ForwardSettlement {
             SameWindow {
                 runtime: DockViewportRuntimeHandle,
@@ -9315,6 +9510,7 @@ impl DockLiveUndockRuntime {
                                 && cleanup.session_retired
                         });
                     let post_commit_settled = cleanup_settled
+                        && commit.host_drop_notified
                         && commit
                             .publication
                             .as_ref()
@@ -9402,20 +9598,14 @@ impl DockLiveUndockRuntime {
             return false;
         }
 
-        let publication = {
-            let execution = journal.execution.borrow();
-            let DockLiveUndockPromotionCommitExecution::Host(commit) = &*execution else {
-                return false;
-            };
-            commit.publication.clone()
-        };
-        if let Some(publication) = publication
-            && !publication.is_settled()
-        {
-            publication.publish(cx);
-            if !publication.is_settled() {
-                return false;
-            }
+        let mut first_panic = None;
+        let post_commit_settled =
+            self.drive_host_post_commit_journal(journal, false, cx, &mut first_panic);
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
+        if !post_commit_settled {
+            return false;
         }
 
         enum Settlement {

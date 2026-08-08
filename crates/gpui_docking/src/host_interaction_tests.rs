@@ -6348,7 +6348,7 @@ fn same_window_lower_authority_loss_after_provider_commit_recovers_without_wall_
 }
 
 #[open_gpui::test]
-fn same_window_promotion_settles_after_surface_subscriber_panic(cx: &mut TestAppContext) {
+fn same_window_post_commit_retries_refresh_after_surface_subscriber_panic(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
@@ -6365,6 +6365,11 @@ fn same_window_promotion_settles_after_surface_subscriber_panic(cx: &mut TestApp
                 panic!("injected promotion surface subscriber panic");
             }
         })
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner
+            .live_undock_runtime()
+            .panic_next_same_window_post_commit_refresh_for_test();
     });
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
@@ -6388,24 +6393,55 @@ fn same_window_promotion_settles_after_surface_subscriber_panic(cx: &mut TestApp
         cx.run_until_parked();
     }));
     assert!(panic.is_err());
-    assert_eq!(subscriber_calls.get(), 1);
+    assert_eq!(subscriber_calls.get(), 0);
     cx.read_entity(fixture.surface.owner(), |owner, _| {
         assert_eq!(
+            owner
+                .live_undock_runtime()
+                .same_window_post_commit_refresh_attempts_for_test(),
+            1
+        );
+        assert_eq!(
             owner.live_undock_runtime().execution_count_for_test(),
-            0,
-            "post-commit receipt completion must settle terminal authority despite subscriber panic"
+            1,
+            "the failed post-commit refresh must retain the exact execution for replay"
         );
     });
 
-    // A stale retry that was armed before post-commit completion must remain harmless.
-    cx.executor().advance_clock(Duration::from_millis(16));
-    cx.run_until_parked();
+    // The retry replays only the incomplete refresh. Surface publication remains at-most-once.
+    let publication_panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.executor().advance_clock(Duration::from_millis(16));
+        cx.run_until_parked();
+    }));
+    assert!(publication_panic.is_err());
 
     assert_eq!(
         subscriber_calls.get(),
         1,
         "the committed event is at-most-once"
     );
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner
+                .live_undock_runtime()
+                .same_window_post_commit_refresh_attempts_for_test(),
+            1
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 1);
+    });
+
+    cx.executor().advance_clock(Duration::from_millis(16));
+    cx.run_until_parked();
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner
+                .live_undock_runtime()
+                .same_window_post_commit_refresh_attempts_for_test(),
+            2,
+            "the failed post-commit refresh must be replayed before terminal authority settles"
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+    });
     assert_eq!(
         cx.read(|app| fixture.surface.revision(app)),
         revision_before_release + 1
