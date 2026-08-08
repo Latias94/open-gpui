@@ -21,25 +21,26 @@ use windows::Win32::{
     Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
     Graphics::Gdi::{ClientToScreen, RDW_INVALIDATE, RedrawWindow},
     System::SystemServices::MK_LBUTTON,
+    System::Threading::{AttachThreadInput, GetCurrentThreadId},
     UI::{
         Controls::WM_MOUSELEAVE,
         Input::KeyboardAndMouse::{
             GetActiveWindow, GetAsyncKeyState, GetCapture, INPUT, INPUT_0, INPUT_MOUSE,
             IsWindowEnabled, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-            MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, ReleaseCapture, SendInput,
-            SetActiveWindow, VK_LBUTTON,
+            MOUSEEVENTF_MOVE, MOUSEEVENTF_MOVE_NOCOALESCE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
+            ReleaseCapture, SendInput, SetActiveWindow, VK_LBUTTON,
         },
         WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT, GW_OWNER,
-            GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageExtraInfo,
-            GetSystemMetrics, GetWindow, GetWindowRect, HTTRANSPARENT, HWND_MESSAGE, IsWindow,
-            IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE,
-            PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SendMessageW, SetCursorPos,
-            SetForegroundWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE,
-            WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-            WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
-            WS_EX_NOACTIVATE,
+            BringWindowToTop, CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST,
+            GW_HWNDNEXT, GW_OWNER, GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow,
+            GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect,
+            GetWindowThreadProcessId, HTTRANSPARENT, HWND_MESSAGE, IsWindow, IsWindowVisible,
+            IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW,
+            PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SendMessageW, SetCursorPos, SetForegroundWindow,
+            TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_KEYDOWN, WM_KEYUP,
+            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST,
+            WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
         },
     },
 };
@@ -71,7 +72,6 @@ struct DispatchedMessage {
     hwnd: HWND,
     message: u32,
     result: isize,
-    extra_info: isize,
 }
 
 #[derive(Default)]
@@ -92,12 +92,6 @@ impl MessageTrace {
             .rev()
             .find(|record| record.hwnd == hwnd && record.message == message)
             .map(|record| record.result)
-    }
-
-    fn contains_extra_info(&self, hwnd: HWND, message: u32, extra_info: isize) -> bool {
-        self.dispatched.iter().any(|record| {
-            record.hwnd == hwnd && record.message == message && record.extra_info == extra_info
-        })
     }
 
     fn message_ids(&self) -> Vec<u32> {
@@ -131,14 +125,12 @@ fn dispatch_one_message(trace: &mut MessageTrace) -> bool {
     );
 
     if translate_accelerator(&message).is_none() {
-        let extra_info = unsafe { GetMessageExtraInfo() }.0;
         _ = unsafe { TranslateMessage(&message) };
         let result = unsafe { DispatchMessageW(&message) };
         trace.dispatched.push(DispatchedMessage {
             hwnd: message.hwnd,
             message: message.message,
             result: result.0,
-            extra_info,
         });
     }
 
@@ -162,6 +154,39 @@ fn pump_messages_until(description: &str, mut converged: impl FnMut() -> bool) -
         "{description} did not converge within {MAX_MESSAGE_PUMP_ATTEMPTS} message-pump attempts; dispatched={:x?}",
         trace.message_ids()
     );
+}
+
+fn acquire_foreground_window(hwnd: HWND) -> bool {
+    let current_thread = unsafe { GetCurrentThreadId() };
+    let foreground_thread = unsafe {
+        let foreground = GetForegroundWindow();
+        (foreground != HWND::default()).then(|| GetWindowThreadProcessId(foreground, None))
+    }
+    .unwrap_or_default();
+    let target_thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
+    let mut attached_threads = Vec::new();
+
+    for thread in [foreground_thread, target_thread] {
+        if thread != 0
+            && thread != current_thread
+            && !attached_threads.contains(&thread)
+            && unsafe { AttachThreadInput(current_thread, thread, true).as_bool() }
+        {
+            attached_threads.push(thread);
+        }
+    }
+
+    let acquired = unsafe {
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetActiveWindow(hwnd);
+        SetForegroundWindow(hwnd).as_bool()
+    };
+
+    for thread in attached_threads {
+        let _ = unsafe { AttachThreadInput(current_thread, thread, false) };
+    }
+
+    acquired && unsafe { GetForegroundWindow() == hwnd }
 }
 
 fn pump_messages_until_with_delay(
@@ -390,6 +415,11 @@ fn inject_system_pointer(
     flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
 ) {
     let (dx, dy) = VirtualScreenBounds::current().absolute_coordinates(point);
+    let flags = if flags.contains(MOUSEEVENTF_MOVE) {
+        flags | MOUSEEVENTF_MOVE_NOCOALESCE
+    } else {
+        flags
+    };
     let input = INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
@@ -2595,7 +2625,9 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
                             _ => None,
                         };
                         if let Some(label) = label {
-                            observed.borrow_mut().push(label);
+                            observed
+                                .borrow_mut()
+                                .push((label, unsafe { GetMessageExtraInfo() }.0));
                         }
                     }
                 })
@@ -2622,7 +2654,7 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     });
 
     assert!(
-        unsafe { SetForegroundWindow(hwnd).as_bool() },
+        acquire_foreground_window(hwnd),
         "interactive native runner could not foreground the sentinel HWND"
     );
     pump_messages_until("interactive native sentinel foreground", || unsafe {
@@ -2633,15 +2665,19 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     let move_before = observed
         .borrow()
         .iter()
-        .filter(|label| **label == "move")
+        .filter(|(label, extra_info)| {
+            *label == "move" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+        })
         .count();
     inject_system_pointer(injection_point, MOUSEEVENTF_MOVE);
     pump_system_input_until("system-injected pointer move", |trace| {
-        trace.contains_extra_info(hwnd, WM_MOUSEMOVE, NATIVE_INTERACTIVE_INPUT_CANARY as isize)
+        trace.contains(hwnd, WM_MOUSEMOVE)
             && observed
                 .borrow()
                 .iter()
-                .filter(|label| **label == "move")
+                .filter(|(label, extra_info)| {
+                    *label == "move" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+                })
                 .count()
                 > move_before
     });
@@ -2657,21 +2693,22 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     let down_before = observed
         .borrow()
         .iter()
-        .filter(|label| **label == "down")
+        .filter(|(label, extra_info)| {
+            *label == "down" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+        })
         .count();
     cursor_guard.mark_primary_button_down();
     inject_system_pointer(injection_point, MOUSEEVENTF_LEFTDOWN);
     pump_system_input_until("system-injected pointer down and capture", |trace| {
-        trace.contains_extra_info(
-            hwnd,
-            WM_LBUTTONDOWN,
-            NATIVE_INTERACTIVE_INPUT_CANARY as isize,
-        ) && observed
-            .borrow()
-            .iter()
-            .filter(|label| **label == "down")
-            .count()
-            > down_before
+        trace.contains(hwnd, WM_LBUTTONDOWN)
+            && observed
+                .borrow()
+                .iter()
+                .filter(|(label, extra_info)| {
+                    *label == "down" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+                })
+                .count()
+                > down_before
             && unsafe { GetCapture() == hwnd }
     });
     assert_eq!(
@@ -2683,16 +2720,20 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     let up_before = observed
         .borrow()
         .iter()
-        .filter(|label| **label == "up")
+        .filter(|(label, extra_info)| {
+            *label == "up" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+        })
         .count();
     inject_system_pointer(injection_point, MOUSEEVENTF_LEFTUP);
     cursor_guard.mark_primary_button_up();
     pump_system_input_until("system-injected pointer up and capture release", |trace| {
-        trace.contains_extra_info(hwnd, WM_LBUTTONUP, NATIVE_INTERACTIVE_INPUT_CANARY as isize)
+        trace.contains(hwnd, WM_LBUTTONUP)
             && observed
                 .borrow()
                 .iter()
-                .filter(|label| **label == "up")
+                .filter(|(label, extra_info)| {
+                    *label == "up" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+                })
                 .count()
                 > up_before
             && unsafe { GetCapture() != hwnd }
