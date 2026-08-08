@@ -210,7 +210,7 @@ pub(crate) enum DockHostRecoverySourcePhase {
 pub(crate) enum DockHostRecoveryDestinationPhase {
     AwaitingSourceRelease,
     Staging,
-    Exposed(view_presentation_window::DestinationMountReceipt),
+    Exposed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,21 +230,21 @@ pub(crate) enum DockHostRecoverySourceRestorationInstallOutcome {
 pub(crate) enum DockHostLivePresentationMode {
     SourceProjection {
         lease: DockLiveUndockPayloadLeaseReceipt,
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         retained: retained_visual::Ticket,
         carrier: DockLivePayloadCarrier,
         phase: DockHostLiveSourcePhase,
     },
     DestinationProjection {
         proxy: DockLiveUndockSourceProxyReceipt,
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         leases: view_presentation_window::LeaseBatch,
         accepted_geometry: Option<DockHostLiveDestinationGeometry>,
         phase: DockHostLiveDestinationPhase,
     },
     SourceRestoration {
         lease: DockLiveUndockPayloadLeaseReceipt,
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         leases: view_presentation_window::LeaseBatch,
         retained: Option<(retained_visual::Ticket, DockLivePayloadCarrier)>,
         phase: DockHostLiveSourceRestorationPhase,
@@ -261,17 +261,17 @@ pub(crate) struct DockHostLivePresentationState {
 #[derive(Debug, Clone)]
 pub(crate) enum DockHostRecoveryPresentationMode {
     SourceProjection {
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         phase: DockHostRecoverySourcePhase,
     },
     DestinationProjection {
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         leases: view_presentation_window::LeaseBatch,
         resolved_roots: Vec<AnyView>,
         phase: DockHostRecoveryDestinationPhase,
     },
     SourceRestoration {
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         leases: view_presentation_window::LeaseBatch,
         resolved_roots: Vec<AnyView>,
         phase: DockHostRecoverySourceRestorationPhase,
@@ -478,7 +478,19 @@ pub(crate) struct DockHostPreparedPayloadRecoverySourceRetirement {
 pub(crate) struct DockHostPreparedPayloadRecoveryDestinationCommit {
     key: DockHostRecoveryPresentationKey,
     destination: view_presentation_window::LeaseBatch,
-    presented: view_presentation_window::PresentedBatchReceipt,
+    presented: view_presentation_window::RehostDestinationPresentation,
+}
+
+#[derive(Clone, Debug)]
+struct DockHostCommittedPayloadRecoverySourceRetirement {
+    key: DockHostRecoveryPresentationKey,
+    source: view_presentation_window::LeaseBatch,
+}
+
+#[derive(Clone, Debug)]
+struct DockHostCommittedPayloadRecoveryDestination {
+    key: DockHostRecoveryPresentationKey,
+    destination: view_presentation_window::LeaseBatch,
 }
 
 #[derive(Debug)]
@@ -641,6 +653,9 @@ pub struct DockHost {
     surface_owner: Option<Entity<DockSurfaceOwner>>,
     role: DockHostRole,
     live_presentation: Option<DockHostPresentationState>,
+    committed_payload_recovery_source_retirement:
+        Option<DockHostCommittedPayloadRecoverySourceRetirement>,
+    committed_payload_recovery_destination: Option<DockHostCommittedPayloadRecoveryDestination>,
     live_source_semantic_proxy: Option<DockHostLiveSourceSemanticProxy>,
     native_drag_transport_proxy: Option<DockHostNativeDragTransportProxy>,
     live_destination_semantics: Option<DockHostLiveDestinationSemantics>,
@@ -817,6 +832,8 @@ impl DockHost {
             surface_owner,
             role,
             live_presentation: None,
+            committed_payload_recovery_source_retirement: None,
+            committed_payload_recovery_destination: None,
             live_source_semantic_proxy: None,
             native_drag_transport_proxy: None,
             live_destination_semantics: None,
@@ -1131,7 +1148,7 @@ impl DockHost {
         identity: DockLiveUndockIdentity,
         lease: DockLiveUndockPayloadLeaseReceipt,
         presentation: DockHostPresentationSession,
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         retained: retained_visual::Ticket,
         carrier: DockLivePayloadCarrier,
         accessible_name: SharedString,
@@ -1139,9 +1156,9 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockHostLivePresentationKey> {
         if lease.identity() != identity
-            || lease.rehost_generation() != prepared.generation()
+            || lease.rehost_generation() != projection.generation()
             || lease.source().window_id() != expected_binding.window_id()
-            || prepared.source().window_id() != expected_binding.window_id()
+            || projection.source().window_id() != expected_binding.window_id()
             || lease.retained_visual() != Some(retained.identity())
             || retained.source_window() != expected_binding.window_id()
             || retained.bounds() != carrier.bounds
@@ -1150,14 +1167,14 @@ impl DockHost {
             return None;
         }
         let key =
-            self.next_live_presentation_key(expected_binding, identity, prepared.generation())?;
+            self.next_live_presentation_key(expected_binding, identity, projection.generation())?;
         self.live_presentation = Some(DockHostPresentationState::Live(
             DockHostLivePresentationState {
                 key,
                 presentation,
                 mode: DockHostLivePresentationMode::SourceProjection {
                     lease,
-                    prepared,
+                    projection,
                     retained,
                     carrier: carrier.clone(),
                     phase: DockHostLiveSourcePhase::Releasing,
@@ -1181,29 +1198,29 @@ impl DockHost {
         identity: DockLiveUndockIdentity,
         proxy: DockLiveUndockSourceProxyReceipt,
         presentation: DockHostPresentationSession,
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         leases: view_presentation_window::LeaseBatch,
         cx: &mut Context<Self>,
     ) -> Option<DockHostLivePresentationKey> {
         if self.role != DockHostRole::ProvisionalViewport(identity.opening())
             || presentation.space() != &self.space
             || proxy.lease().identity() != identity
-            || proxy.lease().rehost_generation() != prepared.generation()
+            || proxy.lease().rehost_generation() != projection.generation()
             || leases.window_id() != expected_binding.window_id()
-            || prepared.destination().window_id() != expected_binding.window_id()
-            || leases.leases() != prepared.destination().leases()
+            || projection.destination().window_id() != expected_binding.window_id()
+            || leases.leases() != projection.destination().leases()
         {
             return None;
         }
         let key =
-            self.next_live_presentation_key(expected_binding, identity, prepared.generation())?;
+            self.next_live_presentation_key(expected_binding, identity, projection.generation())?;
         self.live_presentation = Some(DockHostPresentationState::Live(
             DockHostLivePresentationState {
                 key,
                 presentation,
                 mode: DockHostLivePresentationMode::DestinationProjection {
                     proxy,
-                    prepared,
+                    projection,
                     leases,
                     accepted_geometry: None,
                     phase: DockHostLiveDestinationPhase::Staging,
@@ -1219,13 +1236,13 @@ impl DockHost {
         expected_binding: DockHostWindowBinding,
         action: DockPayloadRecoveryRestoreAction,
         presentation: DockHostPresentationSession,
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         cx: &mut Context<Self>,
     ) -> Option<DockHostRecoveryPresentationKey> {
         if presentation.kind()
             != crate::host_render_session::DockHostPresentationKind::PayloadRecoveryProjection
             || presentation.space() != &self.space
-            || prepared.source().window_id() != expected_binding.window_id()
+            || projection.source().window_id() != expected_binding.window_id()
         {
             return None;
         }
@@ -1236,14 +1253,14 @@ impl DockHost {
         let key = self.next_payload_recovery_presentation_key(
             expected_binding,
             action,
-            prepared.generation(),
+            projection.generation(),
         )?;
         self.live_presentation = Some(DockHostPresentationState::Recovery(
             DockHostRecoveryPresentationState {
                 key,
                 presentation,
                 mode: DockHostRecoveryPresentationMode::SourceProjection {
-                    prepared,
+                    projection,
                     phase: DockHostRecoverySourcePhase::Releasing,
                 },
             },
@@ -1265,7 +1282,7 @@ impl DockHost {
         expected_binding: DockHostWindowBinding,
         action: DockPayloadRecoveryRestoreAction,
         presentation: DockHostPresentationSession,
-        prepared: view_presentation_window::PreparedRehost,
+        projection: view_presentation_window::RehostProjection,
         leases: view_presentation_window::LeaseBatch,
         resolved_roots: Vec<AnyView>,
         cx: &mut Context<Self>,
@@ -1278,9 +1295,9 @@ impl DockHost {
             != crate::host_render_session::DockHostPresentationKind::PayloadRecoveryProjection
             || presentation.space() != &self.space
             || leases.window_id() != expected_binding.window_id()
-            || prepared.destination().window_id() != expected_binding.window_id()
-            || leases.window_id() != prepared.destination().window_id()
-            || leases.leases() != prepared.destination().leases()
+            || projection.destination().window_id() != expected_binding.window_id()
+            || leases.window_id() != projection.destination().window_id()
+            || leases.leases() != projection.destination().leases()
             || !Self::recovery_roots_cover_batch(&resolved_roots, &leases)
         {
             return None;
@@ -1288,14 +1305,14 @@ impl DockHost {
         let key = self.next_payload_recovery_presentation_key(
             expected_binding,
             action,
-            prepared.generation(),
+            projection.generation(),
         )?;
         self.live_presentation = Some(DockHostPresentationState::Recovery(
             DockHostRecoveryPresentationState {
                 key,
                 presentation,
                 mode: DockHostRecoveryPresentationMode::DestinationProjection {
-                    prepared,
+                    projection,
                     leases,
                     resolved_roots,
                     phase: DockHostRecoveryDestinationPhase::AwaitingSourceRelease,
@@ -1366,8 +1383,7 @@ impl DockHost {
     pub(crate) fn expose_payload_recovery_destination_projection(
         &mut self,
         key: DockHostRecoveryPresentationKey,
-        leases: view_presentation_window::LeaseBatch,
-        mount: view_presentation_window::DestinationMountReceipt,
+        exposure: view_presentation_window::RehostDestinationExposure,
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.accepts_payload_recovery_presentation_key(key) {
@@ -1376,7 +1392,7 @@ impl DockHost {
         let Some(DockHostRecoveryPresentationState {
             mode:
                 DockHostRecoveryPresentationMode::DestinationProjection {
-                    prepared,
+                    projection,
                     leases: current,
                     phase,
                     ..
@@ -1389,17 +1405,17 @@ impl DockHost {
         else {
             return false;
         };
+        let leases = exposure.batch();
         if *phase != DockHostRecoveryDestinationPhase::Staging
-            || prepared.generation() != mount.rehost_generation()
-            || mount.destination_window() != key.binding().window_id()
-            || mount.root_count() != leases.leases().len()
+            || projection.generation() != key.rehost_generation()
+            || exposure.frame_generation() == 0
+            || leases.window_id() != key.binding().window_id()
             || current.window_id() != leases.window_id()
             || current.leases() != leases.leases()
         {
             return false;
         }
-        *current = leases;
-        *phase = DockHostRecoveryDestinationPhase::Exposed(mount);
+        *phase = DockHostRecoveryDestinationPhase::Exposed;
         cx.notify();
         true
     }
@@ -1431,11 +1447,11 @@ impl DockHost {
         if matches!(
             &state.mode,
             DockHostRecoveryPresentationMode::SourceRestoration {
-                prepared,
+                projection,
                 leases: current,
                 resolved_roots: current_roots,
                 ..
-            } if prepared.generation() == key.rehost_generation()
+            } if projection.generation() == key.rehost_generation()
                 && current.window_id() == leases.window_id()
                 && current.leases() == leases.leases()
                 && current_roots.iter().map(AnyView::entity_id).eq(
@@ -1445,21 +1461,26 @@ impl DockHost {
             return DockHostRecoverySourceRestorationInstallOutcome::AlreadyInstalled;
         }
         let DockHostRecoveryPresentationMode::SourceProjection {
-            prepared,
+            projection,
             phase: DockHostRecoverySourcePhase::Frozen,
         } = &state.mode
         else {
             return DockHostRecoverySourceRestorationInstallOutcome::PresentationAuthorityLost;
         };
-        let restored_matches = prepared.restored_source().is_some_and(|restored| {
-            restored.window_id() == leases.window_id() && restored.leases() == leases.leases()
-        });
-        if !restored_matches {
+        if projection.generation() != key.rehost_generation()
+            || projection.source().window_id() != leases.window_id()
+            || projection.source().leases().len() != leases.leases().len()
+            || projection
+                .source()
+                .leases()
+                .iter()
+                .any(|lease| leases.lease_for(lease.entity_id()).is_none())
+        {
             return DockHostRecoverySourceRestorationInstallOutcome::PresentationAuthorityLost;
         }
         state.presentation = presentation;
         state.mode = DockHostRecoveryPresentationMode::SourceRestoration {
-            prepared: prepared.clone(),
+            projection: projection.clone(),
             leases,
             resolved_roots,
             phase: DockHostRecoverySourceRestorationPhase::Staging,
@@ -1518,7 +1539,7 @@ impl DockHost {
         let DockHostRecoveryPresentationState {
             mode:
                 DockHostRecoveryPresentationMode::SourceProjection {
-                    prepared,
+                    projection,
                     phase: DockHostRecoverySourcePhase::Frozen,
                 },
             ..
@@ -1529,14 +1550,14 @@ impl DockHost {
         else {
             return None;
         };
-        if prepared.generation() != key.rehost_generation()
-            || prepared.source().window_id() != key.binding().window_id()
+        if projection.generation() != key.rehost_generation()
+            || projection.source().window_id() != key.binding().window_id()
         {
             return None;
         }
         Some(DockHostPreparedPayloadRecoverySourceRetirement {
             key,
-            source: prepared.source().clone(),
+            source: projection.source().clone(),
         })
     }
 
@@ -1551,6 +1572,18 @@ impl DockHost {
             && current.source.leases() == prepared.source.leases()
     }
 
+    pub(crate) fn payload_recovery_source_retirement_is_committed(
+        &self,
+        key: DockHostRecoveryPresentationKey,
+        source: &view_presentation_window::LeaseBatch,
+    ) -> bool {
+        self.committed_payload_recovery_source_retirement
+            .as_ref()
+            .is_some_and(|committed| {
+                committed.key == key && committed.source.matches_exactly(source)
+            })
+    }
+
     pub(crate) fn commit_prepared_payload_recovery_source_retirement(
         &mut self,
         prepared: DockHostPreparedPayloadRecoverySourceRetirement,
@@ -1563,6 +1596,11 @@ impl DockHost {
         self.live_presentation = None;
         self.panel_presentation_leases
             .retain(|_, lease| !prepared.source.leases().contains(lease));
+        self.committed_payload_recovery_source_retirement =
+            Some(DockHostCommittedPayloadRecoverySourceRetirement {
+                key: prepared.key,
+                source: prepared.source,
+            });
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
         cx.notify();
@@ -1571,7 +1609,7 @@ impl DockHost {
     pub(crate) fn prepare_payload_recovery_destination_commit(
         &self,
         key: DockHostRecoveryPresentationKey,
-        presented: view_presentation_window::PresentedBatchReceipt,
+        presented: view_presentation_window::RehostDestinationPresentation,
     ) -> Option<DockHostPreparedPayloadRecoveryDestinationCommit> {
         if !self.accepts_payload_recovery_presentation_key(key) {
             return None;
@@ -1579,9 +1617,9 @@ impl DockHost {
         let DockHostRecoveryPresentationState {
             mode:
                 DockHostRecoveryPresentationMode::DestinationProjection {
-                    prepared,
+                    projection,
                     leases,
-                    phase: DockHostRecoveryDestinationPhase::Exposed(mount),
+                    phase: DockHostRecoveryDestinationPhase::Exposed,
                     ..
                 },
             ..
@@ -1593,10 +1631,9 @@ impl DockHost {
             return None;
         };
         let generation = leases.leases().first()?.generation();
-        if prepared.generation() != key.rehost_generation()
-            || prepared.destination().window_id() != leases.window_id()
-            || prepared.destination().leases() != leases.leases()
-            || presented.exposure().mount() != *mount
+        if projection.generation() != key.rehost_generation()
+            || projection.destination().window_id() != leases.window_id()
+            || projection.destination().leases() != leases.leases()
             || presented.window_id() != leases.window_id()
             || presented.lease_generation() != generation
             || presented.root_count() != leases.leases().len()
@@ -1627,6 +1664,18 @@ impl DockHost {
             && current.destination.leases() == prepared.destination.leases()
     }
 
+    pub(crate) fn payload_recovery_destination_is_committed(
+        &self,
+        key: DockHostRecoveryPresentationKey,
+        destination: &view_presentation_window::LeaseBatch,
+    ) -> bool {
+        self.committed_payload_recovery_destination
+            .as_ref()
+            .is_some_and(|committed| {
+                committed.key == key && committed.destination.matches_exactly(destination)
+            })
+    }
+
     pub(crate) fn commit_prepared_payload_recovery_destination(
         &mut self,
         prepared: DockHostPreparedPayloadRecoveryDestinationCommit,
@@ -1637,6 +1686,11 @@ impl DockHost {
             "prepared payload-recovery destination authority must remain exact until commit"
         );
         self.live_presentation = None;
+        self.committed_payload_recovery_destination =
+            Some(DockHostCommittedPayloadRecoveryDestination {
+                key: prepared.key,
+                destination: prepared.destination,
+            });
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
         cx.notify();
@@ -1653,7 +1707,7 @@ impl DockHost {
         let DockHostRecoveryPresentationState {
             mode:
                 DockHostRecoveryPresentationMode::SourceRestoration {
-                    prepared,
+                    projection,
                     leases,
                     phase: DockHostRecoverySourceRestorationPhase::AwaitingVisibleFrame,
                     ..
@@ -1667,10 +1721,14 @@ impl DockHost {
             return None;
         };
         let generation = leases.leases().first()?.generation();
-        if prepared.generation() != key.rehost_generation()
-            || prepared.restored_source().is_none_or(|restored| {
-                restored.window_id() != leases.window_id() || restored.leases() != leases.leases()
-            })
+        if projection.generation() != key.rehost_generation()
+            || projection.source().window_id() != leases.window_id()
+            || projection.source().leases().len() != leases.leases().len()
+            || projection
+                .source()
+                .leases()
+                .iter()
+                .any(|lease| leases.lease_for(lease.entity_id()).is_none())
             || presented.window_id() != leases.window_id()
             || presented.lease_generation() != generation
             || presented.root_count() != leases.leases().len()
@@ -1728,33 +1786,33 @@ impl DockHost {
             .as_ref()
             .and_then(DockHostPresentationState::as_recovery)?;
         let (stage, leases, generation, prior) = match &state.mode {
-            DockHostRecoveryPresentationMode::SourceProjection { prepared, phase } => (
+            DockHostRecoveryPresentationMode::SourceProjection { projection, phase } => (
                 DockHostRecoveryPresentationStage::Source(*phase),
-                prepared.source().clone(),
-                prepared.generation(),
+                projection.source().clone(),
+                projection.generation(),
                 None,
             ),
             DockHostRecoveryPresentationMode::DestinationProjection {
-                prepared,
+                projection,
                 leases,
                 phase,
                 ..
             } => (
                 DockHostRecoveryPresentationStage::Destination(*phase),
                 leases.clone(),
-                prepared.generation(),
+                projection.generation(),
                 None,
             ),
             DockHostRecoveryPresentationMode::SourceRestoration {
-                prepared,
+                projection,
                 leases,
                 phase,
                 ..
             } => (
                 DockHostRecoveryPresentationStage::SourceRestoration(*phase),
                 leases.clone(),
-                prepared.generation(),
-                Some(prepared.source().clone()),
+                projection.generation(),
+                Some(projection.source().clone()),
             ),
         };
         if generation != key.rehost_generation() {
@@ -2194,11 +2252,11 @@ impl DockHost {
             &state.mode,
             DockHostLivePresentationMode::SourceRestoration {
                 lease,
-                prepared,
+                projection,
                 leases: current,
                 ..
             } if lease.identity() == key.identity
-                && prepared.generation() == key.rehost_generation
+                && projection.generation() == key.rehost_generation
                 && current.window_id() == leases.window_id()
                 && current.leases() == leases.leases()
         ) {
@@ -2206,7 +2264,7 @@ impl DockHost {
         }
         let DockHostLivePresentationMode::SourceProjection {
             lease,
-            prepared,
+            projection,
             retained,
             carrier,
             phase: _,
@@ -2214,17 +2272,23 @@ impl DockHost {
         else {
             return DockHostLiveSourceRestorationInstallOutcome::PresentationAuthorityLost;
         };
-        let restored_matches = prepared.restored_source().is_some_and(|restored| {
-            restored.window_id() == leases.window_id() && restored.leases() == leases.leases()
-        });
-        if lease.rehost_generation() != prepared.generation() || !restored_matches {
+        if lease.rehost_generation() != projection.generation()
+            || projection.generation() != key.rehost_generation()
+            || projection.source().window_id() != leases.window_id()
+            || projection.source().leases().len() != leases.leases().len()
+            || projection
+                .source()
+                .leases()
+                .iter()
+                .any(|lease| leases.lease_for(lease.entity_id()).is_none())
+        {
             return DockHostLiveSourceRestorationInstallOutcome::PresentationAuthorityLost;
         }
         let retained = Some((*retained, carrier.clone()));
         state.presentation = presentation;
         state.mode = DockHostLivePresentationMode::SourceRestoration {
             lease: *lease,
-            prepared: prepared.clone(),
+            projection: projection.clone(),
             leases,
             retained,
             phase: DockHostLiveSourceRestorationPhase::Staging,
@@ -2340,15 +2404,15 @@ impl DockHost {
             .and_then(DockHostPresentationState::as_live)?;
         let (stage, leases, prepared_generation, prior) = match &state.mode {
             DockHostLivePresentationMode::SourceProjection {
-                prepared, phase, ..
+                projection, phase, ..
             } => (
                 DockHostLivePresentationStage::Source(*phase),
-                prepared.source().clone(),
-                prepared.generation(),
+                projection.source().clone(),
+                projection.generation(),
                 None,
             ),
             DockHostLivePresentationMode::DestinationProjection {
-                prepared,
+                projection,
                 leases,
                 phase,
                 ..
@@ -2373,18 +2437,18 @@ impl DockHost {
                         DockHostLivePresentationStage::DestinationRevealSettled
                     }
                 };
-                (stage, leases.clone(), prepared.generation(), None)
+                (stage, leases.clone(), projection.generation(), None)
             }
             DockHostLivePresentationMode::SourceRestoration {
-                prepared,
+                projection,
                 leases,
                 phase,
                 ..
             } => (
                 DockHostLivePresentationStage::SourceRestoration(*phase),
                 leases.clone(),
-                prepared.generation(),
-                Some(prepared.source().clone()),
+                projection.generation(),
+                Some(projection.source().clone()),
             ),
         };
         if prepared_generation != key.rehost_generation {
@@ -2444,7 +2508,7 @@ impl DockHost {
             mode:
                 DockHostLivePresentationMode::SourceProjection {
                     lease,
-                    prepared,
+                    projection,
                     phase: DockHostLiveSourcePhase::Retired,
                     ..
                 },
@@ -2457,14 +2521,14 @@ impl DockHost {
             return None;
         };
         if lease.identity() != key.identity
-            || lease.rehost_generation() != prepared.generation()
-            || prepared.source().window_id() != key.binding.window_id()
+            || lease.rehost_generation() != projection.generation()
+            || projection.source().window_id() != key.binding.window_id()
         {
             return None;
         }
         Some(DockHostPreparedLiveSourceRetirement {
             key,
-            source: prepared.source().clone(),
+            source: projection.source().clone(),
         })
     }
 
@@ -2522,7 +2586,7 @@ impl DockHost {
         let DockHostLivePresentationState {
             mode:
                 DockHostLivePresentationMode::DestinationProjection {
-                    prepared,
+                    projection,
                     leases,
                     accepted_geometry: Some(accepted_geometry),
                     phase: DockHostLiveDestinationPhase::RevealSettled,
@@ -2536,9 +2600,9 @@ impl DockHost {
         else {
             return None;
         };
-        if prepared.destination().window_id() != key.binding.window_id()
-            || prepared.destination().window_id() != leases.window_id()
-            || prepared.destination().leases() != leases.leases()
+        if projection.destination().window_id() != key.binding.window_id()
+            || projection.destination().window_id() != leases.window_id()
+            || projection.destination().leases() != leases.leases()
             || leases
                 .leases()
                 .iter()
@@ -2682,9 +2746,9 @@ impl DockHost {
                 },
                 DockHostPresentationState::Recovery(state) => {
                     let lease = match &state.mode {
-                        DockHostRecoveryPresentationMode::SourceProjection { prepared, .. } => {
-                            prepared.source().lease_for(entity_id)
-                        }
+                        DockHostRecoveryPresentationMode::SourceProjection {
+                            projection, ..
+                        } => projection.source().lease_for(entity_id),
                         DockHostRecoveryPresentationMode::DestinationProjection {
                             leases,
                             resolved_roots,
@@ -3263,7 +3327,16 @@ impl DockHost {
         if let Some(proxy) = self.native_drag_transport_proxy.take() {
             proxy.transport.retire();
         }
-        self.panel_presentation_leases.clear();
+        let panel_presentation_leases = self
+            .panel_presentation_leases
+            .drain()
+            .map(|(_, lease)| lease)
+            .collect::<Vec<_>>();
+
+        let _ = view_presentation_window::release_stable_leases_after_endpoint_loss(
+            cx,
+            &panel_presentation_leases,
+        );
 
         if let Some(source) = pending_stable_source {
             let _ = view_presentation_window::release_stable_batch_after_endpoint_loss(cx, &source);

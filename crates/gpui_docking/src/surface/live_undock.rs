@@ -11,8 +11,8 @@ use open_gpui::{
     WindowProvisionalSession, WindowProvisionalSessionPhase,
     retained_visual::TicketIdentity,
     view_presentation_window::{
-        DestinationExposureReceipt, Invalidation, LeaseBatch, PreparedRehost,
-        PresentedBatchReceipt, SourceProxyCommitReceipt, StableBatchPresentationReceipt,
+        Invalidation, LeaseBatch, RehostDestinationExposure, RehostDestinationPresentation,
+        RehostProjection, RehostSourceProxyCommit,
     },
 };
 
@@ -461,10 +461,10 @@ pub(crate) struct DockLiveUndockPresentationAuthorityLossReceipt {
 impl DockLiveUndockPresentationAuthorityLossReceipt {
     pub(crate) fn from_invalidation(
         payload_lease: DockLiveUndockPayloadLeaseReceipt,
-        prepared: &PreparedRehost,
+        projection: &RehostProjection,
+        invalidation: Invalidation,
     ) -> Option<Self> {
-        let invalidation = prepared.presentation_authority_loss()?;
-        if prepared.generation() != payload_lease.rehost_generation() {
+        if !payload_lease.matches_projection(projection) {
             return None;
         }
         Some(Self {
@@ -475,11 +475,9 @@ impl DockLiveUndockPresentationAuthorityLossReceipt {
 
     pub(crate) fn from_source_host_loss(
         payload_lease: DockLiveUndockPayloadLeaseReceipt,
-        prepared: &PreparedRehost,
+        projection: &RehostProjection,
     ) -> Option<Self> {
-        if prepared.generation() != payload_lease.rehost_generation()
-            || prepared.active_source_restoration().is_none()
-        {
+        if !payload_lease.matches_projection(projection) {
             return None;
         }
         Some(Self {
@@ -531,23 +529,23 @@ impl DockLiveUndockPayloadLeaseReceipt {
         source: DockLiveUndockSourceSnapshot,
         surface_revision: u64,
         retained_visual: TicketIdentity,
-        prepared: &PreparedRehost,
+        projection: &RehostProjection,
         provisional_session: &WindowProvisionalSession,
     ) -> Option<Self> {
         let session = provisional_session.snapshot();
-        let destination_lease_generation = prepared.destination().leases().first()?.generation();
+        let destination_lease_generation = projection.destination().leases().first()?.generation();
         if retained_visual.source_window() != source.window_id
-            || prepared.source().window_id() != source.window_id
-            || prepared.source().leases().is_empty()
-            || prepared.destination().leases().is_empty()
-            || prepared.generation() == 0
-            || destination_lease_generation != prepared.generation()
-            || prepared
+            || projection.source().window_id() != source.window_id
+            || projection.source().leases().is_empty()
+            || projection.destination().leases().is_empty()
+            || projection.generation() == 0
+            || destination_lease_generation != projection.generation()
+            || projection
                 .destination()
                 .leases()
                 .iter()
                 .any(|lease| lease.generation() != destination_lease_generation)
-            || session.window_id() != Some(prepared.destination().window_id())
+            || session.window_id() != Some(projection.destination().window_id())
             || session.phase() != WindowProvisionalSessionPhase::Gated
         {
             return None;
@@ -560,10 +558,23 @@ impl DockLiveUndockPayloadLeaseReceipt {
             surface_revision,
             lease_generation,
             retained_visual: Some(retained_visual),
-            rehost_generation: prepared.generation(),
-            destination_window: prepared.destination().window_id(),
+            rehost_generation: projection.generation(),
+            destination_window: projection.destination().window_id(),
             provisional_session_generation: session.generation(),
         })
+    }
+
+    fn matches_projection(self, projection: &RehostProjection) -> bool {
+        projection.generation() == self.rehost_generation
+            && projection.source().window_id() == self.source.window_id
+            && projection.destination().window_id() == self.destination_window
+            && !projection.source().leases().is_empty()
+            && !projection.destination().leases().is_empty()
+            && projection
+                .destination()
+                .leases()
+                .iter()
+                .all(|lease| lease.generation() == self.lease_generation.get())
     }
 
     pub(crate) const fn identity(self) -> DockLiveUndockIdentity {
@@ -641,13 +652,12 @@ impl DockLiveUndockSourceRestorationReceipt {
     /// Proves that cancellation completed while the original source batch remained authoritative.
     pub(crate) fn source_unchanged(
         payload_lease: DockLiveUndockPayloadLeaseReceipt,
-        prepared: &PreparedRehost,
+        projection: &RehostProjection,
         source_leases: &LeaseBatch,
     ) -> Option<Self> {
-        let exact_source_batch = prepared.source().window_id() == source_leases.window_id()
-            && prepared.source().leases() == source_leases.leases();
-        if prepared.generation() != payload_lease.rehost_generation()
-            || !prepared.source_authority_remained_unchanged()
+        let exact_source_batch = projection.source().window_id() == source_leases.window_id()
+            && projection.source().leases() == source_leases.leases();
+        if !payload_lease.matches_projection(projection)
             || !exact_source_batch
             || source_leases.window_id() != payload_lease.source().window_id()
             || source_leases.leases().is_empty()
@@ -667,25 +677,20 @@ impl DockLiveUndockSourceRestorationReceipt {
     /// Proves that fresh source leases became stable in one accepted post-restore frame.
     pub(crate) fn source_presented_after_release(
         payload_lease: DockLiveUndockPayloadLeaseReceipt,
-        prepared: &PreparedRehost,
+        projection: &RehostProjection,
         source_leases: &LeaseBatch,
-        accepted_frame: StableBatchPresentationReceipt,
+        accepted_frame: u64,
     ) -> Option<Self> {
-        let restored_source = prepared.accepted_source_restoration()?;
-        let exact_restored_batch = restored_source.window_id() == source_leases.window_id()
-            && restored_source.leases() == source_leases.leases();
-        let source_generation = prepared.source().leases().first()?.generation();
-        if prepared.generation() != payload_lease.rehost_generation()
-            || !exact_restored_batch
+        let source_generation = projection.source().leases().first()?.generation();
+        let restored_generation = source_leases.leases().first()?.generation();
+        if !payload_lease.matches_projection(projection)
             || source_leases.window_id() != payload_lease.source().window_id()
             || source_leases.leases().is_empty()
-            || accepted_frame.window_id() != source_leases.window_id()
-            || accepted_frame.root_count() != source_leases.leases().len()
-            || accepted_frame.frame_generation() == 0
-            || accepted_frame.lease_generation() == source_generation
+            || accepted_frame == 0
+            || restored_generation == source_generation
             || source_leases.leases().iter().any(|lease| {
                 lease.window_id() != source_leases.window_id()
-                    || lease.generation() != accepted_frame.lease_generation()
+                    || lease.generation() != restored_generation
             })
         {
             return None;
@@ -693,9 +698,9 @@ impl DockLiveUndockSourceRestorationReceipt {
         Some(Self {
             payload_lease,
             evidence: DockLiveUndockSourceRestorationEvidence::AfterRelease {
-                lease_generation: accepted_frame.lease_generation(),
-                root_count: accepted_frame.root_count(),
-                frame_generation: accepted_frame.frame_generation(),
+                lease_generation: restored_generation,
+                root_count: source_leases.leases().len(),
+                frame_generation: accepted_frame,
             },
         })
     }
@@ -768,6 +773,11 @@ pub(super) enum DockLiveUndockRehostCleanupEvidence {
         source_window: WindowId,
         destination_window: WindowId,
     },
+    SourceCommitted {
+        generation: u64,
+        source_window: WindowId,
+        destination_window: WindowId,
+    },
 }
 
 impl DockLiveUndockRehostCleanupEvidence {
@@ -795,6 +805,18 @@ impl DockLiveUndockRehostCleanupEvidence {
         }
     }
 
+    pub(super) const fn source_committed(
+        generation: u64,
+        source_window: WindowId,
+        destination_window: WindowId,
+    ) -> Self {
+        Self::SourceCommitted {
+            generation,
+            source_window,
+            destination_window,
+        }
+    }
+
     pub(super) const fn authority(self) -> (u64, WindowId, WindowId) {
         match self {
             Self::Abandoned {
@@ -803,6 +825,11 @@ impl DockLiveUndockRehostCleanupEvidence {
                 destination_window,
             }
             | Self::AlreadyAbsent {
+                generation,
+                source_window,
+                destination_window,
+            }
+            | Self::SourceCommitted {
                 generation,
                 source_window,
                 destination_window,
@@ -1046,26 +1073,20 @@ impl DockLiveUndockCommittedDestinationRecoveryReceipt {
 pub(crate) struct DockLiveUndockSourceProxyReceipt {
     lease: DockLiveUndockPayloadLeaseReceipt,
     proxy_frame_generation: u64,
-    gpui: Option<SourceProxyCommitReceipt>,
 }
 
 impl DockLiveUndockSourceProxyReceipt {
     pub(crate) fn new(
         lease: DockLiveUndockPayloadLeaseReceipt,
-        gpui: SourceProxyCommitReceipt,
+        rehost: RehostSourceProxyCommit,
     ) -> Option<Self> {
-        let replay = gpui.retained_visual_replay()?;
-        if gpui.rehost_generation() != lease.rehost_generation
-            || gpui.source_window() != lease.source.window_id
-            || Some(replay.ticket()) != lease.retained_visual
-            || gpui.frame_generation() == 0
-        {
+        let replay = rehost.retained_visual_replay()?;
+        if Some(replay.ticket()) != lease.retained_visual || rehost.frame_generation() == 0 {
             return None;
         }
         Some(Self {
             lease,
-            proxy_frame_generation: gpui.frame_generation(),
-            gpui: Some(gpui),
+            proxy_frame_generation: rehost.frame_generation(),
         })
     }
 
@@ -1084,7 +1105,6 @@ impl DockLiveUndockSourceProxyReceipt {
         Some(Self {
             lease,
             proxy_frame_generation,
-            gpui: None,
         })
     }
 }
@@ -1096,30 +1116,32 @@ pub(crate) struct DockLiveUndockPayloadMountReceipt {
     mount_frame_generation: u64,
     destination_lease_generation: u64,
     root_count: usize,
-    gpui: Option<DestinationExposureReceipt>,
 }
 
 impl DockLiveUndockPayloadMountReceipt {
     pub(crate) fn new(
         proxy: DockLiveUndockSourceProxyReceipt,
-        gpui: DestinationExposureReceipt,
+        rehost: &RehostDestinationExposure,
     ) -> Option<Self> {
-        let mount = gpui.mount();
-        if proxy.gpui != Some(mount.source_proxy())
-            || mount.rehost_generation() != proxy.lease.rehost_generation
-            || mount.destination_window() != proxy.lease.destination_window
-            || mount.destination_lease_generation() != proxy.lease.lease_generation.get()
-            || mount.frame_generation() == 0
-            || mount.root_count() == 0
+        let batch = rehost.batch();
+        let destination_lease_generation = batch.leases().first()?.generation();
+        let root_count = batch.leases().len();
+        if batch.window_id() != proxy.lease.destination_window
+            || destination_lease_generation != proxy.lease.lease_generation.get()
+            || rehost.frame_generation() == 0
+            || root_count == 0
+            || batch.leases().iter().any(|lease| {
+                lease.window_id() != batch.window_id()
+                    || lease.generation() != destination_lease_generation
+            })
         {
             return None;
         }
         Some(Self {
             proxy,
-            mount_frame_generation: mount.frame_generation(),
-            destination_lease_generation: mount.destination_lease_generation(),
-            root_count: mount.root_count(),
-            gpui: Some(gpui),
+            mount_frame_generation: rehost.frame_generation(),
+            destination_lease_generation,
+            root_count,
         })
     }
 
@@ -1144,7 +1166,6 @@ impl DockLiveUndockPayloadMountReceipt {
             mount_frame_generation,
             destination_lease_generation: proxy.lease.lease_generation.get(),
             root_count: 1,
-            gpui: None,
         })
     }
 }
@@ -1154,26 +1175,25 @@ impl DockLiveUndockPayloadMountReceipt {
 pub(crate) struct DockLiveUndockPayloadPresentationReceipt {
     mount: DockLiveUndockPayloadMountReceipt,
     frame_generation: u64,
-    gpui: Option<PresentedBatchReceipt>,
+    rehost: Option<RehostDestinationPresentation>,
 }
 
 impl DockLiveUndockPayloadPresentationReceipt {
     pub(crate) fn new(
         mount: DockLiveUndockPayloadMountReceipt,
-        gpui: PresentedBatchReceipt,
+        rehost: RehostDestinationPresentation,
     ) -> Option<Self> {
-        if mount.gpui != Some(gpui.exposure())
-            || gpui.window_id() != mount.window_id()
-            || gpui.lease_generation() != mount.destination_lease_generation
-            || gpui.root_count() != mount.root_count
-            || gpui.frame_generation() == 0
+        if rehost.window_id() != mount.window_id()
+            || rehost.lease_generation() != mount.destination_lease_generation
+            || rehost.root_count() != mount.root_count
+            || rehost.frame_generation() == 0
         {
             return None;
         }
         Some(Self {
             mount,
-            frame_generation: gpui.frame_generation(),
-            gpui: Some(gpui),
+            frame_generation: rehost.frame_generation(),
+            rehost: Some(rehost),
         })
     }
 
@@ -1189,6 +1209,10 @@ impl DockLiveUndockPayloadPresentationReceipt {
         self.frame_generation
     }
 
+    pub(crate) const fn rehost_presentation(self) -> Option<RehostDestinationPresentation> {
+        self.rehost
+    }
+
     #[cfg(test)]
     pub(super) fn for_test(
         mount: DockLiveUndockPayloadMountReceipt,
@@ -1200,7 +1224,7 @@ impl DockLiveUndockPayloadPresentationReceipt {
         Some(Self {
             mount,
             frame_generation,
-            gpui: None,
+            rehost: None,
         })
     }
 }
@@ -1358,7 +1382,6 @@ pub(crate) enum DockLiveUndockSourceRestorationFailure {
     PresentationTransitionRejected,
     RestorationReceiptUnavailable,
     SourcePresentationMutationRejected,
-    StablePresentationUnavailable,
     RetainedVisualReplayRejected,
     AwaitingSourceNativeTerminal,
 }

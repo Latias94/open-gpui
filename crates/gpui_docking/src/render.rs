@@ -1011,7 +1011,7 @@ fn observe_live_source_restoration(
     host: WeakEntity<DockHost>,
     key: DockHostLivePresentationKey,
     lease: DockLiveUndockPayloadLeaseReceipt,
-    prepared: view_presentation_window::PreparedRehost,
+    projection: view_presentation_window::RehostProjection,
     leases: view_presentation_window::LeaseBatch,
     phase: DockHostLiveSourceRestorationPhase,
     retained: Option<retained_visual::Ticket>,
@@ -1053,16 +1053,6 @@ fn observe_live_source_restoration(
 
     match phase {
         DockHostLiveSourceRestorationPhase::Staging => {
-            if prepared.accepted_source_restoration().is_none() {
-                defer_live_source_restoration(
-                    &owner,
-                    key,
-                    lease,
-                    DockLiveUndockSourceRestorationFailure::PresentationTransitionRejected,
-                    cx,
-                );
-                return;
-            }
             let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
                 defer_live_source_restoration(
                     &owner,
@@ -1077,8 +1067,7 @@ fn observe_live_source_restoration(
                 key.identity(),
                 key,
                 lease,
-                &prepared,
-                &leases,
+                accepted_frame,
                 cx,
             ) {
                 DockLiveUndockSourceFinishOutcome::Finished => {}
@@ -1115,22 +1104,12 @@ fn observe_live_source_restoration(
             }
         }
         DockHostLiveSourceRestorationPhase::AwaitingVisibleFrame => {
-            let Some(stable) =
-                view_presentation_window::stable_batch_presentation_receipt(cx, &leases)
-                    .filter(|receipt| receipt.frame_generation() == accepted_frame)
-            else {
-                defer_live_source_restoration(
-                    &owner,
-                    key,
-                    lease,
-                    DockLiveUndockSourceRestorationFailure::StablePresentationUnavailable,
-                    cx,
-                );
-                return;
-            };
             let Some(receipt) =
                 DockLiveUndockSourceRestorationReceipt::source_presented_after_release(
-                    lease, &prepared, &leases, stable,
+                    lease,
+                    &projection,
+                    &leases,
+                    accepted_frame,
                 )
             else {
                 defer_live_source_restoration(
@@ -1178,20 +1157,13 @@ fn observe_live_source_proxy_commit(
     host: WeakEntity<DockHost>,
     key: DockHostLivePresentationKey,
     lease: DockLiveUndockPayloadLeaseReceipt,
-    prepared: view_presentation_window::PreparedRehost,
     accepted_frame: u64,
-    window: &mut Window,
     cx: &mut App,
 ) {
     if !live_source_is_releasing(&host, key, cx) {
         return;
     }
-    let Some(gpui_receipt) = prepared
-        .snapshot()
-        .source_proxy_receipt()
-        .filter(|receipt| receipt.frame_generation() == accepted_frame)
-    else {
-        let _ = window;
+    let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
         submit_live_presentation_failure(
             &owner,
             &host,
@@ -1201,7 +1173,8 @@ fn observe_live_source_proxy_commit(
         );
         return;
     };
-    let Some(receipt) = DockLiveUndockSourceProxyReceipt::new(lease, gpui_receipt) else {
+    let Some(Ok(receipt)) = runtime.accept_source_proxy_frame(key, lease, accepted_frame, cx)
+    else {
         submit_live_presentation_failure(
             &owner,
             &host,
@@ -1231,14 +1204,13 @@ fn observe_live_destination_mount(
     host: WeakEntity<DockHost>,
     key: DockHostLivePresentationKey,
     proxy: DockLiveUndockSourceProxyReceipt,
-    prepared: view_presentation_window::PreparedRehost,
     accepted_frame: u64,
     cx: &mut App,
 ) {
     if !live_destination_is_staging(&host, key, cx) {
         return;
     }
-    let Some(mount) = prepared.destination_ready_for_exposure() else {
+    let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
         submit_live_presentation_failure(
             &owner,
             &host,
@@ -1248,28 +1220,9 @@ fn observe_live_destination_mount(
         );
         return;
     };
-    if mount.frame_generation() != accepted_frame {
-        submit_live_presentation_failure(
-            &owner,
-            &host,
-            key,
-            DockLiveUndockPresentationFailure::DestinationExposureFinish { proxy },
-            cx,
-        );
-        return;
-    }
-    let Ok(outcome) = view_presentation_window::expose_destination(cx, &prepared) else {
-        submit_live_presentation_failure(
-            &owner,
-            &host,
-            key,
-            DockLiveUndockPresentationFailure::DestinationExposureFinish { proxy },
-            cx,
-        );
-        return;
-    };
-    let view_presentation_window::DestinationExposureOutcome { batch, exposure } = outcome;
-    let Some(receipt) = DockLiveUndockPayloadMountReceipt::new(proxy, exposure) else {
+    let Some(Ok((batch, receipt))) =
+        runtime.accept_destination_frame(key, proxy, accepted_frame, cx)
+    else {
         submit_live_presentation_failure(
             &owner,
             &host,
@@ -1301,16 +1254,13 @@ fn observe_live_destination_presentation(
     host: WeakEntity<DockHost>,
     key: DockHostLivePresentationKey,
     mount: DockLiveUndockPayloadMountReceipt,
-    leases: view_presentation_window::LeaseBatch,
     accepted_frame: u64,
-    window: &mut Window,
     cx: &mut App,
 ) {
     if !live_destination_is_exposed(&host, key, mount, cx) {
         return;
     }
-    let Some(gpui_receipt) = view_presentation_window::presented_batch_receipt(cx, &leases) else {
-        let _ = window;
+    let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
         submit_live_presentation_failure(
             &owner,
             &host,
@@ -1320,7 +1270,9 @@ fn observe_live_destination_presentation(
         );
         return;
     };
-    let Some(receipt) = DockLiveUndockPayloadPresentationReceipt::new(mount, gpui_receipt) else {
+    let Some(Ok(receipt)) =
+        runtime.accept_destination_presentation_frame(key, mount, accepted_frame, cx)
+    else {
         submit_live_presentation_failure(
             &owner,
             &host,
@@ -1330,16 +1282,6 @@ fn observe_live_destination_presentation(
         );
         return;
     };
-    if receipt.frame_generation() != accepted_frame {
-        submit_live_presentation_failure(
-            &owner,
-            &host,
-            key,
-            DockLiveUndockPresentationFailure::PayloadPresentationObservation { mount },
-            cx,
-        );
-        return;
-    }
     let advanced = host
         .update(cx, |host, cx| {
             host.mark_live_destination_presented(key, receipt, cx)
@@ -1412,13 +1354,17 @@ fn classify_live_reveal_snapshot(
 }
 
 fn current_live_destination_reveal_frame(
+    owner: &WeakEntity<DockSurfaceOwner>,
+    key: DockHostLivePresentationKey,
     preflight: DockLiveUndockPayloadPresentationReceipt,
-    leases: &view_presentation_window::LeaseBatch,
     cx: &App,
 ) -> Option<DockLiveUndockPayloadPresentationReceipt> {
-    view_presentation_window::presented_batch_receipt(cx, leases).and_then(|receipt| {
-        DockLiveUndockPayloadPresentationReceipt::new(preflight.mount(), receipt)
-    })
+    let runtime = owner
+        .read_with(cx, |owner, _| owner.live_undock_runtime())
+        .ok()?;
+    runtime
+        .current_destination_presentation(key, preflight.mount(), cx)?
+        .ok()
 }
 
 fn bind_live_destination_reveal_submission(
@@ -1451,7 +1397,6 @@ fn expire_live_destination_reveal_observation(
     key: DockHostLivePresentationKey,
     preflight: DockLiveUndockPayloadPresentationReceipt,
     candidate_frame: DockLiveUndockPayloadPresentationReceipt,
-    leases: view_presentation_window::LeaseBatch,
     ticket: open_gpui::WindowProvisionalRevealTicket,
     cx: &mut App,
 ) {
@@ -1525,7 +1470,8 @@ fn expire_live_destination_reveal_observation(
     };
     if authority.submitted_frame.is_none()
         && let Some(presentation_generation) = snapshot.presentation_generation()
-        && let Some(submitted_frame) = current_live_destination_reveal_frame(preflight, &leases, cx)
+        && let Some(submitted_frame) =
+            current_live_destination_reveal_frame(&owner, key, preflight, cx)
         && submitted_frame.frame_generation() == presentation_generation
         && !bind_live_destination_reveal_submission(
             &host,
@@ -1599,7 +1545,6 @@ fn capture_live_destination_reveal_frame(
     host: WeakEntity<DockHost>,
     key: DockHostLivePresentationKey,
     preflight: DockLiveUndockPayloadPresentationReceipt,
-    leases: view_presentation_window::LeaseBatch,
     accepted_frame: u64,
     window: &mut Window,
     cx: &mut App,
@@ -1607,7 +1552,7 @@ fn capture_live_destination_reveal_frame(
     if !live_destination_is_reveal_armed(&host, key, preflight, cx) {
         return;
     }
-    let Some(gpui_receipt) = view_presentation_window::presented_batch_receipt(cx, &leases) else {
+    let Ok(runtime) = owner.read_with(cx, |owner, _| owner.live_undock_runtime()) else {
         submit_live_presentation_failure(
             &owner,
             &host,
@@ -1619,8 +1564,8 @@ fn capture_live_destination_reveal_frame(
         );
         return;
     };
-    let Some(candidate_frame) =
-        DockLiveUndockPayloadPresentationReceipt::new(preflight.mount(), gpui_receipt)
+    let Some(Ok(candidate_frame)) =
+        runtime.accept_destination_presentation_frame(key, preflight.mount(), accepted_frame, cx)
     else {
         submit_live_presentation_failure(
             &owner,
@@ -1661,7 +1606,6 @@ fn capture_live_destination_reveal_frame(
     let deadline_owner = owner.clone();
     let deadline_host = host.clone();
     let deadline_window = window.window_handle();
-    let deadline_leases = leases.clone();
     let deadline_ticket = ticket.clone();
     cx.spawn(async move |cx| {
         cx.background_executor()
@@ -1675,7 +1619,6 @@ fn capture_live_destination_reveal_frame(
                 key,
                 preflight,
                 candidate_frame,
-                deadline_leases,
                 deadline_ticket,
                 cx,
             );
@@ -1690,7 +1633,6 @@ fn capture_live_destination_reveal_frame(
             key,
             preflight,
             candidate_frame,
-            leases,
             ticket,
             window,
             cx,
@@ -1706,7 +1648,6 @@ fn observe_live_destination_reveal_native(
     key: DockHostLivePresentationKey,
     preflight: DockLiveUndockPayloadPresentationReceipt,
     candidate_frame: DockLiveUndockPayloadPresentationReceipt,
-    leases: view_presentation_window::LeaseBatch,
     ticket: open_gpui::WindowProvisionalRevealTicket,
     window: &mut Window,
     cx: &mut App,
@@ -1727,7 +1668,7 @@ fn observe_live_destination_reveal_native(
     if authority.submitted_frame.is_none()
         && let Some(presentation_generation) = snapshot.presentation_generation()
     {
-        match current_live_destination_reveal_frame(preflight, &leases, cx) {
+        match current_live_destination_reveal_frame(&owner, key, preflight, cx) {
             Some(submitted_frame)
                 if submitted_frame.frame_generation() == presentation_generation =>
             {
@@ -1760,7 +1701,6 @@ fn observe_live_destination_reveal_native(
         let next_owner = owner.clone();
         let next_host = host.clone();
         let next_ticket = ticket.clone();
-        let next_leases = leases.clone();
         window.on_next_frame(move |window, cx| {
             observe_live_destination_reveal_native(
                 next_owner,
@@ -1768,7 +1708,6 @@ fn observe_live_destination_reveal_native(
                 key,
                 preflight,
                 candidate_frame,
-                next_leases,
                 next_ticket,
                 window,
                 cx,
@@ -1815,7 +1754,6 @@ fn observe_live_destination_reveal_native(
             let next_owner = owner.clone();
             let next_host = host.clone();
             let next_ticket = ticket.clone();
-            let next_leases = leases.clone();
             window.on_next_frame(move |window, cx| {
                 observe_live_destination_reveal_native(
                     next_owner,
@@ -1823,7 +1761,6 @@ fn observe_live_destination_reveal_native(
                     key,
                     preflight,
                     candidate_frame,
-                    next_leases,
                     next_ticket,
                     window,
                     cx,
@@ -2040,7 +1977,7 @@ impl DockHost {
         let state = self.live_presentation_state()?;
         let DockHostLivePresentationMode::SourceRestoration {
             lease,
-            prepared,
+            projection,
             leases,
             retained,
             phase,
@@ -2057,13 +1994,13 @@ impl DockHost {
         let paint_replay_succeeded = replay_succeeded;
         let observe_owner = owner.clone();
         let observe_host = host.clone();
-        let observe_prepared = prepared.clone();
+        let observe_projection = projection.clone();
         let observe_leases = leases.clone();
         let observer = canvas(
             move |_, window, _| {
                 let owner = observe_owner.clone();
                 let host = observe_host.clone();
-                let prepared = observe_prepared.clone();
+                let projection = observe_projection.clone();
                 let leases = observe_leases.clone();
                 let replay_succeeded = observe_replay_succeeded.clone();
                 window.record_prepaint_focus_stable_commit(move |frame, window, cx| {
@@ -2072,7 +2009,7 @@ impl DockHost {
                         host.clone(),
                         state.key,
                         lease,
-                        prepared.clone(),
+                        projection.clone(),
                         leases.clone(),
                         phase,
                         retained_ticket,
@@ -2253,47 +2190,41 @@ impl DockHost {
         let key = state.key;
 
         match state.mode {
-            DockHostRecoveryPresentationMode::SourceProjection { prepared, phase } => {
+            DockHostRecoveryPresentationMode::SourceProjection { projection, phase } => {
                 if phase == DockHostRecoverySourcePhase::Releasing {
                     let proxy_color = rgba(0x00000001);
-                    let barrier = view_presentation_window::source_release_barrier(
-                        prepared.clone(),
-                        move |attempt| {
-                            canvas(
-                                |_, _, _| (),
-                                move |bounds, _, window, _| {
-                                    window.paint_quad(quad(
-                                        bounds,
-                                        px(0.0),
-                                        proxy_color,
-                                        px(0.0),
-                                        proxy_color,
-                                        BorderStyle::Solid,
-                                    ));
-                                    let _ = view_presentation_window::source_proxy_replay_succeeded(
-                                        &attempt, window,
-                                    );
-                                },
-                            )
-                            .absolute()
-                            .size_full()
-                        },
-                    );
+                    let barrier = projection.source_release_barrier(move |attempt| {
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, _, window, _| {
+                                window.paint_quad(quad(
+                                    bounds,
+                                    px(0.0),
+                                    proxy_color,
+                                    px(0.0),
+                                    proxy_color,
+                                    BorderStyle::Solid,
+                                ));
+                                let _ = view_presentation_window::source_proxy_replay_succeeded(
+                                    &attempt, window,
+                                );
+                            },
+                        )
+                        .absolute()
+                        .size_full()
+                    });
                     let observer_owner = owner.clone();
                     let observer_host = host.clone();
-                    let observer_prepared = prepared;
                     let observer = canvas(
                         move |_, window, _| {
                             let owner = observer_owner.clone();
                             let host = observer_host.clone();
-                            let prepared = observer_prepared.clone();
                             window.record_prepaint_focus_stable_commit(
                                 move |accepted_frame, _, cx| {
                                     crate::surface::payload_recovery_executor::payload_recovery_source_proxy_committed(
                                         owner.clone(),
                                         host.clone(),
                                         key,
-                                        prepared.clone(),
                                         accepted_frame,
                                         cx,
                                     );
@@ -2308,10 +2239,10 @@ impl DockHost {
                 }
             }
             DockHostRecoveryPresentationMode::DestinationProjection {
-                prepared,
                 leases,
                 resolved_roots,
                 phase,
+                ..
             } => {
                 if let Some(hidden_roots) =
                     self.render_payload_recovery_hidden_roots(&resolved_roots, session, window, cx)
@@ -2320,13 +2251,11 @@ impl DockHost {
                 }
                 let observer_owner = owner.clone();
                 let observer_host = host.clone();
-                let observer_prepared = prepared;
                 let observer_leases = leases;
                 let observer = canvas(
                     move |_, window, _| {
                         let owner = observer_owner.clone();
                         let host = observer_host.clone();
-                        let prepared = observer_prepared.clone();
                         let leases = observer_leases.clone();
                         window.record_prepaint_focus_stable_commit(
                             move |accepted_frame, _, cx| match phase {
@@ -2336,18 +2265,16 @@ impl DockHost {
                                         owner.clone(),
                                         host.clone(),
                                         key,
-                                        prepared.clone(),
                                         leases.clone(),
                                         accepted_frame,
                                         cx,
                                     );
                                 }
-                                DockHostRecoveryDestinationPhase::Exposed(_) => {
+                                DockHostRecoveryDestinationPhase::Exposed => {
                                     crate::surface::payload_recovery_executor::payload_recovery_destination_presented(
                                         owner.clone(),
                                         host.clone(),
                                         key,
-                                        prepared.clone(),
                                         leases.clone(),
                                         accepted_frame,
                                         cx,
@@ -2362,11 +2289,7 @@ impl DockHost {
                 .size_full();
                 root = root.child(observer);
             }
-            DockHostRecoveryPresentationMode::SourceRestoration {
-                prepared,
-                resolved_roots,
-                ..
-            } => {
+            DockHostRecoveryPresentationMode::SourceRestoration { resolved_roots, .. } => {
                 if let Some(hidden_roots) =
                     self.render_payload_recovery_hidden_roots(&resolved_roots, session, window, cx)
                 {
@@ -2378,13 +2301,12 @@ impl DockHost {
                     move |_, window, _| {
                         let owner = observer_owner.clone();
                         let host = observer_host.clone();
-                        let prepared = prepared.clone();
-                        window.record_prepaint_focus_stable_commit(move |_, _, cx| {
+                        window.record_prepaint_focus_stable_commit(move |accepted_frame, _, cx| {
                             crate::surface::payload_recovery_executor::payload_recovery_source_restoration_frame_committed(
                                 owner.clone(),
                                 host.clone(),
                                 key,
-                                prepared.clone(),
+                                accepted_frame,
                                 cx,
                             );
                         });
@@ -2540,7 +2462,7 @@ impl DockHost {
         match state.mode {
             DockHostLivePresentationMode::SourceProjection {
                 lease,
-                prepared,
+                projection,
                 retained,
                 carrier,
                 phase,
@@ -2549,12 +2471,9 @@ impl DockHost {
                     DockHostLiveSourcePhase::Releasing => {
                         let observe_owner = owner.clone();
                         let observe_host = host.clone();
-                        let observe_prepared = prepared.clone();
-                        let barrier =
-                            view_presentation_window::retained_visual_source_release_barrier(
-                                prepared,
-                                &retained,
-                                move |attempt| {
+                        let barrier = projection.retained_visual_source_release_barrier(
+                            &retained,
+                            move |attempt| {
                                     canvas(
                                         |_, _, _| (),
                                         move |_, _, window, cx| {
@@ -2572,23 +2491,19 @@ impl DockHost {
                                     )
                                     .size_full()
                                 },
-                            );
+                        );
                         let observer = canvas(
                             move |_, window, _| {
-                                window.record_prepaint_focus_stable_commit(
-                                    move |frame, window, cx| {
-                                        observe_live_source_proxy_commit(
-                                            observe_owner.clone(),
-                                            observe_host.clone(),
-                                            state.key,
-                                            lease,
-                                            observe_prepared.clone(),
-                                            frame,
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                );
+                                window.record_prepaint_focus_stable_commit(move |frame, _, cx| {
+                                    observe_live_source_proxy_commit(
+                                        observe_owner.clone(),
+                                        observe_host.clone(),
+                                        state.key,
+                                        lease,
+                                        frame,
+                                        cx,
+                                    );
+                                });
                             },
                             |_, _, _, _| {},
                         )
@@ -2660,13 +2575,7 @@ impl DockHost {
                     root = root.child(overlay);
                 }
             }
-            DockHostLivePresentationMode::DestinationProjection {
-                proxy,
-                prepared,
-                leases,
-                phase,
-                ..
-            } => {
+            DockHostLivePresentationMode::DestinationProjection { proxy, phase, .. } => {
                 if let Some(work_context) = self.live_destination_runtime_work_context(cx) {
                     root =
                         root.child(self.render_live_destination_geometry_probe(work_context, cx));
@@ -2680,7 +2589,6 @@ impl DockHost {
                                 move |_, window, _| {
                                     let next_owner = next_owner.clone();
                                     let next_host = next_host.clone();
-                                    let prepared = prepared.clone();
                                     window.record_prepaint_focus_stable_commit(
                                         move |frame, _, cx| {
                                             observe_live_destination_mount(
@@ -2688,7 +2596,6 @@ impl DockHost {
                                                 next_host.clone(),
                                                 state.key,
                                                 proxy,
-                                                prepared.clone(),
                                                 frame,
                                                 cx,
                                             );
@@ -2710,17 +2617,14 @@ impl DockHost {
                                 move |_, window, _| {
                                     let next_owner = next_owner.clone();
                                     let next_host = next_host.clone();
-                                    let leases = leases.clone();
                                     window.record_prepaint_focus_stable_commit(
-                                        move |frame, window, cx| {
+                                        move |frame, _, cx| {
                                             observe_live_destination_presentation(
                                                 next_owner.clone(),
                                                 next_host.clone(),
                                                 state.key,
                                                 mount,
-                                                leases.clone(),
                                                 frame,
-                                                window,
                                                 cx,
                                             );
                                         },
@@ -2741,7 +2645,6 @@ impl DockHost {
                                 move |_, window, _| {
                                     let next_owner = next_owner.clone();
                                     let next_host = next_host.clone();
-                                    let leases = leases.clone();
                                     window.record_prepaint_focus_stable_commit(
                                         move |frame, window, cx| {
                                             capture_live_destination_reveal_frame(
@@ -2749,7 +2652,6 @@ impl DockHost {
                                                 next_host.clone(),
                                                 state.key,
                                                 presentation,
-                                                leases.clone(),
                                                 frame,
                                                 window,
                                                 cx,

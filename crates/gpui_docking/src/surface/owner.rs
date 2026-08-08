@@ -17,7 +17,8 @@ use super::{
         DockPayloadRecoveryRestoreReceipt,
     },
     payload_recovery_executor::{
-        DockPayloadRecoveryExecutionKey, DockPayloadRecoveryExecutor, DockPayloadRecoveryTransfer,
+        DockPayloadRecoveryExecutionKey, DockPayloadRecoveryExecutor,
+        DockPayloadRecoveryFinalization, DockPayloadRecoveryTransfer,
     },
     window_session::{
         DockSurfaceWindowSession, DockSurfaceWindowSessionDependencyId,
@@ -31,7 +32,7 @@ use crate::{
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, EntityId, EventEmitter, Subscription,
-    WindowId,
+    WindowId, view_presentation_window,
 };
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
@@ -576,9 +577,114 @@ impl DockSurfaceOwner {
         &mut self,
         key: DockPayloadRecoveryExecutionKey,
         transfer: DockPayloadRecoveryTransfer,
+        session: &mut Option<view_presentation_window::RehostSession>,
     ) -> bool {
         self.payload_recovery_executor
-            .install_transfer(key, transfer)
+            .install_transfer(key, transfer, session)
+    }
+
+    pub(crate) fn accept_payload_recovery_source_proxy_frame(
+        &mut self,
+        key: crate::host::DockHostRecoveryPresentationKey,
+        accepted_frame: u64,
+    ) -> Option<
+        Result<
+            view_presentation_window::RehostSourceProxyCommit,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        self.payload_recovery_executor
+            .accept_source_proxy_frame(key, accepted_frame)
+    }
+
+    pub(crate) fn accept_payload_recovery_destination_frame(
+        &mut self,
+        key: crate::host::DockHostRecoveryPresentationKey,
+        accepted_frame: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<
+        Result<
+            view_presentation_window::RehostDestinationExposure,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        self.payload_recovery_executor
+            .accept_destination_frame(key, accepted_frame, cx)
+    }
+
+    pub(crate) fn accept_payload_recovery_destination_presentation_frame(
+        &self,
+        key: crate::host::DockHostRecoveryPresentationKey,
+        accepted_frame: u64,
+        cx: &Context<Self>,
+    ) -> Option<
+        Result<
+            view_presentation_window::RehostDestinationPresentation,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        self.payload_recovery_executor
+            .accept_destination_presentation_frame(key, accepted_frame, cx)
+    }
+
+    pub(crate) fn settle_payload_recovery_source(
+        &mut self,
+        key: DockPayloadRecoveryExecutionKey,
+        cx: &mut Context<Self>,
+    ) -> Option<
+        Result<
+            view_presentation_window::SourceSettlement,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        self.payload_recovery_executor.settle_source(key, cx)
+    }
+
+    pub(crate) fn accept_payload_recovery_source_restoration_frame(
+        &mut self,
+        key: crate::host::DockHostRecoveryPresentationKey,
+        accepted_frame: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<
+        Result<
+            view_presentation_window::SourcePresentationFinish,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        self.payload_recovery_executor
+            .accept_source_restoration_frame(key, accepted_frame, cx)
+    }
+
+    pub(crate) fn abandon_payload_recovery_rehost_after_source_loss(
+        &mut self,
+        key: DockPayloadRecoveryExecutionKey,
+        cx: &mut Context<Self>,
+    ) -> Option<
+        Result<
+            view_presentation_window::RehostAbandonmentOutcome,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        self.payload_recovery_executor
+            .abandon_after_source_loss(key, cx)
+    }
+
+    pub(crate) fn prepare_payload_recovery_destination_terminal(
+        &mut self,
+        key: DockPayloadRecoveryExecutionKey,
+        presented: &view_presentation_window::RehostDestinationPresentation,
+        cx: &mut Context<Self>,
+    ) -> Option<
+        Result<
+            view_presentation_window::RehostTerminalPreparation,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        self.payload_recovery_executor.prepare_terminal(
+            key,
+            cx,
+            view_presentation_window::RehostTerminalIntent::CommitDestination(presented),
+        )
     }
 
     pub(crate) fn payload_recovery_transfer(
@@ -597,11 +703,28 @@ impl DockSurfaceOwner {
             .cloned()
     }
 
-    pub(crate) fn reserve_payload_recovery_finalization(
+    pub(crate) fn queue_payload_recovery_finalization(
         &mut self,
         key: crate::host::DockHostRecoveryPresentationKey,
+        presented: view_presentation_window::RehostDestinationPresentation,
     ) -> Option<DockPayloadRecoveryTransfer> {
-        self.payload_recovery_executor.reserve_finalization(key)
+        self.payload_recovery_executor
+            .queue_finalization(key, presented)
+    }
+
+    pub(crate) fn payload_recovery_finalization(
+        &self,
+        key: DockPayloadRecoveryExecutionKey,
+    ) -> Option<(DockPayloadRecoveryTransfer, DockPayloadRecoveryFinalization)> {
+        self.payload_recovery_executor.finalization(key)
+    }
+
+    pub(crate) fn payload_recovery_rehost_terminal_disposition(
+        &self,
+        key: DockPayloadRecoveryExecutionKey,
+    ) -> Option<view_presentation_window::RehostTerminalDisposition> {
+        self.payload_recovery_executor
+            .session_terminal_disposition(key)
     }
 
     pub(crate) fn cancel_payload_recovery_execution(
@@ -609,6 +732,7 @@ impl DockSurfaceOwner {
         key: DockPayloadRecoveryExecutionKey,
     ) -> bool {
         self.payload_recovery_executor.finish(key)
+            || self.payload_recovery_executor.finish_terminal(key)
     }
 
     pub(crate) fn record_payload_recovery_source_native_terminal(
@@ -640,6 +764,14 @@ impl DockSurfaceOwner {
     ) -> bool {
         self.payload_recovery_executor
             .source_native_terminal_seen(key)
+    }
+
+    pub(crate) fn payload_recovery_source_settlement_started(
+        &self,
+        key: DockPayloadRecoveryExecutionKey,
+    ) -> bool {
+        self.payload_recovery_executor
+            .source_settlement_started(key)
     }
 
     #[cfg(test)]
@@ -684,6 +816,76 @@ impl DockSurfaceOwner {
     pub(crate) fn reject_next_payload_recovery_transfer_install_for_test(&mut self) {
         self.payload_recovery_executor
             .reject_next_transfer_install_once_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_after_payload_recovery_finalization_stage_once_for_test(
+        &mut self,
+        stage: super::payload_recovery_executor::DockPayloadRecoveryFinalizationPanicStage,
+    ) {
+        self.payload_recovery_executor
+            .panic_after_finalization_stage_once_for_test(stage);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_after_payload_recovery_finalization_stage_for_test(
+        &mut self,
+        stage: super::payload_recovery_executor::DockPayloadRecoveryFinalizationPanicStage,
+        attempts: u8,
+    ) {
+        self.payload_recovery_executor
+            .panic_after_finalization_stage_for_test(stage, attempts);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_payload_recovery_finalization_panic_for_test(
+        &mut self,
+        stage: super::payload_recovery_executor::DockPayloadRecoveryFinalizationPanicStage,
+    ) -> bool {
+        self.payload_recovery_executor
+            .take_finalization_panic_for_test(stage)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_before_payload_recovery_finalization_once_for_test(&mut self) {
+        self.payload_recovery_executor
+            .pause_before_finalization_once_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_payload_recovery_finalization_pause_for_test(&mut self) -> bool {
+        self.payload_recovery_executor
+            .take_pause_before_finalization_for_test()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_payload_recovery_finalization_retry_once_for_test(&mut self) {
+        self.payload_recovery_executor
+            .pause_finalization_retry_once_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_payload_recovery_finalization_retry_pause_for_test(&mut self) -> bool {
+        self.payload_recovery_executor
+            .take_pause_finalization_retry_for_test()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_after_payload_recovery_installation_stage_once_for_test(
+        &mut self,
+        stage: super::payload_recovery_executor::DockPayloadRecoveryInstallationPanicStage,
+    ) {
+        self.payload_recovery_executor
+            .panic_after_installation_stage_once_for_test(stage);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_payload_recovery_installation_panic_for_test(
+        &mut self,
+        stage: super::payload_recovery_executor::DockPayloadRecoveryInstallationPanicStage,
+    ) -> bool {
+        self.payload_recovery_executor
+            .take_installation_panic_for_test(stage)
     }
 
     #[cfg(test)]
@@ -739,24 +941,54 @@ impl DockSurfaceOwner {
         cx: &mut Context<Self>,
     ) -> DockPayloadRecoveryRestoreReceipt {
         self.assert_active_transaction(transaction);
-        assert!(
-            self.payload_recovery_executor.finish(prepared.key),
-            "prepared payload recovery execution must remain exact until final commit"
-        );
+        let already_committed = self
+            .payload_recovery
+            .committed_restore_receipt(prepared.prepared.action())
+            .is_some();
+        let projected_graph = prepared.prepared.projected_graph().clone();
+        cx.update_entity(&self.controller, |controller, controller_cx| {
+            controller.workspace_mut().set_graph(projected_graph);
+            controller_cx.notify();
+        });
         let receipt = self
             .payload_recovery
             .commit_prepared_restore(prepared.prepared);
-        self.record_changes(
-            transaction,
-            [
-                DockSurfaceChangeCategory::Layout,
-                DockSurfaceChangeCategory::Selection,
-                DockSurfaceChangeCategory::PanelLifecycle,
-            ],
-        );
-        self.record_transition(transaction, DockSurfaceTransition::ViewportRecovered);
+        if !already_committed {
+            self.record_changes(
+                transaction,
+                [
+                    DockSurfaceChangeCategory::Layout,
+                    DockSurfaceChangeCategory::Selection,
+                    DockSurfaceChangeCategory::PanelLifecycle,
+                ],
+            );
+            self.record_transition(transaction, DockSurfaceTransition::ViewportRecovered);
+        }
         cx.notify();
         receipt
+    }
+
+    pub(crate) fn committed_payload_recovery_restore_receipt(
+        &self,
+        action: DockPayloadRecoveryRestoreAction,
+    ) -> Option<DockPayloadRecoveryRestoreReceipt> {
+        self.payload_recovery
+            .committed_restore_receipt(action)
+            .cloned()
+    }
+
+    pub(crate) fn retire_committed_payload_recovery_restore(
+        &mut self,
+        action: DockPayloadRecoveryRestoreAction,
+        receipt: &DockPayloadRecoveryRestoreReceipt,
+    ) -> bool {
+        self.payload_recovery
+            .retire_committed_restore(action, receipt)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn payload_recovery_committed_restore_count_for_test(&self) -> usize {
+        self.payload_recovery.committed_restore_count_for_test()
     }
 
     pub(crate) fn can_commit_prepared_payload_recovery_restore(

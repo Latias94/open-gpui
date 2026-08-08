@@ -487,12 +487,19 @@ struct DockPayloadRecoveryReservation {
     prepared: DockPayloadRecoveryPrepared,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DockPayloadRecoveryCommittedRestore {
+    action: DockPayloadRecoveryRestoreAction,
+    receipt: DockPayloadRecoveryRestoreReceipt,
+}
+
 /// Surface-owned authority for payload recovery preparation and durable commit.
 #[derive(Debug, Default)]
 pub(crate) struct DockPayloadRecoveryRegistry {
     last_generation: u64,
     reservations: Vec<DockPayloadRecoveryReservation>,
     records: Vec<DockPayloadRecoveryRecord>,
+    committed_restores: Vec<DockPayloadRecoveryCommittedRestore>,
 }
 
 impl DockPayloadRecoveryRegistry {
@@ -881,6 +888,9 @@ impl DockPayloadRecoveryRegistry {
         active_anchor: Option<DockSurfaceWindowSessionLease>,
         prepared: &DockPayloadRecoveryRestorePrepared,
     ) -> bool {
+        if self.committed_restore_receipt(prepared.action).is_some() {
+            return true;
+        }
         if owner_revision != prepared.owner_revision
             || self
                 .validate_restore_action(active_anchor, prepared.action)
@@ -891,15 +901,21 @@ impl DockPayloadRecoveryRegistry {
         let Some(record) = self.record(prepared.action.recovery) else {
             return false;
         };
-        graph.recovery_target_tabs(&prepared.primary_space) == prepared.target_tabs
-            && DockPayloadRecoveryLocation::resolve_unique(graph, &record.payload_identity).as_ref()
-                == Ok(&prepared.source_location)
+        graph.matches_exactly(&prepared.projected_graph)
+            || (graph.recovery_target_tabs(&prepared.primary_space) == prepared.target_tabs
+                && DockPayloadRecoveryLocation::resolve_unique(graph, &record.payload_identity)
+                    .as_ref()
+                    == Ok(&prepared.source_location))
     }
 
     pub(crate) fn commit_prepared_restore(
         &mut self,
         prepared: DockPayloadRecoveryRestorePrepared,
     ) -> DockPayloadRecoveryRestoreReceipt {
+        if let Some(receipt) = self.committed_restore_receipt(prepared.action) {
+            return receipt.clone();
+        }
+        let action = prepared.action;
         let focus_item = prepared.focus_item.clone();
         let descendant_focus = prepared.descendant_focus.clone();
         let index = self
@@ -908,11 +924,48 @@ impl DockPayloadRecoveryRegistry {
             .position(|record| record.receipt == prepared.action.recovery)
             .expect("preflighted payload recovery restore must retain its exact record");
         self.records.remove(index);
-        DockPayloadRecoveryRestoreReceipt {
+        let receipt = DockPayloadRecoveryRestoreReceipt {
             recovery: prepared.action.recovery,
             focus_item,
             descendant_focus,
-        }
+        };
+        self.committed_restores
+            .push(DockPayloadRecoveryCommittedRestore {
+                action,
+                receipt: receipt.clone(),
+            });
+        receipt
+    }
+
+    pub(crate) fn committed_restore_receipt(
+        &self,
+        action: DockPayloadRecoveryRestoreAction,
+    ) -> Option<&DockPayloadRecoveryRestoreReceipt> {
+        self.committed_restores
+            .iter()
+            .find(|committed| committed.action == action)
+            .map(|committed| &committed.receipt)
+    }
+
+    pub(crate) fn retire_committed_restore(
+        &mut self,
+        action: DockPayloadRecoveryRestoreAction,
+        receipt: &DockPayloadRecoveryRestoreReceipt,
+    ) -> bool {
+        let Some(index) = self
+            .committed_restores
+            .iter()
+            .position(|committed| committed.action == action && committed.receipt == *receipt)
+        else {
+            return false;
+        };
+        self.committed_restores.remove(index);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn committed_restore_count_for_test(&self) -> usize {
+        self.committed_restores.len()
     }
 
     fn validate_restore_action(

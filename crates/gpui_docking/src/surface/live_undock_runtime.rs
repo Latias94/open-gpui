@@ -59,7 +59,7 @@ use open_gpui::{
     retained_visual::{self, Ticket},
     size,
     view_presentation_window::{
-        self, PreparedAbandonRehostAfterSourceLoss, PreparedFinishDestination, PreparedRehost,
+        self, PreparedRehostTerminal, RehostProjection, RehostSession, RehostTerminalPreparation,
     },
 };
 use std::{
@@ -473,19 +473,98 @@ struct DockLiveUndockObservedReleasePlacement {
     facts: DockViewportWindowFacts,
 }
 
-#[derive(Clone)]
 struct DockLiveUndockPresentationExecution {
     carrier: DockLivePayloadCarrier,
     retained: Ticket,
-    prepared: PreparedRehost,
+    projection: RehostProjection,
+    session: DockLiveUndockRehostSessionState,
     lease: DockLiveUndockPayloadLeaseReceipt,
     source_key: Option<DockHostLivePresentationKey>,
     destination_key: Option<DockHostLivePresentationKey>,
     reveal: Option<DockLiveUndockRevealReceipt>,
     retained_released: bool,
+    source_restoration_batch: Option<view_presentation_window::LeaseBatch>,
     source_restoration_receipt: Option<DockLiveUndockSourceRestorationReceipt>,
     restore_focus: bool,
     source_focus_restored: bool,
+}
+
+enum DockLiveUndockRehostSessionState {
+    Active(RehostSession),
+    CheckedOut,
+    Retired,
+}
+
+impl DockLiveUndockRehostSessionState {
+    fn active(&self) -> Option<&RehostSession> {
+        match self {
+            Self::Active(session) => Some(session),
+            Self::CheckedOut | Self::Retired => None,
+        }
+    }
+
+    fn checkout(&mut self) -> Option<RehostSession> {
+        let current = std::mem::replace(self, Self::CheckedOut);
+        match current {
+            Self::Active(session) => Some(session),
+            Self::CheckedOut | Self::Retired => {
+                *self = current;
+                None
+            }
+        }
+    }
+
+    fn restore(&mut self, session: RehostSession, projection: &RehostProjection) {
+        assert!(
+            matches!(self, Self::CheckedOut) && projection.matches_exactly(&session.projection()),
+            "checked-out live-undock rehost authority must return to its exact execution"
+        );
+        *self = Self::Active(session);
+    }
+
+    fn retire_terminal(&mut self) -> bool {
+        let Self::Active(session) = self else {
+            return false;
+        };
+        if !session.is_terminal() {
+            return false;
+        }
+        *self = Self::Retired;
+        true
+    }
+
+    fn is_active(&self) -> bool {
+        matches!(self, Self::Active(_))
+    }
+
+    fn is_checked_out(&self) -> bool {
+        matches!(self, Self::CheckedOut)
+    }
+}
+
+#[derive(Clone)]
+struct DockLiveUndockPresentationSnapshot {
+    carrier: DockLivePayloadCarrier,
+    retained: Ticket,
+    projection: RehostProjection,
+}
+
+impl DockLiveUndockPresentationExecution {
+    fn snapshot(&self) -> DockLiveUndockPresentationSnapshot {
+        DockLiveUndockPresentationSnapshot {
+            carrier: self.carrier.clone(),
+            retained: self.retained,
+            projection: self.projection.clone(),
+        }
+    }
+
+    fn checkout_session(&mut self) -> Option<RehostSession> {
+        self.session.checkout()
+    }
+
+    fn restore_session(&mut self, session: RehostSession) {
+        self.session.restore(session, &self.projection);
+    }
 }
 
 #[derive(Clone)]
@@ -499,9 +578,10 @@ struct DockLiveUndockSourceRestorationExecution {
     restore_session: DockHostPresentationSession,
     destination_host: Option<WindowHandle<DockHost>>,
     destination_key: Option<DockHostLivePresentationKey>,
-    prepared: PreparedRehost,
+    projection: RehostProjection,
     retained: Ticket,
     retained_released: bool,
+    source_restoration_batch: Option<view_presentation_window::LeaseBatch>,
     source_restoration_receipt: Option<DockLiveUndockSourceRestorationReceipt>,
 }
 
@@ -527,12 +607,9 @@ enum DockLiveUndockPreparedHostPresentationAbandonment {
     },
 }
 
-enum DockLiveUndockPreparedPresentationAbandonment {
-    Exact {
-        authority: PreparedRehost,
-        prepared: PreparedAbandonRehostAfterSourceLoss,
-    },
-    AlreadyAbsent(PreparedRehost),
+enum DockLiveUndockPreparedPresentationCleanup {
+    Exact(PreparedRehostTerminal),
+    AlreadyTerminal(DockLiveUndockRehostCleanupEvidence),
 }
 
 enum DockLiveUndockPreparedRetainedVisualCleanup {
@@ -556,7 +633,7 @@ struct DockLiveUndockPreparedOrphanCleanup {
     identity: DockLiveUndockIdentity,
     payload_lease: DockLiveUndockPayloadLeaseReceipt,
     runtime: DockViewportRuntimeHandle,
-    presentation: DockLiveUndockPreparedPresentationAbandonment,
+    presentation: DockLiveUndockPreparedPresentationCleanup,
     presentation_generation: u64,
     source_host: DockLiveUndockPreparedHostPresentationAbandonment,
     destination_host: DockLiveUndockPreparedHostPresentationAbandonment,
@@ -566,7 +643,7 @@ struct DockLiveUndockPreparedOrphanCleanup {
 }
 
 struct DockLiveUndockPreparedOrphanRecoveryExecution {
-    recovery: DockPayloadRecoveryPrepared,
+    recovery: DockLiveUndockPreparedRecoveryRecord,
     cleanup: DockLiveUndockPreparedOrphanCleanup,
 }
 
@@ -577,12 +654,12 @@ struct DockLiveUndockPreparedCommittedDestinationRecoveryExecution {
     token: DockLiveUndockPromotionToken,
     destination: DockLiveUndockPromotionDestination,
     runtime: DockViewportRuntimeHandle,
-    recovery: DockLiveUndockPreparedCommittedRecoveryRecord,
+    recovery: DockLiveUndockPreparedRecoveryRecord,
     source_semantic: Option<DockLiveUndockPreparedSourceSemanticRetirement>,
     destination_window: WindowHandle<DockHost>,
 }
 
-enum DockLiveUndockPreparedCommittedRecoveryRecord {
+enum DockLiveUndockPreparedRecoveryRecord {
     Prepared(DockPayloadRecoveryPrepared),
     AlreadyCommitted(DockPayloadRecoveryCommitReceipt),
 }
@@ -626,7 +703,7 @@ struct DockLiveUndockPreparedSameWindowPromotionExecution {
     source: DockHostPreparedLiveSourceRetirement,
     destination_host: Entity<DockHost>,
     destination_host_promotion: DockHostPreparedLiveDestinationPromotion,
-    presentation: PreparedFinishDestination,
+    presentation: RehostTerminalPreparation,
     reveal: DockLiveUndockRevealReceipt,
     provisional_session: WindowProvisionalSession,
     semantics: WindowProvisionalSemanticsTicket,
@@ -668,7 +745,7 @@ struct DockLiveUndockPreflightedHostPromotionExecution {
 struct DockLiveUndockPreparedHostPromotionPresentationCleanup {
     payload_lease: DockLiveUndockPayloadLeaseReceipt,
     presentation_generation: u64,
-    presentation: DockLiveUndockPreparedPresentationAbandonment,
+    presentation: DockLiveUndockPreparedPresentationCleanup,
     source_host: DockLiveUndockPreparedHostPresentationAbandonment,
     provisional_host: DockLiveUndockPreparedHostPresentationAbandonment,
     source_window: AnyWindowHandle,
@@ -790,6 +867,8 @@ struct DockLiveUndockRuntimeState {
     #[cfg(test)]
     reject_orphan_recovery_records: bool,
     #[cfg(test)]
+    interrupt_orphan_cleanup_after_recovery_commit_once: bool,
+    #[cfg(test)]
     reject_committed_destination_recovery_records: bool,
     #[cfg(test)]
     terminate_next_same_window_destination_before_semantics_ack: bool,
@@ -811,6 +890,43 @@ struct DockLiveUndockPreparedSeed {
 pub(crate) struct DockLiveUndockRuntime {
     pump: DockLiveUndockEffectPump<DockLiveUndockQueuedFact, DockLiveUndockEffects>,
     state: Rc<RefCell<DockLiveUndockRuntimeState>>,
+}
+
+struct DockLiveUndockRehostSessionCheckout {
+    state: Rc<RefCell<DockLiveUndockRuntimeState>>,
+    identity: DockLiveUndockIdentity,
+    lease: DockLiveUndockPayloadLeaseReceipt,
+    session: Option<RehostSession>,
+}
+
+impl DockLiveUndockRehostSessionCheckout {
+    fn session(&self) -> &RehostSession {
+        self.session
+            .as_ref()
+            .expect("live-undock rehost checkout must retain its session")
+    }
+
+    fn session_mut(&mut self) -> &mut RehostSession {
+        self.session
+            .as_mut()
+            .expect("live-undock rehost checkout must retain its session")
+    }
+}
+
+impl Drop for DockLiveUndockRehostSessionCheckout {
+    fn drop(&mut self) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        let mut state = self.state.borrow_mut();
+        let presentation = state
+            .executions
+            .get_mut(&self.identity)
+            .and_then(|execution| execution.presentation.as_mut())
+            .filter(|presentation| presentation.lease == self.lease)
+            .expect("checked-out live-undock rehost execution cannot retire before return");
+        presentation.restore_session(session);
+    }
 }
 
 impl fmt::Debug for DockLiveUndockRuntime {
@@ -873,8 +989,46 @@ impl DockLiveUndockRuntime {
     }
 
     #[cfg(test)]
+    pub(crate) fn current_rehost_session_is_active_for_test(&self) -> bool {
+        self.state.borrow().executions.values().any(|execution| {
+            execution
+                .presentation
+                .as_ref()
+                .is_some_and(|presentation| presentation.session.is_active())
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_with_current_rehost_session_checked_out_for_test(&self) {
+        let (identity, lease) = self
+            .state
+            .borrow()
+            .executions
+            .iter()
+            .find_map(|(identity, execution)| {
+                execution
+                    .presentation
+                    .as_ref()
+                    .filter(|presentation| presentation.session.is_active())
+                    .map(|presentation| (*identity, presentation.lease))
+            })
+            .expect("the test requires one active live-undock rehost session");
+        let _checkout = self
+            .checkout_presentation_session(identity, lease)
+            .expect("the active test session must check out exactly once");
+        panic!("injected panic while live-undock rehost authority is checked out");
+    }
+
+    #[cfg(test)]
     pub(crate) fn reject_orphan_recovery_records_for_test(&self) {
         self.state.borrow_mut().reject_orphan_recovery_records = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn interrupt_orphan_cleanup_after_recovery_commit_once_for_test(&self) {
+        self.state
+            .borrow_mut()
+            .interrupt_orphan_cleanup_after_recovery_commit_once = true;
     }
 
     #[cfg(test)]
@@ -888,7 +1042,7 @@ impl DockLiveUndockRuntime {
     pub(crate) fn orphan_cleanup_authority_for_test(
         &self,
     ) -> Option<(
-        PreparedRehost,
+        RehostProjection,
         Ticket,
         crate::native_captured_drag::DockNativeCapturedDragTransportLease,
     )> {
@@ -899,7 +1053,7 @@ impl DockLiveUndockRuntime {
             .find_map(|execution| {
                 let presentation = execution.presentation.as_ref()?;
                 Some((
-                    presentation.prepared.clone(),
+                    presentation.projection.clone(),
                     presentation.retained,
                     execution.seed.source.source_transport.clone(),
                 ))
@@ -1988,14 +2142,104 @@ impl DockLiveUndockRuntime {
         });
     }
 
+    fn checkout_presentation_session(
+        &self,
+        identity: DockLiveUndockIdentity,
+        lease: DockLiveUndockPayloadLeaseReceipt,
+    ) -> Option<DockLiveUndockRehostSessionCheckout> {
+        let mut state = self.state.borrow_mut();
+        let presentation = state.executions.get_mut(&identity)?.presentation.as_mut()?;
+        if presentation.lease != lease {
+            return None;
+        }
+        let session = presentation.checkout_session()?;
+        drop(state);
+        Some(DockLiveUndockRehostSessionCheckout {
+            state: self.state.clone(),
+            identity,
+            lease,
+            session: Some(session),
+        })
+    }
+
+    fn committed_source_finish(
+        &self,
+        identity: DockLiveUndockIdentity,
+        lease: DockLiveUndockPayloadLeaseReceipt,
+    ) -> Option<view_presentation_window::SourcePresentationFinish> {
+        self.state
+            .borrow()
+            .executions
+            .get(&identity)?
+            .presentation
+            .as_ref()
+            .filter(|presentation| presentation.lease == lease)?
+            .session
+            .active()?
+            .committed_source_finish()
+    }
+
+    fn prepare_presentation_terminal(
+        &self,
+        identity: DockLiveUndockIdentity,
+        lease: DockLiveUndockPayloadLeaseReceipt,
+        intent: view_presentation_window::RehostTerminalIntent<'_>,
+        cx: &App,
+    ) -> Option<
+        Result<
+            view_presentation_window::RehostTerminalPreparation,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        let state = self.state.borrow();
+        let presentation = state.executions.get(&identity)?.presentation.as_ref()?;
+        if presentation.lease != lease {
+            return None;
+        }
+        Some(presentation.session.active()?.prepare_terminal(cx, intent))
+    }
+
+    fn presentation_projection_matches(
+        &self,
+        identity: DockLiveUndockIdentity,
+        lease: DockLiveUndockPayloadLeaseReceipt,
+        projection: &RehostProjection,
+    ) -> bool {
+        self.state
+            .borrow()
+            .executions
+            .get(&identity)
+            .and_then(|execution| execution.presentation.as_ref())
+            .filter(|presentation| presentation.lease == lease)
+            .and_then(|presentation| presentation.session.active())
+            .is_some_and(|session| projection.matches_exactly(&session.projection()))
+    }
+
+    fn retire_presentation_session_after_terminal_commit(
+        &self,
+        identity: DockLiveUndockIdentity,
+        lease: DockLiveUndockPayloadLeaseReceipt,
+    ) -> bool {
+        let mut state = self.state.borrow_mut();
+        let Some(presentation) = state
+            .executions
+            .get_mut(&identity)
+            .and_then(|execution| execution.presentation.as_mut())
+            .filter(|presentation| presentation.lease == lease)
+        else {
+            return false;
+        };
+        presentation.session.retire_terminal()
+    }
+
     fn cancel_prepared_presentation(
         source_window: AnyWindowHandle,
         retained: Ticket,
-        prepared: &PreparedRehost,
+        mut session: RehostSession,
         cx: &mut App,
     ) {
         let source_retired = matches!(
-            view_presentation_window::settle_rehost_source(cx, prepared),
+            session.settle_source(cx),
             Ok(
                 view_presentation_window::SourceSettlement::RetiredToSource(_)
                     | view_presentation_window::SourceSettlement::AlreadyRetired
@@ -2003,11 +2247,8 @@ impl DockLiveUndockRuntime {
             )
         );
         if !source_retired {
-            let _ = view_presentation_window::abandon_rehost_after_source_loss(cx, prepared);
+            let _ = session.abandon_after_source_loss(cx);
         }
-        debug_assert!(view_presentation_window::rehost_authority_is_absent(
-            cx, prepared
-        ));
         Self::release_retained_visual(source_window, retained, cx);
     }
 
@@ -2109,7 +2350,7 @@ impl DockLiveUndockRuntime {
             return Err(DockLiveUndockPresentationFailure::PayloadLeaseClaim);
         };
         let source_leases = roots.iter().map(|(_, lease)| *lease).collect::<Vec<_>>();
-        let prepared = match view_presentation_window::prepare_rehost(
+        let session = match view_presentation_window::prepare_rehost(
             cx,
             &source_leases,
             destination_binding.window_id(),
@@ -2120,6 +2361,7 @@ impl DockLiveUndockRuntime {
                 return Err(DockLiveUndockPresentationFailure::RehostPreparation);
             }
         };
+        let projection = session.projection();
         let source =
             DockLiveUndockSourceSnapshot::new(source_binding.window_id(), source_frame_generation);
         let Some(lease) = DockLiveUndockPayloadLeaseReceipt::new(
@@ -2127,22 +2369,24 @@ impl DockLiveUndockRuntime {
             source,
             surface_revision,
             retained.identity(),
-            &prepared,
+            &projection,
             request.provisional_session(),
         ) else {
-            Self::cancel_prepared_presentation(source_window, retained, &prepared, cx);
+            Self::cancel_prepared_presentation(source_window, retained, session, cx);
             return Err(DockLiveUndockPresentationFailure::RehostPreparation);
         };
 
         Ok(DockLiveUndockPresentationExecution {
             carrier,
             retained,
-            prepared,
+            projection,
+            session: DockLiveUndockRehostSessionState::Active(session),
             lease,
             source_key: None,
             destination_key: None,
             reveal: None,
             retained_released: false,
+            source_restoration_batch: None,
             source_restoration_receipt: None,
             restore_focus: false,
             source_focus_restored: false,
@@ -2227,6 +2471,148 @@ impl DockLiveUndockRuntime {
         }
         presentation.source_restoration_receipt = Some(receipt);
         true
+    }
+
+    pub(crate) fn accept_source_proxy_frame(
+        &self,
+        key: DockHostLivePresentationKey,
+        lease: DockLiveUndockPayloadLeaseReceipt,
+        accepted_frame: u64,
+        _cx: &mut App,
+    ) -> Option<
+        Result<
+            super::live_undock::DockLiveUndockSourceProxyReceipt,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        let source_is_exact = self
+            .state
+            .borrow()
+            .executions
+            .get(&key.identity())?
+            .presentation
+            .as_ref()
+            .is_some_and(|presentation| {
+                presentation.lease == lease && presentation.source_key == Some(key)
+            });
+        if !source_is_exact {
+            return None;
+        }
+        let mut checkout = self.checkout_presentation_session(key.identity(), lease)?;
+        let result = checkout
+            .session_mut()
+            .accept_source_proxy_frame(accepted_frame)
+            .and_then(|accepted| {
+                super::live_undock::DockLiveUndockSourceProxyReceipt::new(lease, accepted)
+                    .ok_or(view_presentation_window::TransitionError::WrongSourceProxyEvidence)
+            });
+        Some(result)
+    }
+
+    pub(crate) fn accept_destination_frame(
+        &self,
+        key: DockHostLivePresentationKey,
+        proxy: super::live_undock::DockLiveUndockSourceProxyReceipt,
+        accepted_frame: u64,
+        cx: &mut App,
+    ) -> Option<
+        Result<
+            (
+                view_presentation_window::LeaseBatch,
+                super::live_undock::DockLiveUndockPayloadMountReceipt,
+            ),
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        let lease = proxy.lease();
+        let destination_is_exact = self
+            .state
+            .borrow()
+            .executions
+            .get(&key.identity())?
+            .presentation
+            .as_ref()
+            .is_some_and(|presentation| {
+                presentation.lease == lease && presentation.destination_key == Some(key)
+            });
+        if !destination_is_exact {
+            return None;
+        }
+        let mut checkout = self.checkout_presentation_session(key.identity(), lease)?;
+        let result = checkout
+            .session_mut()
+            .accept_destination_frame(cx, accepted_frame)
+            .and_then(|exposure| {
+                let batch = exposure.batch().clone();
+                super::live_undock::DockLiveUndockPayloadMountReceipt::new(proxy, &exposure)
+                    .map(|receipt| (batch, receipt))
+                    .ok_or(view_presentation_window::TransitionError::StalePrepared)
+            });
+        Some(result)
+    }
+
+    pub(crate) fn accept_destination_presentation_frame(
+        &self,
+        key: DockHostLivePresentationKey,
+        mount: super::live_undock::DockLiveUndockPayloadMountReceipt,
+        accepted_frame: u64,
+        cx: &mut App,
+    ) -> Option<
+        Result<DockLiveUndockPayloadPresentationReceipt, view_presentation_window::TransitionError>,
+    > {
+        let lease = mount.proxy().lease();
+        let destination_is_exact = self
+            .state
+            .borrow()
+            .executions
+            .get(&key.identity())?
+            .presentation
+            .as_ref()
+            .is_some_and(|presentation| {
+                presentation.lease == lease && presentation.destination_key == Some(key)
+            });
+        if !destination_is_exact {
+            return None;
+        }
+        let checkout = self.checkout_presentation_session(key.identity(), lease)?;
+        let result = checkout
+            .session()
+            .accept_destination_presentation_frame(cx, accepted_frame)
+            .and_then(|accepted| {
+                DockLiveUndockPayloadPresentationReceipt::new(mount, accepted)
+                    .ok_or(view_presentation_window::TransitionError::StalePrepared)
+            });
+        Some(result)
+    }
+
+    pub(crate) fn current_destination_presentation(
+        &self,
+        key: DockHostLivePresentationKey,
+        mount: super::live_undock::DockLiveUndockPayloadMountReceipt,
+        cx: &App,
+    ) -> Option<
+        Result<DockLiveUndockPayloadPresentationReceipt, view_presentation_window::TransitionError>,
+    > {
+        let lease = mount.proxy().lease();
+        let state = self.state.borrow();
+        let presentation = state
+            .executions
+            .get(&key.identity())?
+            .presentation
+            .as_ref()?;
+        if presentation.lease != lease || presentation.destination_key != Some(key) {
+            return None;
+        }
+        Some(
+            presentation
+                .session
+                .active()?
+                .current_destination_presentation(cx)
+                .and_then(|current| {
+                    DockLiveUndockPayloadPresentationReceipt::new(mount, current)
+                        .ok_or(view_presentation_window::TransitionError::StalePrepared)
+                }),
+        )
     }
 
     pub(crate) fn release_source_restoration_visual_in_frame(
@@ -2441,9 +2827,10 @@ impl DockLiveUndockRuntime {
             restore_session: execution.seed.restore_session.clone(),
             destination_host: execution.destination_host,
             destination_key: presentation.destination_key,
-            prepared: presentation.prepared.clone(),
+            projection: presentation.projection.clone(),
             retained: presentation.retained,
             retained_released: presentation.retained_released,
+            source_restoration_batch: presentation.source_restoration_batch.clone(),
             source_restoration_receipt: presentation.source_restoration_receipt,
         })
     }
@@ -2664,10 +3051,6 @@ impl DockLiveUndockRuntime {
         receipt: DockLiveUndockSourceRestorationReceipt,
         cx: &mut App,
     ) {
-        let source_leases = restoration
-            .prepared
-            .restored_source()
-            .expect("a presented source-restoration receipt must retain fresh source leases");
         if receipt.payload_lease() != restoration.payload_lease {
             self.defer_source_restoration_execution(
                 restoration,
@@ -2675,18 +3058,6 @@ impl DockLiveUndockRuntime {
                 cx,
             );
             return;
-        }
-        match self.finish_source_presentation_for_restoration(restoration, &source_leases, cx) {
-            DockLiveUndockSourceFinishOutcome::Finished => {}
-            DockLiveUndockSourceFinishOutcome::AuthorityLossSubmitted => return,
-            DockLiveUndockSourceFinishOutcome::Retry => {
-                self.defer_source_restoration_execution(
-                    restoration,
-                    DockLiveUndockSourceRestorationFailure::SourcePresentationMutationRejected,
-                    cx,
-                );
-                return;
-            }
         }
         if !Self::clear_exact_destination_presentation(restoration, cx)
             || !self.release_exact_restoration_visual(restoration, cx)
@@ -2725,61 +3096,12 @@ impl DockLiveUndockRuntime {
         self.finish_presented_source_restoration(&restoration, receipt, cx);
     }
 
-    fn finish_source_presentation(
-        prepared: &PreparedRehost,
-        source: &view_presentation_window::LeaseBatch,
-        cx: &mut App,
-    ) -> DockLiveUndockSourceFinishOutcome {
-        match view_presentation_window::finish_rendered_rehost_source(cx, prepared, source) {
-            Ok(view_presentation_window::SourcePresentationFinish::Finished(finished))
-                if finished.matches_exactly(source) =>
-            {
-                DockLiveUndockSourceFinishOutcome::Finished
-            }
-            Ok(
-                view_presentation_window::SourcePresentationFinish::PresentationAuthorityReleased(
-                    _,
-                ),
-            ) => DockLiveUndockSourceFinishOutcome::AuthorityLossSubmitted,
-            Ok(view_presentation_window::SourcePresentationFinish::Finished(_)) | Err(_) => {
-                DockLiveUndockSourceFinishOutcome::Retry
-            }
-        }
-    }
-
-    fn finish_source_presentation_for_restoration(
-        &self,
-        restoration: &DockLiveUndockSourceRestorationExecution,
-        source: &view_presentation_window::LeaseBatch,
-        cx: &mut App,
-    ) -> DockLiveUndockSourceFinishOutcome {
-        let outcome = Self::finish_source_presentation(&restoration.prepared, source, cx);
-        if outcome != DockLiveUndockSourceFinishOutcome::AuthorityLossSubmitted {
-            return outcome;
-        }
-        let Some(receipt) = DockLiveUndockPresentationAuthorityLossReceipt::from_invalidation(
-            restoration.payload_lease,
-            &restoration.prepared,
-        ) else {
-            return DockLiveUndockSourceFinishOutcome::Retry;
-        };
-        if self.submit(
-            DockLiveUndockFact::PresentationAuthorityLost { receipt },
-            cx,
-        ) {
-            DockLiveUndockSourceFinishOutcome::AuthorityLossSubmitted
-        } else {
-            DockLiveUndockSourceFinishOutcome::Retry
-        }
-    }
-
     pub(crate) fn finish_source_restoration_presentation(
         &self,
         identity: DockLiveUndockIdentity,
         source_key: DockHostLivePresentationKey,
         payload_lease: DockLiveUndockPayloadLeaseReceipt,
-        prepared: &PreparedRehost,
-        source: &view_presentation_window::LeaseBatch,
+        accepted_frame: u64,
         cx: &mut App,
     ) -> DockLiveUndockSourceFinishOutcome {
         let Some(restoration) =
@@ -2787,23 +3109,64 @@ impl DockLiveUndockRuntime {
         else {
             return DockLiveUndockSourceFinishOutcome::Retry;
         };
-        if restoration.source_key != Some(source_key)
-            || restoration.prepared.generation() != prepared.generation()
-        {
+        let Some(source) = restoration.source_restoration_batch.clone() else {
+            return DockLiveUndockSourceFinishOutcome::Retry;
+        };
+        if restoration.source_key != Some(source_key) {
             return DockLiveUndockSourceFinishOutcome::Retry;
         }
-        self.finish_source_presentation_for_restoration(&restoration, source, cx)
+        let projection = restoration.projection.clone();
+        let result = if let Some(outcome) = self.committed_source_finish(identity, payload_lease) {
+            Ok(outcome)
+        } else {
+            let Some(mut checkout) = self.checkout_presentation_session(identity, payload_lease)
+            else {
+                return DockLiveUndockSourceFinishOutcome::Retry;
+            };
+            checkout
+                .session_mut()
+                .accept_source_restoration_frame(cx, accepted_frame)
+        };
+        match result {
+            Ok(view_presentation_window::SourcePresentationFinish::Finished(finished)) => {
+                debug_assert!(finished.matches_exactly(&source));
+                DockLiveUndockSourceFinishOutcome::Finished
+            }
+            Ok(
+                view_presentation_window::SourcePresentationFinish::PresentationAuthorityReleased(
+                    invalidation,
+                ),
+            ) => {
+                let Some(receipt) =
+                    DockLiveUndockPresentationAuthorityLossReceipt::from_invalidation(
+                        payload_lease,
+                        &projection,
+                        invalidation,
+                    )
+                else {
+                    return DockLiveUndockSourceFinishOutcome::Retry;
+                };
+                self.submit(
+                    DockLiveUndockFact::PresentationAuthorityLost { receipt },
+                    cx,
+                )
+                .then_some(DockLiveUndockSourceFinishOutcome::AuthorityLossSubmitted)
+                .unwrap_or(DockLiveUndockSourceFinishOutcome::Retry)
+            }
+            Err(_) => DockLiveUndockSourceFinishOutcome::Retry,
+        }
     }
 
     fn finish_unchanged_source_restoration(
         &self,
         restoration: &DockLiveUndockSourceRestorationExecution,
+        source_leases: &view_presentation_window::LeaseBatch,
         cx: &mut App,
     ) {
         let Some(receipt) = DockLiveUndockSourceRestorationReceipt::source_unchanged(
             restoration.payload_lease,
-            &restoration.prepared,
-            restoration.prepared.source(),
+            &restoration.projection,
+            source_leases,
         ) else {
             self.defer_source_restoration_execution(
                 restoration,
@@ -2812,22 +3175,6 @@ impl DockLiveUndockRuntime {
             );
             return;
         };
-        match self.finish_source_presentation_for_restoration(
-            restoration,
-            restoration.prepared.source(),
-            cx,
-        ) {
-            DockLiveUndockSourceFinishOutcome::Finished => {}
-            DockLiveUndockSourceFinishOutcome::AuthorityLossSubmitted => return,
-            DockLiveUndockSourceFinishOutcome::Retry => {
-                self.defer_source_restoration_execution(
-                    restoration,
-                    DockLiveUndockSourceRestorationFailure::SourcePresentationMutationRejected,
-                    cx,
-                );
-                return;
-            }
-        }
         if !Self::clear_exact_source_presentation(restoration, cx)
             || !Self::clear_exact_destination_presentation(restoration, cx)
             || !self.release_exact_restoration_visual(restoration, cx)
@@ -2845,6 +3192,47 @@ impl DockLiveUndockRuntime {
         let _ = self.commit_source_restoration(restoration.identity, receipt, cx);
     }
 
+    fn record_source_restoration_batch(
+        &self,
+        identity: DockLiveUndockIdentity,
+        payload_lease: DockLiveUndockPayloadLeaseReceipt,
+        source_leases: &view_presentation_window::LeaseBatch,
+    ) -> bool {
+        let mut state = self.state.borrow_mut();
+        let Some(presentation) = state
+            .executions
+            .get_mut(&identity)
+            .and_then(|execution| execution.presentation.as_mut())
+            .filter(|presentation| presentation.lease == payload_lease)
+        else {
+            return false;
+        };
+        if presentation
+            .source_restoration_batch
+            .as_ref()
+            .is_some_and(|current| !current.matches_exactly(source_leases))
+        {
+            return false;
+        }
+        presentation.source_restoration_batch = Some(source_leases.clone());
+        true
+    }
+
+    fn settle_source_for_restoration(
+        &self,
+        identity: DockLiveUndockIdentity,
+        payload_lease: DockLiveUndockPayloadLeaseReceipt,
+        cx: &mut App,
+    ) -> Option<
+        Result<
+            view_presentation_window::SourceSettlement,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        let mut checkout = self.checkout_presentation_session(identity, payload_lease)?;
+        Some(checkout.session_mut().settle_source(cx))
+    }
+
     fn submit_source_host_authority_loss(
         &self,
         restoration: &DockLiveUndockSourceRestorationExecution,
@@ -2852,7 +3240,7 @@ impl DockLiveUndockRuntime {
     ) {
         let Some(receipt) = DockLiveUndockPresentationAuthorityLossReceipt::from_source_host_loss(
             restoration.payload_lease,
-            &restoration.prepared,
+            &restoration.projection,
         ) else {
             self.defer_source_restoration_execution(
                 restoration,
@@ -2957,14 +3345,32 @@ impl DockLiveUndockRuntime {
             return;
         }
 
-        match view_presentation_window::settle_rehost_source(cx, &restoration.prepared) {
-            Ok(
-                view_presentation_window::SourceSettlement::RetiredToSource(_)
-                | view_presentation_window::SourceSettlement::AlreadyRetired,
-            ) => {
-                self.finish_unchanged_source_restoration(&restoration, cx);
+        let Some(settlement) = self.settle_source_for_restoration(identity, payload_lease, cx)
+        else {
+            self.defer_source_restoration_execution(
+                &restoration,
+                DockLiveUndockSourceRestorationFailure::ExecutionAuthorityUnavailable,
+                cx,
+            );
+            return;
+        };
+        match settlement {
+            Ok(view_presentation_window::SourceSettlement::RetiredToSource(source_leases)) => {
+                self.finish_unchanged_source_restoration(&restoration, &source_leases, cx);
+            }
+            Ok(view_presentation_window::SourceSettlement::AlreadyRetired) => {
+                let source_leases = restoration.projection.source().clone();
+                self.finish_unchanged_source_restoration(&restoration, &source_leases, cx);
             }
             Ok(view_presentation_window::SourceSettlement::RenderSource(source_leases)) => {
+                if !self.record_source_restoration_batch(identity, payload_lease, &source_leases) {
+                    self.defer_source_restoration_execution(
+                        &restoration,
+                        DockLiveUndockSourceRestorationFailure::ExecutionAuthorityUnavailable,
+                        cx,
+                    );
+                    return;
+                }
                 self.install_source_restoration(&restoration, source_leases, cx);
             }
             Ok(view_presentation_window::SourceSettlement::AwaitingSourceNativeTerminal) => {
@@ -2974,11 +3380,14 @@ impl DockLiveUndockRuntime {
                     cx,
                 );
             }
-            Ok(view_presentation_window::SourceSettlement::PresentationAuthorityReleased(_)) => {
+            Ok(view_presentation_window::SourceSettlement::PresentationAuthorityReleased(
+                invalidation,
+            )) => {
                 let Some(receipt) =
                     DockLiveUndockPresentationAuthorityLossReceipt::from_invalidation(
                         restoration.payload_lease,
-                        &restoration.prepared,
+                        &restoration.projection,
+                        invalidation,
                     )
                 else {
                     self.defer_source_restoration_execution(
@@ -3003,68 +3412,152 @@ impl DockLiveUndockRuntime {
         }
     }
 
-    fn prepare_presentation_abandonment(
-        prepared: PreparedRehost,
+    fn prepare_presentation_cleanup(
+        &self,
+        identity: DockLiveUndockIdentity,
+        payload_lease: DockLiveUndockPayloadLeaseReceipt,
         cx: &App,
-    ) -> Option<DockLiveUndockPreparedPresentationAbandonment> {
-        match view_presentation_window::prepare_abandon_rehost_after_source_loss(cx, &prepared) {
-            Ok(abandonment) => Some(DockLiveUndockPreparedPresentationAbandonment::Exact {
-                authority: prepared,
-                prepared: abandonment,
-            }),
-            Err(_) if view_presentation_window::rehost_authority_is_absent(cx, &prepared) => {
-                Some(DockLiveUndockPreparedPresentationAbandonment::AlreadyAbsent(prepared))
+    ) -> Option<
+        Result<
+            DockLiveUndockPreparedPresentationCleanup,
+            view_presentation_window::TransitionError,
+        >,
+    > {
+        let terminal = {
+            let state = self.state.borrow();
+            let presentation = state.executions.get(&identity)?.presentation.as_ref()?;
+            if presentation.lease != payload_lease {
+                return None;
             }
-            Err(_) => None,
+            presentation
+                .session
+                .active()?
+                .terminal_disposition()
+                .map(|terminal| {
+                    (
+                        terminal,
+                        presentation.projection.generation(),
+                        presentation.projection.source().window_id(),
+                        presentation.projection.destination().window_id(),
+                    )
+                })
+        };
+        match terminal {
+            Some((
+                view_presentation_window::RehostTerminalDisposition::SourceCommitted,
+                generation,
+                source_window,
+                destination_window,
+            )) => {
+                return Some(Ok(
+                    DockLiveUndockPreparedPresentationCleanup::AlreadyTerminal(
+                        DockLiveUndockRehostCleanupEvidence::source_committed(
+                            generation,
+                            source_window,
+                            destination_window,
+                        ),
+                    ),
+                ));
+            }
+            Some((
+                view_presentation_window::RehostTerminalDisposition::PresentationAuthorityReleased,
+                generation,
+                source_window,
+                destination_window,
+            )) => {
+                return Some(Ok(
+                    DockLiveUndockPreparedPresentationCleanup::AlreadyTerminal(
+                        DockLiveUndockRehostCleanupEvidence::already_absent(
+                            generation,
+                            source_window,
+                            destination_window,
+                        ),
+                    ),
+                ));
+            }
+            Some((
+                view_presentation_window::RehostTerminalDisposition::DestinationCommitted,
+                ..,
+            )) => {
+                return Some(Err(
+                    view_presentation_window::TransitionError::ConflictingTerminalOutcome,
+                ));
+            }
+            Some((view_presentation_window::RehostTerminalDisposition::Abandoned, ..)) | None => {}
         }
+        Some(
+            match self.prepare_presentation_terminal(
+                identity,
+                payload_lease,
+                view_presentation_window::RehostTerminalIntent::AbandonAfterSourceLoss,
+                cx,
+            )? {
+                Ok(view_presentation_window::RehostTerminalPreparation::Prepared(prepared)) => {
+                    Ok(DockLiveUndockPreparedPresentationCleanup::Exact(prepared))
+                }
+                Ok(view_presentation_window::RehostTerminalPreparation::AlreadyCommitted(
+                    view_presentation_window::RehostTerminalOutcome::Abandoned(receipt),
+                )) => Ok(DockLiveUndockPreparedPresentationCleanup::AlreadyTerminal(
+                    DockLiveUndockRehostCleanupEvidence::already_absent(
+                        receipt.generation(),
+                        receipt.source_window(),
+                        receipt.destination_window(),
+                    ),
+                )),
+                Ok(view_presentation_window::RehostTerminalPreparation::AlreadyCommitted(
+                    view_presentation_window::RehostTerminalOutcome::DestinationCommitted(_),
+                )) => Err(view_presentation_window::TransitionError::ConflictingTerminalOutcome),
+                Err(error) => Err(error),
+            },
+        )
     }
 
-    fn can_commit_presentation_abandonment(
-        prepared: &DockLiveUndockPreparedPresentationAbandonment,
+    fn can_commit_presentation_cleanup(
+        prepared: &DockLiveUndockPreparedPresentationCleanup,
         cx: &App,
     ) -> bool {
         match prepared {
-            DockLiveUndockPreparedPresentationAbandonment::Exact { prepared, .. } => {
-                view_presentation_window::can_commit_prepared_abandon_rehost_after_source_loss(
-                    cx, prepared,
-                )
-            }
-            DockLiveUndockPreparedPresentationAbandonment::AlreadyAbsent(prepared) => {
-                view_presentation_window::rehost_authority_is_absent(cx, prepared)
-            }
+            DockLiveUndockPreparedPresentationCleanup::Exact(prepared) => prepared.can_commit(cx),
+            DockLiveUndockPreparedPresentationCleanup::AlreadyTerminal(_) => true,
         }
     }
 
-    fn commit_presentation_abandonment(
-        prepared: DockLiveUndockPreparedPresentationAbandonment,
+    fn restore_prepared_presentation_cleanup(
+        &self,
+        prepared: DockLiveUndockPreparedPresentationCleanup,
+    ) -> bool {
+        drop(prepared);
+        true
+    }
+
+    fn restore_orphan_cleanup_presentation(
+        &self,
+        prepared: DockLiveUndockPreparedOrphanCleanup,
+        cx: &mut App,
+    ) -> bool {
+        let _ = cx;
+        self.restore_prepared_presentation_cleanup(prepared.presentation)
+    }
+
+    fn commit_presentation_cleanup(
+        prepared: DockLiveUndockPreparedPresentationCleanup,
         cx: &mut App,
     ) -> DockLiveUndockRehostCleanupEvidence {
         match prepared {
-            DockLiveUndockPreparedPresentationAbandonment::Exact {
-                authority,
-                prepared,
-            } => {
-                let receipt =
-                    view_presentation_window::commit_prepared_abandon_rehost_after_source_loss(
-                        cx, prepared,
-                    );
-                assert!(
-                    view_presentation_window::rehost_authority_is_absent(cx, &authority),
-                    "committed source-loss abandonment must retire its exact rehost authority"
-                );
+            DockLiveUndockPreparedPresentationCleanup::Exact(prepared) => {
+                let view_presentation_window::RehostTerminalOutcome::Abandoned(receipt) = prepared
+                    .try_commit(cx)
+                    .expect("preflighted source-loss abandonment must remain exact")
+                else {
+                    unreachable!("source-loss terminal preparation committed a destination")
+                };
                 DockLiveUndockRehostCleanupEvidence::abandoned(
                     receipt.generation(),
                     receipt.source_window(),
                     receipt.destination_window(),
                 )
             }
-            DockLiveUndockPreparedPresentationAbandonment::AlreadyAbsent(prepared) => {
-                DockLiveUndockRehostCleanupEvidence::already_absent(
-                    prepared.generation(),
-                    prepared.source().window_id(),
-                    prepared.destination().window_id(),
-                )
-            }
+            DockLiveUndockPreparedPresentationCleanup::AlreadyTerminal(evidence) => evidence,
         }
     }
 
@@ -3341,7 +3834,7 @@ impl DockLiveUndockRuntime {
             runtime,
             source_host,
             destination_host,
-            presentation,
+            projection,
             source_window,
             retained,
             retained_released,
@@ -3370,7 +3863,7 @@ impl DockLiveUndockRuntime {
                 execution.seed.source.runtime.clone(),
                 execution.seed.source.source_host.clone(),
                 execution.destination_host,
-                presentation.prepared.clone(),
+                presentation.projection.clone(),
                 execution.seed.source.source_window,
                 presentation.retained,
                 presentation.retained_released,
@@ -3379,8 +3872,7 @@ impl DockLiveUndockRuntime {
         };
         let source_window_id = payload_lease.source().window_id();
         let destination_window_id = payload_lease.destination_window();
-        let presentation_generation = presentation.generation();
-        let presentation = Self::prepare_presentation_abandonment(presentation, cx)?;
+        let presentation_generation = projection.generation();
         let source_transport_host = source_host.clone();
         let source_host = source_host.upgrade().map_or(
             Some(
@@ -3426,6 +3918,13 @@ impl DockLiveUndockRuntime {
         )?;
         let retained =
             Self::prepare_retained_visual_cleanup(source_window, retained, retained_released, cx)?;
+        if !self.presentation_projection_matches(identity, payload_lease, &projection) {
+            return None;
+        }
+        let presentation = match self.prepare_presentation_cleanup(identity, payload_lease, cx)? {
+            Ok(prepared) => prepared,
+            Err(_) => return None,
+        };
         Some(DockLiveUndockPreparedOrphanCleanup {
             identity,
             payload_lease,
@@ -3454,8 +3953,9 @@ impl DockLiveUndockRuntime {
                 execution.request.key() == prepared.identity.opening()
                     && execution.presentation.as_ref().is_some_and(|presentation| {
                         presentation.lease == prepared.payload_lease
-                            && presentation.prepared.generation()
+                            && presentation.projection.generation()
                                 == prepared.presentation_generation
+                            && presentation.session.is_active()
                             && Some(presentation.retained.identity())
                                 == prepared.payload_lease.retained_visual()
                             && match &prepared.retained {
@@ -3478,7 +3978,7 @@ impl DockLiveUndockRuntime {
                     )
             });
         execution_is_exact
-            && Self::can_commit_presentation_abandonment(&prepared.presentation, cx)
+            && Self::can_commit_presentation_cleanup(&prepared.presentation, cx)
             && Self::can_commit_host_presentation_abandonment(&prepared.source_host, cx)
             && Self::can_commit_host_presentation_abandonment(&prepared.destination_host, cx)
             && Self::can_commit_retained_visual_cleanup(&prepared.retained, cx)
@@ -3520,14 +4020,14 @@ impl DockLiveUndockRuntime {
             source_transport_host,
             transport,
         } = prepared;
-        let source_host = Self::commit_host_presentation_abandonment(source_host, cx);
-        let destination_host = Self::commit_host_presentation_abandonment(destination_host, cx);
-        let rehost = Self::commit_presentation_abandonment(presentation, cx);
+        let rehost = Self::commit_presentation_cleanup(presentation, cx);
         assert_eq!(
             rehost.authority().0,
             presentation_generation,
             "orphan cleanup must abandon the exact presentation generation"
         );
+        let source_host = Self::commit_host_presentation_abandonment(source_host, cx);
+        let destination_host = Self::commit_host_presentation_abandonment(destination_host, cx);
         let retained = self.commit_retained_visual_cleanup(identity, payload_lease, retained, cx);
         let transport = Self::commit_orphan_transport_cleanup(source_transport_host, transport, cx);
         DockLiveUndockOrphanCleanupReceipt::new(
@@ -3549,7 +4049,6 @@ impl DockLiveUndockRuntime {
         provisional: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> Option<DockLiveUndockPreparedOrphanRecoveryExecution> {
-        let cleanup = self.prepare_orphan_cleanup(identity, payload_lease, provisional, cx)?;
         let payload_identity = self
             .state
             .borrow()
@@ -3573,7 +4072,7 @@ impl DockLiveUndockRuntime {
                 DockPayloadRecoveryReason::PreCommitOrphan,
                 owner_cx,
             ) {
-                Ok(prepared) => Some(prepared),
+                Ok(prepared) => Some(DockLiveUndockPreparedRecoveryRecord::Prepared(prepared)),
                 Err(
                     unresolved @ (DockPayloadRecoveryPrepareError::PayloadMissing
                     | DockPayloadRecoveryPrepareError::PayloadAmbiguous),
@@ -3585,10 +4084,20 @@ impl DockLiveUndockRuntime {
                         unresolved,
                         owner_cx,
                     )
-                    .ok(),
+                    .ok()
+                    .map(DockLiveUndockPreparedRecoveryRecord::Prepared),
+                Err(DockPayloadRecoveryPrepareError::PayloadAlreadyCommitted) => owner
+                    .committed_payload_recovery_receipt(
+                        DockPayloadRecoveryAuthority::presentation_lease(payload_lease),
+                        DockPayloadRecoveryReason::PreCommitOrphan,
+                    )
+                    .map(DockLiveUndockPreparedRecoveryRecord::AlreadyCommitted),
                 Err(_) => None,
             }
-        })?;
+        });
+        let recovery = recovery?;
+        let cleanup = self.prepare_orphan_cleanup(identity, payload_lease, provisional, cx);
+        let cleanup = cleanup?;
         Some(DockLiveUndockPreparedOrphanRecoveryExecution { recovery, cleanup })
     }
 
@@ -3601,7 +4110,19 @@ impl DockLiveUndockRuntime {
         self.preflight_orphan_cleanup(&prepared.cleanup, cx)
             && cx.update_entity(owner, |owner, owner_cx| {
                 owner.accepts_live_undock_identity(prepared.cleanup.identity)
-                    && owner.can_commit_payload_recovery(&prepared.recovery, owner_cx)
+                    && match &prepared.recovery {
+                        DockLiveUndockPreparedRecoveryRecord::Prepared(recovery) => {
+                            owner.can_commit_payload_recovery(recovery, owner_cx)
+                        }
+                        DockLiveUndockPreparedRecoveryRecord::AlreadyCommitted(receipt) => {
+                            owner.committed_payload_recovery_receipt(
+                                DockPayloadRecoveryAuthority::presentation_lease(
+                                    prepared.cleanup.payload_lease,
+                                ),
+                                DockPayloadRecoveryReason::PreCommitOrphan,
+                            ) == Some(*receipt)
+                        }
+                    }
             })
     }
 
@@ -3615,20 +4136,46 @@ impl DockLiveUndockRuntime {
         DockLiveUndockOrphanCleanupReceipt,
     )> {
         let transaction_runtime = prepared.cleanup.runtime.clone();
-        transaction_runtime.with_surface_transaction(cx, |transaction, cx| {
-            let transaction = transaction?;
-            if !self.preflight_orphan_recovery(owner, &prepared, cx) {
+        let mut prepared = Some(prepared);
+        let committed = transaction_runtime.with_surface_transaction(cx, |transaction, cx| {
+            let Some(transaction) = transaction else {
+                return None;
+            };
+            let current = prepared
+                .as_ref()
+                .expect("orphan recovery preparation must remain owned until commit");
+            if !self.preflight_orphan_recovery(owner, current, cx) {
                 return None;
             }
-            let DockLiveUndockPreparedOrphanRecoveryExecution { recovery, cleanup } = prepared;
+            let DockLiveUndockPreparedOrphanRecoveryExecution { recovery, cleanup } = prepared
+                .take()
+                .expect("preflighted orphan recovery must commit exactly once");
+            let recovery = match &recovery {
+                DockLiveUndockPreparedRecoveryRecord::Prepared(recovery) => cx
+                    .update_entity(owner, |owner, owner_cx| {
+                        owner.commit_payload_recovery(transaction, recovery, owner_cx)
+                    })
+                    .expect("preflighted payload recovery must commit in the same transaction"),
+                DockLiveUndockPreparedRecoveryRecord::AlreadyCommitted(receipt) => *receipt,
+            };
+            #[cfg(test)]
+            if std::mem::take(
+                &mut self
+                    .state
+                    .borrow_mut()
+                    .interrupt_orphan_cleanup_after_recovery_commit_once,
+            ) {
+                return None;
+            }
             let cleanup = self.commit_orphan_cleanup(cleanup, cx);
-            let recovery = cx
-                .update_entity(owner, |owner, owner_cx| {
-                    owner.commit_payload_recovery(transaction, &recovery, owner_cx)
-                })
-                .expect("preflighted payload recovery must commit in the same transaction");
             Some((recovery, cleanup))
-        })
+        });
+        if committed.is_none()
+            && let Some(prepared) = prepared.take()
+        {
+            self.restore_orphan_cleanup_presentation(prepared.cleanup, cx);
+        }
+        committed
     }
 
     fn execute_shutdown_orphan_cleanup(
@@ -3642,13 +4189,30 @@ impl DockLiveUndockRuntime {
             .prepare_orphan_cleanup(identity, payload_lease, provisional, cx)
             .ok_or(DockLiveUndockOrphanCleanupFailure::PreparationRejected)?;
         let transaction_runtime = prepared.runtime.clone();
-        transaction_runtime
-            .with_surface_transaction(cx, |transaction, cx| {
-                transaction?;
-                self.preflight_orphan_cleanup(&prepared, cx)
-                    .then(|| self.commit_orphan_cleanup(prepared, cx))
-            })
-            .ok_or(DockLiveUndockOrphanCleanupFailure::PreflightRejected)
+        let mut prepared = Some(prepared);
+        let committed = transaction_runtime.with_surface_transaction(cx, |transaction, cx| {
+            transaction?;
+            let current = prepared
+                .as_ref()
+                .expect("orphan cleanup preparation must remain owned until commit");
+            if !self.preflight_orphan_cleanup(current, cx) {
+                return None;
+            }
+            Some(
+                self.commit_orphan_cleanup(
+                    prepared
+                        .take()
+                        .expect("preflighted orphan cleanup must commit exactly once"),
+                    cx,
+                ),
+            )
+        });
+        if committed.is_none()
+            && let Some(prepared) = prepared.take()
+        {
+            self.restore_orphan_cleanup_presentation(prepared, cx);
+        }
+        committed.ok_or(DockLiveUndockOrphanCleanupFailure::PreflightRejected)
     }
 
     fn recover_orphaned_payload_topology(
@@ -3778,9 +4342,7 @@ impl DockLiveUndockRuntime {
                 presentation_origin.clone(),
                 owner_cx,
             ) {
-                Ok(prepared) => Some(DockLiveUndockPreparedCommittedRecoveryRecord::Prepared(
-                    prepared,
-                )),
+                Ok(prepared) => Some(DockLiveUndockPreparedRecoveryRecord::Prepared(prepared)),
                 Err(
                     unresolved @ (DockPayloadRecoveryPrepareError::PayloadMissing
                     | DockPayloadRecoveryPrepareError::PayloadAmbiguous),
@@ -3794,13 +4356,13 @@ impl DockLiveUndockRuntime {
                         owner_cx,
                     )
                     .ok()
-                    .map(DockLiveUndockPreparedCommittedRecoveryRecord::Prepared),
+                    .map(DockLiveUndockPreparedRecoveryRecord::Prepared),
                 Err(DockPayloadRecoveryPrepareError::PayloadAlreadyCommitted) => owner
                     .committed_payload_recovery_receipt(
                         authority,
                         DockPayloadRecoveryReason::LostViewportRecovery,
                     )
-                    .map(DockLiveUndockPreparedCommittedRecoveryRecord::AlreadyCommitted),
+                    .map(DockLiveUndockPreparedRecoveryRecord::AlreadyCommitted),
                 Err(_) => None,
             }
         })?;
@@ -3857,12 +4419,10 @@ impl DockLiveUndockRuntime {
             && cx.update_entity(owner, |owner, owner_cx| {
                 owner.accepts_live_undock_identity(prepared.identity)
                     && match prepared.recovery {
-                        DockLiveUndockPreparedCommittedRecoveryRecord::Prepared(ref recovery) => {
+                        DockLiveUndockPreparedRecoveryRecord::Prepared(ref recovery) => {
                             owner.can_commit_payload_recovery(recovery, owner_cx)
                         }
-                        DockLiveUndockPreparedCommittedRecoveryRecord::AlreadyCommitted(
-                            receipt,
-                        ) => {
+                        DockLiveUndockPreparedRecoveryRecord::AlreadyCommitted(receipt) => {
                             owner.committed_payload_recovery_receipt(
                                 prepared.authority,
                                 DockPayloadRecoveryReason::LostViewportRecovery,
@@ -3891,15 +4451,14 @@ impl DockLiveUndockRuntime {
                 return None;
             }
             let receipt = match &prepared.recovery {
-                DockLiveUndockPreparedCommittedRecoveryRecord::Prepared(recovery) => cx
-                    .update_entity(owner, |owner, owner_cx| {
+                DockLiveUndockPreparedRecoveryRecord::Prepared(recovery) => {
+                    cx.update_entity(owner, |owner, owner_cx| {
                         owner
                             .commit_payload_recovery(transaction, recovery, owner_cx)
                             .ok()
-                    })?,
-                DockLiveUndockPreparedCommittedRecoveryRecord::AlreadyCommitted(receipt) => {
-                    *receipt
+                    })?
                 }
+                DockLiveUndockPreparedRecoveryRecord::AlreadyCommitted(receipt) => *receipt,
             };
             if let Some(source_semantic) = prepared.source_semantic {
                 Self::commit_source_semantic_retirement(source_semantic, cx);
@@ -3930,6 +4489,22 @@ impl DockLiveUndockRuntime {
             .ok_or(DockLiveUndockCommittedDestinationRecoveryFailure::PreparationRejected)?;
         self.commit_committed_destination_recovery(owner, prepared, cx)
             .ok_or(DockLiveUndockCommittedDestinationRecoveryFailure::PreflightRejected)
+    }
+
+    fn restore_host_release_authority(
+        &self,
+        identity: DockLiveUndockIdentity,
+        authority: DockLiveUndockHostReleaseAuthority,
+    ) -> bool {
+        let mut state = self.state.borrow_mut();
+        let Some(execution) = state.executions.get_mut(&identity) else {
+            return false;
+        };
+        if execution.host_release.is_some() {
+            return false;
+        }
+        execution.host_release = Some(authority);
+        true
     }
 
     fn prepare_host_promotion(
@@ -3977,13 +4552,14 @@ impl DockLiveUndockRuntime {
             if execution.promotion.is_some()
                 || execution.request.key() != identity.opening()
                 || !host_release.matches_release(target, &execution.seed.source.session)
+                || !host_release.locked_drop.is_workspace()
             {
                 return None;
             }
             let presentation_seed = execution.presentation.as_ref().map(|presentation| {
                 (
                     presentation.lease,
-                    presentation.prepared.clone(),
+                    presentation.projection.clone(),
                     execution.seed.source.source_host.clone(),
                     execution.destination_host,
                     execution.seed.source.source_window,
@@ -4029,9 +4605,9 @@ impl DockLiveUndockRuntime {
             return None;
         }
 
-        let presentation_cleanup = if let Some((
+        let presentation_cleanup_seed = if let Some((
             payload_lease,
-            prepared,
+            projection,
             source_host,
             provisional_window,
             source_window,
@@ -4045,8 +4621,7 @@ impl DockLiveUndockRuntime {
             {
                 return None;
             }
-            let presentation_generation = prepared.generation();
-            let presentation = Self::prepare_presentation_abandonment(prepared, cx)?;
+            let presentation_generation = projection.generation();
             let source_window_id = source_window.window_id();
             let provisional_window_id = provisional_window.window_id();
             let source_host = source_host.upgrade().map_or(
@@ -4089,15 +4664,15 @@ impl DockLiveUndockRuntime {
                         .ok()?,
                 )
             };
-            Some(DockLiveUndockPreparedHostPromotionPresentationCleanup {
+            Some((
                 payload_lease,
+                projection,
                 presentation_generation,
-                presentation,
                 source_host,
                 provisional_host,
                 source_window,
                 retained_release,
-            })
+            ))
         } else {
             None
         };
@@ -4123,11 +4698,92 @@ impl DockLiveUndockRuntime {
             || locked_target_space != target_space
             || locked_target_frame != target_frame
         {
+            let _ = self.restore_host_release_authority(
+                identity,
+                DockLiveUndockHostReleaseAuthority {
+                    locked_drop,
+                    target_window: locked_target_window,
+                    target_host: locked_target_host,
+                    target_binding: locked_target_binding,
+                    target_space: locked_target_space,
+                    target_frame: locked_target_frame,
+                },
+            );
             return None;
         }
+
+        let presentation_cleanup = if let Some((
+            payload_lease,
+            projection,
+            presentation_generation,
+            source_host,
+            provisional_host,
+            source_window,
+            retained_release,
+        )) = presentation_cleanup_seed
+        {
+            if !self.presentation_projection_matches(identity, payload_lease, &projection) {
+                let _ = self.restore_host_release_authority(
+                    identity,
+                    DockLiveUndockHostReleaseAuthority {
+                        locked_drop,
+                        target_window: locked_target_window,
+                        target_host: locked_target_host,
+                        target_binding: locked_target_binding,
+                        target_space: locked_target_space,
+                        target_frame: locked_target_frame,
+                    },
+                );
+                return None;
+            }
+            let Some(presentation_preparation) =
+                self.prepare_presentation_cleanup(identity, payload_lease, cx)
+            else {
+                let _ = self.restore_host_release_authority(
+                    identity,
+                    DockLiveUndockHostReleaseAuthority {
+                        locked_drop,
+                        target_window: locked_target_window,
+                        target_host: locked_target_host,
+                        target_binding: locked_target_binding,
+                        target_space: locked_target_space,
+                        target_frame: locked_target_frame,
+                    },
+                );
+                return None;
+            };
+            let presentation = match presentation_preparation {
+                Ok(prepared) => prepared,
+                Err(_) => {
+                    let _ = self.restore_host_release_authority(
+                        identity,
+                        DockLiveUndockHostReleaseAuthority {
+                            locked_drop,
+                            target_window: locked_target_window,
+                            target_host: locked_target_host,
+                            target_binding: locked_target_binding,
+                            target_space: locked_target_space,
+                            target_frame: locked_target_frame,
+                        },
+                    );
+                    return None;
+                }
+            };
+            Some(DockLiveUndockPreparedHostPromotionPresentationCleanup {
+                payload_lease,
+                presentation_generation,
+                presentation,
+                source_host,
+                provisional_host,
+                source_window,
+                retained_release,
+            })
+        } else {
+            None
+        };
         let drop = runtime
             .prepare_live_undock_host_drop(locked_drop, target_window.into())
-            .ok()?;
+            .expect("validated host release authority must contain a workspace drop");
 
         Some(DockLiveUndockPreparedPromotionExecution::Host(
             DockLiveUndockPreparedHostPromotionExecution {
@@ -4148,6 +4804,36 @@ impl DockLiveUndockRuntime {
                 presentation_cleanup,
             },
         ))
+    }
+
+    fn restore_host_promotion_presentation_cleanup(
+        &self,
+        identity: DockLiveUndockIdentity,
+        cleanup: Option<DockLiveUndockPreparedHostPromotionPresentationCleanup>,
+        cx: &mut App,
+    ) -> bool {
+        let _ = (identity, cx);
+        cleanup
+            .is_none_or(|cleanup| self.restore_prepared_presentation_cleanup(cleanup.presentation))
+    }
+
+    fn restore_prepared_promotion_session(
+        &self,
+        prepared: DockLiveUndockPreparedPromotionExecution,
+        cx: &mut App,
+    ) -> bool {
+        match prepared {
+            DockLiveUndockPreparedPromotionExecution::SameWindow(prepared) => {
+                drop(prepared.presentation);
+                true
+            }
+            DockLiveUndockPreparedPromotionExecution::Host(prepared) => self
+                .restore_host_promotion_presentation_cleanup(
+                    prepared.identity,
+                    prepared.presentation_cleanup,
+                    cx,
+                ),
+        }
     }
 
     fn prepare_same_window_promotion(
@@ -4230,7 +4916,7 @@ impl DockLiveUndockRuntime {
                 execution.seed.source.source_host.clone(),
                 presentation.source_key?,
                 presentation.destination_key?,
-                presentation.prepared.clone(),
+                presentation.projection.clone(),
                 presentation.lease,
                 presentation.retained,
                 presentation.reveal?,
@@ -4298,8 +4984,6 @@ impl DockLiveUndockRuntime {
         })?;
         let viewport =
             viewport.with_host_geometry(destination_host_promotion.host_geometry().clone());
-        let presentation =
-            view_presentation_window::prepare_finish_destination(cx, &presentation).ok()?;
         let retained_release = source_window
             .update(cx, |_, window, _| {
                 retained_visual::prepare_release(window, &retained)
@@ -4307,8 +4991,8 @@ impl DockLiveUndockRuntime {
             .ok()?
             .ok()?;
 
-        // This is the last fallible preparation step. The serialized pump commits the already
-        // prepared swap before another frame can observe the projecting semantics state.
+        // Begin destination semantics before preparing the provider terminal. The unique session
+        // remains in the runtime so any rejected aggregate preparation stays compensatable.
         let semantics = destination_window
             .update(cx, |_, window, cx| {
                 window.begin_provisional_destination_semantics(
@@ -4319,6 +5003,22 @@ impl DockLiveUndockRuntime {
             })
             .ok()?
             .ok()?;
+
+        let destination_presentation = reveal.preflight().rehost_presentation()?;
+        if !self.presentation_projection_matches(identity, payload_lease, &presentation) {
+            return None;
+        }
+        let presentation = match self.prepare_presentation_terminal(
+            identity,
+            payload_lease,
+            view_presentation_window::RehostTerminalIntent::CommitDestination(
+                &destination_presentation,
+            ),
+            cx,
+        )? {
+            Ok(prepared) => prepared,
+            Err(_) => return None,
+        };
 
         Some(DockLiveUndockPreparedPromotionExecution::SameWindow(
             DockLiveUndockPreparedSameWindowPromotionExecution {
@@ -4369,9 +5069,11 @@ impl DockLiveUndockRuntime {
             presentation_cleanup,
         } = prepared;
         let DockLiveUndockPromotionDestination::Host(target) = destination else {
+            self.restore_host_promotion_presentation_cleanup(identity, presentation_cleanup, cx);
             return None;
         };
         if release.hit() != super::live_undock::DockLiveUndockRouteFeedback::Host(target) {
+            self.restore_host_promotion_presentation_cleanup(identity, presentation_cleanup, cx);
             return None;
         }
 
@@ -4397,8 +5099,9 @@ impl DockLiveUndockRuntime {
                             (None, None) => true,
                             (Some(presentation), Some(cleanup)) => {
                                 presentation.lease == cleanup.payload_lease
-                                    && presentation.prepared.generation()
+                                    && presentation.projection.generation()
                                         == cleanup.presentation_generation
+                                    && presentation.session.is_active()
                             }
                             (None, Some(_)) | (Some(_), None) => false,
                         }
@@ -4415,7 +5118,7 @@ impl DockLiveUndockRuntime {
                     .is_some_and(|frame| frame == &target_frame)
         });
         let presentation_is_exact = presentation_cleanup.as_ref().is_none_or(|cleanup| {
-            Self::can_commit_presentation_abandonment(&cleanup.presentation, cx)
+            Self::can_commit_presentation_cleanup(&cleanup.presentation, cx)
                 && Self::can_commit_host_presentation_abandonment(&cleanup.source_host, cx)
                 && Self::can_commit_host_presentation_abandonment(&cleanup.provisional_host, cx)
                 && cleanup
@@ -4441,11 +5144,20 @@ impl DockLiveUndockRuntime {
             && target_window.window_id() == target.window_id()
             && target_frame.generation() == target.host_scene_generation())
         {
+            self.restore_host_promotion_presentation_cleanup(identity, presentation_cleanup, cx);
             return None;
         }
-        let drop = runtime
-            .preflight_live_undock_host_drop_commit(drop, cx)
-            .ok()?;
+        let drop = match runtime.preflight_live_undock_host_drop_commit(drop, cx) {
+            Ok(drop) => drop,
+            Err(_) => {
+                self.restore_host_promotion_presentation_cleanup(
+                    identity,
+                    presentation_cleanup,
+                    cx,
+                );
+                return None;
+            }
+        };
         Some(DockLiveUndockPreflightedHostPromotionExecution {
             identity,
             token,
@@ -4496,20 +5208,21 @@ impl DockLiveUndockRuntime {
         let cleanup_payload_lease = presentation_cleanup
             .as_ref()
             .map(|cleanup| cleanup.payload_lease);
+        let cleanup_runtime = self.clone();
         let committed = runtime.commit_preflighted_live_undock_host_drop(
             drop,
             move |cx| {
                 let Some(cleanup) = presentation_cleanup else {
                     return;
                 };
-                let _ = Self::commit_host_presentation_abandonment(cleanup.source_host, cx);
-                let _ = Self::commit_host_presentation_abandonment(cleanup.provisional_host, cx);
-                let abandonment = Self::commit_presentation_abandonment(cleanup.presentation, cx);
+                let abandonment = Self::commit_presentation_cleanup(cleanup.presentation, cx);
                 assert_eq!(
                     abandonment.authority().0,
                     cleanup.presentation_generation,
                     "host promotion must abandon the exact provisional presentation"
                 );
+                let _ = Self::commit_host_presentation_abandonment(cleanup.source_host, cx);
+                let _ = Self::commit_host_presentation_abandonment(cleanup.provisional_host, cx);
                 if let Some(retained_release) = cleanup.retained_release {
                     cleanup
                         .source_window
@@ -4518,6 +5231,13 @@ impl DockLiveUndockRuntime {
                         })
                         .expect("preflighted host promotion must retain its exact source window");
                 }
+                assert!(
+                    cleanup_runtime.retire_presentation_session_after_terminal_commit(
+                        identity,
+                        cleanup.payload_lease,
+                    ),
+                    "host promotion must retire its exact committed rehost session"
+                );
             },
             cx,
         );
@@ -4603,7 +5323,25 @@ impl DockLiveUndockRuntime {
                     .window_session()
                     .admits(prepared.identity.opening().lease())
         });
+        let payload_lease = prepared.reveal.preflight().mount().proxy().lease();
+        let execution_is_exact = self
+            .state
+            .borrow()
+            .executions
+            .get(&prepared.identity)
+            .is_some_and(|execution| {
+                execution.request.key() == prepared.identity.opening()
+                    && execution.surface_revision == prepared.surface_revision
+                    && execution.presentation.as_ref().is_some_and(|presentation| {
+                        presentation.lease == payload_lease
+                            && presentation.projection.generation()
+                                == payload_lease.rehost_generation()
+                            && presentation.session.is_active()
+                            && presentation.reveal == Some(prepared.reveal)
+                    })
+            });
         if !owner_is_exact
+            || !execution_is_exact
             || !prepared
                 .runtime
                 .can_commit_live_undock_provisional_promotion(&prepared.viewport)
@@ -4615,10 +5353,7 @@ impl DockLiveUndockRuntime {
                     &prepared.destination_host_promotion,
                 )
             })
-            || !view_presentation_window::can_commit_prepared_finish_destination(
-                cx,
-                &prepared.presentation,
-            )
+            || !prepared.presentation.can_commit(cx)
             || !prepared
                 .source_window
                 .update(cx, |_, window, _| {
@@ -4686,6 +5421,7 @@ impl DockLiveUndockRuntime {
             super::live_undock::DockLiveUndockRouteFeedback::Desktop
                 | super::live_undock::DockLiveUndockRouteFeedback::OpaqueBarrier
         ));
+        let payload_lease = reveal.preflight().mount().proxy().lease();
 
         let destination_window = self
             .state
@@ -4695,6 +5431,15 @@ impl DockLiveUndockRuntime {
             .and_then(|execution| execution.destination_host)
             .filter(|window| window.window_id() == window_id)
             .expect("prepared same-window promotion must retain its destination window");
+        let view_presentation_window::RehostTerminalOutcome::DestinationCommitted(batch) =
+            presentation
+                .try_commit(cx)
+                .expect("preflighted destination terminal must remain exact")
+        else {
+            unreachable!("destination terminal preparation abandoned its rehost")
+        };
+        assert_eq!(batch.window_id(), window_id);
+
         let commit_runtime = runtime.clone();
         let (registration, destination_binding) = runtime.with_surface_transaction(cx, |_, cx| {
             cx.update_entity(&controller, |controller, controller_cx| {
@@ -4712,9 +5457,6 @@ impl DockLiveUndockRuntime {
                     host_cx,
                 );
             });
-            let finish =
-                view_presentation_window::commit_prepared_finish_destination(cx, presentation);
-            assert_eq!(finish.batch.window_id(), window_id);
             let registration =
                 commit_runtime.publish_live_undock_promotion_commit(committed_viewport, true, cx);
             let binding = cx.read_entity(&destination_host, |host, _| {
@@ -4743,6 +5485,10 @@ impl DockLiveUndockRuntime {
             assert!(
                 retained_marked,
                 "durable promotion must checkpoint its retained-visual release"
+            );
+            assert!(
+                self.retire_presentation_session_after_terminal_commit(identity, payload_lease),
+                "same-window promotion must retire its exact committed rehost session"
             );
             (registration, binding)
         });
@@ -4835,6 +5581,7 @@ impl DockLiveUndockRuntime {
             } => match self.prepare_presentation_handoff(identity, window, cx) {
                 Ok(presentation) => {
                     let receipt = presentation.lease;
+                    let mut presentation = Some(presentation);
                     let source_window = self
                         .state
                         .borrow()
@@ -4850,7 +5597,7 @@ impl DockLiveUndockRuntime {
                             if execution.presentation.is_some() {
                                 return false;
                             }
-                            execution.presentation = Some(presentation.clone());
+                            execution.presentation = presentation.take();
                             true
                         });
                     if installed {
@@ -4859,13 +5606,20 @@ impl DockLiveUndockRuntime {
                             cx,
                         );
                     } else {
-                        if let Some(source_window) = source_window {
-                            Self::cancel_prepared_presentation(
-                                source_window,
-                                presentation.retained,
-                                &presentation.prepared,
-                                cx,
-                            );
+                        let mut presentation = presentation
+                            .expect("rejected presentation installation must retain its session");
+                        if let Some(session) = presentation.checkout_session() {
+                            if let Some(source_window) = source_window {
+                                Self::cancel_prepared_presentation(
+                                    source_window,
+                                    presentation.retained,
+                                    session,
+                                    cx,
+                                );
+                            } else {
+                                let mut session = session;
+                                let _ = session.abandon_after_source_loss(cx);
+                            }
                         }
                         self.submit_presentation_failure(
                             identity,
@@ -4893,7 +5647,7 @@ impl DockLiveUndockRuntime {
                                     execution.seed.source.payload.title().to_owned(),
                                 ),
                                 execution.seed.source.source_focus.clone(),
-                                presentation.clone(),
+                                presentation.snapshot(),
                             )
                         })
                     });
@@ -4920,7 +5674,7 @@ impl DockLiveUndockRuntime {
                             identity,
                             lease,
                             source_session,
-                            presentation.prepared.clone(),
+                            presentation.projection.clone(),
                             presentation.retained,
                             presentation.carrier.clone(),
                             accessible_name,
@@ -4968,7 +5722,7 @@ impl DockLiveUndockRuntime {
                                 (
                                     destination_host,
                                     execution.seed.payload_session.clone(),
-                                    presentation.clone(),
+                                    presentation.snapshot(),
                                 )
                             })
                         });
@@ -4989,8 +5743,8 @@ impl DockLiveUndockRuntime {
                             identity,
                             proxy,
                             payload_session,
-                            presentation.prepared.clone(),
-                            presentation.prepared.destination().clone(),
+                            presentation.projection.clone(),
+                            presentation.projection.destination().clone(),
                             cx,
                         )
                     })
@@ -5275,6 +6029,31 @@ impl DockLiveUndockRuntime {
                     }
                 };
                 let Some(next_graph) = commit_plan else {
+                    let prepared = {
+                        let mut state = self.state.borrow_mut();
+                        state
+                            .executions
+                            .get_mut(&identity)
+                            .and_then(|execution| {
+                                let is_exact = matches!(
+                                    execution.promotion.as_ref(),
+                                    Some(DockLiveUndockPromotionExecution::Prepared(prepared))
+                                        if prepared.identity() == identity
+                                            && prepared.token() == token
+                                            && prepared.destination() == destination
+                                );
+                                is_exact.then(|| execution.promotion.take()).flatten()
+                            })
+                            .and_then(|promotion| match promotion {
+                                DockLiveUndockPromotionExecution::Prepared(prepared) => {
+                                    Some(prepared)
+                                }
+                                DockLiveUndockPromotionExecution::Durable(_) => None,
+                            })
+                    };
+                    if let Some(prepared) = prepared {
+                        self.restore_prepared_promotion_session(prepared, cx);
+                    }
                     self.enqueue_fact(
                         DockLiveUndockQueuedFact::Reduce(
                             DockLiveUndockFact::PromotionPreparationFailed { identity, token },
@@ -5313,8 +6092,11 @@ impl DockLiveUndockRuntime {
                     (DockLiveUndockPreparedPromotionExecution::Host(prepared), None) => self
                         .preflight_host_promotion_commit(owner, prepared, cx)
                         .map(|prepared| self.commit_host_promotion(owner, prepared, cx)),
-                    (DockLiveUndockPreparedPromotionExecution::SameWindow(_), None)
-                    | (DockLiveUndockPreparedPromotionExecution::Host(_), Some(_)) => None,
+                    (prepared @ DockLiveUndockPreparedPromotionExecution::SameWindow(_), None)
+                    | (prepared @ DockLiveUndockPreparedPromotionExecution::Host(_), Some(_)) => {
+                        self.restore_prepared_promotion_session(prepared, cx);
+                        None
+                    }
                 };
                 let Some(durable) = durable else {
                     self.enqueue_fact(
@@ -5937,6 +6719,18 @@ impl DockLiveUndockRuntime {
     }
 
     fn finalize_live_payload_drag(&self, identity: DockLiveUndockIdentity, cx: &mut App) {
+        let session_checked_out = self
+            .state
+            .borrow()
+            .executions
+            .get(&identity)
+            .and_then(|execution| execution.presentation.as_ref())
+            .is_some_and(|presentation| presentation.session.is_checked_out());
+        if session_checked_out {
+            let runtime = self.clone();
+            cx.defer(move |cx| runtime.finalize_live_payload_drag(identity, cx));
+            return;
+        }
         let execution = self.state.borrow_mut().executions.remove(&identity);
         let Some(execution) = execution else {
             return;

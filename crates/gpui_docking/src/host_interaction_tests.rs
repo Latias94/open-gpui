@@ -649,15 +649,13 @@ fn reveal_live_undock_provisional_destination(
         reveal_ticket,
         initial_ticket_snapshot,
         reveal_candidate,
-        current_batch_receipt,
         reveal_preflight,
         initially_submitted_frame,
-    ) = cx.read_entity(&destination_host, |host, cx| {
+    ) = cx.read_entity(&destination_host, |host, _| {
         let state = host
             .live_presentation_state()
             .expect("the provisional destination should retain live presentation authority");
         let crate::host::DockHostLivePresentationMode::DestinationProjection {
-            leases,
             phase:
                 crate::host::DockHostLiveDestinationPhase::RevealObserving {
                     presentation,
@@ -675,7 +673,6 @@ fn reveal_live_undock_provisional_destination(
             ticket.clone(),
             ticket.snapshot(),
             candidate_frame,
-            open_gpui::view_presentation_window::presented_batch_receipt(cx, &leases),
             presentation,
             submitted_frame,
         )
@@ -689,13 +686,14 @@ fn reveal_live_undock_provisional_destination(
         reveal_candidate.frame_generation(),
         "the reveal observer must retain the ticket's first eligible accepted generation"
     );
-    let current_candidate = current_batch_receipt
-        .and_then(|receipt| {
-            crate::surface::live_undock::DockLiveUndockPayloadPresentationReceipt::new(
-                reveal_preflight.mount(),
-                receipt,
-            )
+    let runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    let current_candidate = cx
+        .read(|app| {
+            runtime.current_destination_presentation(reveal_key, reveal_preflight.mount(), app)
         })
+        .and_then(Result::ok)
         .expect("the live destination should retain one current candidate frame");
     assert_eq!(
         current_candidate.mount(),
@@ -5345,6 +5343,56 @@ fn native_captured_release_rejects_floating_title_target_reparented_by_mouse_up_
 }
 
 #[open_gpui::test]
+fn live_rehost_session_checkout_restores_authority_after_unwind(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        runtime.panic_with_current_rehost_session_checked_out_for_test();
+    }));
+    assert!(
+        panic.is_err(),
+        "the test must exercise unwind while checked out"
+    );
+    assert!(
+        runtime.current_rehost_session_is_active_for_test(),
+        "RAII checkout must restore the exact rehost session after unwind"
+    );
+
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the drag session must remain recoverable after the injected panic");
+    cx.update(|app| {
+        crate::native_captured_drag::cancel_native_captured_drag_route(
+            fixture.runtime.identity(),
+            Some(&session),
+            Some(&fixture.payload),
+            &fixture.source_host.downgrade(),
+            None,
+            PointerCancelReason::CaptureRevoked,
+            app,
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Idle
+    );
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "the restored session must still converge through ordinary cancellation"
+    );
+}
+
+#[open_gpui::test]
 fn native_source_restoration_activates_only_after_the_visible_receipt(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
@@ -5514,6 +5562,77 @@ fn live_source_restoration_host_loss_after_finish_converges_through_orphan_recov
 }
 
 #[open_gpui::test]
+fn orphan_recovery_replays_cleanup_after_durable_recovery_commit(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the source should retain its exact live-undock drag session");
+    let owner = fixture.surface.owner().clone();
+    let live_runtime = cx.read_entity(&owner, |owner, _| owner.live_undock_runtime());
+    live_runtime.replace_source_host_after_finish_once_for_test();
+    live_runtime.interrupt_orphan_cleanup_after_recovery_commit_once_for_test();
+    let source_host = fixture.source_host.downgrade();
+    drop(fixture.source_host);
+
+    cx.update(|app| {
+        crate::native_captured_drag::cancel_native_captured_drag_route(
+            fixture.runtime.identity(),
+            Some(&session),
+            Some(&fixture.payload),
+            &source_host,
+            None,
+            PointerCancelReason::CaptureRevoked,
+            app,
+        );
+    });
+    cx.run_until_parked();
+
+    cx.read_entity(&owner, |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::RecoveringOrphan,
+            "an interrupted cleanup must retain the reducer and runtime execution"
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 1);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
+            ),
+            1,
+            "recovery authority must become durable before destructive cleanup"
+        );
+    });
+
+    cx.executor().advance_clock(Duration::from_millis(16));
+    cx.run_until_parked();
+
+    cx.read_entity(&owner, |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle,
+            "the retry must replay cleanup from the committed recovery receipt"
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
+            ),
+            1,
+            "cleanup replay must not duplicate the durable recovery record"
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "accepted orphan recovery must release the exact drag generation"
+    );
+}
+
+#[open_gpui::test]
 fn source_restoration_shutdown_before_visible_receipt_never_activates(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
@@ -5634,9 +5753,7 @@ fn source_restoration_shutdown_before_visible_receipt_never_activates(cx: &mut T
             crate::surface::payload_recovery::DockPayloadRecoveryReason::PreCommitOrphan,
         )
     });
-    let rehost_absent = cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared_rehost)
-    });
+    let rehost_absent = cx.read(|app| prepared_rehost.authority_is_retired(app));
     assert!(
         rehost_absent,
         "shutdown fallback must retire exact rehost authority; captured_generation={}; recovery_count={recovery_count}; transport_active={}",
@@ -9997,6 +10114,392 @@ fn start_payload_recovery_host_restore(
 }
 
 #[open_gpui::test]
+fn payload_recovery_finalization_resumes_after_each_committed_stage_panics(
+    cx: &mut TestAppContext,
+) {
+    use crate::surface::payload_recovery_executor::DockPayloadRecoveryFinalizationPanicStage;
+
+    for stage in [
+        DockPayloadRecoveryFinalizationPanicStage::Provider,
+        DockPayloadRecoveryFinalizationPanicStage::SourceHost,
+        DockPayloadRecoveryFinalizationPanicStage::DestinationHost,
+        DockPayloadRecoveryFinalizationPanicStage::Owner,
+    ] {
+        let fixture = payload_recovery_host_fixture(cx);
+        let owner = fixture.surface.owner().clone();
+        cx.update_entity(&owner, |owner, _| {
+            owner.pause_before_payload_recovery_finalization_once_for_test();
+            owner.panic_after_payload_recovery_finalization_stage_once_for_test(stage);
+        });
+        start_payload_recovery_host_restore(&fixture, cx);
+        cx.run_until_parked();
+        let execution = cx
+            .read_entity(&owner, |owner, _| {
+                owner.payload_recovery_execution_snapshot_for_test()
+            })
+            .expect("the paused finalization must retain its execution")
+            .0;
+
+        cx.update(|app| {
+            crate::surface::payload_recovery_executor::resume_payload_recovery_finalization_for_test(
+                owner.clone(),
+                execution,
+                app,
+            );
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read_entity(&owner, |owner, _| owner
+                .payload_recovery_execution_snapshot_for_test())
+                .is_none(),
+            "the retained continuation must finish after {stage:?} retry"
+        );
+        assert_eq!(
+            cx.read_entity(&owner, |owner, _| owner
+                .visible_payload_recovery_count_for_test(
+                    DockPayloadRecoveryReason::LostViewportRecovery,
+                )),
+            0,
+            "the exact durable recovery record must be consumed after {stage:?} retry"
+        );
+        assert_eq!(
+            cx.read_entity(&owner, |owner, _| owner
+                .payload_recovery_committed_restore_count_for_test()),
+            0,
+            "the finalization journal must retire its registry tombstone after {stage:?}"
+        );
+        assert!(
+            cx.read(|app| {
+                open_gpui::view_presentation_window::stable_lease_for_window(
+                    app,
+                    fixture.panel_a.entity_id(),
+                    fixture.primary_window.window_id(),
+                )
+            })
+            .is_some(),
+            "the destination must retain stable presentation after {stage:?} retry"
+        );
+    }
+}
+
+#[open_gpui::test]
+fn payload_recovery_finalization_exhausts_persistent_panic_without_starving_effects(
+    cx: &mut TestAppContext,
+) {
+    use crate::surface::payload_recovery_executor::DockPayloadRecoveryFinalizationPanicStage;
+
+    let fixture = payload_recovery_host_fixture(cx);
+    let start = prepare_payload_recovery_host_restore(&fixture, cx);
+    cx.update_entity(&start.owner, |owner, _| {
+        owner.panic_after_payload_recovery_finalization_stage_for_test(
+            DockPayloadRecoveryFinalizationPanicStage::Provider,
+            2,
+        );
+    });
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner.clone(),
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("the recovery executor should admit the persistent-panic sequence");
+    cx.run_until_parked();
+
+    assert!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "retry exhaustion must retire the terminal executor instead of self-deferring forever"
+    );
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1,
+        "a provider-only terminal must preserve the durable recovery action"
+    );
+    assert_eq!(
+        cx.read_entity(&start.owner, |owner, _| owner
+            .payload_recovery_committed_restore_count_for_test()),
+        0
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.primary_window.window_id(),
+        )
+        .is_none()
+    }));
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+            start.owner,
+            fixture.primary_host.downgrade(),
+            start.primary_window,
+            start.primary_binding,
+            start.action,
+            app,
+        )
+    })
+    .expect("terminal compensation must leave the durable recovery immediately retryable");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        0
+    );
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .payload_recovery_committed_restore_count_for_test()),
+        0
+    );
+}
+
+#[open_gpui::test]
+fn payload_recovery_finalization_uses_source_checkpoint_after_source_host_rebind(
+    cx: &mut TestAppContext,
+) {
+    use crate::surface::payload_recovery_executor::DockPayloadRecoveryFinalizationPanicStage;
+
+    let fixture = payload_recovery_host_fixture(cx);
+    let owner = fixture.surface.owner().clone();
+    cx.update_entity(&owner, |owner, _| {
+        owner.pause_before_payload_recovery_finalization_once_for_test();
+        owner.pause_payload_recovery_finalization_retry_once_for_test();
+        owner.panic_after_payload_recovery_finalization_stage_once_for_test(
+            DockPayloadRecoveryFinalizationPanicStage::SourceHost,
+        );
+    });
+    start_payload_recovery_host_restore(&fixture, cx);
+    cx.run_until_parked();
+    let execution = cx
+        .read_entity(&owner, |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("the paused finalization must retain its execution")
+        .0;
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::resume_payload_recovery_finalization_for_test(
+            owner.clone(),
+            execution,
+            app,
+        );
+    });
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_some(),
+        "the test retry pause must retain the committed source checkpoint"
+    );
+    fixture
+        .source_window
+        .update(cx, |_, window, app| {
+            window.replace_root(app, |_, _| open_gpui::Empty);
+        })
+        .expect("the source Host should be replaceable between finalization attempts");
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::resume_payload_recovery_finalization_for_test(
+            owner.clone(),
+            execution,
+            app,
+        );
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none()
+    );
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        0
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.primary_window.window_id(),
+        )
+        .is_some()
+    }));
+}
+
+#[open_gpui::test]
+fn payload_recovery_finalization_bounds_destination_loss_before_owner_commit(
+    cx: &mut TestAppContext,
+) {
+    use crate::surface::payload_recovery_executor::DockPayloadRecoveryFinalizationPanicStage;
+
+    let fixture = payload_recovery_host_fixture(cx);
+    let owner = fixture.surface.owner().clone();
+    cx.update_entity(&owner, |owner, _| {
+        owner.pause_before_payload_recovery_finalization_once_for_test();
+        owner.pause_payload_recovery_finalization_retry_once_for_test();
+        owner.panic_after_payload_recovery_finalization_stage_once_for_test(
+            DockPayloadRecoveryFinalizationPanicStage::DestinationHost,
+        );
+    });
+    start_payload_recovery_host_restore(&fixture, cx);
+    cx.run_until_parked();
+    let execution = cx
+        .read_entity(&owner, |owner, _| {
+            owner.payload_recovery_execution_snapshot_for_test()
+        })
+        .expect("the paused finalization must retain its execution")
+        .0;
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::resume_payload_recovery_finalization_for_test(
+            owner.clone(),
+            execution,
+            app,
+        );
+    });
+    fixture
+        .primary_window
+        .update(cx, |_, window, app| {
+            window.replace_root(app, |_, _| open_gpui::Empty);
+        })
+        .expect("the destination Host should be replaceable between finalization attempts");
+
+    cx.update(|app| {
+        crate::surface::payload_recovery_executor::resume_payload_recovery_finalization_for_test(
+            owner.clone(),
+            execution,
+            app,
+        );
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_execution_snapshot_for_test())
+            .is_none(),
+        "destination loss must retire the terminal executor after its retry budget"
+    );
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .visible_payload_recovery_count_for_test(
+                DockPayloadRecoveryReason::LostViewportRecovery,
+            )),
+        1,
+        "destination loss before owner commit must preserve the durable recovery action"
+    );
+    assert_eq!(
+        cx.read_entity(&owner, |owner, _| owner
+            .payload_recovery_committed_restore_count_for_test()),
+        0
+    );
+    assert!(cx.read(|app| {
+        open_gpui::view_presentation_window::stable_lease_for_window(
+            app,
+            fixture.panel_a.entity_id(),
+            fixture.primary_window.window_id(),
+        )
+        .is_none()
+    }));
+}
+
+#[open_gpui::test]
+fn payload_recovery_installation_never_drops_rehost_authority_during_unwind(
+    cx: &mut TestAppContext,
+) {
+    use crate::surface::payload_recovery_executor::DockPayloadRecoveryInstallationPanicStage;
+
+    for stage in [
+        DockPayloadRecoveryInstallationPanicStage::PreparedSession,
+        DockPayloadRecoveryInstallationPanicStage::DestinationHost,
+        DockPayloadRecoveryInstallationPanicStage::SourceHost,
+        DockPayloadRecoveryInstallationPanicStage::Executor,
+    ] {
+        let fixture = payload_recovery_host_fixture(cx);
+        let start = prepare_payload_recovery_host_restore(&fixture, cx);
+        cx.update_entity(&start.owner, |owner, _| {
+            owner.panic_after_payload_recovery_installation_stage_once_for_test(stage);
+        });
+
+        let start_result = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|app| {
+                crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+                    start.owner.clone(),
+                    fixture.primary_host.downgrade(),
+                    start.primary_window,
+                    start.primary_binding,
+                    start.action,
+                    app,
+                )
+            })
+        }));
+
+        if stage == DockPayloadRecoveryInstallationPanicStage::Executor {
+            assert!(
+                start_result
+                    .expect("executor-owned installation panic must be contained")
+                    .is_ok(),
+                "executor admission owns enough state to continue after unwind"
+            );
+        } else {
+            assert!(
+                start_result.is_err(),
+                "pre-admission {stage:?} panic must propagate after compensation"
+            );
+            cx.run_until_parked();
+            assert!(
+                cx.read_entity(&start.owner, |owner, _| owner
+                    .payload_recovery_execution_snapshot_for_test())
+                    .is_none(),
+                "compensation must retire the reservation after {stage:?}"
+            );
+            assert!(cx.read_entity(&fixture.source_host, |host, _| {
+                host.payload_recovery_presentation_state().is_none()
+            }));
+            assert!(cx.read_entity(&fixture.primary_host, |host, _| {
+                host.payload_recovery_presentation_state().is_none()
+            }));
+            cx.update(|app| {
+                crate::surface::payload_recovery_executor::start_payload_recovery_restore(
+                    start.owner.clone(),
+                    fixture.primary_host.downgrade(),
+                    start.primary_window,
+                    start.primary_binding,
+                    start.action,
+                    app,
+                )
+            })
+            .expect("a compensated installation must be immediately retryable");
+        }
+
+        cx.run_until_parked();
+        assert!(
+            cx.read_entity(&start.owner, |owner, _| owner
+                .payload_recovery_execution_snapshot_for_test())
+                .is_none(),
+            "the recovered installation must converge after {stage:?}"
+        );
+        assert_eq!(
+            cx.read_entity(&start.owner, |owner, _| owner
+                .visible_payload_recovery_count_for_test(
+                    DockPayloadRecoveryReason::LostViewportRecovery,
+                )),
+            0
+        );
+    }
+}
+
+#[open_gpui::test]
 fn payload_recovery_source_close_before_release_waits_for_native_terminal(cx: &mut TestAppContext) {
     let fixture = payload_recovery_host_fixture(cx);
     let start = prepare_payload_recovery_host_restore(&fixture, cx);
@@ -10048,7 +10551,7 @@ fn payload_recovery_source_close_before_release_waits_for_native_terminal(cx: &m
         owner
             .payload_recovery_transfer(pending.0)
             .expect("the native-terminal barrier should retain the transfer")
-            .prepared()
+            .projection()
             .clone()
     });
 
@@ -10060,9 +10563,7 @@ fn payload_recovery_source_close_before_release_waits_for_native_terminal(cx: &m
             .is_none(),
         "the exact native terminal should retire the recovery execution"
     );
-    assert!(cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
-    }));
+    assert!(cx.read(|app| prepared.authority_is_retired(app)));
     assert_eq!(
         cx.read_entity(fixture.surface.owner(), |owner, _| owner
             .visible_payload_recovery_count_for_test(
@@ -10077,7 +10578,9 @@ fn payload_recovery_source_close_before_release_waits_for_native_terminal(cx: &m
 }
 
 #[open_gpui::test]
-fn payload_recovery_endpoint_loss_after_prepare_compensates_before_retry(cx: &mut TestAppContext) {
+fn payload_recovery_endpoint_loss_releases_stable_authority_before_restore(
+    cx: &mut TestAppContext,
+) {
     let fixture = payload_recovery_host_fixture(cx);
     let start = prepare_payload_recovery_host_restore(&fixture, cx);
     let owner = fixture.surface.owner().clone();
@@ -10101,39 +10604,7 @@ fn payload_recovery_endpoint_loss_after_prepare_compensates_before_retry(cx: &mu
             )
         })
         .is_some(),
-        "the resolved panel should still expose the stale source authority before compensation"
-    );
-
-    let first = cx.update(|app| {
-        crate::surface::payload_recovery_executor::start_payload_recovery_restore(
-            start.owner.clone(),
-            fixture.primary_host.downgrade(),
-            start.primary_window,
-            start.primary_binding,
-            start.action,
-            app,
-        )
-    });
-    assert_eq!(
-        first,
-        Err(DockPayloadRecoveryRestoreError::PresentationEndpointUnavailable)
-    );
-    assert!(
-        cx.read_entity(&owner, |owner, _| owner
-            .payload_recovery_execution_snapshot_for_test())
-            .is_none(),
-        "failed installation must release the executor reservation"
-    );
-    assert!(
-        cx.read(|app| {
-            open_gpui::view_presentation_window::stable_lease_for_window(
-                app,
-                fixture.panel_a.entity_id(),
-                source_window.window_id(),
-            )
-        })
-        .is_none(),
-        "post-prepare endpoint loss must abandon the dead source authority"
+        "recovery admission must observe the exact stale source authority it will release"
     );
 
     cx.update(|app| {
@@ -10146,7 +10617,7 @@ fn payload_recovery_endpoint_loss_after_prepare_compensates_before_retry(cx: &mu
             app,
         )
     })
-    .expect("compensation must prevent RehostInFlight on the next recovery attempt");
+    .expect("endpoint cleanup must make the durable recovery immediately restorable");
     cx.run_until_parked();
     assert_eq!(
         cx.read_entity(&owner, |owner, _| owner
@@ -10154,6 +10625,17 @@ fn payload_recovery_endpoint_loss_after_prepare_compensates_before_retry(cx: &mu
                 DockPayloadRecoveryReason::LostViewportRecovery,
             )),
         0
+    );
+    assert!(
+        cx.read(|app| {
+            open_gpui::view_presentation_window::stable_lease_for_window(
+                app,
+                fixture.panel_a.entity_id(),
+                source_window.window_id(),
+            )
+        })
+        .is_none(),
+        "the first recovery attempt must release stale source authority"
     );
     assert!(
         cx.read(|app| {
@@ -10366,23 +10848,24 @@ fn payload_recovery_source_close_while_restoring_waits_for_native_terminal(
     cx.run_until_parked();
 
     let owner = fixture.surface.owner().clone();
-    let transfer = cx
+    let (transfer, phase) = cx
         .read_entity(&owner, |owner, _| {
             let snapshot = owner.payload_recovery_execution_snapshot_for_test()?;
-            owner.payload_recovery_transfer(snapshot.0)
+            owner
+                .payload_recovery_transfer(snapshot.0)
+                .map(|transfer| (transfer, snapshot.1))
         })
         .expect("the paused recovery should retain one admitted transfer");
     assert_eq!(
-        transfer.prepared().snapshot().phase(),
+        phase,
         open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
     );
-    let prepared = transfer.prepared().clone();
+    let prepared = transfer.projection().clone();
     cx.update(|app| {
         crate::surface::payload_recovery_executor::payload_recovery_presentation_failed(
             owner.downgrade(),
             transfer.destination().host().clone(),
             transfer.destination_presentation(),
-            prepared.clone(),
             app,
         );
     });
@@ -10427,9 +10910,7 @@ fn payload_recovery_source_close_while_restoring_waits_for_native_terminal(
             .payload_recovery_execution_snapshot_for_test())
             .is_none()
     );
-    assert!(cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
-    }));
+    assert!(cx.read(|app| prepared.authority_is_retired(app)));
 }
 
 #[open_gpui::test]
@@ -10461,7 +10942,7 @@ fn payload_recovery_source_host_release_retires_execution_while_window_stays_liv
             owner
                 .payload_recovery_transfer(initial.0)
                 .expect("the live Host release should begin with one transfer")
-                .prepared()
+                .projection()
                 .clone()
         });
         source_window
@@ -10488,9 +10969,7 @@ fn payload_recovery_source_host_release_retires_execution_while_window_stays_liv
             .is_none(),
         "Host endpoint release must not leave a Busy recovery executor"
     );
-    assert!(cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
-    }));
+    assert!(cx.read(|app| prepared.authority_is_retired(app)));
     assert!(
         cx.read(|app| {
             open_gpui::view_presentation_window::stable_lease_for_window(
@@ -10574,31 +11053,30 @@ fn payload_recovery_source_host_loss_after_finish_releases_stable_batch_before_r
     .expect("the recovery executor should accept the exact endpoints");
     cx.run_until_parked();
 
-    let transfer = cx
+    let (transfer, phase) = cx
         .read_entity(&owner, |owner, _| {
             let snapshot = owner.payload_recovery_execution_snapshot_for_test()?;
-            owner.payload_recovery_transfer(snapshot.0)
+            owner
+                .payload_recovery_transfer(snapshot.0)
+                .map(|transfer| (transfer, snapshot.1))
         })
         .expect("the source-release pause should retain one admitted transfer");
     assert_eq!(
-        transfer.prepared().snapshot().phase(),
+        phase,
         open_gpui::view_presentation_window::RehostPhase::DestinationAdmitted
     );
-    let prepared = transfer.prepared().clone();
+    let prepared = transfer.projection().clone();
     cx.update(|app| {
         crate::surface::payload_recovery_executor::payload_recovery_presentation_failed(
             owner.downgrade(),
             transfer.destination().host().clone(),
             transfer.destination_presentation(),
-            prepared.clone(),
             app,
         );
     });
     cx.run_until_parked();
 
-    assert!(cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
-    }));
+    assert!(cx.read(|app| prepared.authority_is_retired(app)));
 
     assert!(source_host.upgrade().is_none());
     assert!(
@@ -10681,7 +11159,7 @@ fn payload_recovery_source_close_after_release_preserves_ungoverned_hidden_root(
         owner
             .payload_recovery_transfer(released.0)
             .expect("the paused recovery executor should retain its transfer")
-            .prepared()
+            .projection()
             .generation()
     });
     let source_state = cx
@@ -10748,7 +11226,7 @@ fn payload_recovery_source_close_after_release_preserves_ungoverned_hidden_root(
         owner
             .payload_recovery_transfer(pending.0)
             .expect("the native-terminal barrier should retain the released transfer")
-            .prepared()
+            .projection()
             .clone()
     });
 
@@ -10759,9 +11237,7 @@ fn payload_recovery_source_close_after_release_preserves_ungoverned_hidden_root(
             .payload_recovery_execution_snapshot_for_test())
             .is_none()
     );
-    assert!(cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
-    }));
+    assert!(cx.read(|app| prepared.authority_is_retired(app)));
     assert_eq!(
         cx.read_entity(fixture.surface.owner(), |owner, _| owner
             .visible_payload_recovery_count_for_test(
@@ -10867,7 +11343,7 @@ fn payload_recovery_destination_close_then_source_close_waits_for_source_native_
         owner
             .payload_recovery_transfer(admitted.0)
             .expect("the admitted recovery should retain its exact transfer")
-            .prepared()
+            .projection()
             .clone()
     });
     let source_terminal = cx.hold_window_native_terminal(fixture.source_window);
@@ -10901,9 +11377,7 @@ fn payload_recovery_destination_close_then_source_close_waits_for_source_native_
             .payload_recovery_execution_snapshot_for_test())
             .is_none()
     );
-    assert!(cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
-    }));
+    assert!(cx.read(|app| prepared.authority_is_retired(app)));
 }
 
 #[open_gpui::test]
@@ -10931,7 +11405,7 @@ fn payload_recovery_released_source_host_release_abandons_transfer(cx: &mut Test
         owner
             .payload_recovery_transfer(transfer.0)
             .expect("the released Host should retain one prepared transfer")
-            .prepared()
+            .projection()
             .clone()
     });
 
@@ -10951,9 +11425,7 @@ fn payload_recovery_released_source_host_release_abandons_transfer(cx: &mut Test
             .is_none(),
         "post-release Host loss must retire the recovery executor"
     );
-    assert!(cx.read(|app| {
-        open_gpui::view_presentation_window::rehost_authority_is_absent(app, &prepared)
-    }));
+    assert!(cx.read(|app| prepared.authority_is_retired(app)));
     assert!(cx.read_entity(&fixture.primary_host, |host, _| {
         host.payload_recovery_presentation_state().is_none()
     }));

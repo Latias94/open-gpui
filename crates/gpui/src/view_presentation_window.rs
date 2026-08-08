@@ -5,8 +5,9 @@
 //! presentation must move between windows without ever rendering in both at once.
 
 use crate::{
-    AnyElement, AnyView, App, Bounds, Element, ElementId, Empty, EntityId, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Window, WindowId,
+    AnyElement, AnyView, App, AppContext, Bounds, Element, ElementId, Empty, Entity, EntityId,
+    GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, PrepaintPublicationId,
+    Window, WindowId,
 };
 use open_gpui_collections::{FxHashMap, FxHashSet};
 use parking_lot::Mutex;
@@ -446,6 +447,7 @@ pub struct PreparedRehost {
     destination: LeaseBatch,
     restored_source: Arc<Mutex<Option<LeaseBatch>>>,
     snapshot: Arc<Mutex<RehostSnapshot>>,
+    terminal: Arc<Mutex<Option<RehostTerminalTombstone>>>,
 }
 
 impl fmt::Debug for PreparedRehost {
@@ -495,6 +497,7 @@ impl PreparedRehost {
             && self.destination.matches_exactly(&other.destination)
             && Arc::ptr_eq(&self.restored_source, &other.restored_source)
             && Arc::ptr_eq(&self.snapshot, &other.snapshot)
+            && Arc::ptr_eq(&self.terminal, &other.terminal)
     }
 
     /// Returns source-proxy evidence only while destination presentation remains active.
@@ -569,6 +572,663 @@ impl PreparedRehost {
         .then(|| snapshot.invalidation())
         .flatten()
     }
+
+    fn terminal_tombstone(&self) -> Option<RehostTerminalTombstone> {
+        self.terminal.lock().clone()
+    }
+
+    fn record_terminal(&self, terminal: RehostTerminalTombstone) {
+        let mut current = self.terminal.lock();
+        assert!(
+            current.is_none(),
+            "one rehost generation cannot publish two terminal outcomes"
+        );
+        *current = Some(terminal);
+    }
+}
+
+/// Cloneable render projection for one exact rehost generation.
+///
+/// A projection can render the source barrier and the currently selected lease batches, but it
+/// cannot inspect or advance the provider phase machine. The owning [`RehostSession`] remains the
+/// only transition authority.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct RehostProjection {
+    prepared: PreparedRehost,
+}
+
+impl fmt::Debug for RehostProjection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RehostProjection")
+            .field("generation", &self.generation())
+            .field("source", self.source())
+            .field("destination", self.destination())
+            .finish()
+    }
+}
+
+impl RehostProjection {
+    fn new(prepared: PreparedRehost) -> Self {
+        Self { prepared }
+    }
+
+    /// Returns the exact rehost generation.
+    pub const fn generation(&self) -> u64 {
+        self.prepared.generation()
+    }
+
+    /// Returns the source leases captured when this generation was prepared.
+    pub const fn source(&self) -> &LeaseBatch {
+        self.prepared.source()
+    }
+
+    /// Returns the reserved destination leases.
+    pub const fn destination(&self) -> &LeaseBatch {
+        self.prepared.destination()
+    }
+
+    /// Returns whether both projections identify the same exact provider generation.
+    pub fn matches_exactly(&self, other: &Self) -> bool {
+        self.prepared.matches_exactly(&other.prepared)
+    }
+
+    /// Returns whether this exact generation no longer owns any presentation binding.
+    pub fn authority_is_retired(&self, cx: &App) -> bool {
+        rehost_authority_is_absent(cx, &self.prepared)
+    }
+
+    /// Wraps a source proxy in the accepted-frame authority barrier for this exact generation.
+    #[track_caller]
+    pub fn source_release_barrier<E>(
+        &self,
+        child: impl FnOnce(SourceProxyReplayAttempt) -> E,
+    ) -> SourceReleaseBarrier
+    where
+        E: IntoElement,
+    {
+        source_release_barrier(self.prepared.clone(), child)
+    }
+
+    /// Wraps a retained visual in the accepted-frame authority barrier for this exact generation.
+    #[track_caller]
+    pub fn retained_visual_source_release_barrier<E>(
+        &self,
+        ticket: &crate::window::retained_visual::Ticket,
+        child: impl FnOnce(SourceProxyReplayAttempt) -> E,
+    ) -> SourceReleaseBarrier
+    where
+        E: IntoElement,
+    {
+        retained_visual_source_release_barrier(self.prepared.clone(), ticket, child)
+    }
+}
+
+/// Accepted source-proxy commit for one exact rehost generation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RehostSourceProxyCommit {
+    receipt: SourceProxyCommitReceipt,
+}
+
+impl RehostSourceProxyCommit {
+    /// Returns the committed source frame.
+    pub const fn frame_generation(self) -> u64 {
+        self.receipt.frame_generation()
+    }
+
+    /// Returns retained-visual evidence when that mechanism produced the source proxy.
+    pub const fn retained_visual_replay(
+        self,
+    ) -> Option<crate::window::retained_visual::ReplayReceipt> {
+        self.receipt.retained_visual_replay()
+    }
+}
+
+/// Reversible destination exposure produced from one exact accepted staging frame.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct RehostDestinationExposure {
+    batch: LeaseBatch,
+    receipt: DestinationExposureReceipt,
+}
+
+impl RehostDestinationExposure {
+    /// Returns the exact exposed destination batch.
+    pub const fn batch(&self) -> &LeaseBatch {
+        &self.batch
+    }
+
+    /// Returns the accepted staging frame that produced this exposure.
+    pub const fn frame_generation(&self) -> u64 {
+        self.receipt.mount().frame_generation()
+    }
+}
+
+/// Exact visible frame for an exposed destination batch.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RehostDestinationPresentation {
+    receipt: PresentedBatchReceipt,
+}
+
+impl RehostDestinationPresentation {
+    /// Returns the visible destination frame.
+    pub const fn frame_generation(self) -> u64 {
+        self.receipt.frame_generation()
+    }
+
+    /// Returns the destination window.
+    pub const fn window_id(self) -> WindowId {
+        self.receipt.window_id()
+    }
+
+    /// Returns the exact destination lease generation.
+    pub const fn lease_generation(self) -> u64 {
+        self.receipt.lease_generation()
+    }
+
+    /// Returns the number of roots proven by this presentation.
+    pub const fn root_count(self) -> usize {
+        self.receipt.root_count()
+    }
+}
+
+/// Requested terminal transition for a larger synchronous authority transaction.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub enum RehostTerminalIntent<'a> {
+    /// Retire one exact visible destination as the stable presentation authority.
+    CommitDestination(&'a RehostDestinationPresentation),
+    /// Release every still-owned binding after the source endpoint or topology was lost.
+    AbandonAfterSourceLoss,
+}
+
+/// Evidence that source-loss abandonment terminally released one rehost generation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RehostAbandonmentReceipt {
+    generation: u64,
+    source_window: WindowId,
+    destination_window: WindowId,
+}
+
+impl RehostAbandonmentReceipt {
+    fn from_prepared(prepared: &PreparedRehost) -> Self {
+        Self {
+            generation: prepared.generation(),
+            source_window: prepared.source().window_id(),
+            destination_window: prepared.destination().window_id(),
+        }
+    }
+
+    /// Returns the retired rehost generation.
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the former source window.
+    pub const fn source_window(self) -> WindowId {
+        self.source_window
+    }
+
+    /// Returns the former destination window.
+    pub const fn destination_window(self) -> WindowId {
+        self.destination_window
+    }
+}
+
+#[derive(Clone, Debug)]
+enum RehostTerminalTombstone {
+    DestinationCommitted {
+        batch: LeaseBatch,
+        exposure: DestinationExposureReceipt,
+        accepted_frame: Option<u64>,
+    },
+    SourceCommitted {
+        batch: LeaseBatch,
+        accepted_frame: Option<u64>,
+    },
+    Abandoned(RehostAbandonmentReceipt),
+    RetiredWithoutPresentationAuthority,
+}
+
+impl RehostTerminalTombstone {
+    fn disposition(&self) -> RehostTerminalDisposition {
+        match self {
+            Self::DestinationCommitted { .. } => RehostTerminalDisposition::DestinationCommitted,
+            Self::SourceCommitted { .. } => RehostTerminalDisposition::SourceCommitted,
+            Self::Abandoned(_) => RehostTerminalDisposition::Abandoned,
+            Self::RetiredWithoutPresentationAuthority => {
+                RehostTerminalDisposition::PresentationAuthorityReleased
+            }
+        }
+    }
+
+    fn destination_outcome(
+        &self,
+        expected: &LeaseBatch,
+        presentation: &RehostDestinationPresentation,
+    ) -> Option<RehostTerminalOutcome> {
+        let Self::DestinationCommitted {
+            batch,
+            exposure,
+            accepted_frame: Some(accepted_frame),
+        } = self
+        else {
+            return None;
+        };
+        (batch.matches_exactly(expected)
+            && *exposure == presentation.receipt.exposure()
+            && *accepted_frame == presentation.receipt.frame_generation())
+        .then(|| RehostTerminalOutcome::DestinationCommitted(batch.clone()))
+    }
+
+    fn abandonment_receipt(&self) -> Option<RehostAbandonmentReceipt> {
+        match self {
+            Self::Abandoned(receipt) => Some(*receipt),
+            Self::DestinationCommitted { .. }
+            | Self::SourceCommitted { .. }
+            | Self::RetiredWithoutPresentationAuthority => None,
+        }
+    }
+
+    fn source_finish_matches(&self, source: &LeaseBatch) -> bool {
+        matches!(
+            self,
+            Self::SourceCommitted { batch, .. } if batch.matches_exactly(source)
+        )
+    }
+
+    fn source_frame_matches(&self, source: &LeaseBatch, accepted_frame: u64) -> bool {
+        matches!(
+            self,
+            Self::SourceCommitted {
+                batch,
+                accepted_frame: Some(committed_frame),
+            } if batch.matches_exactly(source) && *committed_frame == accepted_frame
+        )
+    }
+}
+
+/// Result of preparing one terminal rehost transition.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum RehostTerminalPreparation {
+    /// Every provider precondition was validated and is held by one single-use token.
+    Prepared(PreparedRehostTerminal),
+    /// An earlier attempt already committed this exact requested terminal outcome.
+    AlreadyCommitted(RehostTerminalOutcome),
+}
+
+impl RehostTerminalPreparation {
+    /// Returns whether the requested terminal outcome can be committed without further recovery.
+    pub fn can_commit(&self, cx: &App) -> bool {
+        match self {
+            Self::Prepared(prepared) => prepared.can_commit(cx),
+            Self::AlreadyCommitted(_) => true,
+        }
+    }
+
+    /// Commits the prepared provider transition or replays its exact idempotent outcome.
+    pub fn try_commit(self, cx: &mut App) -> Result<RehostTerminalOutcome, TransitionError> {
+        match self {
+            Self::Prepared(prepared) => prepared.try_commit(cx),
+            Self::AlreadyCommitted(outcome) => Ok(outcome),
+        }
+    }
+}
+
+/// Single-use provider authority for the final step of a larger synchronous transaction.
+#[doc(hidden)]
+#[derive(Debug)]
+#[must_use = "a prepared terminal must be committed or discarded before retrying"]
+pub struct PreparedRehostTerminal {
+    transition: PreparedRehostTerminalTransition,
+}
+
+#[derive(Debug)]
+enum PreparedRehostTerminalTransition {
+    CommitDestination(PreparedFinishDestination),
+    AbandonAfterSourceLoss(PreparedAbandonRehostAfterSourceLoss),
+}
+
+impl PreparedRehostTerminal {
+    /// Returns whether this exact token can still commit without provider validation failure.
+    pub fn can_commit(&self, cx: &App) -> bool {
+        match &self.transition {
+            PreparedRehostTerminalTransition::CommitDestination(prepared) => {
+                can_commit_prepared_finish_destination(cx, prepared)
+            }
+            PreparedRehostTerminalTransition::AbandonAfterSourceLoss(prepared) => {
+                can_commit_prepared_abandon_rehost_after_source_loss(cx, prepared)
+            }
+        }
+    }
+
+    /// Consumes the validated provider transition if its exact receipt still matches.
+    pub fn try_commit(self, cx: &mut App) -> Result<RehostTerminalOutcome, TransitionError> {
+        if !self.can_commit(cx) {
+            return Err(TransitionError::StalePrepared);
+        }
+        Ok(match self.transition {
+            PreparedRehostTerminalTransition::CommitDestination(prepared) => {
+                let outcome = commit_prepared_finish_destination(cx, prepared);
+                RehostTerminalOutcome::DestinationCommitted(outcome.batch)
+            }
+            PreparedRehostTerminalTransition::AbandonAfterSourceLoss(prepared) => {
+                let receipt = RehostAbandonmentReceipt::from_prepared(&prepared.prepared);
+                let _ = commit_prepared_abandon_rehost_after_source_loss(cx, prepared);
+                RehostTerminalOutcome::Abandoned(receipt)
+            }
+        })
+    }
+}
+
+/// Terminal result of one prepared provider transition.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub enum RehostTerminalOutcome {
+    /// Destination presentation became stable and the provider session was retired.
+    DestinationCommitted(LeaseBatch),
+    /// Source-loss cleanup released the exact provider generation.
+    Abandoned(RehostAbandonmentReceipt),
+}
+
+/// Atomic source-loss abandonment result outside a larger prepared transaction.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RehostAbandonmentOutcome {
+    /// This call released the exact provider generation.
+    Abandoned(RehostAbandonmentReceipt),
+    /// An earlier idempotent attempt already abandoned this exact provider generation.
+    AlreadyAbandoned(RehostAbandonmentReceipt),
+}
+
+/// Exact terminal disposition published by one rehost session.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RehostTerminalDisposition {
+    /// Destination presentation became the stable authority.
+    DestinationCommitted,
+    /// Source presentation remained or became the stable authority.
+    SourceCommitted,
+    /// Source loss released every binding owned by the rehost generation.
+    Abandoned,
+    /// Provider authority was released without a surviving presentation endpoint.
+    PresentationAuthorityReleased,
+}
+
+/// Unique transition owner for one prepared presentation rehost.
+///
+/// The session is deliberately not cloneable. Clone [`RehostProjection`] values for rendering or
+/// asynchronous observation, while retaining this owner in the executor that must settle,
+/// abandon, or atomically commit the provider generation.
+#[doc(hidden)]
+#[must_use = "a rehost session must be transferred to an executor or explicitly settled"]
+pub struct RehostSession {
+    prepared: PreparedRehost,
+    _lifecycle: Entity<RehostSessionLifecycle>,
+    accepted_destination_exposure: Option<(u64, RehostDestinationExposure)>,
+    accepted_source_finish: Option<(u64, SourcePresentationFinish)>,
+}
+
+struct RehostSessionLifecycle {
+    prepared: PreparedRehost,
+}
+
+impl fmt::Debug for RehostSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RehostSession")
+            .field("projection", &self.projection())
+            .finish()
+    }
+}
+
+impl RehostSession {
+    fn new(prepared: PreparedRehost, cx: &mut App) -> Self {
+        let lifecycle = cx.new(|_| RehostSessionLifecycle {
+            prepared: prepared.clone(),
+        });
+        cx.observe_release(&lifecycle, |lifecycle, cx| {
+            cx.retire_released_rehost_session(&lifecycle.prepared);
+        })
+        .detach();
+        Self {
+            prepared,
+            _lifecycle: lifecycle,
+            accepted_destination_exposure: None,
+            accepted_source_finish: None,
+        }
+    }
+
+    /// Returns a cloneable render projection for this exact session.
+    pub fn projection(&self) -> RehostProjection {
+        RehostProjection::new(self.prepared.clone())
+    }
+
+    /// Returns the exact rehost generation.
+    pub const fn generation(&self) -> u64 {
+        self.prepared.generation()
+    }
+
+    /// Returns the source leases captured when this generation was prepared.
+    pub const fn source(&self) -> &LeaseBatch {
+        self.prepared.source()
+    }
+
+    /// Returns the reserved destination leases.
+    pub const fn destination(&self) -> &LeaseBatch {
+        self.prepared.destination()
+    }
+
+    /// Returns the exact provider terminal disposition, when one has been published.
+    pub fn terminal_disposition(&self) -> Option<RehostTerminalDisposition> {
+        self.prepared
+            .terminal_tombstone()
+            .as_ref()
+            .map(RehostTerminalTombstone::disposition)
+    }
+
+    /// Returns whether this session has published one exact provider terminal outcome.
+    pub fn is_terminal(&self) -> bool {
+        self.terminal_disposition().is_some()
+    }
+
+    /// Returns the exact source finish already committed by this session, when present.
+    pub fn committed_source_finish(&self) -> Option<SourcePresentationFinish> {
+        if self.terminal_disposition() != Some(RehostTerminalDisposition::SourceCommitted) {
+            return None;
+        }
+        self.accepted_source_finish
+            .as_ref()
+            .map(|(_, outcome)| outcome.clone())
+    }
+
+    /// Accepts the exact source-proxy frame committed by the provider barrier.
+    pub fn accept_source_proxy_frame(
+        &mut self,
+        accepted_frame: u64,
+    ) -> Result<RehostSourceProxyCommit, TransitionError> {
+        if self.is_terminal() {
+            return Err(TransitionError::ConflictingTerminalOutcome);
+        }
+        let receipt = self
+            .prepared
+            .committed_source_proxy()
+            .ok_or(TransitionError::WrongState)?;
+        if receipt.frame_generation() != accepted_frame {
+            return Err(TransitionError::StaleCandidateFrameAttempt);
+        }
+        Ok(RehostSourceProxyCommit { receipt })
+    }
+
+    /// Exposes the destination only when every root mounted in the supplied accepted frame.
+    pub fn accept_destination_frame(
+        &mut self,
+        cx: &mut App,
+        accepted_frame: u64,
+    ) -> Result<RehostDestinationExposure, TransitionError> {
+        if self.is_terminal() {
+            return Err(TransitionError::ConflictingTerminalOutcome);
+        }
+        if let Some((committed_frame, exposure)) = &self.accepted_destination_exposure {
+            return (*committed_frame == accepted_frame)
+                .then(|| exposure.clone())
+                .ok_or(TransitionError::StaleCandidateFrameAttempt);
+        }
+        let mount = self
+            .prepared
+            .destination_ready_for_exposure()
+            .ok_or(TransitionError::WrongState)?;
+        if mount.frame_generation() != accepted_frame {
+            return Err(TransitionError::StaleCandidateFrameAttempt);
+        }
+        let DestinationExposureOutcome { batch, exposure } =
+            expose_destination(cx, &self.prepared)?;
+        let exposure = RehostDestinationExposure {
+            batch,
+            receipt: exposure,
+        };
+        self.accepted_destination_exposure = Some((accepted_frame, exposure.clone()));
+        Ok(exposure)
+    }
+
+    /// Accepts one visible frame for the already exposed destination batch.
+    pub fn accept_destination_presentation_frame(
+        &self,
+        cx: &App,
+        accepted_frame: u64,
+    ) -> Result<RehostDestinationPresentation, TransitionError> {
+        let receipt =
+            presented_batch_receipt(cx, self.destination()).ok_or(TransitionError::WrongState)?;
+        if receipt.frame_generation() != accepted_frame {
+            return Err(TransitionError::StaleCandidateFrameAttempt);
+        }
+        Ok(RehostDestinationPresentation { receipt })
+    }
+
+    /// Returns the currently accepted visible frame for the exposed destination batch.
+    pub fn current_destination_presentation(
+        &self,
+        cx: &App,
+    ) -> Result<RehostDestinationPresentation, TransitionError> {
+        let receipt =
+            presented_batch_receipt(cx, self.destination()).ok_or(TransitionError::WrongState)?;
+        Ok(RehostDestinationPresentation { receipt })
+    }
+
+    /// Requests ordinary source settlement without exposing the provider phase machine.
+    pub fn settle_source(&mut self, cx: &mut App) -> Result<SourceSettlement, TransitionError> {
+        settle_rehost_source(cx, &self.prepared)
+    }
+
+    /// Finishes the source restoration mounted in the supplied accepted staging frame.
+    pub fn accept_source_restoration_frame(
+        &mut self,
+        cx: &mut App,
+        accepted_frame: u64,
+    ) -> Result<SourcePresentationFinish, TransitionError> {
+        if let Some(disposition) = self.terminal_disposition() {
+            if disposition != RehostTerminalDisposition::SourceCommitted {
+                return Err(TransitionError::ConflictingTerminalOutcome);
+            }
+            return self
+                .accepted_source_finish
+                .as_ref()
+                .and_then(|(committed_frame, outcome)| {
+                    (*committed_frame == accepted_frame).then(|| outcome.clone())
+                })
+                .ok_or(TransitionError::StaleCandidateFrameAttempt);
+        }
+        if let Some((committed_frame, outcome)) = &self.accepted_source_finish {
+            return (*committed_frame == accepted_frame)
+                .then(|| outcome.clone())
+                .ok_or(TransitionError::StaleCandidateFrameAttempt);
+        }
+        let source = cx
+            .view_presentation_windows
+            .source_restoration_for_frame(&self.prepared, accepted_frame)?;
+        let outcome = finish_rendered_rehost_source(cx, &self.prepared, &source)?;
+        self.accepted_source_finish = Some((accepted_frame, outcome.clone()));
+        Ok(outcome)
+    }
+
+    /// Validates the final provider step for a larger synchronous authority transaction.
+    pub fn prepare_terminal(
+        &self,
+        cx: &App,
+        intent: RehostTerminalIntent<'_>,
+    ) -> Result<RehostTerminalPreparation, TransitionError> {
+        match intent {
+            RehostTerminalIntent::CommitDestination(presentation) => {
+                let prepared = match prepare_finish_destination(cx, &self.prepared) {
+                    Ok(prepared) => prepared,
+                    Err(TransitionError::StalePrepared) => {
+                        return match self.prepared.terminal_tombstone() {
+                            Some(terminal) => terminal
+                                .destination_outcome(self.destination(), presentation)
+                                .map(RehostTerminalPreparation::AlreadyCommitted)
+                                .ok_or(TransitionError::ConflictingTerminalOutcome),
+                            None => Err(TransitionError::StalePrepared),
+                        };
+                    }
+                    Err(error) => return Err(error),
+                };
+                if prepared.presentation != presentation.receipt
+                    || prepared.exposure != presentation.receipt.exposure()
+                    || !prepared.batch.matches_exactly(self.destination())
+                {
+                    return Err(TransitionError::StalePrepared);
+                }
+                Ok(RehostTerminalPreparation::Prepared(
+                    PreparedRehostTerminal {
+                        transition: PreparedRehostTerminalTransition::CommitDestination(prepared),
+                    },
+                ))
+            }
+            RehostTerminalIntent::AbandonAfterSourceLoss => {
+                match prepare_abandon_rehost_after_source_loss(cx, &self.prepared) {
+                    Ok(prepared) => Ok(RehostTerminalPreparation::Prepared(
+                        PreparedRehostTerminal {
+                            transition: PreparedRehostTerminalTransition::AbandonAfterSourceLoss(
+                                prepared,
+                            ),
+                        },
+                    )),
+                    Err(TransitionError::StalePrepared) => match self.prepared.terminal_tombstone()
+                    {
+                        Some(terminal) => terminal
+                            .abandonment_receipt()
+                            .map(|receipt| {
+                                RehostTerminalPreparation::AlreadyCommitted(
+                                    RehostTerminalOutcome::Abandoned(receipt),
+                                )
+                            })
+                            .ok_or(TransitionError::ConflictingTerminalOutcome),
+                        None => Err(TransitionError::StalePrepared),
+                    },
+                    Err(error) => Err(error),
+                }
+            }
+        }
+    }
+
+    /// Atomically abandons this exact provider generation after source topology loss.
+    pub fn abandon_after_source_loss(
+        &mut self,
+        cx: &mut App,
+    ) -> Result<RehostAbandonmentOutcome, TransitionError> {
+        let receipt = RehostAbandonmentReceipt::from_prepared(&self.prepared);
+        match abandon_rehost_after_source_loss(cx, &self.prepared)? {
+            AbandonRehostOutcome::Abandoned(_) => Ok(RehostAbandonmentOutcome::Abandoned(receipt)),
+            AbandonRehostOutcome::AlreadyAbandoned => {
+                Ok(RehostAbandonmentOutcome::AlreadyAbandoned(receipt))
+            }
+        }
+    }
 }
 
 /// Error returned while claiming initial presentation authority.
@@ -617,11 +1277,17 @@ pub enum PrepareError {
 /// prepared rehost. Ungoverned roots and roots already governed by the destination remain
 /// unchanged for the surrounding topology transaction to reconcile.
 #[doc(hidden)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum ResolvedViewRehostOutcome {
     /// No supplied root requires a presentation-window transfer.
     NoTransfer,
     /// The exact source-bound subset entered the ordinary prepared-rehost protocol.
+    Prepared(RehostSession),
+}
+
+#[derive(Debug)]
+enum ResolvedPreparedViewRehostOutcome {
+    NoTransfer,
     Prepared(PreparedRehost),
 }
 
@@ -665,14 +1331,16 @@ pub enum ResolvedViewRehostError {
 pub enum TransitionError {
     /// The prepared generation is no longer registered.
     StalePrepared,
-    /// The transition is not legal from the current phase.
-    WrongPhase(RehostPhase),
+    /// The requested domain operation is not available from the current provider state.
+    WrongState,
     /// The callback came from the wrong window.
     WrongWindow,
     /// The source proxy did not prove the mechanism and exact lease bound by the barrier.
     WrongSourceProxyEvidence,
     /// Retained replay evidence came from a different candidate attempt.
     StaleCandidateFrameAttempt,
+    /// The generation already reached a different terminal outcome.
+    ConflictingTerminalOutcome,
     /// Exact source leases were still present in the release frame.
     SourceStillMounted,
     /// A governed lease no longer matched current authority.
@@ -741,8 +1409,8 @@ pub enum SourceSettlement {
 pub enum AbandonRehostOutcome {
     /// The exact rehost authority was released by this call.
     Abandoned(AbandonedRehostReceipt),
-    /// The exact rehost authority had already been released.
-    AlreadyAbsent,
+    /// The exact rehost generation had already been abandoned.
+    AlreadyAbandoned,
 }
 
 /// Reversible destination exposure retained under one prepared rehost generation.
@@ -766,6 +1434,19 @@ pub struct PreparedFinishDestination {
     prepared: PreparedRehost,
     batch: LeaseBatch,
     exposure: DestinationExposureReceipt,
+    presentation: PresentedBatchReceipt,
+}
+
+impl PreparedFinishDestination {
+    /// Returns whether this exact token can still commit without provider validation failure.
+    pub fn can_commit(&self, cx: &App) -> bool {
+        can_commit_prepared_finish_destination(cx, self)
+    }
+
+    /// Consumes this exactly validated provider commit.
+    pub fn commit(self, cx: &mut App) -> DestinationExposureOutcome {
+        commit_prepared_finish_destination(cx, self)
+    }
 }
 
 /// Single-use authority to abandon one exact rehost after its source topology is lost.
@@ -779,6 +1460,18 @@ pub struct PreparedAbandonRehostAfterSourceLoss {
     prepared: PreparedRehost,
     phase: RehostPhase,
     bindings: Vec<(EntityId, Option<Binding>)>,
+}
+
+impl PreparedAbandonRehostAfterSourceLoss {
+    /// Returns whether this exact abandonment token can still commit.
+    pub fn can_commit(&self, cx: &App) -> bool {
+        can_commit_prepared_abandon_rehost_after_source_loss(cx, self)
+    }
+
+    /// Consumes this exact source-loss abandonment token.
+    pub fn commit(self, cx: &mut App) -> AbandonedRehostReceipt {
+        commit_prepared_abandon_rehost_after_source_loss(cx, self)
+    }
 }
 
 /// Receipt proving that one exact rehost generation no longer owns presentation authority.
@@ -816,6 +1509,7 @@ impl AbandonedRehostReceipt {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Binding {
     current: Lease,
+    publication: PrepaintPublicationId,
     last_mounted_frame: Option<u64>,
     pending_rehost: Option<u64>,
     destination_exposure: Option<DestinationExposureReceipt>,
@@ -897,6 +1591,7 @@ pub(crate) struct Registry {
     next_generation: u64,
     bindings: FxHashMap<EntityId, Binding>,
     rehosts: FxHashMap<u64, RehostRecord>,
+    accepted_presentation_frames: FxHashMap<WindowId, u64>,
 }
 
 impl Registry {
@@ -963,6 +1658,7 @@ impl Registry {
                 entity_id,
                 Binding {
                     current: lease,
+                    publication: PrepaintPublicationId::new(),
                     last_mounted_frame: None,
                     pending_rehost: None,
                     destination_exposure: None,
@@ -1048,6 +1744,7 @@ impl Registry {
             destination,
             restored_source: Arc::new(Mutex::new(None)),
             snapshot,
+            terminal: Arc::new(Mutex::new(None)),
         };
         self.rehosts.insert(
             generation,
@@ -1071,7 +1768,7 @@ impl Registry {
         entity_ids: &[EntityId],
         expected_source_window: WindowId,
         destination_window: WindowId,
-    ) -> Result<ResolvedViewRehostOutcome, ResolvedViewRehostError> {
+    ) -> Result<ResolvedPreparedViewRehostOutcome, ResolvedViewRehostError> {
         if entity_ids.is_empty() {
             return Err(ResolvedViewRehostError::Empty);
         }
@@ -1106,10 +1803,10 @@ impl Registry {
         }
 
         if exact_source.is_empty() {
-            return Ok(ResolvedViewRehostOutcome::NoTransfer);
+            return Ok(ResolvedPreparedViewRehostOutcome::NoTransfer);
         }
         self.prepare(&exact_source, destination_window)
-            .map(ResolvedViewRehostOutcome::Prepared)
+            .map(ResolvedPreparedViewRehostOutcome::Prepared)
             .map_err(ResolvedViewRehostError::Prepare)
     }
 
@@ -1166,6 +1863,92 @@ impl Registry {
         }
     }
 
+    fn presentation_publication(
+        &self,
+        lease: Lease,
+        window_id: WindowId,
+    ) -> Option<PrepaintPublicationId> {
+        (self.presentation_admission(lease, window_id) != PresentationAdmission::Rejected)
+            .then(|| {
+                self.bindings
+                    .get(&lease.entity_id)
+                    .map(|binding| binding.publication)
+            })
+            .flatten()
+    }
+
+    fn begin_accepted_presentation_frame(
+        &mut self,
+        window_id: WindowId,
+        frame_generation: u64,
+    ) -> bool {
+        if let Some(current) = self.accepted_presentation_frames.get(&window_id) {
+            if *current > frame_generation {
+                return false;
+            }
+            if *current == frame_generation {
+                return true;
+            }
+        }
+        self.accepted_presentation_frames
+            .insert(window_id, frame_generation);
+
+        for binding in self.bindings.values_mut() {
+            if binding.current.window_id == window_id {
+                binding.last_mounted_frame = None;
+            }
+        }
+
+        for record in self.rehosts.values_mut() {
+            match record.phase {
+                RehostPhase::DestinationAdmitted
+                    if record.prepared.destination.window_id == window_id =>
+                {
+                    record.destination_mount_frame = None;
+                    record.destination_mounted.clear();
+                }
+                RehostPhase::DestinationMounted
+                    if record.prepared.destination.window_id == window_id =>
+                {
+                    record.phase = RehostPhase::DestinationAdmitted;
+                    record.destination_mount_frame = None;
+                    record.destination_mounted.clear();
+                    record.publish(None);
+                }
+                RehostPhase::RestoringSource
+                    if record
+                        .restore
+                        .as_ref()
+                        .is_some_and(|restore| restore.window_id == window_id) =>
+                {
+                    record.restore_mount_frame = None;
+                    record.restore_mounted.clear();
+                }
+                RehostPhase::SourceRestored
+                    if record
+                        .restore
+                        .as_ref()
+                        .is_some_and(|restore| restore.window_id == window_id) =>
+                {
+                    let invalidation = record.prepared.snapshot().invalidation();
+                    record.phase = RehostPhase::RestoringSource;
+                    record.restore_mount_frame = None;
+                    record.restore_mounted.clear();
+                    record.publish(invalidation);
+                }
+                RehostPhase::AwaitingSourceRelease
+                | RehostPhase::DestinationAdmitted
+                | RehostPhase::DestinationMounted
+                | RehostPhase::DestinationExposed
+                | RehostPhase::RestoringSource
+                | RehostPhase::SourceRestored
+                | RehostPhase::Cancelled
+                | RehostPhase::Invalidated => {}
+            }
+        }
+        true
+    }
+
     fn presented_batch_receipt(&self, batch: &LeaseBatch) -> Option<PresentedBatchReceipt> {
         let lease_generation = batch.common_generation()?;
         let mut frame_generation = None;
@@ -1201,6 +1984,7 @@ impl Registry {
         if mount.destination_window != batch.window_id
             || mount.destination_lease_generation != lease_generation
             || mount.root_count != batch.leases.len()
+            || self.accepted_presentation_frames.get(&batch.window_id) != Some(&frame_generation?)
         {
             return None;
         }
@@ -1228,11 +2012,15 @@ impl Registry {
                 Some(_) => return None,
             }
         }
+        let frame_generation = frame_generation?;
+        if self.accepted_presentation_frames.get(&batch.window_id) != Some(&frame_generation) {
+            return None;
+        }
         Some(StableBatchPresentationReceipt {
             window_id: batch.window_id,
             lease_generation,
             root_count: batch.leases.len(),
-            frame_generation: frame_generation?,
+            frame_generation,
         })
     }
 
@@ -1367,6 +2155,9 @@ impl Registry {
         frame_generation: u64,
         current_windows: &mut FxHashMap<EntityId, WindowId>,
     ) -> Result<MountCommitOutcome, TransitionError> {
+        if !self.begin_accepted_presentation_frame(lease.window_id, frame_generation) {
+            return Err(TransitionError::StaleCandidateFrameAttempt);
+        }
         let Some(binding) = self.bindings.get(&lease.entity_id) else {
             return Err(TransitionError::StaleLease);
         };
@@ -1482,7 +2273,7 @@ impl Registry {
             return Err(TransitionError::StalePrepared);
         };
         if record.phase != RehostPhase::AwaitingSourceRelease {
-            return Err(TransitionError::WrongPhase(record.phase));
+            return Err(TransitionError::WrongState);
         }
         if receipt.rehost_generation != prepared.generation {
             return Err(TransitionError::StalePrepared);
@@ -1537,7 +2328,7 @@ impl Registry {
             return Err(TransitionError::StalePrepared);
         };
         if record.phase != RehostPhase::AwaitingSourceRelease {
-            return Err(TransitionError::WrongPhase(record.phase));
+            return Err(TransitionError::WrongState);
         }
         if self
             .validate_batch_authority(&prepared.source, prepared.generation)
@@ -1581,7 +2372,7 @@ impl Registry {
                 | RehostPhase::DestinationMounted
                 | RehostPhase::DestinationExposed
         ) {
-            return Err(TransitionError::WrongPhase(record.phase));
+            return Err(TransitionError::WrongState);
         }
         self.begin_source_restore(prepared.generation, None, current_windows)
     }
@@ -1602,7 +2393,7 @@ impl Registry {
                     | RehostPhase::DestinationMounted
                     | RehostPhase::DestinationExposed
             ) {
-                return Err(TransitionError::WrongPhase(record.phase));
+                return Err(TransitionError::WrongState);
             }
             if record.source_window_closed {
                 self.invalidate_rehost_and_release_authority(
@@ -1671,7 +2462,7 @@ impl Registry {
                 return Err(TransitionError::StalePrepared);
             };
             if record.phase != RehostPhase::DestinationMounted {
-                return Err(TransitionError::WrongPhase(record.phase));
+                return Err(TransitionError::WrongState);
             }
             (
                 record.prepared.destination.clone(),
@@ -1711,7 +2502,7 @@ impl Registry {
             return Err(TransitionError::StalePrepared);
         }
         if record.phase != RehostPhase::DestinationExposed {
-            return Err(TransitionError::WrongPhase(record.phase));
+            return Err(TransitionError::WrongState);
         }
 
         let batch = record.prepared.destination.clone();
@@ -1729,11 +2520,16 @@ impl Registry {
                 return Err(TransitionError::StaleLease);
             }
         }
+        let presentation = self
+            .presented_batch_receipt(&batch)
+            .filter(|presentation| presentation.exposure() == exposure)
+            .ok_or(TransitionError::WrongState)?;
 
         Ok(PreparedFinishDestination {
             prepared: record.prepared.clone(),
             batch,
             exposure,
+            presentation,
         })
     }
 
@@ -1749,6 +2545,7 @@ impl Registry {
             prepared,
             batch,
             exposure,
+            presentation,
         } = prepared_finish;
         let generation = prepared.generation;
 
@@ -1761,9 +2558,14 @@ impl Registry {
                 .get_mut(&lease.entity_id)
                 .expect("validated destination finish must retain every binding");
             binding.pending_rehost = None;
-            binding.last_mounted_frame = None;
+            binding.last_mounted_frame = Some(presentation.frame_generation());
             binding.destination_exposure = Some(exposure);
         }
+        prepared.record_terminal(RehostTerminalTombstone::DestinationCommitted {
+            batch: batch.clone(),
+            exposure,
+            accepted_frame: Some(presentation.frame_generation()),
+        });
 
         FinishOutcome::Destination { batch, exposure }
     }
@@ -1782,6 +2584,8 @@ impl Registry {
                 .destination
                 .matches_exactly(&prepared_finish.batch)
             && record.destination_mount_receipt() == Some(prepared_finish.exposure.mount)
+            && self.presented_batch_receipt(&prepared_finish.batch)
+                == Some(prepared_finish.presentation)
             && prepared_finish.batch.leases.iter().all(|lease| {
                 self.bindings.get(&lease.entity_id).is_some_and(|binding| {
                     binding.current == *lease
@@ -1792,38 +2596,47 @@ impl Registry {
     }
 
     fn source_finish_is_committed(&self, prepared: &PreparedRehost, source: &LeaseBatch) -> bool {
-        let expected = match prepared.snapshot().phase() {
-            RehostPhase::Cancelled => prepared.source().clone(),
-            RehostPhase::SourceRestored => {
-                let Some(restored) = prepared.restored_source() else {
-                    return false;
-                };
-                restored
-            }
-            RehostPhase::Invalidated
-                if prepared.snapshot().source_invalidation_disposition()
-                    == Some(SourceInvalidationDisposition::SourceAuthorityUnchanged) =>
-            {
-                prepared.source().clone()
-            }
-            _ => return false,
-        };
         !self.rehosts.contains_key(&prepared.generation())
-            && expected.matches_exactly(source)
-            && source.leases.iter().all(|lease| {
-                self.bindings.get(&lease.entity_id).is_some_and(|binding| {
-                    binding.current == *lease && binding.pending_rehost.is_none()
-                })
-            })
+            && prepared
+                .terminal_tombstone()
+                .is_some_and(|terminal| terminal.source_finish_matches(source))
     }
 
-    fn release_stable_batch_after_endpoint_loss(
+    fn source_restoration_for_frame(
+        &self,
+        prepared: &PreparedRehost,
+        accepted_frame: u64,
+    ) -> Result<LeaseBatch, TransitionError> {
+        let Some(record) = self.rehosts.get(&prepared.generation) else {
+            let source = prepared
+                .restored_source()
+                .ok_or(TransitionError::StalePrepared)?;
+            let committed_in_frame = prepared
+                .terminal_tombstone()
+                .is_some_and(|terminal| terminal.source_frame_matches(&source, accepted_frame));
+            return committed_in_frame
+                .then_some(source)
+                .ok_or(TransitionError::StalePrepared);
+        };
+        if !record.prepared.matches_exactly(prepared) {
+            return Err(TransitionError::StalePrepared);
+        }
+        if record.phase != RehostPhase::SourceRestored {
+            return Err(TransitionError::WrongState);
+        }
+        if record.restore_mount_frame != Some(accepted_frame) {
+            return Err(TransitionError::StaleCandidateFrameAttempt);
+        }
+        record.restore.clone().ok_or(TransitionError::WrongState)
+    }
+
+    fn release_stable_leases_after_endpoint_loss(
         &mut self,
-        batch: &LeaseBatch,
+        leases: &[Lease],
         current_windows: &mut FxHashMap<EntityId, WindowId>,
     ) -> Vec<EntityId> {
         let mut released = Vec::new();
-        for lease in batch.leases.iter() {
+        for lease in leases {
             let releases_exact_stable_binding =
                 self.bindings.get(&lease.entity_id).is_some_and(|binding| {
                     binding.current == *lease && binding.pending_rehost.is_none()
@@ -1915,10 +2728,14 @@ impl Registry {
         let generation = abandonment.prepared.generation;
         let source_window = abandonment.prepared.source.window_id;
         let destination_window = abandonment.prepared.destination.window_id;
+        let terminal_receipt = RehostAbandonmentReceipt::from_prepared(&abandonment.prepared);
         let released_entities = self.release_rehost_authority(generation, Some(current_windows));
         self.rehosts
             .remove(&generation)
             .expect("validated source-loss abandonment must remain registered");
+        abandonment
+            .prepared
+            .record_terminal(RehostTerminalTombstone::Abandoned(terminal_receipt));
 
         AbandonedRehostReceipt {
             generation,
@@ -1967,9 +2784,9 @@ impl Registry {
                     .invalidation
                     .expect("invalidated phase must retain a reason"),
             ),
-            phase => {
+            _ => {
                 self.rehosts.insert(prepared.generation, record);
-                return Err(TransitionError::WrongPhase(phase));
+                return Err(TransitionError::WrongState);
             }
         };
         for lease in record.prepared.source.leases.iter() {
@@ -1985,6 +2802,34 @@ impl Registry {
                 }
             }
         }
+        let terminal = match &outcome {
+            FinishOutcome::Destination { batch, exposure } => {
+                RehostTerminalTombstone::DestinationCommitted {
+                    batch: batch.clone(),
+                    exposure: *exposure,
+                    accepted_frame: None,
+                }
+            }
+            FinishOutcome::Source(batch) => RehostTerminalTombstone::SourceCommitted {
+                batch: batch.clone(),
+                accepted_frame: (record.phase == RehostPhase::SourceRestored)
+                    .then_some(record.restore_mount_frame)
+                    .flatten(),
+            },
+            FinishOutcome::Invalidated(invalidation)
+                if record.prepared.snapshot().source_invalidation_disposition()
+                    == Some(SourceInvalidationDisposition::SourceAuthorityUnchanged) =>
+            {
+                RehostTerminalTombstone::SourceCommitted {
+                    batch: record.prepared.source.clone(),
+                    accepted_frame: None,
+                }
+            }
+            FinishOutcome::Invalidated(_) => {
+                RehostTerminalTombstone::RetiredWithoutPresentationAuthority
+            }
+        };
+        record.prepared.record_terminal(terminal);
         Ok(outcome)
     }
 
@@ -2015,7 +2860,7 @@ impl Registry {
             {
                 (record.prepared.source.clone(), None)
             }
-            phase => return Err(TransitionError::WrongPhase(phase)),
+            _ => return Err(TransitionError::WrongState),
         };
         if !expected.matches_exactly(source) {
             return Err(TransitionError::StalePrepared);
@@ -2062,8 +2907,14 @@ impl Registry {
     ) -> Result<AbandonRehostOutcome, TransitionError> {
         let abandonment = match self.prepare_abandon_rehost_after_source_loss(prepared) {
             Ok(abandonment) => abandonment,
-            Err(TransitionError::StalePrepared) if self.rehost_authority_is_absent(prepared) => {
-                return Ok(AbandonRehostOutcome::AlreadyAbsent);
+            Err(TransitionError::StalePrepared) => {
+                return match prepared.terminal_tombstone() {
+                    Some(terminal) if terminal.abandonment_receipt().is_some() => {
+                        Ok(AbandonRehostOutcome::AlreadyAbandoned)
+                    }
+                    Some(_) => Err(TransitionError::ConflictingTerminalOutcome),
+                    None => Err(TransitionError::StalePrepared),
+                };
             }
             Err(error) => return Err(error),
         };
@@ -2078,10 +2929,12 @@ impl Registry {
         current_windows: &mut FxHashMap<EntityId, WindowId>,
     ) -> Result<SourceSettlement, TransitionError> {
         let Some(record) = self.rehosts.get(&prepared.generation) else {
-            return if self.rehost_authority_is_absent(prepared) {
-                Ok(SourceSettlement::AlreadyRetired)
-            } else {
-                Err(TransitionError::StalePrepared)
+            return match prepared.terminal_tombstone() {
+                Some(RehostTerminalTombstone::SourceCommitted { .. }) => {
+                    Ok(SourceSettlement::AlreadyRetired)
+                }
+                Some(_) => Err(TransitionError::ConflictingTerminalOutcome),
+                None => Err(TransitionError::StalePrepared),
             };
         };
         if !record.prepared.matches_exactly(prepared) {
@@ -2146,7 +2999,7 @@ impl Registry {
                     invalidation,
                 ))
             }
-            None => Err(TransitionError::WrongPhase(snapshot.phase())),
+            None => Err(TransitionError::WrongState),
         }
     }
 
@@ -2174,6 +3027,43 @@ impl Registry {
                 Err(TransitionError::StalePrepared)
             }
         }
+    }
+
+    fn retire_released_rehost_session(
+        &mut self,
+        prepared: &PreparedRehost,
+        current_windows: &mut FxHashMap<EntityId, WindowId>,
+    ) -> Result<(), TransitionError> {
+        if prepared.terminal_tombstone().is_some() {
+            return Ok(());
+        }
+
+        let requires_abandonment = match self.settle_rehost_source(prepared, current_windows) {
+            Ok(
+                SourceSettlement::RetiredToSource(_)
+                | SourceSettlement::PresentationAuthorityReleased(_)
+                | SourceSettlement::AlreadyRetired,
+            ) => false,
+            Ok(
+                SourceSettlement::RenderSource(_) | SourceSettlement::AwaitingSourceNativeTerminal,
+            ) => true,
+            Err(TransitionError::ConflictingTerminalOutcome) => false,
+            Err(TransitionError::StalePrepared) if self.rehost_authority_is_absent(prepared) => {
+                false
+            }
+            Err(_) => true,
+        };
+
+        if requires_abandonment {
+            match self.abandon_rehost_after_source_loss(prepared, current_windows) {
+                Ok(_) | Err(TransitionError::ConflictingTerminalOutcome) => {}
+                Err(TransitionError::StalePrepared)
+                    if self.rehost_authority_is_absent(prepared) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(())
     }
 
     fn invalidate_rehost(&mut self, generation: u64, invalidation: Invalidation) {
@@ -2240,6 +3130,7 @@ impl Registry {
         window_id: WindowId,
         current_windows: &mut FxHashMap<EntityId, WindowId>,
     ) {
+        self.accepted_presentation_frames.remove(&window_id);
         let affected = self
             .rehosts
             .iter()
@@ -2356,12 +3247,14 @@ pub fn prepare_rehost(
     cx: &mut App,
     source: &[Lease],
     destination_window: WindowId,
-) -> Result<PreparedRehost, PrepareError> {
+) -> Result<RehostSession, PrepareError> {
     if !cx.window_handles.contains_key(&destination_window) {
         return Err(PrepareError::DestinationUnavailable);
     }
-    cx.view_presentation_windows
-        .prepare(source, destination_window)
+    let prepared = cx
+        .view_presentation_windows
+        .prepare(source, destination_window)?;
+    Ok(RehostSession::new(prepared, cx))
 }
 
 /// Resolves view roots against current presentation authority and prepares the exact source-bound
@@ -2369,9 +3262,8 @@ pub fn prepare_rehost(
 ///
 /// Ungoverned roots and roots already governed by `destination_window` do not acquire new leases.
 /// A root governed by any third window, or participating in any pending rehost, fails the entire
-/// operation before registry mutation. The prepared variant is the ordinary [`PreparedRehost`]
-/// protocol and must be driven through its normal source-release, destination-mount, and finish
-/// transitions.
+/// operation before registry mutation. The prepared variant returns one unique [`RehostSession`]
+/// transition owner plus cloneable projections for endpoint rendering.
 #[doc(hidden)]
 pub fn prepare_resolved_view_rehost(
     cx: &mut App,
@@ -2383,11 +3275,35 @@ pub fn prepare_resolved_view_rehost(
         return Err(ResolvedViewRehostError::DestinationUnavailable);
     }
     let entity_ids = views.iter().map(AnyView::entity_id).collect::<Vec<_>>();
-    cx.view_presentation_windows.prepare_resolved_view_rehost(
+    let outcome = cx.view_presentation_windows.prepare_resolved_view_rehost(
         &entity_ids,
         expected_source_window,
         destination_window,
-    )
+    )?;
+    Ok(match outcome {
+        ResolvedPreparedViewRehostOutcome::NoTransfer => ResolvedViewRehostOutcome::NoTransfer,
+        ResolvedPreparedViewRehostOutcome::Prepared(prepared) => {
+            ResolvedViewRehostOutcome::Prepared(RehostSession::new(prepared, cx))
+        }
+    })
+}
+
+impl App {
+    fn retire_released_rehost_session(&mut self, prepared: &PreparedRehost) {
+        let source_window = prepared.source().window_id();
+        let destination_window = prepared.destination().window_id();
+        if let Err(error) = self
+            .view_presentation_windows
+            .retire_released_rehost_session(prepared, &mut self.current_window_by_entity)
+        {
+            log::error!(
+                "failed to compensate released rehost session generation {}: {error:?}",
+                prepared.generation()
+            );
+        }
+        refresh_window(self, source_window);
+        refresh_window(self, destination_window);
+    }
 }
 
 /// Cancels an admitted or mounted-but-unexposed destination and returns fresh source leases.
@@ -2509,11 +3425,29 @@ pub fn rehost_authority_is_absent(cx: &App, prepared: &PreparedRehost) -> bool {
 /// preserved. This makes endpoint-loss cleanup idempotent without touching replacement authority.
 #[doc(hidden)]
 pub fn release_stable_batch_after_endpoint_loss(cx: &mut App, batch: &LeaseBatch) -> Vec<EntityId> {
+    release_stable_leases_after_endpoint_loss(cx, batch.leases())
+}
+
+/// Releases exact stable leases whose presentation endpoint has been lost.
+///
+/// Leases that already moved, entered another rehost, or were replaced remain untouched. This is
+/// the endpoint-lifecycle counterpart to [`release_stable_batch_after_endpoint_loss`] for hosts
+/// whose ordinary roots may have independent lease generations.
+#[doc(hidden)]
+pub fn release_stable_leases_after_endpoint_loss(cx: &mut App, leases: &[Lease]) -> Vec<EntityId> {
     let released = cx
         .view_presentation_windows
-        .release_stable_batch_after_endpoint_loss(batch, &mut cx.current_window_by_entity);
+        .release_stable_leases_after_endpoint_loss(leases, &mut cx.current_window_by_entity);
     if !released.is_empty() {
-        refresh_window(cx, batch.window_id());
+        let released = released.iter().copied().collect::<FxHashSet<_>>();
+        for window_id in leases
+            .iter()
+            .filter(|lease| released.contains(&lease.entity_id()))
+            .map(|lease| lease.window_id())
+            .collect::<FxHashSet<_>>()
+        {
+            refresh_window(cx, window_id);
+        }
     }
     released
 }
@@ -2686,6 +3620,31 @@ fn commit_mount(cx: &mut App, lease: Lease, frame_generation: u64) {
     }
 }
 
+fn discard_mount(cx: &mut App, window_id: WindowId, frame_generation: u64) {
+    let _ = cx
+        .view_presentation_windows
+        .begin_accepted_presentation_frame(window_id, frame_generation);
+}
+
+fn record_mount_transaction(window: &mut Window, cx: &App, lease: Lease) {
+    let Some(publication) = cx
+        .view_presentation_windows
+        .presentation_publication(lease, window.handle.window_id())
+    else {
+        return;
+    };
+    window.record_prepaint_window_transaction(
+        publication,
+        move |accepted, _, cx| {
+            debug_assert_eq!(accepted.window_id(), lease.window_id);
+            commit_mount(cx, lease, accepted.generation());
+        },
+        move |accepted, _, cx| {
+            discard_mount(cx, accepted.window_id(), accepted.generation());
+        },
+    );
+}
+
 fn refresh_window(cx: &mut App, window_id: WindowId) {
     let Some(handle) = cx.window_handles.get(&window_id).copied() else {
         return;
@@ -2792,18 +3751,12 @@ impl Element for PresentedAnyView {
             PresentationAdmission::Staging => {
                 window.with_subtree_presentation(crate::SubtreePresentation::Hidden, |window| {
                     state.child.prepaint(window, cx);
-                    let lease = self.lease;
-                    window.record_prepaint_commit(move |frame_generation, cx| {
-                        commit_mount(cx, lease, frame_generation);
-                    });
+                    record_mount_transaction(window, cx, self.lease);
                 });
             }
             PresentationAdmission::Presented => {
                 state.child.prepaint(window, cx);
-                let lease = self.lease;
-                window.record_prepaint_commit(move |frame_generation, cx| {
-                    commit_mount(cx, lease, frame_generation);
-                });
+                record_mount_transaction(window, cx, self.lease);
             }
         }
     }
@@ -3054,18 +4007,30 @@ impl IntoElement for SourceReleaseBarrier {
 mod tests {
     use super::*;
     use crate::{
-        AnyWindowHandle, AppContext as _, AtlasKey, AtlasTextureId, AtlasTextureInstanceId,
-        AtlasTextureKind, AtlasTextureLeaseEpoch, AtlasTextureLeaseError, AtlasTile, Context,
-        DevicePixels, HeadlessAppContext, ImageSource, InteractiveElement as _, Modifiers,
-        MouseButton, MouseDownEvent, MouseUpEvent, NoopTextSystem, ParentElement as _,
-        PlatformAtlas, PlatformHeadlessRenderer, PlatformInput, Render, RenderImage, Scene, Size,
-        Styled as _, TestAppContext, TileId, canvas, div, img, point, px, red, size,
+        AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureKind,
+        AtlasTextureLeaseEpoch, AtlasTextureLeaseError, AtlasTile, Context, DevicePixels,
+        HeadlessAppContext, ImageSource, InteractiveElement as _, Modifiers, MouseButton,
+        MouseDownEvent, MouseUpEvent, NoopTextSystem, ParentElement as _, PlatformAtlas,
+        PlatformHeadlessRenderer, PlatformInput, Render, RenderImage, Scene, Size, Styled as _,
+        TestAppContext, TileId, canvas, div, img, point, px, red, size,
     };
     use std::{
         borrow::Cow,
         cell::{Cell, RefCell},
         rc::Rc,
     };
+
+    fn prepare_rehost(
+        cx: &mut App,
+        source: &[Lease],
+        destination_window: WindowId,
+    ) -> Result<PreparedRehost, PrepareError> {
+        if !cx.window_handles.contains_key(&destination_window) {
+            return Err(PrepareError::DestinationUnavailable);
+        }
+        cx.view_presentation_windows
+            .prepare(source, destination_window)
+    }
 
     struct PresentationProbe {
         rendered_in: Rc<RefCell<Vec<WindowId>>>,
@@ -3471,6 +4436,9 @@ mod tests {
             .commit_mount(destination_lease, 3, &mut current_windows)
             .unwrap();
         let exposed = registry.expose_destination(&prepared).unwrap();
+        registry
+            .commit_mount(destination_lease, 4, &mut current_windows)
+            .unwrap();
         ExposedRehostFixture {
             source,
             destination,
@@ -3547,7 +4515,7 @@ mod tests {
                 destination,
             )
             .expect("the exact source subset should prepare");
-        let ResolvedViewRehostOutcome::Prepared(prepared) = outcome else {
+        let ResolvedPreparedViewRehostOutcome::Prepared(prepared) = outcome else {
             panic!("the source-bound root should require a prepared rehost");
         };
 
@@ -3557,15 +4525,14 @@ mod tests {
         assert_eq!(prepared.destination().leases().len(), 1);
         assert!(prepared.destination().lease_for(source_bound).is_some());
         assert!(!registry.governs(ungoverned));
-        assert_eq!(
-            registry.bindings.get(&already_destination),
-            Some(&Binding {
-                current: destination_lease,
-                last_mounted_frame: Some(1),
-                pending_rehost: None,
-                destination_exposure: None,
-            })
-        );
+        let binding = registry
+            .bindings
+            .get(&already_destination)
+            .expect("the destination-owned root must remain bound");
+        assert_eq!(binding.current, destination_lease);
+        assert_eq!(binding.last_mounted_frame, Some(1));
+        assert_eq!(binding.pending_rehost, None);
+        assert_eq!(binding.destination_exposure, None);
     }
 
     #[test]
@@ -3741,6 +4708,115 @@ mod tests {
     }
 
     #[test]
+    fn dropping_an_unreleased_rehost_session_restores_stable_source_authority() {
+        let mut cx = TestAppContext::single();
+        let panel = cx.update(|cx| {
+            cx.new(|_| PresentationProbe {
+                rendered_in: Rc::new(RefCell::new(Vec::new())),
+            })
+        });
+        let panel_view = AnyView::from(panel.clone());
+        let source = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .window_id();
+        let destination = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .window_id();
+        let source_lease = cx.update(|cx| claim(cx, &panel_view, source).expect("source claim"));
+        cx.update(|cx| {
+            cx.view_presentation_windows
+                .commit_mount(source_lease, 1, &mut cx.current_window_by_entity)
+                .expect("source mount");
+        });
+        let session = cx.update(|cx| {
+            super::prepare_rehost(cx, &[source_lease], destination).expect("prepared rehost")
+        });
+        let generation = session.generation();
+
+        drop(session);
+        cx.update(|_| {});
+
+        cx.update(|cx| {
+            assert!(
+                !cx.view_presentation_windows
+                    .rehosts
+                    .contains_key(&generation)
+            );
+            let binding = cx
+                .view_presentation_windows
+                .bindings
+                .get(&panel.entity_id())
+                .expect("source authority must remain registered");
+            assert_eq!(binding.current, source_lease);
+            assert_eq!(binding.pending_rehost, None);
+            assert_eq!(
+                cx.current_window_by_entity.get(&panel.entity_id()),
+                Some(&source)
+            );
+        });
+
+        let retry = cx.update(|cx| {
+            super::prepare_rehost(cx, &[source_lease], destination)
+                .expect("released session must not block a later rehost")
+        });
+        assert_ne!(retry.generation(), generation);
+        drop(retry);
+        cx.update(|_| {});
+    }
+
+    #[test]
+    fn dropping_a_released_rehost_session_relinquishes_unrendered_restore_authority() {
+        let mut cx = TestAppContext::single();
+        let panel = cx.update(|cx| {
+            cx.new(|_| PresentationProbe {
+                rendered_in: Rc::new(RefCell::new(Vec::new())),
+            })
+        });
+        let panel_view = AnyView::from(panel.clone());
+        let source = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .window_id();
+        let destination = cx
+            .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
+            .window_id();
+        let source_lease = cx.update(|cx| claim(cx, &panel_view, source).expect("source claim"));
+        cx.update(|cx| {
+            cx.view_presentation_windows
+                .commit_mount(source_lease, 1, &mut cx.current_window_by_entity)
+                .expect("source mount");
+        });
+        let session = cx.update(|cx| {
+            super::prepare_rehost(cx, &[source_lease], destination).expect("prepared rehost")
+        });
+        let generation = session.generation();
+        cx.update(|cx| {
+            cx.view_presentation_windows
+                .commit_source_release(
+                    &session.prepared,
+                    source_proxy_receipt(&session.prepared, source, 2),
+                    &mut cx.current_window_by_entity,
+                )
+                .expect("source release");
+        });
+
+        drop(session);
+        cx.update(|_| {});
+
+        cx.update(|cx| {
+            assert!(
+                !cx.view_presentation_windows
+                    .rehosts
+                    .contains_key(&generation)
+            );
+            assert!(!cx.view_presentation_windows.governs(panel.entity_id()));
+            assert!(!cx.current_window_by_entity.contains_key(&panel.entity_id()));
+        });
+        let replacement =
+            cx.update(|cx| claim(cx, &panel_view, source).expect("fresh source claim"));
+        assert_ne!(replacement.generation(), source_lease.generation());
+    }
+
+    #[test]
     fn accepted_source_release_switches_window_authority_before_destination_mount() {
         let mut cx = TestAppContext::single();
         let rendered_in = Rc::new(RefCell::new(Vec::new()));
@@ -3884,6 +4960,170 @@ mod tests {
         assert_eq!(presented.lease_generation(), destination_lease.generation());
         assert_eq!(presented.root_count(), 1);
         assert_eq!(presented.frame_generation(), presented_frame);
+    }
+
+    #[test]
+    fn deep_rehost_session_owns_frame_acceptance_and_terminal_commit() {
+        let mut cx = TestAppContext::single();
+        let panel = cx.update(|cx| {
+            cx.new(|_| PresentationProbe {
+                rendered_in: Rc::new(RefCell::new(Vec::new())),
+            })
+        });
+        let panel_view = AnyView::from(panel.clone());
+        let source_window = cx.open_window(size(px(320.0), px(200.0)), {
+            let panel_view = panel_view.clone();
+            move |_, _| PresentationHost {
+                view: panel_view,
+                mode: HostMode::Empty,
+            }
+        });
+        let destination_window = cx.open_window(size(px(320.0), px(200.0)), {
+            let panel_view = panel_view.clone();
+            move |_, _| PresentationHost {
+                view: panel_view,
+                mode: HostMode::Empty,
+            }
+        });
+        let source_id = source_window.window_id();
+        let destination_id = destination_window.window_id();
+        let source_lease = cx.update(|cx| claim(cx, &panel_view, source_id).unwrap());
+
+        set_host_mode(&mut cx, source_window, HostMode::Presented(source_lease));
+        draw_window(&mut cx, source_window.into());
+
+        let mut session =
+            cx.update(|cx| super::prepare_rehost(cx, &[source_lease], destination_id).unwrap());
+        let projection = session.projection();
+        let destination_lease = projection
+            .destination()
+            .lease_for(panel.entity_id())
+            .expect("prepared projection should contain the destination root");
+
+        set_host_mode(
+            &mut cx,
+            source_window,
+            HostMode::Releasing(session.prepared.clone()),
+        );
+        let source_frame = draw_window(&mut cx, source_window.into());
+        let source_commit = session
+            .accept_source_proxy_frame(source_frame)
+            .expect("the exact accepted source frame should be recognized");
+        assert_eq!(source_commit.frame_generation(), source_frame);
+        assert_eq!(
+            session.accept_source_proxy_frame(source_frame.saturating_add(1)),
+            Err(TransitionError::StaleCandidateFrameAttempt)
+        );
+
+        set_host_mode(
+            &mut cx,
+            destination_window,
+            HostMode::Presented(destination_lease),
+        );
+        let staging_frame = draw_window(&mut cx, destination_window.into());
+        let exposure = cx
+            .update(|cx| session.accept_destination_frame(cx, staging_frame))
+            .expect("the exact accepted staging frame should expose the destination");
+        assert!(exposure.batch().matches_exactly(projection.destination()));
+        assert_eq!(exposure.frame_generation(), staging_frame);
+        let repeated_exposure = cx
+            .update(|cx| session.accept_destination_frame(cx, staging_frame))
+            .expect("the same accepted staging callback should be idempotent");
+        assert!(repeated_exposure.batch().matches_exactly(exposure.batch()));
+        assert_eq!(repeated_exposure.frame_generation(), staging_frame);
+        assert!(matches!(
+            cx.update(|cx| {
+                session.accept_destination_frame(cx, staging_frame.saturating_add(1))
+            }),
+            Err(TransitionError::StaleCandidateFrameAttempt)
+        ));
+
+        let visible_frame = draw_window(&mut cx, destination_window.into());
+        let stale_presentation = cx
+            .update(|cx| session.accept_destination_presentation_frame(cx, visible_frame))
+            .expect("the later visible frame should become terminal commit evidence");
+        assert_eq!(stale_presentation.frame_generation(), visible_frame);
+
+        set_host_mode(&mut cx, destination_window, HostMode::Empty);
+        let omitted_frame = draw_window(&mut cx, destination_window.into());
+        assert!(omitted_frame > visible_frame);
+        assert_eq!(
+            cx.update(|cx| session.current_destination_presentation(cx)),
+            Err(TransitionError::WrongState)
+        );
+        assert!(matches!(
+            cx.update(|cx| session.prepare_terminal(
+                cx,
+                RehostTerminalIntent::CommitDestination(&stale_presentation),
+            )),
+            Err(TransitionError::WrongState)
+        ));
+
+        set_host_mode(
+            &mut cx,
+            destination_window,
+            HostMode::Presented(destination_lease),
+        );
+        let replacement_visible_frame = draw_window(&mut cx, destination_window.into());
+        let presentation = cx
+            .update(|cx| {
+                session.accept_destination_presentation_frame(cx, replacement_visible_frame)
+            })
+            .expect("a later complete accepted frame should restore terminal evidence");
+
+        let prepared = cx
+            .update(|cx| {
+                session.prepare_terminal(cx, RehostTerminalIntent::CommitDestination(&presentation))
+            })
+            .expect("the visible destination should prepare its final provider commit");
+        let RehostTerminalPreparation::Prepared(prepared) = prepared else {
+            panic!("destination commit cannot resolve as already absent");
+        };
+        assert!(cx.update(|cx| prepared.can_commit(cx)));
+        drop(prepared);
+
+        let prepared = cx
+            .update(|cx| {
+                session.prepare_terminal(cx, RehostTerminalIntent::CommitDestination(&presentation))
+            })
+            .expect("discarding a terminal token must leave the session retryable");
+        assert!(cx.update(|cx| prepared.can_commit(cx)));
+        let outcome = cx.update(|cx| prepared.try_commit(cx).unwrap());
+        let RehostTerminalOutcome::DestinationCommitted(batch) = outcome else {
+            panic!("destination terminal token must commit destination authority");
+        };
+        assert!(batch.matches_exactly(projection.destination()));
+        assert_eq!(
+            session.terminal_disposition(),
+            Some(RehostTerminalDisposition::DestinationCommitted)
+        );
+        assert!(
+            matches!(
+                cx.update(|cx| session.accept_destination_frame(cx, staging_frame)),
+                Err(TransitionError::ConflictingTerminalOutcome)
+            ),
+            "a cached reversible exposure must not replay after destination commit"
+        );
+        let replayed = cx
+            .update(|cx| {
+                session.prepare_terminal(cx, RehostTerminalIntent::CommitDestination(&presentation))
+            })
+            .expect("the exact committed destination terminal should be idempotent");
+        let RehostTerminalPreparation::AlreadyCommitted(
+            RehostTerminalOutcome::DestinationCommitted(replayed_batch),
+        ) = replayed
+        else {
+            panic!("destination retry must replay only its exact terminal outcome")
+        };
+        assert!(replayed_batch.matches_exactly(projection.destination()));
+        assert_eq!(
+            cx.update(|cx| session.abandon_after_source_loss(cx)),
+            Err(TransitionError::ConflictingTerminalOutcome)
+        );
+        assert_eq!(
+            resolved_window(&mut cx, panel.entity_id()),
+            Some(destination_id)
+        );
     }
 
     #[test]
@@ -4110,7 +5350,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_destination_batch_never_paints_before_source_recovery() {
+    fn incomplete_destination_batch_stays_hidden_and_retryable() {
         let mut cx = TestAppContext::single();
         let first_paints = Rc::new(RefCell::new(Vec::new()));
         let first = cx.update({
@@ -4170,12 +5410,20 @@ mod tests {
         assert!(first_paints.borrow().is_empty());
 
         draw_window(&mut cx, destination_window.into());
-        assert_eq!(prepared.snapshot().phase(), RehostPhase::RestoringSource);
         assert_eq!(
-            prepared.snapshot().invalidation(),
-            Some(Invalidation::DestinationFrameMismatch)
+            prepared.snapshot().phase(),
+            RehostPhase::DestinationAdmitted
         );
+        assert_eq!(prepared.snapshot().invalidation(), None);
         assert!(first_paints.borrow().is_empty());
+
+        let settlement = cx
+            .update(|cx| settle_rehost_source(cx, &prepared))
+            .expect("an incomplete destination batch must remain compensatable");
+        let SourceSettlement::RenderSource(restore) = settlement else {
+            panic!("incomplete destination staging must return fresh source authority")
+        };
+        assert_eq!(restore.window_id(), source_id);
     }
 
     #[test]
@@ -4269,10 +5517,34 @@ mod tests {
             BatchHostMode::Presented(vec![(views[1].clone(), second_destination)]),
         );
         draw_window(&mut cx, destination_window.into());
-        assert_eq!(prepared.snapshot().phase(), RehostPhase::RestoringSource);
         assert_eq!(
-            prepared.snapshot().invalidation(),
-            Some(Invalidation::DestinationFrameMismatch)
+            prepared.snapshot().phase(),
+            RehostPhase::DestinationAdmitted
+        );
+        assert_eq!(prepared.snapshot().invalidation(), None);
+        assert_eq!((first_paints.get(), second_paints.get()), (0, 0));
+        dispatch_primary_click(
+            &mut cx,
+            destination_window.into(),
+            point(px(25.0), px(25.0)),
+        );
+        dispatch_primary_click(
+            &mut cx,
+            destination_window.into(),
+            point(px(125.0), px(25.0)),
+        );
+        assert_eq!((first_clicks.get(), second_clicks.get()), (0, 0));
+
+        set_batch_host_mode(
+            &mut cx,
+            destination_window,
+            BatchHostMode::Presented(leased_roots(&views, prepared.destination())),
+        );
+        let staging_frame = draw_window(&mut cx, destination_window.into());
+        assert_eq!(prepared.snapshot().phase(), RehostPhase::DestinationMounted);
+        assert_eq!(
+            prepared.snapshot().destination_frame_generation(),
+            Some(staging_frame)
         );
         assert_eq!((first_paints.get(), second_paints.get()), (0, 0));
         dispatch_primary_click(
@@ -4287,36 +5559,35 @@ mod tests {
         );
         assert_eq!((first_clicks.get(), second_clicks.get()), (0, 0));
 
-        let restored = prepared
-            .restored_source()
-            .expect("cross-frame destination staging should restore the source batch");
-        set_batch_host_mode(
-            &mut cx,
-            source_window,
-            BatchHostMode::Presented(leased_roots(&views, &restored)),
-        );
-        let restored_frame = draw_window(&mut cx, source_window.into());
-        assert_eq!(prepared.snapshot().phase(), RehostPhase::SourceRestored);
-        assert_eq!(
-            prepared.snapshot().destination_frame_generation(),
-            Some(restored_frame)
-        );
-        assert_eq!((first_paints.get(), second_paints.get()), (0, 0));
-        dispatch_primary_click(&mut cx, source_window.into(), point(px(25.0), px(25.0)));
-        dispatch_primary_click(&mut cx, source_window.into(), point(px(125.0), px(25.0)));
-        assert_eq!((first_clicks.get(), second_clicks.get()), (0, 0));
+        cx.update(|cx| expose_destination(cx, &prepared).expect("expose destination batch"));
+        let visible_frame = draw_window(&mut cx, destination_window.into());
+        assert!(first_paints.get() > 0);
+        assert_eq!(first_paints.get(), second_paints.get());
+        let visible = cx
+            .update(|cx| presented_batch_receipt(cx, prepared.destination()))
+            .expect("the complete visible batch should publish a receipt");
+        assert_eq!(visible.frame_generation(), visible_frame);
 
-        match cx.update(|cx| finish(cx, &prepared).expect("finish restored batch")) {
-            FinishOutcome::Source(batch) => {
-                assert_eq!(batch.window_id(), source_id);
-                assert_eq!(batch.leases().len(), 2);
-            }
-            outcome => panic!("unexpected two-root rehost outcome: {outcome:?}"),
-        }
-        cx.run_until_parked();
-        assert_eq!((first_paints.get(), second_paints.get()), (1, 1));
-        dispatch_primary_click(&mut cx, source_window.into(), point(px(25.0), px(25.0)));
-        dispatch_primary_click(&mut cx, source_window.into(), point(px(125.0), px(25.0)));
+        let prepared_finish = cx
+            .update(|cx| prepare_finish_destination(cx, &prepared))
+            .expect("the visible destination batch should prepare its finish");
+        cx.update(|cx| commit_prepared_finish_destination(cx, prepared_finish));
+        let stable_visible = cx
+            .update(|cx| presented_batch_receipt(cx, prepared.destination()))
+            .expect("terminal commit must preserve the accepted visible frame");
+        assert_eq!(stable_visible.exposure(), visible.exposure());
+        assert!(stable_visible.frame_generation() >= visible.frame_generation());
+
+        dispatch_primary_click(
+            &mut cx,
+            destination_window.into(),
+            point(px(25.0), px(25.0)),
+        );
+        dispatch_primary_click(
+            &mut cx,
+            destination_window.into(),
+            point(px(125.0), px(25.0)),
+        );
         assert_eq!((first_clicks.get(), second_clicks.get()), (1, 1));
     }
 
@@ -4473,7 +5744,7 @@ mod tests {
 
         assert!(matches!(
             registry.prepare_finish_destination(&prepared),
-            Err(TransitionError::WrongPhase(RehostPhase::DestinationMounted))
+            Err(TransitionError::WrongState)
         ));
         assert_eq!(prepared.snapshot().phase(), RehostPhase::DestinationMounted);
         assert!(registry.admits(destination_lease, destination));
@@ -4631,6 +5902,18 @@ mod tests {
                 .prepare_abandon_rehost_after_source_loss(&fixture.prepared),
             Err(TransitionError::StalePrepared)
         ));
+        assert!(matches!(
+            fixture
+                .registry
+                .abandon_rehost_after_source_loss(&fixture.prepared, &mut fixture.current_windows,),
+            Ok(AbandonRehostOutcome::AlreadyAbandoned)
+        ));
+        assert!(matches!(
+            fixture
+                .registry
+                .settle_rehost_source(&fixture.prepared, &mut fixture.current_windows),
+            Err(TransitionError::ConflictingTerminalOutcome)
+        ));
     }
 
     #[test]
@@ -4671,7 +5954,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_mount_mismatch_revokes_destination_and_restores_source_authority() {
+    fn cross_frame_destination_mounts_restart_the_batch_without_revoking_authority() {
         let mut cx = TestAppContext::single();
         let source = cx
             .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
@@ -4718,44 +6001,22 @@ mod tests {
             .unwrap();
         assert_eq!(
             registry.commit_mount(second_destination, 4, &mut current_windows),
-            Err(TransitionError::StalePrepared)
+            Ok(MountCommitOutcome::AwaitingBatch)
         );
-        assert_eq!(prepared.snapshot().phase(), RehostPhase::RestoringSource);
-        assert_eq!(
-            prepared.snapshot().invalidation(),
-            Some(Invalidation::DestinationFrameMismatch)
-        );
-        assert!(!registry.admits(first_destination, destination));
-        assert!(!registry.admits(second_destination, destination));
-
-        let restore = prepared
-            .restored_source()
-            .expect("destination frame mismatch should mint fresh source authority");
-        let first_restore = restore.lease_for(first).unwrap();
-        let second_restore = restore.lease_for(second).unwrap();
-        assert!(registry.admits(first_restore, source));
-        assert!(registry.admits(second_restore, source));
-        assert_eq!(current_windows.get(&first), Some(&source));
-        assert_eq!(current_windows.get(&second), Some(&source));
-
         registry
-            .commit_mount(first_restore, 5, &mut current_windows)
+            .commit_mount(first_destination, 5, &mut current_windows)
             .unwrap();
         registry
-            .commit_mount(second_restore, 5, &mut current_windows)
+            .commit_mount(second_destination, 5, &mut current_windows)
             .unwrap();
-        assert_eq!(prepared.snapshot().phase(), RehostPhase::SourceRestored);
-        match registry.finish(&prepared).unwrap() {
-            FinishOutcome::Source(batch) => {
-                assert_eq!(batch.lease_for(first), Some(first_restore));
-                assert_eq!(batch.lease_for(second), Some(second_restore));
-            }
-            outcome => panic!("unexpected rehost outcome: {outcome:?}"),
-        }
+        assert_eq!(prepared.snapshot().phase(), RehostPhase::DestinationMounted);
+        assert_eq!(prepared.snapshot().invalidation(), None);
+        assert!(registry.admits(first_destination, destination));
+        assert!(registry.admits(second_destination, destination));
     }
 
     #[test]
-    fn batch_mount_mismatch_after_source_terminal_releases_all_authority() {
+    fn source_window_loss_does_not_cancel_a_retryable_destination_batch() {
         let mut cx = TestAppContext::single();
         let source = cx
             .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
@@ -4804,25 +6065,18 @@ mod tests {
             .unwrap();
         assert_eq!(
             registry.commit_mount(second_destination, 4, &mut current_windows),
-            Err(TransitionError::StalePrepared)
+            Ok(MountCommitOutcome::AwaitingBatch)
         );
-
-        assert_eq!(prepared.snapshot().phase(), RehostPhase::Invalidated);
-        assert_eq!(
-            prepared.snapshot().invalidation(),
-            Some(Invalidation::SourceWindowClosed)
-        );
-        assert!(prepared.restored_source().is_none());
-        assert!(!registry.admits(first_destination, destination));
-        assert!(!registry.admits(second_destination, destination));
-        assert_eq!(registry.resolved_window(first), None);
-        assert_eq!(registry.resolved_window(second), None);
-        assert!(!current_windows.contains_key(&first));
-        assert!(!current_windows.contains_key(&second));
-        match registry.finish(&prepared).unwrap() {
-            FinishOutcome::Invalidated(Invalidation::SourceWindowClosed) => {}
-            outcome => panic!("unexpected rehost outcome: {outcome:?}"),
-        }
+        registry
+            .commit_mount(first_destination, 5, &mut current_windows)
+            .unwrap();
+        registry
+            .commit_mount(second_destination, 5, &mut current_windows)
+            .unwrap();
+        assert_eq!(prepared.snapshot().phase(), RehostPhase::DestinationMounted);
+        assert_eq!(prepared.snapshot().invalidation(), None);
+        assert!(registry.admits(first_destination, destination));
+        assert!(registry.admits(second_destination, destination));
     }
 
     #[test]
@@ -5121,7 +6375,6 @@ mod tests {
             .commit_mount(source_lease, 1, &mut current_windows)
             .unwrap();
         let prepared = registry.prepare(&[source_lease], destination).unwrap();
-
         let outcome = registry
             .settle_rehost_source(&prepared, &mut current_windows)
             .unwrap();
@@ -5130,7 +6383,24 @@ mod tests {
         };
         assert_eq!(source_batch.lease_for(entity_id), Some(source_lease));
         assert!(registry.rehost_authority_is_absent(&prepared));
+        assert_eq!(
+            prepared
+                .terminal_tombstone()
+                .as_ref()
+                .map(RehostTerminalTombstone::disposition),
+            Some(RehostTerminalDisposition::SourceCommitted)
+        );
         assert_eq!(current_windows.get(&entity_id), Some(&source));
+        assert!(matches!(
+            registry
+                .settle_rehost_source(&prepared, &mut current_windows)
+                .unwrap(),
+            SourceSettlement::AlreadyRetired
+        ));
+        assert!(matches!(
+            registry.abandon_rehost_after_source_loss(&prepared, &mut current_windows),
+            Err(TransitionError::ConflictingTerminalOutcome)
+        ));
     }
 
     #[test]
@@ -5202,7 +6472,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            registry.release_stable_batch_after_endpoint_loss(&source_batch, &mut current_windows),
+            registry.release_stable_leases_after_endpoint_loss(
+                source_batch.leases(),
+                &mut current_windows,
+            ),
             vec![second]
         );
         assert_eq!(
@@ -5215,7 +6488,7 @@ mod tests {
     }
 
     #[test]
-    fn cross_frame_source_restore_enters_a_releasable_terminal_state() {
+    fn cross_frame_source_restore_restarts_the_batch_and_can_finish_later() {
         let mut cx = TestAppContext::single();
         let source = cx
             .open_window(size(px(100.0), px(100.0)), |_, _| Empty)
@@ -5250,9 +6523,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             registry.commit_mount(second_destination, 4, &mut current_windows),
-            Err(TransitionError::StalePrepared)
+            Ok(MountCommitOutcome::AwaitingBatch)
         );
-        let restore = prepared.restored_source().unwrap();
+        let restore = registry
+            .cancel_after_source_release(&prepared, &mut current_windows)
+            .expect("source settlement should mint fresh restoration authority");
         let first_restore = restore.lease_for(first).unwrap();
         let second_restore = restore.lease_for(second).unwrap();
         registry
@@ -5260,27 +6535,23 @@ mod tests {
             .unwrap();
         assert_eq!(
             registry.commit_mount(second_restore, 6, &mut current_windows),
-            Err(TransitionError::StalePrepared)
+            Ok(MountCommitOutcome::AwaitingBatch)
         );
-
-        assert_eq!(prepared.snapshot().phase(), RehostPhase::Invalidated);
-        assert_eq!(
-            prepared.snapshot().invalidation(),
-            Some(Invalidation::SourceRestoreFrameMismatch)
-        );
-        assert!(!registry.governs(first));
-        assert!(!registry.governs(second));
-        assert!(!current_windows.contains_key(&first));
-        assert!(!current_windows.contains_key(&second));
-        assert!(matches!(
-            registry
-                .settle_rehost_source(&prepared, &mut current_windows)
-                .unwrap(),
-            SourceSettlement::PresentationAuthorityReleased(
-                Invalidation::SourceRestoreFrameMismatch
-            )
-        ));
-        assert!(registry.rehost_authority_is_absent(&prepared));
+        registry
+            .commit_mount(first_restore, 7, &mut current_windows)
+            .unwrap();
+        registry
+            .commit_mount(second_restore, 7, &mut current_windows)
+            .unwrap();
+        assert_eq!(prepared.snapshot().phase(), RehostPhase::SourceRestored);
+        assert_eq!(prepared.snapshot().invalidation(), None);
+        match registry.finish(&prepared).unwrap() {
+            FinishOutcome::Source(batch) => {
+                assert_eq!(batch.lease_for(first), Some(first_restore));
+                assert_eq!(batch.lease_for(second), Some(second_restore));
+            }
+            outcome => panic!("unexpected rehost outcome: {outcome:?}"),
+        }
     }
 
     #[test]

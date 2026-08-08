@@ -586,10 +586,10 @@ mod reducer_tests {
     }
 
     #[test]
-    fn payload_lease_constructor_derives_generation_from_prepared_rehost() {
+    fn payload_lease_constructor_derives_generation_from_rehost_projection() {
         use open_gpui::{
             WindowProvisionalSession, retained_visual::TicketIdentity,
-            view_presentation_window::PreparedRehost,
+            view_presentation_window::RehostProjection,
         };
 
         let _constructor: fn(
@@ -597,7 +597,7 @@ mod reducer_tests {
             DockLiveUndockSourceSnapshot,
             u64,
             TicketIdentity,
-            &PreparedRehost,
+            &RehostProjection,
             &WindowProvisionalSession,
         ) -> Option<DockLiveUndockPayloadLeaseReceipt> = DockLiveUndockPayloadLeaseReceipt::new;
     }

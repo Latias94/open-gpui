@@ -266,13 +266,25 @@ pub struct DockGraph {
     tab_selection_history: HashMap<DockNodeId, DockTabSelectionState>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(in crate::graph) struct DockTabSelectionState {
     next_stamp: u64,
     selected_stamps_by_item: HashMap<DockItemId, u64>,
 }
 
 impl DockGraph {
+    pub(crate) fn matches_exactly(&self, other: &Self) -> bool {
+        self.nodes.len() == other.nodes.len()
+            && self
+                .nodes
+                .iter()
+                .all(|(key, node)| other.nodes.get(key) == Some(node))
+            && self.roots == other.roots
+            && self.floatings == other.floatings
+            && self.central_regions == other.central_regions
+            && self.tab_selection_history == other.tab_selection_history
+    }
+
     /// Creates an empty dock graph.
     pub fn new() -> Self {
         Self::default()
