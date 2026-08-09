@@ -76,13 +76,19 @@ jobs:
         run: >-
           cargo nextest run -p open-gpui-windows --locked --run-ignored only
           -E 'test(/native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture/)'
-          --no-fail-fast
+          --test-threads=1 --no-fail-fast
 
-      - name: Prove real two-HWND Dock captured drag, preview, and drop
+      - name: Run Windows backend baseline after preflight
+        shell: pwsh
+        run: >-
+          cargo nextest run -p open-gpui-windows --locked
+          --test-threads=1 --no-fail-fast
+
+      - name: Prove real Dock capture, provisional presentation, promotion, and shutdown
         shell: pwsh
         run: >-
           cargo nextest run -p open-gpui-docking-native --locked --run-ignored only
-          -E 'test(/native_interactive_two_hwnd_captured_drag_routes_preview_and_drop/)'
+          -E 'test(/native_interactive_(two_hwnd_captured_drag_routes_preview_and_drop|provisional_is_presented_before_release_and_promotes_same_hwnd|anchor_close_releases_capture_and_retires_dependent_hwnds)/)'
           --test-threads=1 --no-fail-fast
 
       - name: Run rendered native Docking baseline after preflight

@@ -1926,7 +1926,7 @@ cargo nextest run -p open-gpui-windows --locked --run-ignored only -E 'test(/nat
 ```
 
 The sentinel is the phase-zero runner proof. The same workflow then runs the Dock-owned scenario
-`docking-native.windows.two-hwnd-captured-drop`:
+`native.u27.source-capture`:
 
 ```powershell
 $env:CARGO_BUILD_JOBS = '1'
@@ -1937,14 +1937,50 @@ cargo nextest run -p open-gpui-docking-native --locked --run-ignored only -E 'te
 That scenario opens two distinct rendered Dock HWNDs, derives source and target points from their
 committed debug-selector bounds and actual client-to-screen scale, and injects an unaddressed
 system drag. It requires the source HWND to acquire and retain `GetCapture()` while the system
-cursor crosses the target HWND, proves the source WndProc remains the raw move/up recipient, waits
-for a non-empty target drop-preview frame, and then requires one newer durable surface revision in
-which the payload moved from the source space to the target space. The test restores the cursor,
-foreground window, button state, and matching capture during normal completion and unwinding.
+cursor crosses the target HWND, requires the source framework observer to receive the captured
+move/up while the target observer receives no mouse event, waits for a non-empty target
+drop-preview frame, and then requires one newer durable surface revision in which the payload moved
+from the source space to the target space. The sentinel separately proves the canary-tagged WndProc
+boundary. The test restores the cursor, foreground window, button state, and matching capture
+during normal completion and unwinding.
 
 This two-HWND scenario proves captured routing, preview, and committed-host drop. It does not by
 itself claim desktop live-undock, provisional-content reveal, or same-HWND promotion completion;
 those remain separate native scenarios rather than being inferred from this gate.
+
+The same runner also executes the two complementary lifecycle scenarios:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+$env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
+cargo nextest run -p open-gpui-docking-native --locked --run-ignored only `
+  -E 'test(/native_interactive_(provisional_is_presented_before_release_and_promotes_same_hwnd|anchor_close_releases_capture_and_retires_dependent_hwnds)/)' `
+  --test-threads=1 --no-fail-fast
+```
+
+`native_interactive_provisional_is_presented_before_release_and_promotes_same_hwnd` moves a
+captured payload to a runner-selected point outside both test HWND rectangles and keeps the
+physical button down. It requires a third, runtime-opening, natively visible HWND with a submitted
+non-empty frame containing the payload before release, while the provisional remains gated for
+pointer input, activation, and focus. It then releases the locked point and requires the same HWND
+(not a replacement) to become the committed viewport, with exactly one durable surface revision
+and one graph ownership transfer. A framework mouse observer is installed as soon as the exact
+provisional window appears and proves that the captured move/down/up stream is not replayed into
+that window.
+
+`native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds` begins the same
+real captured drag, posts `WM_CLOSE` to the primary anchor, and waits for the typed surface session
+to reach `Closed`, the viewport runtime and GPUI window registry to empty, native capture to clear,
+the active drag to disappear, all terminal tickets to settle without failure, and the source and
+anchor HWNDs to be destroyed. This scenario proves final convergence, not the exact
+`WM_NCDESTROY` ordering. The test restores the physical button state through an unwind-safe guard;
+a separate 30-second process watchdog sends a best-effort button-up and aborts a deadlocked worker
+instead of leaving the runner in a global drag until the workflow timeout.
+
+These scenarios are separate assertions, not a claim that every U28 matrix cell is covered. DPI
+divergence, opaque foreign-window occlusion, two-surface isolation, renderer fault injection, and
+all native terminal-order permutations remain covered by the deterministic and subprocess suites
+listed below and must not be inferred from this runner gate alone.
 
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
