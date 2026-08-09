@@ -5970,9 +5970,7 @@ fn surface_owned_native_captured_desktop_release_promotes_exact_visible_provisio
 }
 
 #[open_gpui::test]
-fn same_window_graph_conflict_after_provider_commit_enters_committed_destination_recovery(
-    cx: &mut TestAppContext,
-) {
+fn same_window_post_swap_graph_mutation_is_a_new_transaction(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
@@ -6018,35 +6016,37 @@ fn same_window_graph_conflict_after_provider_commit_enters_committed_destination
     cx.run_until_parked();
 
     assert!(
-        destination_window.update(cx, |_, _, _| ()).is_err(),
-        "a committed destination that cannot publish its topology must close through recovery"
+        destination_window.update(cx, |_, _, _| ()).is_ok(),
+        "a graph mutation queued after the final swap must not be mistaken for partial commit failure"
     );
     cx.read_entity(&fixture.controller, |controller, _| {
         assert_eq!(
             controller
                 .graph()
                 .collect_items_in_space(&DockSpaceId::from("main")),
-            vec![item("a"), item("b")],
-            "recovery must not apply the stale promotion graph"
+            vec![item("b")],
+            "the atomic promotion must commit before the queued graph transaction"
         );
         assert_eq!(
             controller
                 .graph()
                 .collect_items_in_space(&destination_space),
             vec![item("c")],
-            "recovery must preserve the graph mutation that superseded promotion"
+            "the later graph transaction must remain the final topology authority"
         );
     });
     cx.read_entity(fixture.surface.owner(), |owner, _| {
+        let phase = owner.live_undock_phase();
+        let execution_count = owner.live_undock_runtime().execution_count_for_test();
         assert_eq!(
-            owner.live_undock_phase(),
+            phase,
             crate::surface::live_undock::DockLiveUndockPhase::Idle,
-            "committed-destination recovery must publish one terminal outcome"
+            "the final swap and its queued successor transaction must both settle; execution_count={execution_count}"
         );
         assert_eq!(
-            owner.live_undock_runtime().execution_count_for_test(),
+            execution_count,
             0,
-            "terminal recovery must retire the exact promotion execution"
+            "post-commit publication must retire the exact promotion execution"
         );
     });
     assert!(
@@ -6054,12 +6054,12 @@ fn same_window_graph_conflict_after_provider_commit_enters_committed_destination
             .runtime
             .active_payload_drag_session(&fixture.payload)
             .is_none(),
-        "terminal recovery must release the exact payload drag session"
+        "post-commit settlement must release the exact payload drag session"
     );
     cx.read_entity(&fixture.source_host, |host, _| {
         assert!(
             host.live_presentation_state().is_none(),
-            "terminal recovery must retire the frozen source presentation"
+            "the atomic final swap must retire the frozen source presentation"
         );
         assert!(host.live_source_semantic_proxy().is_none());
         assert!(host.native_drag_transport_proxy().is_none());
@@ -6067,9 +6067,7 @@ fn same_window_graph_conflict_after_provider_commit_enters_committed_destination
 }
 
 #[open_gpui::test]
-fn same_window_graph_commit_superseded_by_aba_enters_committed_destination_recovery(
-    cx: &mut TestAppContext,
-) {
+fn same_window_post_swap_graph_aba_does_not_replay_or_rollback_promotion(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
@@ -6121,9 +6119,24 @@ fn same_window_graph_commit_superseded_by_aba_enters_committed_destination_recov
     cx.run_until_parked();
 
     assert!(
-        destination_window.update(cx, |_, _, _| ()).is_err(),
-        "an ABA-superseded graph receipt must recover instead of publishing ordinary Durable"
+        destination_window.update(cx, |_, _, _| ()).is_ok(),
+        "an ABA after the final swap is a later graph transaction, not a failed promotion"
     );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")],
+            "the ABA must not cause the committed promotion graph to replay twice"
+        );
+    });
     cx.read_entity(fixture.surface.owner(), |owner, _| {
         assert_eq!(
             owner.live_undock_phase(),
@@ -6136,14 +6149,12 @@ fn same_window_graph_commit_superseded_by_aba_enters_committed_destination_recov
             .runtime
             .active_payload_drag_session(&fixture.payload)
             .is_none(),
-        "ABA recovery must release the exact payload drag generation"
+        "post-commit settlement must release the exact payload drag generation"
     );
 }
 
 #[open_gpui::test]
-fn same_window_logical_close_after_viewport_commit_uses_forward_committed_authority(
-    cx: &mut TestAppContext,
-) {
+fn same_window_logical_close_after_final_swap_uses_durable_authority(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
@@ -6155,13 +6166,13 @@ fn same_window_logical_close_after_viewport_commit_uses_forward_committed_author
         let ordinary_close_applied = ordinary_close_applied.clone();
         move |_| ordinary_close_applied.set(true)
     });
-    let forward_authority_observed = Rc::new(Cell::new(false));
+    let durable_authority_observed = Rc::new(Cell::new(false));
     let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
         owner.live_undock_runtime()
     });
     live_runtime.after_same_window_viewport_commit_for_test({
         let owner = fixture.surface.owner().clone();
-        let forward_authority_observed = forward_authority_observed.clone();
+        let durable_authority_observed = durable_authority_observed.clone();
         move |cx| {
             let authority = cx.read_entity(&owner, |owner, _| {
                 owner.live_undock_committed_destination_logical_close_authority(
@@ -6171,13 +6182,13 @@ fn same_window_logical_close_after_viewport_commit_uses_forward_committed_author
             assert!(matches!(
                 authority,
                 Some(
-                    crate::surface::live_undock_runtime::DockLiveUndockLogicalCloseAuthority::ForwardCommitted(_)
+                    crate::surface::live_undock_runtime::DockLiveUndockLogicalCloseAuthority::Durable(_)
                 )
             ));
-            forward_authority_observed.set(true);
+            durable_authority_observed.set(true);
             destination_window
                 .update(cx, |_, window, cx| window.remove_window(cx))
-                .expect("the forward-committed destination should begin logical close");
+                .expect("the durable destination should begin logical close");
         }
     });
 
@@ -6199,10 +6210,10 @@ fn same_window_logical_close_after_viewport_commit_uses_forward_committed_author
     assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
     cx.run_until_parked();
 
-    assert!(forward_authority_observed.get());
+    assert!(durable_authority_observed.get());
     assert!(
         !ordinary_close_applied.get(),
-        "a forward-committed destination must not enter the ordinary provisional close path"
+        "a durable destination must not enter the ordinary provisional close path"
     );
     assert!(
         destination_window.update(cx, |_, _, _| ()).is_err(),
@@ -6220,7 +6231,7 @@ fn same_window_logical_close_after_viewport_commit_uses_forward_committed_author
                 .graph()
                 .collect_items_in_space(&destination_space),
             vec![item("a")],
-            "logical close after the forward boundary must not roll committed topology back"
+            "logical close after the final swap must not roll committed topology back"
         );
     });
     cx.read_entity(fixture.surface.owner(), |owner, _| {
@@ -6242,109 +6253,6 @@ fn same_window_logical_close_after_viewport_commit_uses_forward_committed_author
             .active_payload_drag_session(&fixture.payload)
             .is_none()
     );
-}
-
-#[open_gpui::test]
-fn same_window_lower_authority_loss_after_provider_commit_recovers_without_wall_clock_retry(
-    cx: &mut TestAppContext,
-) {
-    let mut fixture = native_captured_source_fixture(cx);
-    begin_native_live_undock_with_released_source(&mut fixture, cx);
-    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
-    let (destination_window, _destination_host, destination_space) =
-        reveal_live_undock_provisional_destination(&fixture, cx);
-
-    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
-        owner.live_undock_runtime()
-    });
-    live_runtime.after_same_window_provider_commit_for_test({
-        let controller = fixture.controller.clone();
-        let runtime = fixture.runtime.clone();
-        let destination_space = destination_space.clone();
-        move |cx| {
-            cx.update_entity(&controller, |controller, controller_cx| {
-                let mut graph = controller.graph().clone();
-                let replacement = graph.insert_node(DockNode::Tabs {
-                    items: vec![item("c")],
-                    selected: Some(item("c")),
-                });
-                graph.set_root(destination_space.clone(), replacement);
-                controller.workspace_mut().set_graph(graph);
-                controller_cx.notify();
-            });
-            runtime
-                .borrow()
-                .reject_live_undock_promotion_commits_for_test(1);
-        }
-    });
-
-    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
-    cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
-            point(DevicePixels(1880), DevicePixels(1880)),
-            Vec::new(),
-        )
-        .expect("the moved desktop release observation should be valid"),
-    );
-    fixture.source_visual.simulate_mouse_up(
-        point(px(940.0), px(940.0)),
-        MouseButton::Left,
-        Modifiers::none(),
-    );
-    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
-    assert!(drained_without_advancing_deadline);
-    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
-    cx.run_until_parked();
-
-    let (phase, execution_count, recovery_count) =
-        cx.read_entity(fixture.surface.owner(), |owner, _| {
-            (
-                owner.live_undock_phase(),
-                owner.live_undock_runtime().execution_count_for_test(),
-                owner.visible_payload_recovery_count_for_test(
-                    crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
-                ),
-            )
-        });
-    assert!(
-        destination_window.update(cx, |_, _, _| ()).is_err(),
-        "provider-terminal recovery must retire the stale provisional destination; phase={phase:?}, executions={execution_count}, recoveries={recovery_count}"
-    );
-    cx.read_entity(&fixture.controller, |controller, _| {
-        assert_eq!(
-            controller
-                .graph()
-                .collect_items_in_space(&DockSpaceId::from("main")),
-            vec![item("a"), item("b")],
-            "recovery must preserve the source topology when the lower commit never became durable"
-        );
-        assert_eq!(
-            controller
-                .graph()
-                .collect_items_in_space(&destination_space),
-            vec![item("c")],
-            "recovery must preserve the reentrant graph authority"
-        );
-    });
-    cx.read_entity(fixture.surface.owner(), |owner, _| {
-        assert_eq!(
-            owner.live_undock_phase(),
-            crate::surface::live_undock::DockLiveUndockPhase::Idle
-        );
-        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
-    });
-    assert!(
-        fixture
-            .runtime
-            .active_payload_drag_session(&fixture.payload)
-            .is_none(),
-        "provider-terminal recovery must release the exact payload drag generation"
-    );
-    cx.read_entity(&fixture.source_host, |host, _| {
-        assert!(host.live_presentation_state().is_none());
-        assert!(host.live_source_semantic_proxy().is_none());
-        assert!(host.native_drag_transport_proxy().is_none());
-    });
 }
 
 #[open_gpui::test]
@@ -8918,7 +8826,7 @@ fn managed_source_host_drop_into_primary_anchor_preserves_surface_shutdown_hook(
 }
 
 #[open_gpui::test]
-fn runtime_existing_host_binding_loss_retries_recovery_after_panic_and_terminates(
+fn runtime_existing_host_binding_loss_after_final_swap_retries_recovery_and_terminates(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source-live-host-recovery");
@@ -9031,11 +8939,11 @@ fn runtime_existing_host_binding_loss_retries_recovery_after_panic_and_terminate
     source_visual.simulate_mouse_move(target_global, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let live_runtime = cx.read_entity(surface.owner(), |owner, _| owner.live_undock_runtime());
-    let forward_authority_observed = Rc::new(Cell::new(false));
+    let durable_authority_observed = Rc::new(Cell::new(false));
     live_runtime.after_host_drop_commit_for_test({
         let owner = surface.owner().clone();
         let target_host = target_host.clone();
-        let forward_authority_observed = forward_authority_observed.clone();
+        let durable_authority_observed = durable_authority_observed.clone();
         move |cx| {
             let authority = cx.read_entity(&owner, |owner, _| {
                 owner.live_undock_committed_destination_logical_close_authority(
@@ -9045,13 +8953,16 @@ fn runtime_existing_host_binding_loss_retries_recovery_after_panic_and_terminate
             assert!(matches!(
                 authority,
                 Some(
-                    crate::surface::live_undock_runtime::DockLiveUndockLogicalCloseAuthority::ForwardCommitted(_)
+                    crate::surface::live_undock_runtime::DockLiveUndockLogicalCloseAuthority::Durable(_)
                 )
             ));
-            forward_authority_observed.set(true);
+            durable_authority_observed.set(true);
             cx.update_entity(&target_host, |host, _| {
                 host.invalidate_window_binding_for_test();
             });
+            target_window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("the durable Host destination should begin logical close");
         }
     });
     live_runtime.panic_next_committed_destination_recovery_attempt_for_test();
@@ -9068,8 +8979,8 @@ fn runtime_existing_host_binding_loss_retries_recovery_after_panic_and_terminate
     cx.run_until_parked();
 
     assert!(
-        forward_authority_observed.get(),
-        "a committed Host drop must publish forward logical-close authority before Durable"
+        durable_authority_observed.get(),
+        "a committed Host drop must publish durable logical-close authority before post-commit callbacks"
     );
 
     cx.read_entity(&controller, |controller, _| {
@@ -9125,8 +9036,8 @@ fn runtime_existing_host_binding_loss_retries_recovery_after_panic_and_terminate
     });
     assert_eq!(
         cx.windows().len(),
-        2,
-        "the provisional must retire after Host recovery commits",
+        1,
+        "the provisional and terminal target must retire while the source anchor remains",
     );
 
     assert_eq!(

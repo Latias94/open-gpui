@@ -2653,6 +2653,20 @@ impl DockHost {
         if !self.can_commit_prepared_live_source_retirement(&prepared) {
             return None;
         }
+        Some(self.commit_prepared_live_source_retirement_without_notify(prepared))
+    }
+
+    pub(crate) fn commit_prepared_live_source_retirement_without_notify(
+        &mut self,
+        prepared: DockHostPreparedLiveSourceRetirement,
+    ) -> DockHostLiveSourceRetirementReceipt {
+        if let Some(receipt) = self.committed_live_source_retirement(&prepared) {
+            return receipt;
+        }
+        assert!(
+            self.can_commit_prepared_live_source_retirement(&prepared),
+            "prepared live source retirement must remain exact until commit"
+        );
         let receipt = DockHostLiveSourceRetirementReceipt {
             key: prepared.key,
             source: prepared.source.clone(),
@@ -2663,7 +2677,7 @@ impl DockHost {
             .retain(|_, lease| !prepared.source.leases().contains(lease));
         self.last_visual_affordance_scene = None;
         self.last_presentation_scene = None;
-        Some(receipt)
+        receipt
     }
 
     pub(crate) fn retire_live_source_retirement(
@@ -2778,6 +2792,24 @@ impl DockHost {
         if !self.can_commit_prepared_live_destination_promotion(&prepared) {
             return None;
         }
+        Some(self.commit_prepared_live_destination_promotion_without_notify(prepared))
+    }
+
+    pub(crate) fn commit_prepared_live_destination_promotion_without_notify(
+        &mut self,
+        prepared: DockHostPreparedLiveDestinationPromotion,
+    ) -> DockHostLiveDestinationPromotionReceipt {
+        if let Some(receipt) = self
+            .committed_live_destination_promotion
+            .as_ref()
+            .filter(|receipt| receipt.matches_prepared(&prepared))
+        {
+            return receipt.clone();
+        }
+        assert!(
+            self.can_commit_prepared_live_destination_promotion(&prepared),
+            "prepared live destination promotion must remain exact until commit"
+        );
 
         self.role = DockHostRole::ManagedViewport(prepared.opening.lease());
         self.bound_viewport_registration = Some(prepared.registration);
@@ -2805,7 +2837,7 @@ impl DockHost {
         self.live_destination_semantics = Some(semantics.clone());
         let receipt = DockHostLiveDestinationPromotionReceipt { semantics };
         self.committed_live_destination_promotion = Some(receipt.clone());
-        Some(receipt)
+        receipt
     }
 
     pub(crate) fn retire_live_destination_promotion(

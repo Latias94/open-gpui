@@ -878,6 +878,20 @@ impl RehostTerminalPreparation {
             Self::AlreadyCommitted(outcome) => Ok(outcome),
         }
     }
+
+    /// Consumes one aggregate-preflighted provider authority without another fallible branch.
+    ///
+    /// Callers must invoke [`Self::can_commit`] as part of the same synchronous transaction before
+    /// crossing any irreversible authority boundary.
+    pub fn commit_prepared(
+        self,
+        cx: &mut App,
+    ) -> (RehostTerminalOutcome, RehostTerminalPostCommit) {
+        match self {
+            Self::Prepared(prepared) => prepared.commit_prepared(cx),
+            Self::AlreadyCommitted(outcome) => (outcome, RehostTerminalPostCommit::default()),
+        }
+    }
 }
 
 /// Single-use provider authority for the final step of a larger synchronous transaction.
@@ -912,17 +926,75 @@ impl PreparedRehostTerminal {
         if !self.can_commit(cx) {
             return Err(TransitionError::StalePrepared);
         }
-        Ok(match self.transition {
+        let (outcome, post_commit) = self.commit_prepared(cx);
+        post_commit.publish(cx);
+        Ok(outcome)
+    }
+
+    /// Consumes this exact provider token after an enclosing aggregate preflight succeeds.
+    pub fn commit_prepared(
+        self,
+        cx: &mut App,
+    ) -> (RehostTerminalOutcome, RehostTerminalPostCommit) {
+        match self.transition {
             PreparedRehostTerminalTransition::CommitDestination(prepared) => {
-                let outcome = commit_prepared_finish_destination(cx, prepared);
-                RehostTerminalOutcome::DestinationCommitted(outcome.batch)
+                let outcome = cx
+                    .view_presentation_windows
+                    .commit_prepared_finish_destination(prepared);
+                let FinishOutcome::Destination { batch, exposure: _ } = outcome else {
+                    unreachable!("prepared destination finish must commit a destination outcome")
+                };
+                let post_commit = RehostTerminalPostCommit::one(batch.window_id());
+                (
+                    RehostTerminalOutcome::DestinationCommitted(batch),
+                    post_commit,
+                )
             }
             PreparedRehostTerminalTransition::AbandonAfterSourceLoss(prepared) => {
                 let receipt = RehostAbandonmentReceipt::from_prepared(&prepared.prepared);
-                let _ = commit_prepared_abandon_rehost_after_source_loss(cx, prepared);
-                RehostTerminalOutcome::Abandoned(receipt)
+                let source_window = prepared.prepared.source.window_id;
+                let destination_window = prepared.prepared.destination.window_id;
+                let _ = cx
+                    .view_presentation_windows
+                    .commit_prepared_abandon_rehost_after_source_loss(
+                        prepared,
+                        &mut cx.current_window_by_entity,
+                    );
+                (
+                    RehostTerminalOutcome::Abandoned(receipt),
+                    RehostTerminalPostCommit::two(source_window, destination_window),
+                )
             }
-        })
+        }
+    }
+}
+
+/// Deferred window refreshes produced by one aggregate-preflighted rehost terminal commit.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+#[must_use = "provider post-commit refreshes must run after the enclosing authority swap"]
+pub struct RehostTerminalPostCommit {
+    windows: [Option<WindowId>; 2],
+}
+
+impl RehostTerminalPostCommit {
+    fn one(window: WindowId) -> Self {
+        Self {
+            windows: [Some(window), None],
+        }
+    }
+
+    fn two(first: WindowId, second: WindowId) -> Self {
+        Self {
+            windows: [Some(first), (second != first).then_some(second)],
+        }
+    }
+
+    /// Publishes renderer refreshes after the enclosing transaction installs durable authority.
+    pub fn publish(&self, cx: &mut App) {
+        for window in self.windows.iter().copied().flatten() {
+            refresh_window(cx, window);
+        }
     }
 }
 

@@ -946,6 +946,15 @@ impl DockViewportRuntimeHandle {
             .commit_or_replay_live_undock_provisional_promotion(prepared.clone())
     }
 
+    pub(crate) fn commit_prepared_live_undock_provisional_promotion(
+        &self,
+        prepared: DockViewportPreparedLiveUndockPromotion,
+    ) -> DockViewportCommittedLiveUndockPromotion {
+        self.runtime
+            .borrow_mut()
+            .commit_live_undock_provisional_promotion(prepared)
+    }
+
     pub(crate) fn retire_live_undock_provisional_promotion_commit(
         &self,
         committed: &DockViewportCommittedLiveUndockPromotion,

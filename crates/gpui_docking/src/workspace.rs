@@ -42,6 +42,18 @@ pub(crate) struct DockWorkspaceGraphCommitReceipt {
     graph_revision: u64,
 }
 
+#[must_use = "a prepared graph commit must be committed or discarded before retrying"]
+pub(crate) struct DockWorkspacePreparedGraphCommit {
+    commit_id: DockWorkspaceGraphCommitId,
+    expected_revision: u64,
+    projected_graph: DockGraph,
+}
+
+pub(crate) enum DockWorkspaceGraphCommitPreparation {
+    Prepared(DockWorkspacePreparedGraphCommit),
+    AlreadyCommitted(DockWorkspaceGraphCommitReceipt),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockWorkspaceGraphCommitObservation {
     Exact,
@@ -110,6 +122,46 @@ impl DockWorkspace {
         };
         self.graph_commits.insert(commit_id, receipt);
         Some(receipt)
+    }
+
+    pub(crate) fn prepare_graph_commit(
+        &self,
+        commit_id: DockWorkspaceGraphCommitId,
+        projected_graph: DockGraph,
+    ) -> DockWorkspaceGraphCommitPreparation {
+        if let Some(receipt) = self.graph_commits.get(&commit_id) {
+            return DockWorkspaceGraphCommitPreparation::AlreadyCommitted(*receipt);
+        }
+        DockWorkspaceGraphCommitPreparation::Prepared(DockWorkspacePreparedGraphCommit {
+            commit_id,
+            expected_revision: self.graph_revision,
+            projected_graph,
+        })
+    }
+
+    pub(crate) fn can_commit_prepared_graph(
+        &self,
+        prepared: &DockWorkspacePreparedGraphCommit,
+    ) -> bool {
+        self.graph_revision == prepared.expected_revision
+            && !self.graph_commits.contains_key(&prepared.commit_id)
+    }
+
+    pub(crate) fn commit_prepared_graph(
+        &mut self,
+        prepared: DockWorkspacePreparedGraphCommit,
+    ) -> DockWorkspaceGraphCommitReceipt {
+        assert!(
+            self.can_commit_prepared_graph(&prepared),
+            "a prepared workspace graph commit must remain exact until commit"
+        );
+        self.replace_graph(prepared.projected_graph);
+        let receipt = DockWorkspaceGraphCommitReceipt {
+            commit_id: prepared.commit_id,
+            graph_revision: self.graph_revision,
+        };
+        self.graph_commits.insert(prepared.commit_id, receipt);
+        receipt
     }
 
     pub(crate) fn graph_commit(
@@ -457,5 +509,52 @@ mod tests {
             Some(DockWorkspaceGraphCommitObservation::Superseded),
             "shape equality must not restore superseded transaction authority"
         );
+    }
+
+    #[test]
+    fn prepared_graph_commit_rejects_an_aba_before_commit() {
+        let (initial, _) = root_tabs_graph(&["initial"]);
+        let (projected, _) = root_tabs_graph(&["projected"]);
+        let (intermediate, _) = root_tabs_graph(&["intermediate"]);
+        let mut workspace = DockWorkspace::new(main_space(), initial.clone());
+        let commit_id = workspace.allocate_graph_commit_id();
+        let DockWorkspaceGraphCommitPreparation::Prepared(prepared) =
+            workspace.prepare_graph_commit(commit_id, projected)
+        else {
+            panic!("a fresh graph commit must prepare one single-use token");
+        };
+
+        workspace.set_graph(intermediate);
+        workspace.set_graph(initial);
+
+        assert!(!workspace.can_commit_prepared_graph(&prepared));
+    }
+
+    #[test]
+    fn prepared_graph_commit_consumes_one_exact_revision_and_replays_its_receipt() {
+        let (initial, _) = root_tabs_graph(&["initial"]);
+        let (projected, _) = root_tabs_graph(&["projected"]);
+        let mut workspace = DockWorkspace::new(main_space(), initial);
+        let commit_id = workspace.allocate_graph_commit_id();
+        let DockWorkspaceGraphCommitPreparation::Prepared(prepared) =
+            workspace.prepare_graph_commit(commit_id, projected.clone())
+        else {
+            panic!("a fresh graph commit must prepare one single-use token");
+        };
+
+        assert!(workspace.can_commit_prepared_graph(&prepared));
+        let receipt = workspace.commit_prepared_graph(prepared);
+
+        assert!(workspace.graph().matches_exactly(&projected));
+        assert_eq!(
+            workspace.observe_graph_commit(receipt),
+            Some(DockWorkspaceGraphCommitObservation::Exact)
+        );
+        let DockWorkspaceGraphCommitPreparation::AlreadyCommitted(replayed) =
+            workspace.prepare_graph_commit(commit_id, workspace.graph().clone())
+        else {
+            panic!("the same graph commit identity must replay its exact receipt");
+        };
+        assert_eq!(replayed, receipt);
     }
 }
