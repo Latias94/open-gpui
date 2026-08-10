@@ -2769,6 +2769,7 @@ mod window_capability_tests {
         };
         PlatformWindowMutationCapabilities {
             position: WindowMutationSupport::Unsupported,
+            physical_placement: WindowMutationSupport::Unsupported,
             size: WindowMutationSupport::CreationOnly,
             windowed: toplevel_state,
             maximized: toplevel_state,

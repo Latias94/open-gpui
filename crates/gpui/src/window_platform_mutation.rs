@@ -1,7 +1,8 @@
 use crate::{
     Pixels, PlatformWindowDispatch, PlatformWindowMutationTerminal, Point, Size, Subscription,
     WindowActivationPolicy, WindowBackgroundAppearance, WindowMutationDomain,
-    WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
+    WindowPhysicalPlacementRequest, WindowPlacementRequest, WindowPlacementState,
+    WindowPlatformFacts,
 };
 use std::{
     any::Any,
@@ -18,6 +19,8 @@ use std::{
 pub enum WindowMutationRequest {
     /// A coherent window placement request.
     Placement(WindowPlacementRequest),
+    /// A windowed client-area placement in physical desktop coordinates.
+    PhysicalPlacement(WindowPhysicalPlacementRequest),
     /// A pointer-input acceptance request.
     PointerInput(bool),
     /// A coherent lifetime activation-policy request.
@@ -34,7 +37,7 @@ impl WindowMutationRequest {
     /// Returns the conflict domain this request belongs to.
     pub const fn domain(self) -> WindowMutationDomain {
         match self {
-            Self::Placement(_) => WindowMutationDomain::Placement,
+            Self::Placement(_) | Self::PhysicalPlacement(_) => WindowMutationDomain::Placement,
             Self::PointerInput(_) => WindowMutationDomain::PointerInput,
             Self::ActivationPolicy(_) => WindowMutationDomain::ActivationPolicy,
             Self::Alpha(_) => WindowMutationDomain::Alpha,
@@ -46,6 +49,12 @@ impl WindowMutationRequest {
     pub(crate) fn matches_facts(self, facts: &WindowPlatformFacts) -> bool {
         match self {
             Self::Placement(request) => placement_request_matches_facts(request, facts),
+            Self::PhysicalPlacement(request) => {
+                placement_state_from_facts(facts) == WindowPlacementState::Windowed
+                    && facts
+                        .physical_geometry
+                        .is_some_and(|geometry| geometry.client_bounds() == request.client_bounds())
+            }
             Self::PointerInput(requested) => facts.accepts_pointer_input == requested,
             Self::ActivationPolicy(requested) => {
                 facts.accepts_activation == requested.accepts_activation
@@ -415,6 +424,12 @@ impl WindowMutationState {
             .is_some_and(|pending| pending.ticket.belongs_to_generation(authority, generation))
     }
 
+    pub(crate) fn last_generation(&self, domain: WindowMutationDomain) -> u64 {
+        self.domains
+            .get(&domain)
+            .map_or(0, |state| state.last_generation)
+    }
+
     pub(crate) fn settle_all(
         &mut self,
         authority: &Arc<WindowPlatformMutationAuthority>,
@@ -506,6 +521,12 @@ fn terminal_outcome(
     facts: &WindowPlatformFacts,
 ) -> WindowMutationOutcome {
     match terminal {
+        PlatformWindowMutationTerminal::Observed
+            if matches!(request, WindowMutationRequest::PhysicalPlacement(_))
+                && facts.physical_geometry.is_none() =>
+        {
+            WindowMutationOutcome::Rejected
+        }
         PlatformWindowMutationTerminal::Observed => observation_outcome(request, facts),
         PlatformWindowMutationTerminal::Rejected => WindowMutationOutcome::Rejected,
         PlatformWindowMutationTerminal::Unsupported => WindowMutationOutcome::Unsupported,

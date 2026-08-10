@@ -63,7 +63,7 @@ impl RegisteredWindow {
         self.generation
     }
 
-    fn window_id(self) -> WindowId {
+    pub(crate) fn window_id(self) -> WindowId {
         self.window_id
     }
 
@@ -894,6 +894,7 @@ fn windows_window_capabilities() -> PlatformWindowCapabilities {
         },
         mutations: PlatformWindowMutationCapabilities {
             position: WindowMutationSupport::CreationOnly,
+            physical_placement: WindowMutationSupport::Live,
             size: WindowMutationSupport::Live,
             windowed: WindowMutationSupport::Live,
             maximized: WindowMutationSupport::Live,
@@ -953,7 +954,7 @@ fn physical_coverage_from_native_rect(rect: RECT) -> Option<PlatformWindowPhysic
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NativeWindowCloak {
+pub(crate) enum NativeWindowCloak {
     Uncloaked,
     Cloaked,
     Unknown,
@@ -967,7 +968,7 @@ fn cloak_observation(observed: Option<u32>) -> NativeWindowCloak {
     }
 }
 
-fn native_window_cloak(hwnd: HWND) -> NativeWindowCloak {
+pub(crate) fn native_window_cloak(hwnd: HWND) -> NativeWindowCloak {
     let mut cloaked = 0_u32;
     let observed = unsafe {
         DwmGetWindowAttribute(
@@ -1163,9 +1164,11 @@ fn point_covering_windows_in_z_order(
     point: Point<DevicePixels>,
     registered_windows: &[RegisteredWindow],
 ) -> Option<Vec<NativeCoveringWindowObservation>> {
+    let native_target = window_from_point_root(point);
     let mut context = NativePointBoundWindowEnumeration {
         platform,
         point,
+        native_target,
         registered_windows,
         enumeration: PointBoundWindowEnumeration::new(),
     };
@@ -1179,7 +1182,11 @@ fn point_covering_windows_in_z_order(
         .ok()
     }
     .is_some();
-    context.enumeration.finish(native_completed)
+    finish_point_bound_window_enumeration(
+        context.enumeration,
+        native_completed,
+        context.native_target,
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1193,9 +1200,13 @@ enum PointBoundWindowInspection {
 fn inspect_point_bound_window(
     platform: &WindowsPlatform,
     point: Point<DevicePixels>,
+    native_target: Option<HWND>,
     hwnd: HWND,
     registered_windows: &[RegisteredWindow],
 ) -> PointBoundWindowInspection {
+    if native_window_is_shell_desktop(hwnd) {
+        return PointBoundWindowInspection::Skip;
+    }
     if unsafe {
         !IsWindow(Some(hwnd)).as_bool()
             || !IsWindowVisible(hwnd).as_bool()
@@ -1230,7 +1241,7 @@ fn inspect_point_bound_window(
         return PointBoundWindowInspection::Skip;
     }
     let child_root = child_root(hwnd);
-    let mut observation = NativeCoveringWindowObservation {
+    let observation = NativeCoveringWindowObservation {
         hwnd,
         child_root,
         coverage,
@@ -1238,20 +1249,33 @@ fn inspect_point_bound_window(
         role: NativeCoveringWindowRole::Terminal,
     };
     if cloak == NativeWindowCloak::Unknown {
-        return PointBoundWindowInspection::Terminal(observation);
+        return classify_point_bound_window_candidate(observation, native_target, None);
     }
-    let Some(registered) = registered_window_hit_candidate(hwnd, child_root, registered_windows)
-    else {
-        return PointBoundWindowInspection::Terminal(observation);
-    };
-    match inspect_registered_window_for_point(platform, registered) {
-        RegisteredPointHitInspection::ProvisionalPassThrough(provisional) => {
+    let registered = registered_window_hit_candidate(hwnd, child_root, registered_windows)
+        .map(|registered| inspect_registered_window_for_point(platform, registered));
+    classify_point_bound_window_candidate(observation, native_target, registered)
+}
+
+fn classify_point_bound_window_candidate(
+    mut observation: NativeCoveringWindowObservation,
+    native_target: Option<HWND>,
+    registered: Option<RegisteredPointHitInspection>,
+) -> PointBoundWindowInspection {
+    let is_native_target = native_target == Some(observation.hwnd);
+    match registered {
+        None => PointBoundWindowInspection::Terminal(observation),
+        Some(RegisteredPointHitInspection::ProvisionalPassThrough(provisional)) => {
+            if is_native_target {
+                return PointBoundWindowInspection::Failed;
+            }
             observation.role = NativeCoveringWindowRole::ProvisionalPassThrough(provisional);
             PointBoundWindowInspection::PassThrough(observation)
         }
-        RegisteredPointHitInspection::NoInputPassThrough => PointBoundWindowInspection::Skip,
-        RegisteredPointHitInspection::Terminal => PointBoundWindowInspection::Terminal(observation),
-        RegisteredPointHitInspection::Failed => PointBoundWindowInspection::Failed,
+        Some(
+            RegisteredPointHitInspection::NoInputPassThrough
+            | RegisteredPointHitInspection::Terminal,
+        ) => PointBoundWindowInspection::Terminal(observation),
+        Some(RegisteredPointHitInspection::Failed) => PointBoundWindowInspection::Failed,
     }
 }
 
@@ -1320,7 +1344,14 @@ fn stabilized_window_hit_stack(
     {
         return PlatformWindowHitStack::Unavailable;
     }
-    PlatformWindowHitStack::try_available(point, final_hits).unwrap_or_default()
+    if final_observation
+        .last()
+        .is_none_or(|observation| !observation.is_terminal())
+    {
+        PlatformWindowHitStack::try_available_open_desktop(point, final_hits).unwrap_or_default()
+    } else {
+        PlatformWindowHitStack::try_available(point, final_hits).unwrap_or_default()
+    }
 }
 
 fn sample_stabilized_window_hit_stack(
@@ -1360,14 +1391,23 @@ fn classification_is_complete_through_first_terminal(
     if observations.len() != hits.len() {
         return false;
     }
-    if observations.is_empty() {
-        return true;
-    }
-    let Some((terminal, prefix)) = observations.split_last() else {
-        return false;
-    };
-    if !terminal.is_terminal() || prefix.iter().any(|observation| observation.is_terminal()) {
-        return false;
+    let reaches_open_desktop = observations
+        .last()
+        .is_none_or(|observation| !observation.is_terminal());
+    if reaches_open_desktop {
+        if observations
+            .iter()
+            .any(|observation| observation.is_terminal())
+        {
+            return false;
+        }
+    } else {
+        let Some((terminal, prefix)) = observations.split_last() else {
+            return false;
+        };
+        if !terminal.is_terminal() || prefix.iter().any(|observation| observation.is_terminal()) {
+            return false;
+        }
     }
     observations.iter().zip(hits).all(|(observation, hit)| {
         if observation.coverage != hit.coverage() {
@@ -1405,7 +1445,36 @@ fn window_from_point_root(point: Point<DevicePixels>) -> Option<HWND> {
     }
     let root = unsafe { GetAncestor(hit, GA_ROOT) };
     let root = if root.is_invalid() { hit } else { root };
-    (root != unsafe { GetDesktopWindow() }).then_some(root)
+    (!native_window_is_shell_desktop(root)).then_some(root)
+}
+
+pub(crate) fn native_window_is_shell_desktop(hwnd: HWND) -> bool {
+    if hwnd.is_invalid() || hwnd == unsafe { GetDesktopWindow() } {
+        return true;
+    }
+    let shell = unsafe { GetShellWindow() };
+    if shell.is_invalid() {
+        return false;
+    }
+    let mut shell_process = 0;
+    let mut candidate_process = 0;
+    unsafe {
+        GetWindowThreadProcessId(shell, Some(&mut shell_process));
+        GetWindowThreadProcessId(hwnd, Some(&mut candidate_process));
+    }
+    if shell_process == 0 || candidate_process != shell_process {
+        return false;
+    }
+
+    let mut class_name = [0_u16; 64];
+    let length = unsafe { GetClassNameW(hwnd, &mut class_name) };
+    if length <= 0 {
+        return false;
+    }
+    matches!(
+        String::from_utf16_lossy(&class_name[..length as usize]).as_str(),
+        "Progman" | "WorkerW"
+    )
 }
 
 fn independently_verified_point_covering_windows(
@@ -1413,40 +1482,32 @@ fn independently_verified_point_covering_windows(
     point: Point<DevicePixels>,
 ) -> Option<Vec<NativeCoveringWindowObservation>> {
     let registered_windows = platform.raw_window_handles.read().clone();
-    let observations =
-        point_covering_windows_via_z_order_walk(platform, point, registered_windows.as_slice())?;
-    let Some(window_from_point) = window_from_point_root(point) else {
-        return observations.is_empty().then_some(observations);
-    };
-    let window_from_point_is_no_input = registered_window_hit_candidate(
+    let window_from_point = window_from_point_root(point);
+    let observations = point_covering_windows_via_z_order_walk(
+        platform,
+        point,
         window_from_point,
-        child_root(window_from_point),
         registered_windows.as_slice(),
-    )
-    .is_some_and(|registered| {
-        matches!(
-            inspect_registered_window_for_point(platform, registered),
-            RegisteredPointHitInspection::NoInputPassThrough
-        )
-    });
+    )?;
+    let Some(window_from_point) = window_from_point else {
+        return observations
+            .iter()
+            .all(|observation| !observation.is_terminal())
+            .then_some(observations);
+    };
     let verified_suffix = point_covering_windows_from_z_order_candidate(
         platform,
         point,
+        Some(window_from_point),
         registered_windows.as_slice(),
         window_from_point,
     )?;
-    window_from_point_suffix_agrees(
-        window_from_point,
-        window_from_point_is_no_input,
-        &observations,
-        &verified_suffix,
-    )
-    .then_some(observations)
+    window_from_point_suffix_agrees(window_from_point, &observations, &verified_suffix)
+        .then_some(observations)
 }
 
 fn window_from_point_suffix_agrees(
     window_from_point: HWND,
-    window_from_point_is_no_input: bool,
     observations: &[NativeCoveringWindowObservation],
     verified_suffix: &[NativeCoveringWindowObservation],
 ) -> bool {
@@ -1456,7 +1517,7 @@ fn window_from_point_suffix_agrees(
     {
         verified_suffix == &observations[index..]
     } else {
-        window_from_point_is_no_input && verified_suffix == observations
+        false
     }
 }
 
@@ -1492,29 +1553,41 @@ fn classify_native_hovered_window(
 fn point_covering_windows_via_z_order_walk(
     platform: &WindowsPlatform,
     point: Point<DevicePixels>,
+    native_target: Option<HWND>,
     registered_windows: &[RegisteredWindow],
 ) -> Option<Vec<NativeCoveringWindowObservation>> {
     let Ok(candidate) = (unsafe { GetTopWindow(None) }) else {
-        return PointBoundWindowEnumeration::new().finish(true);
+        return finish_point_bound_window_enumeration(
+            PointBoundWindowEnumeration::new(),
+            true,
+            native_target,
+        );
     };
-    point_covering_windows_from_z_order_candidate(platform, point, registered_windows, candidate)
+    point_covering_windows_from_z_order_candidate(
+        platform,
+        point,
+        native_target,
+        registered_windows,
+        candidate,
+    )
 }
 
 fn point_covering_windows_from_z_order_candidate(
     platform: &WindowsPlatform,
     point: Point<DevicePixels>,
+    native_target: Option<HWND>,
     registered_windows: &[RegisteredWindow],
     mut candidate: HWND,
 ) -> Option<Vec<NativeCoveringWindowObservation>> {
     let mut enumeration = PointBoundWindowEnumeration::new();
     loop {
         if !enumeration.visit_with(candidate, |hwnd| {
-            inspect_point_bound_window(platform, point, hwnd, registered_windows)
+            inspect_point_bound_window(platform, point, native_target, hwnd, registered_windows)
         }) {
-            return enumeration.finish(false);
+            return finish_point_bound_window_enumeration(enumeration, false, native_target);
         }
         let Ok(next) = (unsafe { GetWindow(candidate, GW_HWNDNEXT) }) else {
-            return enumeration.finish(true);
+            return finish_point_bound_window_enumeration(enumeration, true, native_target);
         };
         candidate = next;
     }
@@ -1586,7 +1659,7 @@ impl PointBoundWindowEnumeration {
         if self.failed {
             return None;
         }
-        if self.terminal || (native_completed && self.observations.is_empty()) {
+        if self.terminal || native_completed {
             Some(self.observations)
         } else {
             None
@@ -1594,9 +1667,35 @@ impl PointBoundWindowEnumeration {
     }
 }
 
+fn finish_point_bound_window_enumeration(
+    enumeration: PointBoundWindowEnumeration,
+    native_completed: bool,
+    native_target: Option<HWND>,
+) -> Option<Vec<NativeCoveringWindowObservation>> {
+    let observations = enumeration.finish(native_completed)?;
+    match native_target {
+        Some(target)
+            if observations.last().is_some_and(|observation| {
+                observation.hwnd == target && observation.is_terminal()
+            }) =>
+        {
+            Some(observations)
+        }
+        Some(_) => None,
+        None if observations
+            .iter()
+            .all(|observation| !observation.is_terminal()) =>
+        {
+            Some(observations)
+        }
+        None => None,
+    }
+}
+
 struct NativePointBoundWindowEnumeration<'a> {
     platform: &'a WindowsPlatform,
     point: Point<DevicePixels>,
+    native_target: Option<HWND>,
     registered_windows: &'a [RegisteredWindow],
     enumeration: PointBoundWindowEnumeration,
 }
@@ -1608,9 +1707,10 @@ unsafe extern "system" fn collect_point_bound_window(hwnd: HWND, data: LPARAM) -
     let context = unsafe { &mut *context };
     let platform = context.platform;
     let point = context.point;
+    let native_target = context.native_target;
     let registered_windows = context.registered_windows;
     if context.enumeration.visit_with(hwnd, |hwnd| {
-        inspect_point_bound_window(platform, point, hwnd, registered_windows)
+        inspect_point_bound_window(platform, point, native_target, hwnd, registered_windows)
     }) {
         BOOL(1)
     } else {
@@ -3805,6 +3905,52 @@ mod tests {
     }
 
     #[test]
+    fn completed_provisional_prefix_can_terminate_at_verified_open_desktop() {
+        let sampled_point = point(DevicePixels(20), DevicePixels(20));
+        let coverage = checked_coverage(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(100), DevicePixels(100)),
+        );
+        let geometry = checked_geometry(
+            point(DevicePixels(2), DevicePixels(2)),
+            size(DevicePixels(90), DevicePixels(90)),
+            1.0,
+        );
+        let window = AnyWindowHandle::from(WindowHandle::<Empty>::new(WindowId::from(204_u64)));
+        let provisional = provisional_observation(
+            HWND(0xc4usize as *mut core::ffi::c_void),
+            23,
+            window,
+            33,
+            coverage,
+            geometry,
+        );
+        let mut enumeration = super::PointBoundWindowEnumeration::new();
+        assert!(enumeration.visit_with(provisional.hwnd, |_| {
+            super::PointBoundWindowInspection::PassThrough(provisional)
+        }));
+        let observations = super::finish_point_bound_window_enumeration(enumeration, true, None)
+            .expect("a completed exact provisional prefix should reach open desktop");
+        assert_eq!(observations, vec![provisional]);
+
+        let hits = vec![provisional_hit(provisional)];
+        let stack = stabilize_identical_observations(
+            sampled_point,
+            &observations,
+            hits.clone(),
+            &observations,
+        );
+        assert_eq!(
+            stack,
+            PlatformWindowHitStack::try_available_open_desktop(sampled_point, hits)
+                .expect("the verified desktop underlay should remain explicit")
+        );
+        assert!(stack.observation().is_some_and(|observation| {
+            observation.terminus() == open_gpui::PlatformWindowHitTerminus::OpenDesktop
+        }));
+    }
+
+    #[test]
     fn window_from_point_verifier_requires_an_exact_pass_through_witness() {
         let coverage = checked_coverage(
             point(DevicePixels(0), DevicePixels(0)),
@@ -3824,13 +3970,11 @@ mod tests {
 
         assert!(super::window_from_point_suffix_agrees(
             provisional_hwnd,
-            false,
             &observations,
             &observations,
         ));
         assert!(super::window_from_point_suffix_agrees(
             terminal.hwnd,
-            false,
             &observations,
             &[terminal],
         ));
@@ -3839,21 +3983,83 @@ mod tests {
             provisional_observation(provisional_hwnd, 26, window, 37, coverage, geometry);
         assert!(!super::window_from_point_suffix_agrees(
             provisional_hwnd,
-            false,
             &observations,
             &[stale_generation, terminal],
         ));
         assert!(!super::window_from_point_suffix_agrees(
             HWND(0xc8usize as *mut core::ffi::c_void),
-            false,
             &observations,
             &observations,
         ));
-        assert!(super::window_from_point_suffix_agrees(
-            HWND(0xc8usize as *mut core::ffi::c_void),
-            true,
-            &observations,
-            &observations,
+    }
+
+    #[test]
+    fn native_input_target_rejects_ordinary_prefixes_but_preserves_provisional_authority() {
+        let coverage = checked_coverage(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(100), DevicePixels(100)),
+        );
+        let overlay = covering_observation(HWND(0xd1usize as *mut core::ffi::c_void), coverage);
+        let terminal = covering_observation(HWND(0xd2usize as *mut core::ffi::c_void), coverage);
+        assert!(matches!(
+            super::classify_point_bound_window_candidate(overlay, Some(terminal.hwnd), None),
+            super::PointBoundWindowInspection::Terminal(observation)
+                if observation == overlay
+        ));
+        let mut mismatch = super::PointBoundWindowEnumeration::new();
+        assert!(!mismatch.visit_with(overlay.hwnd, |_| {
+            super::PointBoundWindowInspection::Terminal(overlay)
+        }));
+        assert!(
+            super::finish_point_bound_window_enumeration(mismatch, false, Some(terminal.hwnd),)
+                .is_none(),
+            "WindowFromPoint disagreement with an ordinary covering prefix must fail closed"
+        );
+        assert!(matches!(
+            super::classify_point_bound_window_candidate(terminal, Some(terminal.hwnd), None),
+            super::PointBoundWindowInspection::Terminal(observation)
+                if observation == terminal
+        ));
+
+        let geometry = checked_geometry(
+            point(DevicePixels(5), DevicePixels(5)),
+            size(DevicePixels(80), DevicePixels(80)),
+            1.0,
+        );
+        let window = AnyWindowHandle::from(WindowHandle::<Empty>::new(WindowId::from(207_u64)));
+        let provisional = provisional_observation(
+            HWND(0xd3usize as *mut core::ffi::c_void),
+            27,
+            window,
+            37,
+            coverage,
+            geometry,
+        );
+        let super::NativeCoveringWindowRole::ProvisionalPassThrough(provisional_authority) =
+            provisional.role
+        else {
+            panic!("test observation should carry provisional authority")
+        };
+        assert!(matches!(
+            super::classify_point_bound_window_candidate(
+                provisional,
+                Some(terminal.hwnd),
+                Some(super::RegisteredPointHitInspection::ProvisionalPassThrough(
+                    provisional_authority,
+                )),
+            ),
+            super::PointBoundWindowInspection::PassThrough(observation)
+                if observation.hwnd == provisional.hwnd
+        ));
+        assert!(matches!(
+            super::classify_point_bound_window_candidate(
+                provisional,
+                Some(provisional.hwnd),
+                Some(super::RegisteredPointHitInspection::ProvisionalPassThrough(
+                    provisional_authority,
+                )),
+            ),
+            super::PointBoundWindowInspection::Failed
         ));
     }
 
@@ -4181,7 +4387,7 @@ mod tests {
                 Vec::new(),
                 &[],
             ),
-            PlatformWindowHitStack::try_available(
+            PlatformWindowHitStack::try_available_open_desktop(
                 point(DevicePixels(100), DevicePixels(100)),
                 Vec::new(),
             )
@@ -4231,6 +4437,7 @@ mod tests {
                 },
                 mutations: PlatformWindowMutationCapabilities {
                     position: WindowMutationSupport::CreationOnly,
+                    physical_placement: WindowMutationSupport::Live,
                     size: WindowMutationSupport::Live,
                     windowed: WindowMutationSupport::Live,
                     maximized: WindowMutationSupport::Live,
@@ -4451,16 +4658,17 @@ mod tests {
             let point_inspection = super::inspect_point_bound_window(
                 &platform,
                 sampled_point,
+                accepts_pointer_input.then_some(native_window),
                 native_window,
                 &[registered_window],
             );
             assert!(
                 matches!(
                     (accepts_pointer_input, point_inspection),
-                    (false, super::PointBoundWindowInspection::Skip)
+                    (false, super::PointBoundWindowInspection::Terminal(_))
                         | (true, super::PointBoundWindowInspection::Terminal(_))
                 ),
-                "a committed no-input HWND must disappear from the native routing stack"
+                "a committed no-input HWND remains a terminal point-stack fact"
             );
         }
 

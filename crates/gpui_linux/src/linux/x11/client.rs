@@ -1586,6 +1586,7 @@ fn x11_window_capabilities(
         },
         mutations: PlatformWindowMutationCapabilities {
             position: WindowMutationSupport::CreationOnly,
+            physical_placement: WindowMutationSupport::Unsupported,
             size: WindowMutationSupport::CreationOnly,
             windowed: WindowMutationSupport::CreationOnly,
             maximized: if supports_toplevel_state {
@@ -3027,6 +3028,7 @@ mod tests {
     ) -> PlatformWindowMutationCapabilities {
         PlatformWindowMutationCapabilities {
             position: WindowMutationSupport::CreationOnly,
+            physical_placement: WindowMutationSupport::Unsupported,
             size: WindowMutationSupport::CreationOnly,
             windowed: WindowMutationSupport::CreationOnly,
             maximized: toplevel_state,

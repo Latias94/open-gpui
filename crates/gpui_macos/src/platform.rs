@@ -489,6 +489,7 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
         },
         mutations: PlatformWindowMutationCapabilities {
             position: WindowMutationSupport::CreationOnly,
+            physical_placement: WindowMutationSupport::Unsupported,
             size: WindowMutationSupport::CreationOnly,
             windowed: WindowMutationSupport::CreationOnly,
             maximized: if supports_toplevel_state {
@@ -1612,6 +1613,7 @@ mod window_capability_tests {
             },
             mutations: PlatformWindowMutationCapabilities {
                 position: WindowMutationSupport::CreationOnly,
+                physical_placement: WindowMutationSupport::Unsupported,
                 size: WindowMutationSupport::CreationOnly,
                 windowed: WindowMutationSupport::CreationOnly,
                 maximized: toplevel_state,

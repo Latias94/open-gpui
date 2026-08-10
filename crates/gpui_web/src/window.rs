@@ -916,6 +916,7 @@ impl PlatformWindow for WebWindow {
         WindowPlatformFacts {
             bounds: state.bounds,
             coordinate_space: WindowCoordinateSpace::WindowLocal,
+            physical_geometry: None,
             window_bounds: WindowBounds::Windowed(state.bounds),
             inner_window_bounds: WindowBounds::Windowed(state.bounds),
             content_size: state.bounds.size,

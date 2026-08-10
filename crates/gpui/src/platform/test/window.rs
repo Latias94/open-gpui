@@ -13,8 +13,10 @@ use crate::{
     PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
     RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
-    WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPlacementState,
-    WindowPlatformFacts, WindowPresentationShutdownTicket, WindowProvisionalRevealNativeFacts,
+    WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPhysicalPlacementRequest,
+    WindowPlacementState, WindowPlatformFacts, WindowPresentationShutdownTicket,
+    WindowProvisionalPlacementNativeFacts, WindowProvisionalPlacementOutcome,
+    WindowProvisionalPlacementRequest, WindowProvisionalRevealNativeFacts,
     WindowProvisionalRevealZOrder, WindowProvisionalSession,
 };
 #[cfg(test)]
@@ -167,10 +169,39 @@ fn test_native_pointer_physical_frame(
     ))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct TestWindowMutationRequest {
     generation: u64,
     request: WindowMutationRequest,
+    provisional_placement: Option<WindowProvisionalPlacementRequest>,
+}
+
+fn test_provisional_placement_native_facts(
+    state: &TestWindowState,
+    request: &WindowProvisionalPlacementRequest,
+) -> WindowProvisionalPlacementNativeFacts {
+    WindowProvisionalPlacementNativeFacts::new(
+        state.physical_client_bounds == Some(request.client_bounds()),
+        state.mapped,
+        true,
+        true,
+        true,
+        WindowProvisionalRevealZOrder::Exact,
+    )
+}
+
+fn settle_test_provisional_placement(
+    session: WindowProvisionalSession,
+    window_id: crate::WindowId,
+    request: WindowProvisionalPlacementRequest,
+    native_facts: Option<WindowProvisionalPlacementNativeFacts>,
+    outcome: WindowProvisionalPlacementOutcome,
+) {
+    if let Some(native_facts) = native_facts {
+        let _ =
+            session.record_native_final_placement(window_id, request.generation(), native_facts);
+    }
+    let _ = session.settle_native_final_placement(window_id, request.generation(), outcome);
 }
 
 #[derive(Default)]
@@ -515,6 +546,7 @@ impl TestWindow {
             PlatformWindowCommand::RevealDeferredInitialPresentation {
                 session_generation,
                 presentation_generation,
+                ..
             } => {
                 let mut state = self.0.lock();
                 let session = state.provisional_session.clone();
@@ -827,13 +859,33 @@ impl TestWindow {
         let Some(generation) = lock.mutation_generations.get(&domain).copied() else {
             return false;
         };
+        let provisional_placement = lock
+            .pending_mutations
+            .iter()
+            .rfind(|queued| queued.request.domain() == domain && queued.generation == generation)
+            .and_then(|queued| queued.provisional_placement.clone())
+            .and_then(|request| {
+                let session = lock.provisional_session.clone()?;
+                let native_facts = test_provisional_placement_native_facts(&lock, &request);
+                Some((session, lock.handle.window_id(), request, native_facts))
+            });
         lock.pending_mutations
             .retain(|queued| queued.request.domain() != domain);
         let facts = window_platform_facts(&lock);
-        let Some(mut callback) = lock.mutation_observation_callback.take() else {
+        let mut callback = lock.mutation_observation_callback.take();
+        drop(lock);
+        if let Some((session, window_id, request, native_facts)) = provisional_placement {
+            settle_test_provisional_placement(
+                session,
+                window_id,
+                request,
+                Some(native_facts),
+                WindowProvisionalPlacementOutcome::Settled,
+            );
+        }
+        let Some(mut callback) = callback else {
             return false;
         };
-        drop(lock);
         callback(PlatformWindowMutationObservation::observed(
             domain, generation, facts,
         ));
@@ -859,11 +911,26 @@ impl TestWindow {
         };
         let queued = lock.pending_mutations.remove(index);
         apply_test_window_mutation(&mut lock, queued.request);
+        let provisional_placement = queued.provisional_placement.and_then(|request| {
+            let session = lock.provisional_session.clone()?;
+            let facts = test_provisional_placement_native_facts(&lock, &request);
+            Some((session, lock.handle.window_id(), request, facts))
+        });
         let facts = window_platform_facts(&lock);
-        let Some(mut callback) = lock.mutation_observation_callback.take() else {
+        let mut callback = lock.mutation_observation_callback.take();
+        drop(lock);
+        if let Some((session, window_id, request, native_facts)) = provisional_placement {
+            settle_test_provisional_placement(
+                session,
+                window_id,
+                request,
+                Some(native_facts),
+                WindowProvisionalPlacementOutcome::Settled,
+            );
+        }
+        let Some(mut callback) = callback else {
             return false;
         };
-        drop(lock);
         callback(PlatformWindowMutationObservation::observed(
             domain, generation, facts,
         ));
@@ -914,13 +981,42 @@ impl TestWindow {
         facts: WindowPlatformFacts,
     ) -> bool {
         let mut lock = self.0.lock();
+        let provisional_placement = lock
+            .pending_mutations
+            .iter()
+            .find(|queued| queued.request.domain() == domain && queued.generation == generation)
+            .and_then(|queued| queued.provisional_placement.clone())
+            .and_then(|request| {
+                let session = lock.provisional_session.clone()?;
+                Some((session, lock.handle.window_id(), request))
+            });
         lock.pending_mutations
             .retain(|queued| queued.request.domain() != domain || queued.generation != generation);
         apply_window_platform_facts(&mut lock, &facts);
-        let Some(mut callback) = lock.mutation_observation_callback.take() else {
+        let provisional_placement = provisional_placement.map(|(session, window_id, request)| {
+            let (native_facts, outcome) = match terminal {
+                PlatformWindowMutationTerminal::Observed => (
+                    Some(test_provisional_placement_native_facts(&lock, &request)),
+                    WindowProvisionalPlacementOutcome::Settled,
+                ),
+                PlatformWindowMutationTerminal::Rejected
+                | PlatformWindowMutationTerminal::Unsupported => {
+                    (None, WindowProvisionalPlacementOutcome::Rejected)
+                }
+                PlatformWindowMutationTerminal::WindowClosed => {
+                    (None, WindowProvisionalPlacementOutcome::WindowTerminal)
+                }
+            };
+            (session, window_id, request, native_facts, outcome)
+        });
+        let mut callback = lock.mutation_observation_callback.take();
+        drop(lock);
+        if let Some((session, window_id, request, native_facts, outcome)) = provisional_placement {
+            settle_test_provisional_placement(session, window_id, request, native_facts, outcome);
+        }
+        let Some(mut callback) = callback else {
             return false;
         };
-        drop(lock);
         callback(PlatformWindowMutationObservation::terminal(
             domain, generation, terminal, facts,
         ));
@@ -1294,16 +1390,54 @@ impl PlatformWindow for TestWindow {
         if lock.closed {
             return;
         }
+        let stale_provisional_placement = lock
+            .pending_mutations
+            .iter()
+            .find(|queued| queued.request.domain() == domain)
+            .and_then(|queued| queued.provisional_placement.clone())
+            .and_then(|request| {
+                let session = lock.provisional_session.clone()?;
+                Some((session, lock.handle.window_id(), request))
+            });
         lock.mutation_generations.insert(domain, generation);
         lock.pending_mutations
             .retain(|queued| queued.request.domain() != domain);
+        drop(lock);
+        if let Some((session, window_id, request)) = stale_provisional_placement {
+            settle_test_provisional_placement(
+                session,
+                window_id,
+                request,
+                None,
+                WindowProvisionalPlacementOutcome::Stale,
+            );
+        }
     }
 
     fn invalidate_window_mutation(&self, domain: WindowMutationDomain) {
         let mut lock = self.0.lock();
         lock.mutation_generations.remove(&domain);
+        let stale_provisional_placement = lock
+            .pending_mutations
+            .iter()
+            .find(|queued| queued.request.domain() == domain)
+            .and_then(|queued| queued.provisional_placement.clone())
+            .and_then(|request| {
+                let session = lock.provisional_session.clone()?;
+                Some((session, lock.handle.window_id(), request))
+            });
         lock.pending_mutations
             .retain(|queued| queued.request.domain() != domain);
+        drop(lock);
+        if let Some((session, window_id, request)) = stale_provisional_placement {
+            settle_test_provisional_placement(
+                session,
+                window_id,
+                request,
+                None,
+                WindowProvisionalPlacementOutcome::Stale,
+            );
+        }
     }
 
     fn request_window_mutation(
@@ -1326,7 +1460,68 @@ impl PlatformWindow for TestWindow {
             lock.pending_mutations.push(TestWindowMutationRequest {
                 generation,
                 request,
+                provisional_placement: None,
             });
+        }
+        dispatch
+    }
+
+    fn request_provisional_placement(
+        &mut self,
+        generation: u64,
+        request: WindowProvisionalPlacementRequest,
+    ) -> PlatformWindowDispatch {
+        let mut lock = self.0.lock();
+        let Some(session) = lock.provisional_session.clone() else {
+            return PlatformWindowDispatch::Rejected;
+        };
+        let domain = WindowMutationDomain::Placement;
+        let request_is_current = matches!(
+            session.final_placement_request(lock.handle.window_id(), request.generation()),
+            Ok(current) if current == request
+        );
+        let Some(physical_request) =
+            WindowPhysicalPlacementRequest::try_new(request.client_bounds())
+        else {
+            return PlatformWindowDispatch::Rejected;
+        };
+        if lock.closed
+            || !lock.mapped
+            || lock.mutation_generations.get(&domain).copied() != Some(generation)
+            || !request_is_current
+        {
+            return PlatformWindowDispatch::Rejected;
+        }
+
+        let dispatch = lock
+            .next_mutation_dispatches
+            .remove(&domain)
+            .unwrap_or(PlatformWindowDispatch::Queued);
+        match dispatch {
+            PlatformWindowDispatch::Queued => {
+                lock.pending_mutations
+                    .retain(|queued| queued.request.domain() != domain);
+                lock.pending_mutations.push(TestWindowMutationRequest {
+                    generation,
+                    request: WindowMutationRequest::PhysicalPlacement(physical_request),
+                    provisional_placement: Some(request),
+                });
+            }
+            PlatformWindowDispatch::Unchanged => {
+                let facts = test_provisional_placement_native_facts(&lock, &request);
+                let window_id = lock.handle.window_id();
+                drop(lock);
+                settle_test_provisional_placement(
+                    session,
+                    window_id,
+                    request,
+                    Some(facts),
+                    WindowProvisionalPlacementOutcome::Settled,
+                );
+            }
+            PlatformWindowDispatch::Unsupported
+            | PlatformWindowDispatch::Rejected
+            | PlatformWindowDispatch::WindowClosed => {}
         }
         dispatch
     }
@@ -1625,6 +1820,9 @@ fn window_platform_facts(state: &TestWindowState) -> WindowPlatformFacts {
     WindowPlatformFacts {
         bounds: state.bounds,
         coordinate_space: crate::WindowCoordinateSpace::GlobalScreen,
+        physical_geometry: state
+            .physical_client_bounds
+            .and_then(|bounds| PlatformWindowPhysicalGeometry::try_new(bounds, state.scale_factor)),
         window_bounds: state.window_bounds,
         inner_window_bounds: state.window_bounds,
         content_size: state.bounds.size,
@@ -1692,6 +1890,16 @@ fn apply_test_window_mutation(state: &mut TestWindowState, request: WindowMutati
             } else if !state.is_minimized && !state.is_maximized && !state.is_fullscreen {
                 state.window_bounds = WindowBounds::Windowed(state.bounds);
             }
+        }
+        WindowMutationRequest::PhysicalPlacement(request) => {
+            let physical_bounds = request.client_bounds();
+            let bounds = physical_bounds.to_pixels(state.scale_factor);
+            state.physical_client_bounds = Some(physical_bounds);
+            state.bounds = bounds;
+            state.is_minimized = false;
+            state.is_maximized = false;
+            state.is_fullscreen = false;
+            state.window_bounds = WindowBounds::Windowed(bounds);
         }
         WindowMutationRequest::PointerInput(accepts_pointer_input) => {
             state.accepts_pointer_input = accepts_pointer_input;
@@ -1762,6 +1970,58 @@ mod window_mutation_tests {
         let platform_window = cx.test_window(handle);
         platform_window.clear_platform_command_history();
         (handle, platform_window)
+    }
+
+    fn open_revealed_provisional_window(
+        cx: &mut TestAppContext,
+        generation: u64,
+    ) -> (WindowProvisionalSession, AnyWindowHandle, TestWindow) {
+        let session = WindowProvisionalSession::new(generation)
+            .expect("the provisional generation should be valid");
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+        let reveal = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
+                    .expect("the matching bound session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            reveal.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+        (session, handle, platform_window)
+    }
+
+    fn provisional_placement_request(generation: u64) -> WindowProvisionalPlacementRequest {
+        WindowProvisionalPlacementRequest::try_new(
+            generation,
+            Bounds::new(
+                point(DevicePixels(80), DevicePixels(90)),
+                size(DevicePixels(360), DevicePixels(260)),
+            ),
+            point(DevicePixels(120), DevicePixels(130)),
+        )
+        .expect("the test final placement should be structurally valid")
     }
 
     #[crate::test]
@@ -3451,6 +3711,189 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
+    fn pending_provisional_final_placement_rejects_competing_placement_mutations(
+        cx: &mut TestAppContext,
+    ) {
+        let (session, handle, platform_window) = open_revealed_provisional_window(cx, 401);
+        let (dispatch, provisional_ticket) = cx
+            .update_window(handle, |_, window, _| {
+                window.request_provisional_placement(&session, provisional_placement_request(1))
+            })
+            .expect("the provisional window should remain live")
+            .expect("the revealed session should admit final placement");
+        let first_ticket = match dispatch {
+            WindowMutationDispatch::Queued(ticket) => ticket,
+            dispatch => panic!("expected queued provisional placement, got {dispatch:?}"),
+        };
+
+        let logical_replacement = cx
+            .update_window(handle, |_, window, _| {
+                window.request_window_placement_request(WindowPlacementRequest::windowed(bounds(
+                    25.0, 35.0, 440.0, 300.0,
+                )))
+            })
+            .expect("the provisional window should remain live");
+        assert!(matches!(
+            logical_replacement,
+            WindowMutationDispatch::Rejected
+        ));
+        let physical_replacement = cx
+            .update_window(handle, |_, window, _| {
+                window.request_physical_window_placement(
+                    crate::WindowPhysicalPlacementRequest::try_new(Bounds::new(
+                        point(DevicePixels(25), DevicePixels(35)),
+                        size(DevicePixels(440), DevicePixels(300)),
+                    ))
+                    .expect("the competing physical placement should be valid"),
+                )
+            })
+            .expect("the provisional window should remain live");
+        assert!(matches!(
+            physical_replacement,
+            WindowMutationDispatch::Rejected
+        ));
+        assert_eq!(
+            first_ticket.observation(),
+            None,
+            "a competing mutation must not terminalize the in-flight exact placement"
+        );
+        assert_eq!(
+            provisional_ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Pending,
+            "the special placement must retain authority until its native transaction settles"
+        );
+
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::Placement));
+        cx.run_until_parked();
+        assert_eq!(
+            first_ticket
+                .observation()
+                .map(|observation| observation.outcome),
+            Some(WindowMutationOutcome::Exact)
+        );
+        assert_eq!(
+            provisional_ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Settled
+        );
+    }
+
+    #[crate::test]
+    fn settled_provisional_placement_cannot_authorize_semantics_after_newer_placement(
+        cx: &mut TestAppContext,
+    ) {
+        let (session, handle, platform_window) = open_revealed_provisional_window(cx, 403);
+        let (dispatch, provisional_ticket) = cx
+            .update_window(handle, |_, window, _| {
+                window.request_provisional_placement(&session, provisional_placement_request(1))
+            })
+            .expect("the provisional window should remain live")
+            .expect("the revealed session should admit final placement");
+        assert!(matches!(dispatch, WindowMutationDispatch::Queued(_)));
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::Placement));
+        assert_eq!(
+            provisional_ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Settled
+        );
+
+        let replacement = cx
+            .update_window(handle, |_, window, _| {
+                window.request_window_placement_request(WindowPlacementRequest::windowed(bounds(
+                    25.0, 35.0, 440.0, 300.0,
+                )))
+            })
+            .expect("the provisional window should remain live");
+        assert!(matches!(replacement, WindowMutationDispatch::Queued(_)));
+        assert_eq!(
+            provisional_ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Settled,
+            "the immutable receipt may retain its historical terminal outcome"
+        );
+
+        cx.update_window(handle, |_, window, app| {
+            window
+                .begin_provisional_destination_semantics(&session, 1, app)
+                .expect_err(
+                    "a historical receipt must not authorize semantics after a newer placement",
+                );
+        })
+        .expect("the provisional window should remain live");
+
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::Placement));
+        cx.run_until_parked();
+    }
+
+    #[crate::test]
+    fn provisional_final_placement_terminal_settles_both_receipts(cx: &mut TestAppContext) {
+        let (session, handle, platform_window) = open_revealed_provisional_window(cx, 402);
+        let (dispatch, provisional_ticket) = cx
+            .update_window(handle, |_, window, _| {
+                window.request_provisional_placement(&session, provisional_placement_request(1))
+            })
+            .expect("the provisional window should remain live")
+            .expect("the revealed session should admit final placement");
+        let mutation_ticket = match dispatch {
+            WindowMutationDispatch::Queued(ticket) => ticket,
+            dispatch => panic!("expected queued provisional placement, got {dispatch:?}"),
+        };
+        let facts = platform_window.platform_facts();
+
+        assert!(platform_window.simulate_window_mutation_terminal(
+            WindowMutationDomain::Placement,
+            PlatformWindowMutationTerminal::WindowClosed,
+            facts,
+        ));
+        cx.run_until_parked();
+
+        assert_eq!(
+            mutation_ticket
+                .observation()
+                .map(|observation| observation.outcome),
+            Some(WindowMutationOutcome::WindowClosed)
+        );
+        assert_eq!(
+            provisional_ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::WindowTerminal
+        );
+    }
+
+    #[crate::test]
+    fn window_close_settles_provisional_authority_before_generic_observers(
+        cx: &mut TestAppContext,
+    ) {
+        let (session, handle, _platform_window) = open_revealed_provisional_window(cx, 404);
+        let (dispatch, provisional_ticket) = cx
+            .update_window(handle, |_, window, _| {
+                window.request_provisional_placement(&session, provisional_placement_request(1))
+            })
+            .expect("the provisional window should remain live")
+            .expect("the revealed session should admit final placement");
+        let mutation_ticket = match dispatch {
+            WindowMutationDispatch::Queued(ticket) => ticket,
+            dispatch => panic!("expected queued provisional placement, got {dispatch:?}"),
+        };
+        let observed_terminal_order = Rc::new(Cell::new(false));
+        let observed_terminal_order_for_callback = Rc::clone(&observed_terminal_order);
+        let provisional_ticket_for_callback = provisional_ticket.clone();
+        let _subscription = mutation_ticket.subscribe(move |observation| {
+            assert_eq!(observation.outcome, WindowMutationOutcome::WindowClosed);
+            assert_eq!(
+                provisional_ticket_for_callback.snapshot().outcome(),
+                WindowProvisionalPlacementOutcome::WindowTerminal,
+                "generic observers must see the special provisional authority already terminal"
+            );
+            observed_terminal_order_for_callback.set(true);
+        });
+
+        cx.update_window(handle, |_, window, app| window.remove_window(app))
+            .expect("the provisional window should remain addressable during close");
+        assert!(observed_terminal_order.get());
+        assert_eq!(
+            provisional_ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::WindowTerminal
+        );
+    }
+
+    #[crate::test]
     fn provisional_session_reveals_one_non_empty_generation_without_activation_then_promotes(
         cx: &mut TestAppContext,
     ) {
@@ -3486,10 +3929,16 @@ mod window_mutation_tests {
             "construction and initial root work must observe the provisional gate"
         );
 
+        let reveal_peer = crate::WindowId::from(900);
         let reveal_ticket = cx
             .update_window(handle, |_, window, app| {
                 window
-                    .arm_provisional_presentation(&session, app)
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [reveal_peer],
+                        app,
+                    )
                     .expect("the matching bound session should arm presentation")
             })
             .expect("the provisional window should remain live");
@@ -3518,12 +3967,60 @@ mod window_mutation_tests {
                 PlatformWindowCommand::RevealDeferredInitialPresentation {
                     session_generation: session.snapshot().generation(),
                     presentation_generation: generation,
+                    reveal_point: point(DevicePixels(40), DevicePixels(50)),
                 },
             ]
         );
         assert!(
             !session.snapshot().accepts_interaction(),
             "visibility alone must not admit provisional interaction"
+        );
+
+        let placement_bounds = Bounds::new(
+            point(DevicePixels(80), DevicePixels(90)),
+            size(DevicePixels(360), DevicePixels(260)),
+        );
+        let placement_request = WindowProvisionalPlacementRequest::try_new(
+            91,
+            placement_bounds,
+            point(DevicePixels(120), DevicePixels(130)),
+        )
+        .expect("the test final placement should be structurally valid");
+        let (placement_dispatch, placement_ticket) = cx
+            .update_window(handle, |_, window, _| {
+                window.request_provisional_placement(&session, placement_request)
+            })
+            .expect("the provisional window should remain live")
+            .expect("the revealed session should admit final placement");
+        assert!(matches!(
+            placement_dispatch,
+            WindowMutationDispatch::Queued(_)
+        ));
+        assert_eq!(
+            placement_ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Pending,
+            "queued platform work must not manufacture final-placement evidence"
+        );
+        assert_eq!(
+            session
+                .final_placement_request(handle.window_id(), 91)
+                .expect("the test backend should observe the exact pending request")
+                .peer_windows(),
+            &[reveal_peer],
+            "final placement must consume the peer authority frozen by reveal"
+        );
+        assert!(cx.flush_window_mutation(handle, WindowMutationDomain::Placement));
+        let placement = placement_ticket.snapshot();
+        assert_eq!(
+            placement.outcome(),
+            WindowProvisionalPlacementOutcome::Settled
+        );
+        assert_eq!(placement.client_bounds(), placement_bounds);
+        assert!(
+            placement
+                .native_facts()
+                .is_some_and(|facts| facts.physical_geometry_exact()),
+            "the test backend must settle native facts before mutation observers run"
         );
 
         let semantics_ticket = cx
@@ -3544,6 +4041,38 @@ mod window_mutation_tests {
             "beginning projection must not itself manufacture a semantics receipt"
         );
         assert!(!session.snapshot().accepts_interaction());
+        let frozen_facts = platform_window.platform_facts();
+        cx.update_window(handle, |_, window, _| {
+            assert!(matches!(
+                window.request_pointer_input(frozen_facts.accepts_pointer_input),
+                WindowMutationDispatch::Unchanged
+            ));
+            assert!(matches!(
+                window.request_pointer_input(!frozen_facts.accepts_pointer_input),
+                WindowMutationDispatch::Rejected
+            ));
+            assert!(matches!(
+                window.request_topmost(!frozen_facts.topmost),
+                WindowMutationDispatch::Rejected
+            ));
+            assert!(matches!(
+                window.request_window_placement_request(WindowPlacementRequest::windowed(bounds(
+                    25.0, 35.0, 440.0, 300.0,
+                ))),
+                WindowMutationDispatch::Rejected
+            ));
+            assert!(matches!(
+                window.request_physical_window_placement(
+                    crate::WindowPhysicalPlacementRequest::try_new(Bounds::new(
+                        point(DevicePixels(25), DevicePixels(35)),
+                        size(DevicePixels(440), DevicePixels(300)),
+                    ))
+                    .expect("the competing physical placement should be valid"),
+                ),
+                WindowMutationDispatch::Rejected
+            ));
+        })
+        .expect("the provisional window should remain live");
         cx.update_window(handle, |root, _, app| {
             root.downcast::<ProvisionalSemanticsMarkerRoot>()
                 .expect("the provisional semantics root should retain its exact type")
@@ -3568,6 +4097,17 @@ mod window_mutation_tests {
                 .is_some_and(|generation| generation >= semantics.minimum_frame_generation())
         );
         assert!(!session.snapshot().accepts_interaction());
+        cx.update_window(handle, |_, window, _| {
+            assert!(matches!(
+                window.request_pointer_input(!frozen_facts.accepts_pointer_input),
+                WindowMutationDispatch::Rejected
+            ));
+            assert!(matches!(
+                window.request_topmost(!frozen_facts.topmost),
+                WindowMutationDispatch::Rejected
+            ));
+        })
+        .expect("the provisional window should remain live");
 
         cx.update_window(handle, |_, window, app| {
             window
@@ -3627,7 +4167,12 @@ mod window_mutation_tests {
         let ticket = cx
             .update_window(handle, |_, window, app| {
                 window
-                    .arm_provisional_presentation(&session, app)
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
                     .expect("the matching bound session should arm presentation")
             })
             .expect("the provisional window should remain live");
@@ -3705,7 +4250,12 @@ mod window_mutation_tests {
         let ticket = cx
             .update_window(handle, |_, window, app| {
                 let ticket = window
-                    .arm_provisional_presentation(&session, app)
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
                     .expect("the matching bound session should arm presentation");
                 let presentation_generation = ticket.snapshot().minimum_presentation_generation();
                 app_cell.enqueue_provisional_window_reveal(
@@ -3714,6 +4264,7 @@ mod window_mutation_tests {
                     PlatformWindowCommand::RevealDeferredInitialPresentation {
                         session_generation: session.snapshot().generation(),
                         presentation_generation,
+                        reveal_point: point(DevicePixels(40), DevicePixels(50)),
                     },
                     ticket.clone(),
                 );
@@ -3768,7 +4319,12 @@ mod window_mutation_tests {
         let ticket = cx
             .update_window(handle, |_, window, app| {
                 window
-                    .arm_provisional_presentation(&session, app)
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
                     .expect("the matching bound session should arm presentation")
             })
             .expect("the provisional window should remain live");
@@ -3823,7 +4379,12 @@ mod window_mutation_tests {
         let reveal = cx
             .update_window(handle, |_, window, app| {
                 window
-                    .arm_provisional_presentation(&session, app)
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
                     .expect("the matching session should arm presentation")
             })
             .expect("the provisional window should remain live");
@@ -3902,7 +4463,7 @@ mod window_mutation_tests {
         duplicate.expect_err("one provisional session must own at most one window generation");
         assert_eq!(
             session
-                .begin_destination_semantics(other.window_id(), 11, 1)
+                .begin_destination_semantics(other.window_id(), 11, 1, 1)
                 .expect_err("a stale full window id must not project destination semantics"),
             crate::WindowProvisionalSessionError::WindowMismatch
         );
@@ -3915,7 +4476,12 @@ mod window_mutation_tests {
         let reveal_ticket = cx
             .update_window(handle, |_, window, app| {
                 window
-                    .arm_provisional_presentation(&session, app)
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
                     .expect("the matching bound session should arm presentation")
             })
             .expect("the provisional window should remain live");
@@ -4064,7 +4630,12 @@ mod window_mutation_tests {
         let reveal_ticket = cx
             .update_window(handle, |_, window, app| {
                 window
-                    .arm_provisional_presentation(&session, app)
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
                     .expect("the matching bound session should arm presentation")
             })
             .expect("the provisional window should remain live");

@@ -875,7 +875,7 @@ fn run_native_captured_desktop_release_case(
     cx.set_platform_window_physical_client_geometry(opened.window(), Some(source_bounds), 2.0);
     let sampled_point = point(DevicePixels(1800), DevicePixels(1800));
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(sampled_point, Vec::new())
+        PlatformWindowHitStack::try_available_open_desktop(sampled_point, Vec::new())
             .expect("desktop hit observation should be valid"),
     );
 

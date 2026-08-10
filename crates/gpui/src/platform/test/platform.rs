@@ -696,6 +696,7 @@ impl Platform for TestPlatform {
             .borrow()
             .unwrap_or(PlatformWindowMutationCapabilities {
                 position: WindowMutationSupport::Live,
+                physical_placement: WindowMutationSupport::Live,
                 size: WindowMutationSupport::Live,
                 windowed: WindowMutationSupport::Live,
                 maximized: WindowMutationSupport::Live,

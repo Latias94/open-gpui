@@ -1902,6 +1902,10 @@ fn window_mutation_request_payload(request: &WindowMutationRequest) -> serde_jso
             "state": request.state.map(window_placement_state_label),
             "restore_bounds": request.restore_bounds,
         }),
+        WindowMutationRequest::PhysicalPlacement(request) => serde_json::json!({
+            "kind": "physical-placement",
+            "client_bounds": request.client_bounds(),
+        }),
         WindowMutationRequest::PointerInput(accepts_pointer_input) => serde_json::json!({
             "kind": "pointer-input",
             "accepts_pointer_input": accepts_pointer_input,
@@ -1933,6 +1937,10 @@ fn window_platform_facts_payload(facts: &WindowPlatformFacts) -> serde_json::Val
             WindowCoordinateSpace::WindowLocal => "window-local",
             WindowCoordinateSpace::GlobalScreen => "global-screen",
         },
+        "physical_geometry": facts.physical_geometry.map(|geometry| serde_json::json!({
+            "client_bounds": geometry.client_bounds(),
+            "scale_factor": geometry.scale_factor(),
+        })),
         "window_state": if facts.is_minimized {
             "minimized"
         } else if facts.is_fullscreen {

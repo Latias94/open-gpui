@@ -11,6 +11,8 @@ mod dispatcher;
 mod display;
 mod events;
 mod keyboard;
+#[cfg(any(test, feature = "test-support"))]
+mod native_test_observation;
 mod platform;
 mod system_settings;
 mod util;
@@ -36,5 +38,14 @@ pub(crate) use window::*;
 pub(crate) use wrapper::*;
 
 pub use platform::WindowsPlatform;
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use native_test_observation::{
+    NativeWindowTestCaptureOwner, NativeWindowTestEvent, NativeWindowTestEventKind,
+    NativeWindowTestIdentity, NativeWindowTestMessage, NativeWindowTestMessageDisposition,
+    NativeWindowTestObservation, NativeWindowTestObservationGuard, NativeWindowTestPoint,
+    begin_native_window_test_observation,
+};
 
 pub(crate) use windows::Win32::Foundation::HWND;

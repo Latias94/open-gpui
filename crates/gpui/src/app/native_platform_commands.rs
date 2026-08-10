@@ -389,6 +389,7 @@ impl NativePlatformCommand {
             PlatformWindowCommand::RevealDeferredInitialPresentation {
                 session_generation,
                 presentation_generation,
+                ..
             } => (
                 NativePlatformCommandKind::RevealDeferredInitialPresentation,
                 Some(NativeBoundaryGeneration::ProvisionalPresentation {
@@ -446,18 +447,29 @@ impl Drop for NativePlatformCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PlatformWindowCommandOutcome, WindowProvisionalRevealCancellationOutcome};
+    use crate::{
+        DevicePixels, PlatformWindowCommandOutcome, WindowProvisionalRevealCancellationOutcome,
+        point,
+    };
 
     #[test]
     fn cancelled_provisional_reveal_command_is_not_dispatchable() {
         let window_id = WindowId::from(71);
-        let ticket = WindowProvisionalRevealTicket::new(window_id, 9, 14);
+        let reveal_point = point(DevicePixels(40), DevicePixels(50));
+        let ticket = WindowProvisionalRevealTicket::new(
+            window_id,
+            9,
+            reveal_point,
+            14,
+            Vec::<WindowId>::new().into(),
+        );
         let command = NativePlatformCommand::new_provisional_reveal(
             window_id,
             PlatformWindowCommandDispatcher::new(|_| PlatformWindowCommandOutcome::Accepted),
             PlatformWindowCommand::RevealDeferredInitialPresentation {
                 session_generation: 9,
                 presentation_generation: 14,
+                reveal_point,
             },
             ticket.clone(),
         );

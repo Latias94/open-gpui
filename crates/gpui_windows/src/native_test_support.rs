@@ -1,13 +1,14 @@
 use super::{RegisteredWindow, WindowsPlatform, translate_accelerator};
 use crate::{NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long};
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Application, Context, Empty, IntoElement,
+    AnyWindowHandle, AppContext as _, Application, Context, DevicePixels, Empty, IntoElement,
     NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryGeneration,
     NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind, NativePlatformCommandKind,
     ParentElement, PlatformInput, PlatformWindowPresentOutcome, PointerCancelEvent,
     PointerCancelReason, QuitMode, Render, Styled, Window, WindowActivationPolicy, WindowBounds,
     WindowId, WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome,
-    WindowOptions, WindowProvisionalRevealOutcome, WindowProvisionalRevealZOrder,
+    WindowOptions, WindowProvisionalPlacementOutcome, WindowProvisionalPlacementRequest,
+    WindowProvisionalRevealOutcome, WindowProvisionalRevealZOrder,
     WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
     canvas, div, point, px, size, white,
 };
@@ -32,15 +33,17 @@ use windows::Win32::{
         },
         WindowsAndMessaging::{
             BringWindowToTop, CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST,
-            GW_HWNDNEXT, GW_OWNER, GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow,
-            GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect,
-            GetWindowThreadProcessId, HTTRANSPARENT, HWND_MESSAGE, IsWindow, IsWindowVisible,
-            IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW,
-            PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SendMessageW, SetCursorPos, SetForegroundWindow,
+            GW_HWNDNEXT, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetClientRect, GetCursorPos,
+            GetForegroundWindow, GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect,
+            GetWindowThreadProcessId, HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST, IsWindow,
+            IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE,
+            PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN,
+            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+            SWP_SHOWWINDOW, SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowPos,
             TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_KEYDOWN, WM_KEYUP,
             WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST,
             WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
         },
     },
 };
@@ -272,6 +275,69 @@ fn create_unknown_message_window() -> HWND {
         )
     }
     .expect("native retirement sentinel HWND should be created")
+}
+
+/// Owns a small native opaque window used to make point-scoped Z-order tests deterministic.
+///
+/// The barrier is deliberately topmost and non-activating. The provisional window is placed
+/// immediately below it, while the barrier covers only a portion of the provisional bounds so
+/// the reveal still proves that visible fragments are retained.
+struct NativeOpaqueTestBarrier {
+    hwnd: HWND,
+}
+
+impl NativeOpaqueTestBarrier {
+    fn create_around(points: &[POINT]) -> Self {
+        assert!(!points.is_empty());
+        let left = points.iter().map(|point| point.x).min().unwrap() - 120;
+        let top = points.iter().map(|point| point.y).min().unwrap() - 100;
+        let right = points.iter().map(|point| point.x).max().unwrap() + 120;
+        let bottom = points.iter().map(|point| point.y).max().unwrap() + 100;
+        let width = (right - left).max(1);
+        let height = (bottom - top).max(1);
+        Self::create_rect(left, top, width, height)
+    }
+
+    fn create_rect(left: i32, top: i32, width: i32, height: i32) -> Self {
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                w!("STATIC"),
+                None,
+                WS_POPUP | WS_VISIBLE,
+                left,
+                top,
+                width,
+                height,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("native provisional test barrier should be created");
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                left,
+                top,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
+        }
+        .expect("native provisional test barrier should become visible");
+        Self { hwnd }
+    }
+}
+
+impl Drop for NativeOpaqueTestBarrier {
+    fn drop(&mut self) {
+        if unsafe { IsWindow(Some(self.hwnd)).as_bool() } {
+            let _ = unsafe { DestroyWindow(self.hwnd) };
+        }
+    }
 }
 
 fn mouse_position_lparam(x: u16, y: u16) -> LPARAM {
@@ -1537,6 +1603,13 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let native_window = platform
         .window_from_hwnd(hwnd)
         .expect("native provisional window should remain registered");
+    let mut reveal_rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut reveal_rect) }
+        .expect("native provisional window should expose its retained placement");
+    let reveal_point = point(
+        DevicePixels(reveal_rect.left + (reveal_rect.right - reveal_rect.left) / 2),
+        DevicePixels(reveal_rect.top + (reveal_rect.bottom - reveal_rect.top) / 2),
+    );
 
     assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
     assert!(
@@ -1546,11 +1619,20 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
     assert_eq!(session.snapshot().window_id(), Some(any_window.window_id()));
 
+    // Keep the point-scoped native proof independent of unrelated desktop windows. The barrier
+    // covers only a small region around the reveal point, so the provisional still has visible
+    // fragments after it is inserted immediately below the barrier.
+    let _barrier = NativeOpaqueTestBarrier::create_around(&[POINT {
+        x: reveal_rect.left + (reveal_rect.right - reveal_rect.left) / 2,
+        y: reveal_rect.top + (reveal_rect.bottom - reveal_rect.top) / 2,
+    }]);
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
+
     let reveal_ticket = app
         .update_for_test(|cx| {
             any_window.update(cx, |_, window, cx| {
                 window
-                    .arm_provisional_presentation(&session, cx)
+                    .arm_provisional_presentation(&session, reveal_point, [], cx)
                     .expect("the exact provisional session should arm its next frame")
             })
         })
@@ -1571,10 +1653,10 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .native_facts()
         .expect("the Windows backend must publish typed native reveal facts");
     assert!(native_facts.accepts_reveal());
-    assert_eq!(
+    assert!(matches!(
         native_facts.z_order(),
-        WindowProvisionalRevealZOrder::Unavailable
-    );
+        WindowProvisionalRevealZOrder::Exact | WindowProvisionalRevealZOrder::Adjusted
+    ));
     assert!(unsafe { IsWindowVisible(hwnd).as_bool() });
     assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
     assert!(
@@ -1601,6 +1683,141 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         )
     };
     assert_eq!(gated_mouse_activate.0, MA_NOACTIVATEANDEAT as isize);
+
+    let mut client_rect = RECT::default();
+    unsafe { GetClientRect(hwnd, &mut client_rect) }
+        .expect("visible provisional client bounds should be readable");
+    let mut client_origin = POINT::default();
+    unsafe { ClientToScreen(hwnd, &mut client_origin) }
+        .expect("visible provisional client origin should map to screen coordinates");
+    let client_width = client_rect.right - client_rect.left;
+    let client_height = client_rect.bottom - client_rect.top;
+    let final_client_bounds = open_gpui::Bounds::new(
+        point(
+            DevicePixels(client_origin.x + 48),
+            DevicePixels(client_origin.y + 40),
+        ),
+        size(DevicePixels(client_width), DevicePixels(client_height)),
+    );
+    let final_anchor = point(
+        DevicePixels(final_client_bounds.origin.x.0 + client_width / 2),
+        DevicePixels(final_client_bounds.origin.y.0 + client_height / 2),
+    );
+    let final_request =
+        WindowProvisionalPlacementRequest::try_new(77, final_client_bounds, final_anchor)
+            .expect("the native final-placement request should be finite and non-empty");
+
+    {
+        let _rejecting_barrier = NativeOpaqueTestBarrier::create_rect(
+            final_client_bounds.origin.x.0 - 64,
+            final_client_bounds.origin.y.0 - 64,
+            final_client_bounds.size.width.0 + 128,
+            final_client_bounds.size.height.0 + 128,
+        );
+        let mut window_rect_before = RECT::default();
+        unsafe { GetWindowRect(hwnd, &mut window_rect_before) }
+            .expect("the provisional rollback baseline should expose native bounds");
+        let z_order_before = unsafe { GetWindow(hwnd, GW_HWNDPREV) }.ok();
+        let geometry_before = native_window
+            .physical_geometry_from_native()
+            .expect("the provisional rollback baseline should expose physical geometry");
+        let rejected =
+            WindowProvisionalPlacementRequest::try_new(76, final_client_bounds, final_anchor)
+                .expect("the rejected native placement request should remain structurally valid");
+
+        assert!(
+            native_window
+                .apply_provisional_final_placement_for_test(&rejected)
+                .is_err(),
+            "a fully obscured final placement must reject"
+        );
+
+        let mut window_rect_after = RECT::default();
+        unsafe { GetWindowRect(hwnd, &mut window_rect_after) }
+            .expect("the rejected provisional placement should retain native bounds");
+        assert_eq!(window_rect_after, window_rect_before);
+        assert_eq!(unsafe { GetWindow(hwnd, GW_HWNDPREV) }.ok(), z_order_before);
+        assert_eq!(
+            native_window
+                .physical_geometry_from_native()
+                .expect("the rejected provisional placement should retain physical geometry"),
+            geometry_before
+        );
+    }
+
+    {
+        let mut window_rect_before = RECT::default();
+        unsafe { GetWindowRect(hwnd, &mut window_rect_before) }
+            .expect("the post-apply rollback baseline should expose native bounds");
+        let z_order_before = unsafe { GetWindow(hwnd, GW_HWNDPREV) }.ok();
+        let geometry_before = native_window
+            .physical_geometry_from_native()
+            .expect("the post-apply rollback baseline should expose physical geometry");
+
+        let facts = native_window
+            .apply_and_rollback_provisional_final_placement_for_test(&final_request)
+            .expect("a valid applied provisional placement should remain compensatable");
+        assert!(facts.accepts_placement());
+
+        let mut window_rect_after = RECT::default();
+        unsafe { GetWindowRect(hwnd, &mut window_rect_after) }
+            .expect("the compensated provisional placement should expose native bounds");
+        assert_eq!(window_rect_after, window_rect_before);
+        assert_eq!(unsafe { GetWindow(hwnd, GW_HWNDPREV) }.ok(), z_order_before);
+        assert_eq!(
+            native_window
+                .physical_geometry_from_native()
+                .expect("the compensated provisional placement should restore physical geometry"),
+            geometry_before
+        );
+    }
+
+    native_window
+        .provisional_delayed_rollback_rejects_native_rect_aba_for_test(&final_request)
+        .expect("a delayed provisional compensation must reject native placement ABA");
+
+    let (placement_dispatch, placement_ticket) = app
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window
+                    .request_provisional_placement(&session, final_request)
+                    .expect("the exact revealed provisional should accept final placement")
+            })
+        })
+        .expect("native provisional window should remain live during final placement");
+    let mutation_ticket = match placement_dispatch {
+        WindowMutationDispatch::Queued(ticket) => ticket,
+        outcome => panic!("native final placement must queue a platform observation: {outcome:?}"),
+    };
+    pump_messages_until_with_delay(
+        "real provisional final placement",
+        Duration::from_millis(1),
+        || {
+            app.update_for_test(|_| {
+                placement_ticket.snapshot().outcome() != WindowProvisionalPlacementOutcome::Pending
+                    && mutation_ticket.observation().is_some()
+            })
+        },
+    );
+    let placement = placement_ticket.snapshot();
+    assert_eq!(
+        placement.outcome(),
+        WindowProvisionalPlacementOutcome::Settled
+    );
+    assert_eq!(placement.client_bounds(), final_client_bounds);
+    assert_eq!(placement.anchor_point(), final_anchor);
+    assert!(
+        placement
+            .native_facts()
+            .is_some_and(|facts| facts.accepts_placement())
+    );
+    let mutation = mutation_ticket
+        .observation()
+        .expect("native final placement must settle its GPUI mutation ticket");
+    assert!(matches!(
+        mutation.outcome,
+        WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
+    ));
 
     let semantics_ticket = app
         .update_for_test(|cx| {

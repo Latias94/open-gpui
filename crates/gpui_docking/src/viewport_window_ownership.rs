@@ -712,6 +712,38 @@ impl DockViewportWindowOwnership {
             .collect()
     }
 
+    pub(crate) fn provisional_peer_window_ids(
+        &self,
+        opening: DockLiveUndockOpeningKey,
+        destination: WindowId,
+    ) -> Option<Vec<WindowId>> {
+        let authority = DockViewportWindowAuthority::Surface(opening.lease());
+        let destination_record = self.windows.get(&destination)?;
+        if destination_record.authority != authority
+            || destination_record.role != DockViewportWindowRole::ProvisionalViewport(opening)
+            || destination_record.state != DockViewportWindowOwnershipState::Provisional
+        {
+            return None;
+        }
+
+        let mut peers = self
+            .windows
+            .iter()
+            .filter_map(|(window_id, record)| {
+                (*window_id != destination
+                    && record.authority == authority
+                    && matches!(
+                        record.state,
+                        DockViewportWindowOwnershipState::Provisional
+                            | DockViewportWindowOwnershipState::Owned
+                    ))
+                .then_some(*window_id)
+            })
+            .collect::<Vec<_>>();
+        peers.sort_unstable_by_key(WindowId::as_u64);
+        Some(peers)
+    }
+
     pub(crate) fn freeze_surface(
         &mut self,
         lease: DockSurfaceWindowSessionLease,
@@ -1113,6 +1145,98 @@ mod tests {
             .expect("rejected provisional opening must retain its exact retirement ticket");
         assert!(ownership.settle_retirement(retirement));
         assert!(!ownership.settle_retirement(retirement));
+    }
+
+    #[test]
+    fn provisional_peer_window_ids_include_only_exact_live_surface_peers() {
+        let mut ownership = DockViewportWindowOwnership::default();
+        let lease = surface_lease(55, WindowId::from(550));
+        let other_lease = surface_lease(56, WindowId::from(560));
+        let destination_opening = DockLiveUndockOpeningKey::for_test(lease, 1);
+        let peer_opening = DockLiveUndockOpeningKey::for_test(lease, 2);
+        let opening_only = DockLiveUndockOpeningKey::for_test(lease, 3);
+
+        let anchor = test_window(WindowId::from(550));
+        let managed = test_window(WindowId::from(552));
+        ownership.register_runtime_window_with_lineage(
+            anchor,
+            DockViewportRuntimeLineage::Surface(lease),
+            DockViewportWindowRole::PrimaryAnchor,
+        );
+        ownership.register_runtime_window_with_lineage(
+            managed,
+            DockViewportRuntimeLineage::Surface(lease),
+            DockViewportWindowRole::ManagedViewport,
+        );
+
+        let peer = test_window(WindowId::from(551));
+        let peer_attempt = ownership
+            .begin_provisional_open_attempt(peer, peer_opening, false)
+            .expect("same-surface provisional peer should reserve");
+        assert!(matches!(
+            ownership.complete_provisional_open_attempt(peer_attempt, peer_opening, true),
+            DockViewportProvisionalOpenAttemptCompletion::Admitted(_)
+        ));
+
+        let destination = test_window(WindowId::from(553));
+        let destination_attempt = ownership
+            .begin_provisional_open_attempt(destination, destination_opening, false)
+            .expect("destination provisional should reserve");
+        let destination_key = match ownership.complete_provisional_open_attempt(
+            destination_attempt,
+            destination_opening,
+            true,
+        ) {
+            DockViewportProvisionalOpenAttemptCompletion::Admitted(key) => key,
+            outcome => panic!("destination should be admitted, got {outcome:?}"),
+        };
+
+        let opening_window = test_window(WindowId::from(554));
+        ownership
+            .begin_provisional_open_attempt(opening_window, opening_only, false)
+            .expect("opening-only provisional should reserve");
+        let retired = test_window(WindowId::from(555));
+        ownership.register_runtime_window_with_lineage(
+            retired,
+            DockViewportRuntimeLineage::Surface(lease),
+            DockViewportWindowRole::ManagedViewport,
+        );
+        assert!(ownership.retire_window(retired.window_id()).changed());
+        ownership.register_runtime_window_with_lineage(
+            test_window(WindowId::from(556)),
+            DockViewportRuntimeLineage::Surface(other_lease),
+            DockViewportWindowRole::ManagedViewport,
+        );
+        ownership.register_runtime_window(WindowId::from(557));
+
+        assert_eq!(
+            ownership.provisional_peer_window_ids(destination_opening, destination.window_id(),),
+            Some(vec![
+                anchor.window_id(),
+                peer.window_id(),
+                managed.window_id()
+            ])
+        );
+        assert!(
+            ownership
+                .provisional_peer_window_ids(
+                    DockLiveUndockOpeningKey::for_test(lease, 99),
+                    destination.window_id(),
+                )
+                .is_none(),
+            "a stale opening identity must not inherit the destination peer band"
+        );
+
+        let prepared = ownership
+            .prepare_provisional_window_promotion(destination.window_id(), destination_opening)
+            .expect("exact destination provisional should prepare promotion");
+        ownership.commit_provisional_window_promotion(prepared);
+        assert!(
+            ownership
+                .provisional_peer_window_ids(destination_opening, destination_key.window_id())
+                .is_none(),
+            "a committed destination is no longer a provisional peer-band authority"
+        );
     }
 
     #[test]

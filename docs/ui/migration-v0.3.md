@@ -405,6 +405,23 @@ match dispatch {
 }
 ```
 
+Native multi-window coordination may instead require an exact windowed client rectangle in
+physical desktop pixels. Do not convert a window-local logical `bounds` snapshot yourself. Create
+a checked `WindowPhysicalPlacementRequest` and use the dedicated wrapper:
+
+```rust
+use open_gpui::WindowPhysicalPlacementRequest;
+
+let Some(request) = WindowPhysicalPlacementRequest::try_new(physical_client_bounds) else {
+    return Err("physical client bounds are not representable".into());
+};
+let dispatch = window.request_physical_window_placement(request);
+```
+
+`WindowMutationRequest::PhysicalPlacement` is a breaking addition for exhaustive request matches.
+It is valid only for a positive-size windowed client area and preserves physical desktop units all
+the way through native dispatch and terminal observation.
+
 `Queued` means only that GPUI handed the request to the backend. It does not update
 `Window::platform_facts`, `bounds`, `window_bounds`, fullscreen/minimized state, any independent
 flag, or Dock placement. A retained ticket later settles once as `Exact`, `Adjusted`,
@@ -414,18 +431,23 @@ rejects a stale generation before committing its facts, so an older callback can
 ticket or roll the public cache backward. Dropping a subscription stops callback delivery but
 never cancels the request or its terminal record.
 
-Position, size, windowed/maximized/fullscreen/minimized state, and restore bounds are one
-placement conflict domain. Pointer input, coherent activation policy, alpha, topmost, and taskbar
-visibility are five independent domains. A newer legal request supersedes only the older
-request in its own domain, while an invalid placement request does not disturb a pending one.
+Logical `WindowMutationRequest::Placement` and
+`WindowMutationRequest::PhysicalPlacement` share the single `WindowMutationDomain::Placement`
+generation with position, size, windowed/maximized/fullscreen/minimized state, and restore bounds.
+A newer logical placement therefore supersedes an older physical placement, and a newer physical
+placement supersedes an older logical placement. They are alternative coordinate projections of
+one native placement authority, not independently committable operations. Pointer input, coherent
+activation policy, alpha, topmost, and taskbar visibility are five independent domains. A newer
+legal request supersedes only the older request in its own domain, while an invalid placement
+request does not disturb a pending one.
 Closing a window first invalidates every queued backend generation, then settles retained tickets
 as `WindowClosed`. `WindowBounds` remains the compatibility projection for windowed, maximized,
 and fullscreen creation or requests; use `WindowPlacementRequest` for partial updates and
 minimized state.
 
 `Window::request_window_mutation` accepts the complete `WindowMutationRequest` vocabulary.
-`request_pointer_input`, `request_activation_policy`, `request_topmost`,
-`request_taskbar_visibility`, `set_background_appearance`, `resize`, `zoom_window`,
+`request_physical_window_placement`, `request_pointer_input`, `request_activation_policy`,
+`request_topmost`, `request_taskbar_visibility`, `set_background_appearance`, `resize`, `zoom_window`,
 `minimize_window`, and `toggle_fullscreen` are ergonomic typed wrappers over that same authority
 and now return a `must_use` `WindowMutationDispatch`. The state helpers request only the target
 state; they do not copy restore geometry into the request. Handle the dispatch or explicitly bind
@@ -433,12 +455,15 @@ it to `_` when the terminal result is intentionally ignored.
 
 `PlatformViewportCapabilities::live_window_move`, `PlatformViewportFlagCapabilities`, and
 `App::viewport_flag_capabilities()` have been deleted. Inspect
-`Window::window_capabilities()` instead. The `mutations` matrix covers placement, pointer input,
-the two-field activation policy, alpha, topmost, taskbar visibility, and coordinate space. Windows
-currently exposes live size, windowed/maximized/fullscreen, and pointer-input mutation, but reports
-window-local coordinates and keeps position plus restore bounds creation-only until mixed-DPI
-desktop coordinates are comparable. Other native backends conservatively report only their
-creation-time or unsupported properties. Capability lookup is per `WindowKind`: Wayland
+`Window::window_capabilities()` instead. The `mutations` matrix covers logical placement, physical
+placement, pointer input, the two-field activation policy, alpha, topmost, taskbar visibility, and
+coordinate space. `physical_placement` is intentionally independent of the ordinary `position`
+capability: Windows reports it as `Live` while keeping logical position creation-only, because the
+physical request and observation remain in one mixed-DPI-safe desktop coordinate system. macOS,
+X11, Wayland, Web, and headless backends currently report physical placement as `Unsupported` and
+must return `None` for physical geometry rather than synthesizing it by scaling logical bounds.
+Other native properties remain conservatively creation-only or unsupported. Capability lookup is
+per `WindowKind`: Wayland
 LayerShell windows do not inherit XDG windowed/maximized/fullscreen/restore claims.
 When code has only an opened `AnyWindowHandle`, use `App::window_profile(handle)` to read
 the immutable profile captured for that window's actual creation kind and target display. Do not call
@@ -488,7 +513,13 @@ capabilities that depend on native resources, such as an X11 screen's transparen
 `PlatformWindow::creation_facts` must report the exact applied immutable creation facts,
 `is_visible` must report native visibility, and `draw` must return a truthful
 `PlatformWindowPresentOutcome`. `PlatformWindow::platform_facts` must return one coherent observed
-snapshot. Set `initial_presentation_order` to `BeforeVisibility` only when a frame can be submitted
+snapshot. Every `PlatformWindowMutationCapabilities` literal must initialize
+`physical_placement`. Every `WindowPlatformFacts` literal must initialize `physical_geometry` with
+`Some(PlatformWindowPhysicalGeometry)` only when the client bounds and scale factor came from the
+same physical desktop observation; otherwise use `None`. A backend that reports physical placement
+as `Live` must use that coherent physical geometry to settle the request. Do not derive it from
+`bounds`, combine separately sampled scale and position, or treat `None` as an adjusted success.
+Set `initial_presentation_order` to `BeforeVisibility` only when a frame can be submitted
 while hidden, `AfterVisibility` only when native visibility precedes submission, or
 `PresentationEstablishesVisibility` when the first submission itself maps the native surface. A
 property may be
@@ -692,38 +723,57 @@ native integrations must handle the new variant. The variant is legal only for a
 provisional window and carries its non-zero immutable session generation plus same-observation
 coverage and client geometry.
 
-Custom `Platform::window_hit_stack_at` implementations must return entries in native front-to-back
-order using this grammar:
+`PlatformWindowHitObservation` no longer exposes one untyped hit slice whose final element must be
+inferred by the consumer. Read the exact front-to-back provisional prefix with
+`provisional_pass_throughs()` and then match the typed `PlatformWindowHitTerminus` returned by
+`terminus()`. A complete observation has this shape:
 
 ```text
-ProvisionalPassThrough* (RegisteredApplication | OpaqueBarrier)
+ProvisionalPassThrough* -> OpenDesktop
+ProvisionalPassThrough* -> Window(RegisteredApplication | OpaqueBarrier)
 ```
 
-An empty available observation means the backend positively verified open desktop space. Missing
+This is an intentional contract expansion: verified open desktop may now follow a non-empty
+provisional pass-through prefix. An empty open-desktop observation remains valid, but emptiness is
+not the desktop authority. `PlatformWindowHitTerminus::OpenDesktop` is the authority. Missing
 windows, incomplete enumeration, stale generation identity, a point outside any reported coverage,
-or any ordering ambiguity must return `PlatformWindowHitStack::Unavailable` instead. The trait's
-default implementation already returns `Unavailable`, so backends that do not support classified
-point-hit stacks may keep that fail-closed behavior.
+an unclassified native top-level below a provisional window, or any ordering ambiguity must return
+`PlatformWindowHitStack::Unavailable` instead. The trait's default implementation already returns
+`Unavailable`, so backends that do not support classified point-hit stacks may keep that
+fail-closed behavior.
 
 Update consumers as follows:
 
 ```rust
-match hit {
-    PlatformWindowHit::ProvisionalPassThrough { .. } => {
-        // Continue only after validating the exact provisional session.
+for hit in observation.provisional_pass_throughs() {
+    let PlatformWindowHit::ProvisionalPassThrough { .. } = hit else {
+        unreachable!("checked observations contain only provisional prefix entries");
+    };
+    // Continue only after validating every exact provisional session.
+}
+
+match observation.terminus() {
+    PlatformWindowHitTerminus::OpenDesktop => {
+        // The backend positively verified desktop below the complete prefix.
     }
-    PlatformWindowHit::RegisteredApplication { .. } => {
+    PlatformWindowHitTerminus::Window(PlatformWindowHit::RegisteredApplication { .. }) => {
         // This is the terminal application target.
     }
-    PlatformWindowHit::OpaqueBarrier { .. } => {
+    PlatformWindowHitTerminus::Window(PlatformWindowHit::OpaqueBarrier { .. }) => {
         // Stop routing at ordinary, foreign, or unknown native coverage.
+    }
+    PlatformWindowHitTerminus::Window(PlatformWindowHit::ProvisionalPassThrough { .. }) => {
+        unreachable!("checked observations cannot terminate at a provisional entry");
     }
 }
 ```
 
-Use `PlatformWindowHitObservation::try_new` or `PlatformWindowHitStack::try_available` rather than
-constructing unchecked observations. They reject malformed coverage, zero provisional generations,
-non-prefix pass-through entries, and non-empty observations without exactly one terminal entry.
+Use `PlatformWindowHitObservation::try_new` or `PlatformWindowHitStack::try_available` for a
+window-terminated observation. Use `PlatformWindowHitObservation::try_open_desktop` or
+`PlatformWindowHitStack::try_available_open_desktop` only after independently proving that native
+hit testing continued through every supplied provisional entry to desktop. The checked constructors
+reject malformed coverage, zero provisional generations, non-prefix pass-through entries, and
+window-terminated observations without exactly one terminal entry.
 
 ## Deterministic Collection Typeahead
 

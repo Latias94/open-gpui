@@ -337,9 +337,10 @@ fn relevant_window_mutation_facts_match(
         WindowMutationRequest::PointerInput(_) => {
             previous.accepts_pointer_input == current.accepts_pointer_input
         }
-        WindowMutationRequest::Placement(_) => {
+        WindowMutationRequest::Placement(_) | WindowMutationRequest::PhysicalPlacement(_) => {
             previous.bounds == current.bounds
                 && previous.coordinate_space == current.coordinate_space
+                && previous.physical_geometry == current.physical_geometry
                 && previous.window_bounds == current.window_bounds
                 && previous.inner_window_bounds == current.inner_window_bounds
                 && previous.content_size == current.content_size
@@ -1092,6 +1093,17 @@ impl DockViewportRuntimeHandle {
         lease: DockSurfaceWindowSessionLease,
     ) -> Vec<(crate::DockViewportWindowRole, AnyWindowHandle)> {
         self.runtime.borrow().windows_for_surface(lease)
+    }
+
+    pub(crate) fn provisional_peer_window_ids(
+        &self,
+        context: DockViewportRuntimeWorkContext,
+        opening: DockLiveUndockOpeningKey,
+        destination: WindowId,
+    ) -> Option<Vec<WindowId>> {
+        self.runtime
+            .borrow()
+            .provisional_peer_window_ids(context, opening, destination)
     }
 
     /// Creates a handle from a prepared runtime.
@@ -3222,6 +3234,7 @@ mod window_mutation_retry_tests {
         WindowPlatformFacts {
             bounds,
             coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            physical_geometry: None,
             window_bounds: WindowBounds::Windowed(bounds),
             inner_window_bounds: WindowBounds::Windowed(bounds),
             content_size: bounds.size,

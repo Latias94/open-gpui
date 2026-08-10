@@ -411,6 +411,7 @@ fn docking_runtime_observations_preserve_typed_request_and_committed_facts() {
                 facts: WindowPlatformFacts {
                     bounds: observed_bounds,
                     coordinate_space: WindowCoordinateSpace::WindowLocal,
+                    physical_geometry: None,
                     window_bounds: WindowBounds::Windowed(observed_bounds),
                     inner_window_bounds: WindowBounds::Windowed(observed_bounds),
                     content_size: observed_bounds.size,

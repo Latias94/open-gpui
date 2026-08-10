@@ -240,6 +240,7 @@ impl PlatformWindow for HeadlessWindow {
         WindowPlatformFacts {
             bounds: self.bounds(),
             coordinate_space: open_gpui::WindowCoordinateSpace::WindowLocal,
+            physical_geometry: None,
             window_bounds: self.window_bounds(),
             inner_window_bounds: self.inner_window_bounds(),
             content_size: self.content_size(),

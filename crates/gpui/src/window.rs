@@ -30,8 +30,10 @@ use crate::{
     WindowBackgroundAppearance, WindowBounds, WindowControls, WindowCreationFacts,
     WindowDecorations, WindowInitialPresentationOrder, WindowInitialPresentationStatus, WindowKind,
     WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
-    WindowParams, WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts,
-    WindowPresentAttemptFacts, WindowPresentationFacts, WindowProvisionalOpeningClaim,
+    WindowParams, WindowPhysicalPlacementRequest, WindowPlacementRequest, WindowPlacementState,
+    WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
+    WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
+    WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
     WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
     WindowProvisionalSemanticsSnapshot, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
@@ -2755,6 +2757,8 @@ impl Window {
     pub fn arm_provisional_presentation(
         &mut self,
         session: &WindowProvisionalSession,
+        reveal_point: Point<DevicePixels>,
+        peer_windows: impl IntoIterator<Item = WindowId>,
         _cx: &mut App,
     ) -> Result<WindowProvisionalRevealTicket> {
         let owned = self
@@ -2783,10 +2787,18 @@ impl Window {
             self.presentation_state.provisional_reveal_ticket.is_none(),
             "provisional presentation is already armed"
         );
+        let mut exact_peers = Vec::new();
+        for peer in peer_windows {
+            if peer != self.handle.window_id() && !exact_peers.contains(&peer) {
+                exact_peers.push(peer);
+            }
+        }
         let ticket = WindowProvisionalRevealTicket::new(
             self.handle.window_id(),
             snapshot.generation(),
+            reveal_point,
             self.rendered_frame.generation.saturating_add(1),
+            exact_peers.into(),
         );
         session.register_reveal_ticket(ticket.clone())?;
         self.presentation_state.provisional_reveal_ticket = Some(ticket.clone());
@@ -2796,6 +2808,46 @@ impl Window {
             require_presentation: true,
         });
         Ok(ticket)
+    }
+
+    /// Requests another presented frame for the exact provisional reveal authority.
+    #[doc(hidden)]
+    pub fn request_provisional_presentation_frame(
+        &mut self,
+        ticket: &WindowProvisionalRevealTicket,
+    ) -> Result<()> {
+        let current = self
+            .presentation_state
+            .provisional_reveal_ticket
+            .as_ref()
+            .ok_or_else(|| anyhow!("provisional presentation is not armed"))?;
+        anyhow::ensure!(
+            current.same_authority(ticket),
+            "provisional reveal ticket authority does not match the window"
+        );
+        let snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            snapshot.window_id() == self.handle.window_id(),
+            "provisional reveal ticket belongs to a different full window id"
+        );
+        anyhow::ensure!(
+            matches!(
+                snapshot.outcome(),
+                WindowProvisionalRevealOutcome::Pending | WindowProvisionalRevealOutcome::Revealed
+            ),
+            "terminal provisional reveal authority cannot request another presentation frame"
+        );
+        anyhow::ensure!(
+            self.creation_can_commit() && self.presentation_shutdown.is_none(),
+            "a terminal window cannot continue provisional presentation"
+        );
+
+        self.refresh();
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        });
+        Ok(())
     }
 
     /// Atomically cancels one exact provisional reveal before a native command can win.
@@ -2877,6 +2929,9 @@ impl Window {
                     .is_some_and(|facts| facts.accepts_reveal()),
             "provisional presentation has not completed its exact native reveal"
         );
+        let current_mutation_generation = self
+            .window_mutations
+            .last_generation(WindowMutationDomain::Placement);
         let reveal_generation = reveal.presentation_generation().ok_or_else(|| {
             anyhow!("provisional reveal has no committed presentation generation")
         })?;
@@ -2890,6 +2945,7 @@ impl Window {
             self.handle.window_id(),
             destination_generation,
             minimum_frame_generation,
+            current_mutation_generation,
         )?;
         self.refresh();
         self.platform_window.request_frame(RequestFrameOptions {
@@ -2939,8 +2995,20 @@ impl Window {
                 && frame_generation >= ticket_snapshot.minimum_frame_generation(),
             "destination semantics ticket does not admit the candidate frame"
         );
+        let current_mutation_generation = self
+            .window_mutations
+            .last_generation(WindowMutationDomain::Placement);
+        anyhow::ensure!(
+            ticket_snapshot.placement_mutation_generation() == current_mutation_generation,
+            "destination semantics ticket no longer owns the exact placement authority"
+        );
         session
-            .commit_destination_semantics(self.handle.window_id(), ticket, frame_generation)
+            .commit_destination_semantics(
+                self.handle.window_id(),
+                ticket,
+                frame_generation,
+                current_mutation_generation,
+            )
             .map_err(|error| anyhow!(error))?;
         Ok(ticket.snapshot())
     }
@@ -2969,7 +3037,14 @@ impl Window {
             self.creation_can_commit() && self.presentation_shutdown.is_none(),
             "a terminal window cannot admit provisional interaction"
         );
-        session.admit_interaction(self.handle.window_id(), ticket)?;
+        let current_mutation_generation = self
+            .window_mutations
+            .last_generation(WindowMutationDomain::Placement);
+        anyhow::ensure!(
+            ticket.snapshot().placement_mutation_generation() == current_mutation_generation,
+            "destination semantics ticket no longer owns the exact placement authority"
+        );
+        session.admit_interaction(self.handle.window_id(), ticket, current_mutation_generation)?;
         Ok(())
     }
 
@@ -3066,6 +3141,18 @@ impl Window {
         self.presentation_state
             .renderer_invalidated_generation
             .is_some_and(|generation| self.rendered_frame.generation <= generation)
+    }
+
+    fn provisional_presentation_progress_is_pending(&self) -> bool {
+        self.provisional_session.as_ref().is_some_and(|session| {
+            let snapshot = session.snapshot();
+            snapshot.window_id() == Some(self.handle.window_id())
+                && !matches!(
+                    snapshot.phase(),
+                    WindowProvisionalSessionPhase::Promoted
+                        | WindowProvisionalSessionPhase::Terminal
+                )
+        })
     }
 
     fn request_renderer_repaint_frame(&mut self) {
@@ -3536,6 +3623,7 @@ impl Window {
         self.claim_presentation_shutdown();
         self.removal_state = removal_state;
         let preparation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.terminate_provisional_presentation_for_window_close();
             self.invalidate_platform_window_mutations();
             let deliveries = self.window_mutations.settle_all(
                 &self.window_mutation_authority,
@@ -3593,17 +3681,7 @@ impl Window {
         self.should_close_handler.terminate();
         let mut first_panic = None;
 
-        if let Some(session) = self.provisional_session.as_ref() {
-            let snapshot = session.snapshot();
-            if snapshot.window_id() == Some(self.handle.window_id())
-                && snapshot.phase() != WindowProvisionalSessionPhase::Terminal
-            {
-                let _ = session.terminate(self.handle.window_id());
-            }
-        }
-        if let Some(ticket) = self.presentation_state.provisional_reveal_ticket.as_ref() {
-            ticket.settle(WindowProvisionalRevealOutcome::WindowTerminal);
-        }
+        self.terminate_provisional_presentation_for_window_close();
 
         retain_first_window_cleanup_panic(
             &mut first_panic,
@@ -3672,6 +3750,20 @@ impl Window {
         self.removed = true;
         if let Some(payload) = first_panic {
             std::panic::resume_unwind(payload);
+        }
+    }
+
+    fn terminate_provisional_presentation_for_window_close(&mut self) {
+        if let Some(session) = self.provisional_session.as_ref() {
+            let snapshot = session.snapshot();
+            if snapshot.window_id() == Some(self.handle.window_id())
+                && snapshot.phase() != WindowProvisionalSessionPhase::Terminal
+            {
+                let _ = session.terminate(self.handle.window_id());
+            }
+        }
+        if let Some(ticket) = self.presentation_state.provisional_reveal_ticket.as_ref() {
+            ticket.settle(WindowProvisionalRevealOutcome::WindowTerminal);
         }
     }
 
@@ -4990,6 +5082,11 @@ impl Window {
     fn window_mutation_request_is_live(&self, request: WindowMutationRequest) -> bool {
         match request {
             WindowMutationRequest::Placement(request) => self.placement_request_is_live(request),
+            WindowMutationRequest::PhysicalPlacement(_) => self
+                .window_capabilities
+                .mutations
+                .physical_placement
+                .is_live(),
             WindowMutationRequest::PointerInput(_) => {
                 self.window_capabilities.mutations.pointer_input.is_live()
             }
@@ -5142,6 +5239,78 @@ impl Window {
         self.request_window_mutation(WindowMutationRequest::Placement(request))
     }
 
+    /// Requests a windowed client-area placement in physical desktop coordinates.
+    ///
+    /// This advanced path is intended for native multi-window coordination. It does not change
+    /// the coordinate system of [`Self::bounds`] or imply that ordinary logical position mutation
+    /// is supported by the backend.
+    pub fn request_physical_window_placement(
+        &mut self,
+        request: WindowPhysicalPlacementRequest,
+    ) -> WindowMutationDispatch {
+        self.request_window_mutation(WindowMutationRequest::PhysicalPlacement(request))
+    }
+
+    /// Requests one atomic final physical placement and point-scoped Z-order settlement for the
+    /// exact bound provisional session.
+    #[doc(hidden)]
+    pub fn request_provisional_placement(
+        &mut self,
+        session: &WindowProvisionalSession,
+        request: WindowProvisionalPlacementRequest,
+    ) -> Result<(WindowMutationDispatch, WindowProvisionalPlacementTicket)> {
+        let owned = self
+            .provisional_session
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no provisional presentation session"))?;
+        anyhow::ensure!(
+            owned.same_authority(session),
+            "provisional placement session authority does not match the window"
+        );
+        let snapshot = session.snapshot();
+        anyhow::ensure!(
+            snapshot.window_id() == Some(self.handle.window_id())
+                && snapshot.phase() == WindowProvisionalSessionPhase::Gated,
+            "only the exact gated provisional window can request final placement"
+        );
+        anyhow::ensure!(
+            self.creation_can_commit() && self.presentation_shutdown.is_none(),
+            "a terminal window cannot request final provisional placement"
+        );
+        let physical_request = WindowPhysicalPlacementRequest::try_new(request.client_bounds())
+            .ok_or_else(|| anyhow!("provisional placement contains invalid physical bounds"))?;
+        let ticket = session.begin_final_placement(self.handle.window_id(), request)?;
+        let platform_request = ticket.request();
+        let ticket_for_generation = ticket.clone();
+        let dispatch = self.request_window_mutation_with_platform_dispatch_and_hook(
+            WindowMutationRequest::PhysicalPlacement(physical_request),
+            true,
+            true,
+            move |generation| {
+                assert!(
+                    ticket_for_generation.bind_mutation_generation(generation),
+                    "a provisional placement ticket must bind its exact mutation generation once"
+                );
+            },
+            move |platform_window, generation| {
+                platform_window.request_provisional_placement(generation, platform_request)
+            },
+        );
+        match dispatch {
+            WindowMutationDispatch::Queued(_) => {}
+            WindowMutationDispatch::Unchanged => {
+                ticket.settle(WindowProvisionalPlacementOutcome::Settled);
+            }
+            WindowMutationDispatch::Unsupported | WindowMutationDispatch::Rejected => {
+                ticket.settle(WindowProvisionalPlacementOutcome::Rejected);
+            }
+            WindowMutationDispatch::WindowClosed => {
+                ticket.settle(WindowProvisionalPlacementOutcome::WindowTerminal);
+            }
+        }
+        Ok((dispatch, ticket))
+    }
+
     /// Requests one typed mutation for this already-open window.
     ///
     /// Every request advances only its own conflict-domain generation. A queued result does not
@@ -5151,6 +5320,38 @@ impl Window {
         &mut self,
         request: WindowMutationRequest,
     ) -> WindowMutationDispatch {
+        self.request_window_mutation_with_platform_dispatch(
+            request,
+            false,
+            move |platform_window, generation| {
+                platform_window.request_window_mutation(generation, request)
+            },
+        )
+    }
+
+    fn request_window_mutation_with_platform_dispatch(
+        &mut self,
+        request: WindowMutationRequest,
+        force_platform_dispatch: bool,
+        dispatch_platform: impl FnOnce(&mut dyn PlatformWindow, u64) -> PlatformWindowDispatch,
+    ) -> WindowMutationDispatch {
+        self.request_window_mutation_with_platform_dispatch_and_hook(
+            request,
+            force_platform_dispatch,
+            false,
+            |_| {},
+            dispatch_platform,
+        )
+    }
+
+    fn request_window_mutation_with_platform_dispatch_and_hook(
+        &mut self,
+        request: WindowMutationRequest,
+        force_platform_dispatch: bool,
+        preserve_provisional_placement: bool,
+        before_platform_dispatch: impl FnOnce(u64),
+        dispatch_platform: impl FnOnce(&mut dyn PlatformWindow, u64) -> PlatformWindowDispatch,
+    ) -> WindowMutationDispatch {
         if self.removal_state != WindowRemovalState::Open || self.removed {
             return WindowMutationDispatch::WindowClosed;
         }
@@ -5158,6 +5359,20 @@ impl Window {
             && !placement_request_is_valid(placement, &self.platform_facts)
         {
             return WindowMutationDispatch::Rejected;
+        }
+        if !preserve_provisional_placement && let Some(session) = self.provisional_session.as_ref()
+        {
+            match session.blocks_window_mutation(self.handle.window_id(), request.domain()) {
+                Ok(true) if request.matches_facts(&self.platform_facts) => {
+                    return WindowMutationDispatch::Unchanged;
+                }
+                Ok(true) => return WindowMutationDispatch::Rejected,
+                Ok(false) => {}
+                Err(error) => {
+                    log::error!("failed to check provisional window mutation authority: {error}");
+                    return WindowMutationDispatch::Rejected;
+                }
+            }
         }
 
         let Some(begin) = self.window_mutations.begin(
@@ -5169,10 +5384,11 @@ impl Window {
         };
         let ticket = begin.ticket;
         let mut deliveries = begin.deliveries;
+        before_platform_dispatch(ticket.generation());
         self.platform_window
             .prepare_window_mutation(ticket.domain(), ticket.generation());
 
-        let dispatch = if request.matches_facts(&self.platform_facts) {
+        let dispatch = if !force_platform_dispatch && request.matches_facts(&self.platform_facts) {
             deliveries.extend(self.window_mutations.settle_unqueued(
                 &self.window_mutation_authority,
                 &ticket,
@@ -5189,10 +5405,7 @@ impl Window {
             ));
             WindowMutationDispatch::Unsupported
         } else {
-            match self
-                .platform_window
-                .request_window_mutation(ticket.generation(), request)
-            {
+            match dispatch_platform(self.platform_window.as_mut(), ticket.generation()) {
                 PlatformWindowDispatch::Queued => WindowMutationDispatch::Queued(ticket),
                 PlatformWindowDispatch::Unchanged => {
                     self.refresh_platform_facts();
@@ -5741,6 +5954,8 @@ impl Window {
     ) {
         let renderer_repaint_pending = self.renderer_repaint_is_pending();
         let initial_presentation_pending = self.fresh_initial_presentation_is_pending();
+        let provisional_presentation_pending = request_frame_options.require_presentation
+            && self.provisional_presentation_progress_is_pending();
         let fresh_frame_required =
             self.fresh_initial_presentation_frame_is_required() || renderer_repaint_pending;
         // A force hint can outlive the recovery draw it requested. Once a suitable fresh scene is
@@ -5748,9 +5963,13 @@ impl Window {
         let force_render = fresh_frame_required
             || (request_frame_options.force_render
                 && !(initial_presentation_pending && !fresh_frame_required));
-        let min_frame_interval = if initial_presentation_pending || renderer_repaint_pending {
+        let min_frame_interval = if initial_presentation_pending
+            || renderer_repaint_pending
+            || provisional_presentation_pending
+        {
             // Recovery authority must survive inactive and thermal throttling. A hidden window has
-            // no ordinary frame pump, while an invalidated scene must never be submitted again.
+            // no ordinary frame pump, while an invalidated or provisional scene must reach its
+            // exact presentation acknowledgement before lifecycle progress can continue.
             None
         } else {
             FrameThrottleFacts {
@@ -6458,6 +6677,7 @@ impl Window {
                                 PlatformWindowCommand::RevealDeferredInitialPresentation {
                                     session_generation: snapshot.generation(),
                                     presentation_generation: generation,
+                                    reveal_point: ticket.snapshot().reveal_point(),
                                 },
                                 ticket.clone(),
                             );

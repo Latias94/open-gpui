@@ -5,15 +5,16 @@ use super::{
         DockLiveUndockCommittedDestinationRecoveryReceipt,
         DockLiveUndockDestinationInteractionReceipt, DockLiveUndockDestinationSemanticsReceipt,
         DockLiveUndockEffect, DockLiveUndockEffects, DockLiveUndockFact,
-        DockLiveUndockHostCleanupEvidence, DockLiveUndockIdentity, DockLiveUndockOpenRequest,
-        DockLiveUndockOrphanCleanupFailure, DockLiveUndockOrphanCleanupReceipt,
-        DockLiveUndockOrphanRecoveryReceipt, DockLiveUndockPayloadLeaseReceipt,
-        DockLiveUndockPayloadPresentationReceipt, DockLiveUndockPlacementGeneration,
-        DockLiveUndockPresentationAuthorityLossReceipt, DockLiveUndockPresentationFailure,
-        DockLiveUndockPromotionCommitDisposition, DockLiveUndockPromotionDestination,
-        DockLiveUndockPromotionToken, DockLiveUndockRehostCleanupEvidence,
-        DockLiveUndockReleaseLock, DockLiveUndockRetainedVisualCleanupEvidence,
-        DockLiveUndockRevealObservation, DockLiveUndockRevealOutcome, DockLiveUndockRevealReceipt,
+        DockLiveUndockFinalPlacementReceipt, DockLiveUndockHostCleanupEvidence,
+        DockLiveUndockIdentity, DockLiveUndockOpenRequest, DockLiveUndockOrphanCleanupFailure,
+        DockLiveUndockOrphanCleanupReceipt, DockLiveUndockOrphanRecoveryReceipt,
+        DockLiveUndockPayloadLeaseReceipt, DockLiveUndockPayloadPresentationReceipt,
+        DockLiveUndockPlacementGeneration, DockLiveUndockPresentationAuthorityLossReceipt,
+        DockLiveUndockPresentationFailure, DockLiveUndockPromotionCommitDisposition,
+        DockLiveUndockPromotionDestination, DockLiveUndockPromotionToken,
+        DockLiveUndockRehostCleanupEvidence, DockLiveUndockReleaseLock,
+        DockLiveUndockRetainedVisualCleanupEvidence, DockLiveUndockRevealObservation,
+        DockLiveUndockRevealOutcome, DockLiveUndockRevealReceipt,
         DockLiveUndockSourceFocusSnapshot, DockLiveUndockSourceNativeTerminalReceipt,
         DockLiveUndockSourceRestorationFailure, DockLiveUndockSourceRestorationReceipt,
         DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
@@ -58,11 +59,12 @@ use crate::{
     },
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext, Bounds, Entity, SharedString, Subscription, WeakEntity,
-    Window, WindowBounds, WindowHandle, WindowId, WindowInitialPresentationStatus,
-    WindowMutationDispatch, WindowMutationOutcome, WindowOptions, WindowPlacementRequest,
-    WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
-    WindowProvisionalSessionPhase, point, px,
+    AnyWindowHandle, App, AppContext, Bounds, DevicePixels, Entity, SharedString, Subscription,
+    WeakEntity, Window, WindowBounds, WindowHandle, WindowId, WindowInitialPresentationStatus,
+    WindowMutationDispatch, WindowMutationOutcome, WindowOptions,
+    WindowProvisionalPlacementRequest, WindowProvisionalSemanticsOutcome,
+    WindowProvisionalSemanticsTicket, WindowProvisionalSession, WindowProvisionalSessionPhase,
+    point,
     retained_visual::{self, Ticket},
     size,
     view_presentation_window::{
@@ -833,6 +835,7 @@ struct DockLiveUndockObservedReleasePlacement {
     window_id: WindowId,
     generation: DockLiveUndockPlacementGeneration,
     facts: DockViewportWindowFacts,
+    final_placement: DockLiveUndockFinalPlacementReceipt,
 }
 
 struct DockLiveUndockPresentationExecution {
@@ -2454,10 +2457,9 @@ impl DockLiveUndockRuntime {
                             .same_token(finalizer)
                         && execution.host_release.is_none()
                 });
-        if !release_authority_matches
-            || !execution_matches
-            || !finalizer.begin_live_undock(identity)
-        {
+        let finalizer_adopted =
+            release_authority_matches && execution_matches && finalizer.begin_live_undock(identity);
+        if !finalizer_adopted {
             return DockLiveUndockReleaseAdoption::Rejected(host_release);
         }
         {
@@ -2800,7 +2802,7 @@ impl DockLiveUndockRuntime {
         cx: &mut App,
     ) {
         let generation = release.placement_generation();
-        let claimed = {
+        let preparation = {
             let mut state = self.state.borrow_mut();
             let Some(execution) = state.executions.get_mut(&identity) else {
                 return;
@@ -2809,57 +2811,118 @@ impl DockLiveUndockRuntime {
                 || execution.destination_host.map(Into::into) != Some(window)
                 || execution.release_placement.is_some()
             {
-                false
+                None
             } else {
                 execution.release_placement = Some(DockLiveUndockReleasePlacementExecution {
                     window_id: window.window_id(),
                     generation,
                     subscription: None,
                 });
-                true
+                Some(execution.request.provisional_session().clone())
             }
         };
-        if !claimed {
+        let Some(provisional_session) = preparation else {
             return;
-        }
+        };
 
-        let (dispatch, unchanged_facts) = window
-            .update(cx, |_, window, _| {
-                let scale_factor = window.scale_factor();
-                if !scale_factor.is_finite() || scale_factor <= 0.0 {
-                    return (WindowMutationDispatch::Rejected, None);
-                }
-                let desired = release.desired_bounds();
-                let bounds = Bounds::new(
-                    point(
-                        px(desired.origin().x() as f32 / scale_factor),
-                        px(desired.origin().y() as f32 / scale_factor),
-                    ),
-                    size(
-                        px(desired.width() as f32 / scale_factor),
-                        px(desired.height() as f32 / scale_factor),
-                    ),
+        let desired = release.desired_bounds();
+        let request = {
+            let (Ok(width), Ok(height)) = (
+                i32::try_from(desired.width()),
+                i32::try_from(desired.height()),
+            ) else {
+                self.observe_release_placement(
+                    identity,
+                    window.window_id(),
+                    generation,
+                    super::live_undock::DockLiveUndockPlacementOutcome::Rejected,
+                    None,
+                    None,
+                    cx,
                 );
-                let dispatch = window
-                    .request_window_placement_request(WindowPlacementRequest::windowed(bounds));
-                let facts = matches!(&dispatch, WindowMutationDispatch::Unchanged)
-                    .then(|| DockViewportWindowFacts::from_platform_facts(window.platform_facts()));
-                (dispatch, facts)
+                return;
+            };
+            WindowProvisionalPlacementRequest::try_new(
+                generation.get(),
+                Bounds::new(
+                    point(
+                        DevicePixels(desired.origin().x()),
+                        DevicePixels(desired.origin().y()),
+                    ),
+                    size(DevicePixels(width), DevicePixels(height)),
+                ),
+                point(
+                    DevicePixels(release.point().x()),
+                    DevicePixels(release.point().y()),
+                ),
+            )
+        };
+        let Some(request) = request else {
+            self.observe_release_placement(
+                identity,
+                window.window_id(),
+                generation,
+                super::live_undock::DockLiveUndockPlacementOutcome::Rejected,
+                None,
+                None,
+                cx,
+            );
+            return;
+        };
+
+        let requested = window
+            .update(cx, |_, window, _| {
+                window.request_provisional_placement(&provisional_session, request)
             })
-            .unwrap_or((WindowMutationDispatch::WindowClosed, None));
+            .and_then(|requested| requested);
+        let (dispatch, placement_ticket) = match requested {
+            Ok(requested) => requested,
+            Err(_) => {
+                self.observe_release_placement(
+                    identity,
+                    window.window_id(),
+                    generation,
+                    super::live_undock::DockLiveUndockPlacementOutcome::WindowClosed,
+                    None,
+                    None,
+                    cx,
+                );
+                return;
+            }
+        };
 
         match dispatch {
             WindowMutationDispatch::Queued(ticket) => {
                 let runtime = self.clone();
                 let async_cx = cx.to_async();
                 let subscription = ticket.subscribe(move |observation| {
-                    let outcome = Self::dock_placement_outcome(observation.outcome);
-                    let facts = matches!(
+                    let mut outcome = Self::dock_placement_outcome(observation.outcome);
+                    let placement_snapshot = placement_ticket.snapshot();
+                    let final_placement =
+                        DockLiveUndockFinalPlacementReceipt::new(placement_snapshot);
+                    if matches!(
                         outcome,
                         super::live_undock::DockLiveUndockPlacementOutcome::Exact
                             | super::live_undock::DockLiveUndockPlacementOutcome::Adjusted
-                    )
-                    .then(|| DockViewportWindowFacts::from_platform_facts(&observation.facts));
+                    ) {
+                        outcome = match (
+                            final_placement,
+                            placement_snapshot
+                                .native_facts()
+                                .map(|facts| facts.z_order()),
+                        ) {
+                            (Some(_), Some(open_gpui::WindowProvisionalRevealZOrder::Exact)) => {
+                                outcome
+                            }
+                            (Some(_), Some(open_gpui::WindowProvisionalRevealZOrder::Adjusted)) => {
+                                super::live_undock::DockLiveUndockPlacementOutcome::Adjusted
+                            }
+                            _ => super::live_undock::DockLiveUndockPlacementOutcome::Rejected,
+                        };
+                    }
+                    let facts = final_placement
+                        .is_some()
+                        .then(|| DockViewportWindowFacts::from_platform_facts(&observation.facts));
                     async_cx
                         .spawn(async move |cx| {
                             cx.update(|cx| {
@@ -2869,6 +2932,7 @@ impl DockLiveUndockRuntime {
                                     generation,
                                     outcome,
                                     facts,
+                                    final_placement,
                                     cx,
                                 );
                             });
@@ -2888,20 +2952,38 @@ impl DockLiveUndockRuntime {
                     placement.subscription = Some(subscription);
                 }
             }
-            WindowMutationDispatch::Unchanged => self.observe_release_placement(
-                identity,
-                window.window_id(),
-                generation,
-                super::live_undock::DockLiveUndockPlacementOutcome::Exact,
-                unchanged_facts,
-                cx,
-            ),
+            WindowMutationDispatch::Unchanged => {
+                let snapshot = placement_ticket.snapshot();
+                let final_placement = DockLiveUndockFinalPlacementReceipt::new(snapshot);
+                let outcome = if final_placement.is_some() {
+                    super::live_undock::DockLiveUndockPlacementOutcome::Exact
+                } else {
+                    super::live_undock::DockLiveUndockPlacementOutcome::Rejected
+                };
+                let facts = final_placement.and_then(|_| {
+                    window
+                        .update(cx, |_, window, _| {
+                            DockViewportWindowFacts::from_platform_facts(window.platform_facts())
+                        })
+                        .ok()
+                });
+                self.observe_release_placement(
+                    identity,
+                    window.window_id(),
+                    generation,
+                    outcome,
+                    facts,
+                    final_placement,
+                    cx,
+                );
+            }
             WindowMutationDispatch::Unsupported | WindowMutationDispatch::Rejected => self
                 .observe_release_placement(
                     identity,
                     window.window_id(),
                     generation,
                     super::live_undock::DockLiveUndockPlacementOutcome::Rejected,
+                    None,
                     None,
                     cx,
                 ),
@@ -2910,6 +2992,7 @@ impl DockLiveUndockRuntime {
                 window.window_id(),
                 generation,
                 super::live_undock::DockLiveUndockPlacementOutcome::WindowClosed,
+                None,
                 None,
                 cx,
             ),
@@ -2923,6 +3006,7 @@ impl DockLiveUndockRuntime {
         generation: DockLiveUndockPlacementGeneration,
         outcome: super::live_undock::DockLiveUndockPlacementOutcome,
         facts: Option<DockViewportWindowFacts>,
+        final_placement: Option<DockLiveUndockFinalPlacementReceipt>,
         cx: &mut App,
     ) {
         let current = self
@@ -2940,10 +3024,13 @@ impl DockLiveUndockRuntime {
                 if current {
                     execution.release_placement.take();
                     execution.observed_release_placement =
-                        facts.map(|facts| DockLiveUndockObservedReleasePlacement {
-                            window_id,
-                            generation,
-                            facts,
+                        facts.zip(final_placement).map(|(facts, final_placement)| {
+                            DockLiveUndockObservedReleasePlacement {
+                                window_id,
+                                generation,
+                                facts,
+                                final_placement,
+                            }
                         });
                 }
                 current
@@ -2955,6 +3042,7 @@ impl DockLiveUndockRuntime {
                     window_id,
                     generation,
                     outcome,
+                    final_placement,
                 },
                 cx,
             );
@@ -6737,6 +6825,9 @@ impl DockLiveUndockRuntime {
                 || presentation.lease.identity() != identity
                 || observed_placement.window_id != window_id
                 || observed_placement.generation != release.placement_generation()
+                || !observed_placement
+                    .final_placement
+                    .matches(identity, window_id, release)
             {
                 return None;
             }
@@ -8562,81 +8653,103 @@ impl DockLiveUndockRuntime {
                 identity,
                 presentation,
                 window,
+                point: reveal_point,
             } => {
-                let destination =
-                    self.state
-                        .borrow()
-                        .executions
-                        .get(&identity)
-                        .and_then(|execution| {
-                            let authority = execution.presentation.as_ref()?;
-                            let key = authority.destination_key?;
-                            let host = execution.destination_host?;
-                            (authority.lease == presentation.mount().proxy().lease()
-                                && host.window_id() == window.window_id())
-                            .then(|| (host, key, execution.request.provisional_session().clone()))
-                        });
+                let destination = self
+                    .state
+                    .borrow()
+                    .executions
+                    .get(&identity)
+                    .and_then(|execution| {
+                        let authority = execution.presentation.as_ref()?;
+                        let key = authority.destination_key?;
+                        let host = execution.destination_host?;
+                        (authority.lease == presentation.mount().proxy().lease()
+                            && host.window_id() == window.window_id())
+                        .then(|| {
+                            (
+                                host,
+                                key,
+                                execution.request.provisional_session().clone(),
+                                execution.seed.source.runtime.clone(),
+                                execution.seed.source.work_context,
+                            )
+                        })
+                    })
+                    .and_then(|(host, key, provisional_session, runtime, work_context)| {
+                        runtime
+                            .provisional_peer_window_ids(
+                                work_context,
+                                identity.opening(),
+                                window.window_id(),
+                            )
+                            .map(|peer_windows| (host, key, provisional_session, peer_windows))
+                    });
                 let reveal_runtime = self.clone();
                 let reveal_outcome = destination
-                    .map(|(host, key, provisional_session)| {
+                    .map(|(host, key, provisional_session, peer_windows)| {
                         host.update(cx, |host, destination_window, cx| {
-                        if !host.can_arm_live_destination_reveal(key, presentation) {
-                            return DockLiveUndockRevealArmOutcome::Rejected;
-                        }
-                        match destination_window
-                            .presentation_facts()
-                            .initial_presentation
-                        {
-                            WindowInitialPresentationStatus::Pending => {
-                                let reveal_runtime = reveal_runtime.clone();
-                                destination_window
-                                    .observe_window_initial_presentation(move |window, cx| {
-                                        match window.presentation_facts().initial_presentation {
-                                            WindowInitialPresentationStatus::Completed => {
-                                                reveal_runtime.enqueue_effects(
-                                                    DockLiveUndockEffects::single(
-                                                        DockLiveUndockEffect::ArmExactReveal {
-                                                            identity,
-                                                            presentation,
-                                                            window: window.window_handle(),
-                                                        },
-                                                    ),
-                                                    cx,
-                                                );
-                                            }
-                                            WindowInitialPresentationStatus::Rejected => {
-                                                reveal_runtime.submit_presentation_failure(
-                                                    identity,
-                                                    DockLiveUndockPresentationFailure::ExactRevealTicket {
-                                                        presentation,
-                                                    },
-                                                    cx,
-                                                );
-                                            }
-                                            WindowInitialPresentationStatus::Pending => {}
-                                        }
-                                    })
-                                    .detach();
-                                return DockLiveUndockRevealArmOutcome::WaitingForInitialPresentation;
-                            }
-                            WindowInitialPresentationStatus::Rejected => {
+                            if !host.can_arm_live_destination_reveal(key, presentation) {
                                 return DockLiveUndockRevealArmOutcome::Rejected;
                             }
-                            WindowInitialPresentationStatus::Completed => {}
-                        }
-                        let ticket = match destination_window
-                            .arm_provisional_presentation(&provisional_session, cx)
-                        {
-                            Ok(ticket) => ticket,
-                            Err(_) => return DockLiveUndockRevealArmOutcome::Rejected,
-                        };
-                        if host.arm_live_destination_reveal(key, presentation, ticket, cx) {
-                            DockLiveUndockRevealArmOutcome::Armed
-                        } else {
-                            DockLiveUndockRevealArmOutcome::Rejected
-                        }
-                    })
-                    .unwrap_or(DockLiveUndockRevealArmOutcome::Rejected)
+                            match destination_window.presentation_facts().initial_presentation {
+                                WindowInitialPresentationStatus::Pending => {
+                                    let reveal_runtime = reveal_runtime.clone();
+                                    destination_window
+                                        .observe_window_initial_presentation(move |window, cx| {
+                                            match window.presentation_facts().initial_presentation {
+                                                WindowInitialPresentationStatus::Completed => {
+                                                    reveal_runtime.enqueue_effects(
+                                                        DockLiveUndockEffects::single(
+                                                            DockLiveUndockEffect::ArmExactReveal {
+                                                                identity,
+                                                                presentation,
+                                                                window: window.window_handle(),
+                                                                point: reveal_point,
+                                                            },
+                                                        ),
+                                                        cx,
+                                                    );
+                                                }
+                                                WindowInitialPresentationStatus::Rejected => {
+                                                    reveal_runtime.submit_presentation_failure(
+                                                        identity,
+                                                        DockLiveUndockPresentationFailure::ExactRevealTicket {
+                                                            presentation,
+                                                        },
+                                                        cx,
+                                                    );
+                                                }
+                                                WindowInitialPresentationStatus::Pending => {}
+                                            }
+                                        })
+                                        .detach();
+                                    return DockLiveUndockRevealArmOutcome::WaitingForInitialPresentation;
+                                }
+                                WindowInitialPresentationStatus::Rejected => {
+                                    return DockLiveUndockRevealArmOutcome::Rejected;
+                                }
+                                WindowInitialPresentationStatus::Completed => {}
+                            }
+                            let ticket = match destination_window.arm_provisional_presentation(
+                                &provisional_session,
+                                point(
+                                    DevicePixels(reveal_point.x()),
+                                    DevicePixels(reveal_point.y()),
+                                ),
+                                peer_windows,
+                                cx,
+                            ) {
+                                Ok(ticket) => ticket,
+                                Err(_) => return DockLiveUndockRevealArmOutcome::Rejected,
+                            };
+                            if host.arm_live_destination_reveal(key, presentation, ticket, cx) {
+                                DockLiveUndockRevealArmOutcome::Armed
+                            } else {
+                                DockLiveUndockRevealArmOutcome::Rejected
+                            }
+                        })
+                        .unwrap_or(DockLiveUndockRevealArmOutcome::Rejected)
                     })
                     .unwrap_or(DockLiveUndockRevealArmOutcome::Rejected);
                 if reveal_outcome == DockLiveUndockRevealArmOutcome::Rejected {
@@ -10480,8 +10593,8 @@ mod tests {
     use super::*;
     use crate::surface::{
         live_undock::{
-            DockLiveUndockDragGeneration, DockLiveUndockRouteFeedback, DockLiveUndockSession,
-            DockLiveUndockSourceSnapshot,
+            DockLiveUndockDragGeneration, DockLiveUndockPhysicalPoint, DockLiveUndockRouteFeedback,
+            DockLiveUndockSession, DockLiveUndockSourceSnapshot,
         },
         window_session::DockSurfaceWindowSession,
     };
@@ -10500,6 +10613,7 @@ mod tests {
                 .expect("test drag generation must be non-zero"),
             DockLiveUndockSourceSnapshot::new(WindowId::from(8), generation),
             DockLiveUndockRouteFeedback::Desktop,
+            DockLiveUndockPhysicalPoint::new(50, 50),
         )
         .expect("desktop trigger should be eligible");
         DockLiveUndockSession::new()

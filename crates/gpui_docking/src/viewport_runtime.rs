@@ -26,7 +26,7 @@ use crate::{
     DockViewportPlatformFocusRestorePolicy, DockViewportPlatformSyncRecord,
     DockViewportProvisionalOpenAttemptCompletion, DockViewportRegisterOutcome,
     DockViewportRestoreReadiness, DockViewportRoutedDropPreviewState, DockViewportRuntimeAdmission,
-    DockViewportRuntimeHandle, DockViewportRuntimeIdentity,
+    DockViewportRuntimeHandle, DockViewportRuntimeIdentity, DockViewportRuntimeLineage,
     DockViewportRuntimeLineageActivationOutcome, DockViewportRuntimeLineageFreezeOutcome,
     DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportRuntimeWorkContext,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
@@ -1683,11 +1683,9 @@ impl DockViewportRuntime {
         admit: bool,
     ) -> DockViewportProvisionalOpenAttemptCompletion {
         let lineage = crate::DockViewportRuntimeLineage::Surface(opening.lease());
-        let mut admit = admit && self.admission.get().admits(lineage);
+        let admit = admit && self.admission.get().admits(lineage);
         #[cfg(test)]
-        if std::mem::take(&mut self.reject_next_provisional_registration) {
-            admit = false;
-        }
+        let admit = admit && !std::mem::take(&mut self.reject_next_provisional_registration);
         self.window_ownership
             .complete_provisional_open_attempt(attempt, opening, admit)
     }
@@ -1906,6 +1904,21 @@ impl DockViewportRuntime {
         lease: crate::surface::window_session::DockSurfaceWindowSessionLease,
     ) -> Vec<(DockViewportWindowRole, AnyWindowHandle)> {
         self.window_ownership.windows_for_surface(lease)
+    }
+
+    pub(crate) fn provisional_peer_window_ids(
+        &self,
+        context: DockViewportRuntimeWorkContext,
+        opening: crate::surface::live_undock::DockLiveUndockOpeningKey,
+        destination: WindowId,
+    ) -> Option<Vec<WindowId>> {
+        if !self.admits_work_context(context)
+            || context.lineage() != DockViewportRuntimeLineage::Surface(opening.lease())
+        {
+            return None;
+        }
+        self.window_ownership
+            .provisional_peer_window_ids(opening, destination)
     }
 
     pub(crate) fn surface_generation_empty(

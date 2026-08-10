@@ -1792,6 +1792,7 @@ impl PlatformWindow for X11Window {
         open_gpui::WindowPlatformFacts {
             bounds: self.bounds(),
             coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
+            physical_geometry: None,
             window_bounds,
             inner_window_bounds: self.inner_window_bounds(),
             content_size: self.content_size(),

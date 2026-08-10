@@ -3053,7 +3053,7 @@ mod tests {
             PlatformWindowHitStack::Unavailable
         );
 
-        let no_hits = PlatformWindowHitStack::try_available(sampled_point, Vec::new())
+        let no_hits = PlatformWindowHitStack::try_available_open_desktop(sampled_point, Vec::new())
             .expect("an empty observation is a valid desktop result");
         cx.set_platform_window_hit_stack(no_hits.clone());
 

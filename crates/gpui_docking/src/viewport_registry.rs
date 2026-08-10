@@ -637,14 +637,20 @@ impl DockViewportSnapshot {
             return false;
         }
 
-        let Some(DockViewportWindowBoundsFrame::GlobalScreen(current)) = self.current_bounds else {
+        let Some(current) = self.current_bounds else {
             return false;
         };
-        let DockViewportWindowBoundsFrame::GlobalScreen(next) = window_facts.current_bounds else {
-            return false;
-        };
-
-        current.size == next.size
+        match (current, window_facts.current_bounds) {
+            (
+                DockViewportWindowBoundsFrame::GlobalScreen(current),
+                DockViewportWindowBoundsFrame::GlobalScreen(next),
+            )
+            | (
+                DockViewportWindowBoundsFrame::WindowLocal(current),
+                DockViewportWindowBoundsFrame::WindowLocal(next),
+            ) => current.size == next.size,
+            _ => false,
+        }
     }
 
     fn platform_requests_after_window_facts(
@@ -1459,6 +1465,7 @@ mod tests {
         let platform_route_frame_only =
             snapshot.apply_platform_window_facts_with_change(observed_route_frame_only);
         assert!(platform_route_frame_only.changed);
+        assert!(snapshot.is_route_ready());
         assert!(
             !platform_route_frame_only.placement_changed,
             "platform route coordinates are not part of placement serialization"

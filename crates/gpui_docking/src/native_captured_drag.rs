@@ -24,9 +24,9 @@ use open_gpui::{
     AnyWindowHandle, App, AppContext as _, DragStartGeometry, Global, NativeCapturedDragEvent,
     NativeCapturedDragGeneration, NativeCapturedDragPhase, NativeCapturedDragReleaseBarrier,
     NativeCapturedDragReleaseTerminal, NativeIngressSequence, Pixels,
-    PlatformNativeDragStartSnapshot, PlatformWindowHit, PlatformWindowHitStack, Point,
-    PointerCancelReason, PreparedNativeCapturedDragConsumer, Subscription, WeakEntity, Window,
-    WindowId,
+    PlatformNativeDragStartSnapshot, PlatformWindowHit, PlatformWindowHitStack,
+    PlatformWindowHitTerminus, Point, PointerCancelReason, PreparedNativeCapturedDragConsumer,
+    Subscription, WeakEntity, Window, WindowId,
 };
 use std::{
     any::Any,
@@ -1777,10 +1777,7 @@ fn classify_native_captured_window_hit(
             return DockNativeCapturedWindowHit::Unavailable;
         }
     };
-    let Some((terminal, prefix)) = observation.hits().split_last() else {
-        return DockNativeCapturedWindowHit::OpenDesktop;
-    };
-    if !prefix.iter().all(|hit| {
+    if !observation.provisional_pass_throughs().iter().all(|hit| {
         matches!(
             *hit,
             PlatformWindowHit::ProvisionalPassThrough {
@@ -1794,36 +1791,39 @@ fn classify_native_captured_window_hit(
     }) {
         return DockNativeCapturedWindowHit::Unavailable;
     }
-    match *terminal {
-        PlatformWindowHit::OpaqueBarrier { coverage } => {
-            if coverage.contains(global_position) {
-                DockNativeCapturedWindowHit::OpaqueBarrier
-            } else {
+    match observation.terminus() {
+        PlatformWindowHitTerminus::OpenDesktop => DockNativeCapturedWindowHit::OpenDesktop,
+        PlatformWindowHitTerminus::Window(terminal) => match terminal {
+            PlatformWindowHit::OpaqueBarrier { coverage } => {
+                if coverage.contains(global_position) {
+                    DockNativeCapturedWindowHit::OpaqueBarrier
+                } else {
+                    DockNativeCapturedWindowHit::Unavailable
+                }
+            }
+            PlatformWindowHit::RegisteredApplication {
+                window,
+                coverage,
+                geometry,
+            } => {
+                if !coverage.contains(global_position) {
+                    return DockNativeCapturedWindowHit::Unavailable;
+                }
+                if !geometry.contains_global(global_position) {
+                    return DockNativeCapturedWindowHit::OpaqueBarrier;
+                }
+                geometry.global_to_local(global_position).map_or(
+                    DockNativeCapturedWindowHit::Unavailable,
+                    |window_position| DockNativeCapturedWindowHit::RegisteredApplication {
+                        window,
+                        window_position,
+                    },
+                )
+            }
+            PlatformWindowHit::ProvisionalPassThrough { .. } => {
                 DockNativeCapturedWindowHit::Unavailable
             }
-        }
-        PlatformWindowHit::RegisteredApplication {
-            window,
-            coverage,
-            geometry,
-        } => {
-            if !coverage.contains(global_position) {
-                return DockNativeCapturedWindowHit::Unavailable;
-            }
-            if !geometry.contains_global(global_position) {
-                return DockNativeCapturedWindowHit::OpaqueBarrier;
-            }
-            geometry.global_to_local(global_position).map_or(
-                DockNativeCapturedWindowHit::Unavailable,
-                |window_position| DockNativeCapturedWindowHit::RegisteredApplication {
-                    window,
-                    window_position,
-                },
-            )
-        }
-        PlatformWindowHit::ProvisionalPassThrough { .. } => {
-            DockNativeCapturedWindowHit::Unavailable
-        }
+        },
     }
 }
 
@@ -2150,7 +2150,12 @@ fn live_undock_trigger_for_move(
     {
         return None;
     }
-    DockLiveUndockTrigger::new(drag_generation, source, route)
+    DockLiveUndockTrigger::new(
+        drag_generation,
+        source,
+        route,
+        DockLiveUndockPhysicalPoint::new(current.x.0, current.y.0),
+    )
 }
 
 fn live_undock_drag_generation(
@@ -2242,12 +2247,15 @@ fn update_live_undock_move(
             cx,
         );
     }
-    if let Some(identity) = route.live_undock_identity.get() {
+    if let Some(identity) = route.live_undock_identity.get()
+        && let Some(point) = event.physical_frame().map(|frame| frame.global_position())
+    {
         let _ = submit_live_undock_fact(
             route,
             DockLiveUndockFact::RouteObserved {
                 identity,
                 route: feedback,
+                point: DockLiveUndockPhysicalPoint::new(point.x.0, point.y.0),
             },
             None,
             cx,
@@ -2285,6 +2293,7 @@ fn lock_live_undock_release(
         DockLiveUndockFact::RouteObserved {
             identity,
             route: feedback,
+            point: DockLiveUndockPhysicalPoint::new(point.x.0, point.y.0),
         },
         None,
         cx,
@@ -3237,13 +3246,35 @@ mod tests {
 
     #[test]
     fn empty_exact_hit_stack_is_open_desktop() {
-        let stack = test_stack(Vec::new());
+        let stack = PlatformWindowHitStack::try_available_open_desktop(test_point(), Vec::new())
+            .expect("verified open desktop should be representable");
 
         assert_eq!(
             classify_native_captured_window_hit(&stack, test_point(), |_, _| {
                 panic!("empty desktop must not request provisional authority")
             }),
             DockNativeCapturedWindowHit::OpenDesktop
+        );
+    }
+
+    #[test]
+    fn exact_current_provisional_prefix_reaches_verified_open_desktop() {
+        let provisional = test_window(24);
+        let stack = PlatformWindowHitStack::try_available_open_desktop(
+            test_point(),
+            vec![provisional_hit(provisional, 42)],
+        )
+        .expect("the exact provisional prefix should reach verified open desktop");
+
+        assert_eq!(
+            classify_native_captured_window_hit(&stack, test_point(), |window, generation| {
+                window == provisional && generation == 42
+            }),
+            DockNativeCapturedWindowHit::OpenDesktop
+        );
+        assert_eq!(
+            classify_native_captured_window_hit(&stack, test_point(), |_, _| false),
+            DockNativeCapturedWindowHit::Unavailable
         );
     }
 
@@ -3417,6 +3448,7 @@ mod tests {
             drag_generation(5),
             source,
             DockLiveUndockRouteFeedback::Desktop,
+            DockLiveUndockPhysicalPoint::new(test_point().x.0, test_point().y.0),
         )
         .expect("desktop should be eligible");
         let mut reducer = DockLiveUndockSession::new();
@@ -3437,6 +3469,7 @@ mod tests {
             drag_generation(4),
             source,
             DockLiveUndockRouteFeedback::OpaqueBarrier,
+            DockLiveUndockPhysicalPoint::new(test_point().x.0, test_point().y.0),
         )
         .expect("opaque barrier should be eligible");
         assert!(
@@ -3457,6 +3490,7 @@ mod tests {
             drag_generation(6),
             source_snapshot(6),
             DockLiveUndockRouteFeedback::Desktop,
+            DockLiveUndockPhysicalPoint::new(test_point().x.0, test_point().y.0),
         )
         .expect("desktop should be eligible");
         let mut reducer = DockLiveUndockSession::new();

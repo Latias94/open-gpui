@@ -20,24 +20,24 @@ fn sample_viewport_frame_request<C: open_gpui::AppContext>(
     request: DockViewportFrameSampleRequest,
     cx: &mut C,
 ) -> DockViewportFrameSample {
-    let observation = request
-        .window()
-        .update(cx, |_, window, _| {
-            if window.is_minimized() {
-                DockViewportFrameObservation::InputMask(
-                    crate::viewport_registry::DockViewportInputMask::Minimized,
-                )
-            } else if !window.accepts_pointer_input() {
-                DockViewportFrameObservation::InputMask(
-                    crate::viewport_registry::DockViewportInputMask::NoInputPassThrough,
-                )
-            } else {
-                DockViewportFrameObservation::InputMask(
-                    crate::viewport_registry::DockViewportInputMask::ReceivesInput,
-                )
-            }
-        })
-        .unwrap_or(DockViewportFrameObservation::Unavailable);
+    let observation = match request.window().update(cx, |_, window, _| {
+        if window.is_minimized() {
+            DockViewportFrameObservation::InputMask(
+                crate::viewport_registry::DockViewportInputMask::Minimized,
+            )
+        } else if !window.accepts_pointer_input() {
+            DockViewportFrameObservation::InputMask(
+                crate::viewport_registry::DockViewportInputMask::NoInputPassThrough,
+            )
+        } else {
+            DockViewportFrameObservation::InputMask(
+                crate::viewport_registry::DockViewportInputMask::ReceivesInput,
+            )
+        }
+    }) {
+        Ok(observation) => observation,
+        Err(_) => DockViewportFrameObservation::Unavailable,
+    };
     DockViewportFrameSample::new(request, observation)
 }
 
@@ -329,6 +329,7 @@ impl DockViewportRuntimeHandle {
                     Some(accepts_pointer_input)
                 }
                 WindowMutationRequest::Placement(_)
+                | WindowMutationRequest::PhysicalPlacement(_)
                 | WindowMutationRequest::ActivationPolicy(_)
                 | WindowMutationRequest::Alpha(_)
                 | WindowMutationRequest::Topmost(_)

@@ -1811,6 +1811,7 @@ mod tests {
             facts: WindowPlatformFacts {
                 bounds: observed_bounds,
                 coordinate_space: WindowCoordinateSpace::GlobalScreen,
+                physical_geometry: None,
                 window_bounds: WindowBounds::Windowed(observed_bounds),
                 inner_window_bounds: WindowBounds::Windowed(observed_bounds),
                 content_size: observed_bounds.size,

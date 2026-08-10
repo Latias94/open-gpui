@@ -91,6 +91,18 @@ enum DockViewportHostSceneCandidateForCommit {
     CachedReplay(DockViewportCommittedHostSceneCandidate),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockViewportHostSceneProbeMode {
+    Interactive,
+    RetainedSourceProjection,
+}
+
+impl DockViewportHostSceneProbeMode {
+    const fn publishes_inactive_geometry(self) -> bool {
+        matches!(self, Self::RetainedSourceProjection)
+    }
+}
+
 impl DockViewportHostSceneCandidateState {
     fn begin_prepaint(&mut self) {
         self.pending = None;
@@ -523,6 +535,11 @@ impl Render for DockHost {
         }
         let runtime_work_context = self.runtime_work_context(cx);
         let runtime_publication_admitted = runtime_work_context.is_some();
+        let host_scene_probe_mode = if self.admits_inert_live_source_route_projection() {
+            DockViewportHostSceneProbeMode::RetainedSourceProjection
+        } else {
+            DockViewportHostSceneProbeMode::Interactive
+        };
         if runtime_publication_admitted {
             self.ensure_surface_activation_host_registration(
                 runtime_work_context.expect("admitted runtime publication requires a context"),
@@ -537,7 +554,7 @@ impl Render for DockHost {
             session.kind(),
             crate::host_render_session::DockHostPresentationKind::LivePayloadProjection
         ) {
-            return self.render_live_payload_projection(&session, window, cx);
+            return self.render_live_payload_projection(&session, runtime_work_context, window, cx);
         }
         if session.is_provisional_shell() {
             let mut background = session.visual_style().host.background;
@@ -721,6 +738,7 @@ impl Render for DockHost {
                 session.drop_guide_metrics(),
                 session.empty_central_requests_platform_pointer_passthrough(),
                 runtime_work_context.expect("admitted runtime publication requires a context"),
+                host_scene_probe_mode,
                 cx,
             ));
         }
@@ -1353,6 +1371,19 @@ fn classify_live_reveal_snapshot(
     }
 }
 
+fn live_reveal_submission_is_still_catchable(
+    outcome: WindowProvisionalRevealOutcome,
+    presentation_generation: u64,
+    current_frame_generation: Option<u64>,
+) -> bool {
+    matches!(
+        outcome,
+        WindowProvisionalRevealOutcome::Pending | WindowProvisionalRevealOutcome::Revealed
+    ) && current_frame_generation
+        .map(|current| current < presentation_generation)
+        .unwrap_or(true)
+}
+
 fn current_live_destination_reveal_frame(
     owner: &WeakEntity<DockSurfaceOwner>,
     key: DockHostLivePresentationKey,
@@ -1668,7 +1699,8 @@ fn observe_live_destination_reveal_native(
     if authority.submitted_frame.is_none()
         && let Some(presentation_generation) = snapshot.presentation_generation()
     {
-        match current_live_destination_reveal_frame(&owner, key, preflight, cx) {
+        let current_frame = current_live_destination_reveal_frame(&owner, key, preflight, cx);
+        match current_frame {
             Some(submitted_frame)
                 if submitted_frame.frame_generation() == presentation_generation =>
             {
@@ -1683,37 +1715,40 @@ fn observe_live_destination_reveal_native(
                     return;
                 }
             }
-            Some(current_frame)
-                if current_frame.frame_generation() < presentation_generation
-                    && snapshot.outcome() == WindowProvisionalRevealOutcome::Pending =>
+            current
+                if live_reveal_submission_is_still_catchable(
+                    snapshot.outcome(),
+                    presentation_generation,
+                    current.map(|frame| frame.frame_generation()),
+                ) =>
             {
                 wait_for_submitted_frame = true;
             }
-            None if snapshot.outcome() == WindowProvisionalRevealOutcome::Pending => {
-                wait_for_submitted_frame = true;
-            }
-            None => {}
-            Some(_) => {}
+            _ => {}
         }
     }
 
     if wait_for_submitted_frame {
-        let next_owner = owner.clone();
-        let next_host = host.clone();
-        let next_ticket = ticket.clone();
-        window.on_next_frame(move |window, cx| {
-            observe_live_destination_reveal_native(
-                next_owner,
-                next_host,
+        if let Err(error) = request_next_live_destination_reveal_observation(
+            &owner,
+            &host,
+            key,
+            preflight,
+            candidate_frame,
+            &ticket,
+            window,
+        ) {
+            log::error!("failed to request the next exact live-undock reveal frame: {error}");
+            submit_live_presentation_failure(
+                &owner,
+                &host,
                 key,
-                preflight,
-                candidate_frame,
-                next_ticket,
-                window,
+                DockLiveUndockPresentationFailure::ExactRevealTicket {
+                    presentation: preflight,
+                },
                 cx,
             );
-        });
-        window.refresh();
+        }
         return;
     }
 
@@ -1751,22 +1786,26 @@ fn observe_live_destination_reveal_native(
 
     let observation = match classification {
         DockLiveRevealSnapshotClassification::Pending => {
-            let next_owner = owner.clone();
-            let next_host = host.clone();
-            let next_ticket = ticket.clone();
-            window.on_next_frame(move |window, cx| {
-                observe_live_destination_reveal_native(
-                    next_owner,
-                    next_host,
+            if let Err(error) = request_next_live_destination_reveal_observation(
+                &owner,
+                &host,
+                key,
+                preflight,
+                candidate_frame,
+                &ticket,
+                window,
+            ) {
+                log::error!("failed to request the next exact live-undock reveal frame: {error}");
+                submit_live_presentation_failure(
+                    &owner,
+                    &host,
                     key,
-                    preflight,
-                    candidate_frame,
-                    next_ticket,
-                    window,
+                    DockLiveUndockPresentationFailure::ExactRevealTicket {
+                        presentation: preflight,
+                    },
                     cx,
                 );
-            });
-            window.refresh();
+            }
             return;
         }
         DockLiveRevealSnapshotClassification::Revealed => {
@@ -1807,6 +1846,34 @@ fn observe_live_destination_reveal_native(
         observation,
         cx,
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_next_live_destination_reveal_observation(
+    owner: &WeakEntity<DockSurfaceOwner>,
+    host: &WeakEntity<DockHost>,
+    key: DockHostLivePresentationKey,
+    preflight: DockLiveUndockPayloadPresentationReceipt,
+    candidate_frame: DockLiveUndockPayloadPresentationReceipt,
+    ticket: &open_gpui::WindowProvisionalRevealTicket,
+    window: &mut Window,
+) -> open_gpui::Result<()> {
+    let next_owner = owner.clone();
+    let next_host = host.clone();
+    let next_ticket = ticket.clone();
+    window.on_next_frame(move |window, cx| {
+        observe_live_destination_reveal_native(
+            next_owner,
+            next_host,
+            key,
+            preflight,
+            candidate_frame,
+            next_ticket,
+            window,
+            cx,
+        );
+    });
+    window.request_provisional_presentation_frame(ticket)
 }
 
 fn submit_live_destination_reveal_observation(
@@ -2127,6 +2194,35 @@ impl DockHost {
         root.into_any_element()
     }
 
+    fn wrap_projection_route_scene(
+        &self,
+        visual: AnyElement,
+        frame_slot: &DockViewportHostSceneCandidateSlot,
+        session: &DockHostRenderSession,
+        work_context: Option<DockViewportRuntimeWorkContext>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(work_context) = work_context else {
+            return visual;
+        };
+
+        div()
+            .relative()
+            .size_full()
+            .child(self.render_viewport_host_scene_probe(
+                frame_slot,
+                session,
+                session.drop_guide_metrics(),
+                session.empty_central_requests_platform_pointer_passthrough(),
+                work_context,
+                DockViewportHostSceneProbeMode::RetainedSourceProjection,
+                cx,
+            ))
+            .child(visual)
+            .child(self.render_viewport_host_scene_routing_sentinel(frame_slot))
+            .into_any_element()
+    }
+
     fn render_payload_recovery_projection(
         &mut self,
         session: &DockHostRenderSession,
@@ -2420,6 +2516,7 @@ impl DockHost {
     fn render_live_payload_projection(
         &mut self,
         session: &DockHostRenderSession,
+        runtime_work_context: Option<DockViewportRuntimeWorkContext>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -2449,14 +2546,28 @@ impl DockHost {
         }
 
         let Some(state) = self.live_presentation_state() else {
-            return root
+            let visual = root
                 .with_subtree_presentation(SubtreePresentation::Inert)
                 .into_any_element();
+            return self.wrap_projection_route_scene(
+                visual,
+                &viewport_host_scene_frame,
+                session,
+                runtime_work_context,
+                cx,
+            );
         };
         let Some(owner) = self.surface_owner_entity().map(|owner| owner.downgrade()) else {
-            return root
+            let visual = root
                 .with_subtree_presentation(SubtreePresentation::Inert)
                 .into_any_element();
+            return self.wrap_projection_route_scene(
+                visual,
+                &viewport_host_scene_frame,
+                session,
+                runtime_work_context,
+                cx,
+            );
         };
         let host = cx.entity().downgrade();
         match state.mode {
@@ -2684,6 +2795,13 @@ impl DockHost {
         let visual = root
             .with_subtree_presentation(SubtreePresentation::Inert)
             .into_any_element();
+        let visual = self.wrap_projection_route_scene(
+            visual,
+            &viewport_host_scene_frame,
+            session,
+            runtime_work_context,
+            cx,
+        );
         self.wrap_transport_and_semantic_proxies(visual, window)
     }
 
@@ -3752,13 +3870,14 @@ impl DockHost {
     }
 
     /// Captures viewport geometry during prepaint and publishes it after a valid paint.
-    pub(crate) fn render_viewport_host_scene_probe(
+    fn render_viewport_host_scene_probe(
         &self,
         frame_slot: &DockViewportHostSceneCandidateSlot,
         session: &DockHostRenderSession,
         drop_guide_metrics: geometry::DockDropGuideMetrics,
         passthrough_pointer_input: bool,
         work_context: DockViewportRuntimeWorkContext,
+        mode: DockViewportHostSceneProbeMode,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entity = cx.entity();
@@ -3791,15 +3910,16 @@ impl DockHost {
                     passthrough_pointer_input,
                 );
                 let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                if !hitbox.is_active() {
+                if !hitbox.is_active() && !mode.publishes_inactive_geometry() {
                     return;
                 }
                 let scene = entity.update(app, |host, _| {
                     host.resolved_render_presentation_scene(&session, hitbox.layout_bounds())
                 });
                 let mouse_position = window.mouse_position();
-                let Ok(host_position) = hitbox.window_to_local_point(mouse_position) else {
-                    return;
+                let host_position = match hitbox.window_to_local_point(mouse_position) {
+                    Ok(position) => position,
+                    Err(_) => return,
                 };
                 let window_facts = crate::DockViewportWindowFacts::from_window(window, app);
                 let draft = DockViewportHostSceneDraft::new_with_facts(
@@ -4141,6 +4261,40 @@ mod tests {
             ),
             DockLiveRevealSnapshotClassification::Revealed
         );
+    }
+
+    #[test]
+    fn revealed_native_generation_waits_for_the_exact_gpui_frame_to_catch_up() {
+        assert!(live_reveal_submission_is_still_catchable(
+            WindowProvisionalRevealOutcome::Pending,
+            8,
+            Some(6),
+        ));
+        assert!(live_reveal_submission_is_still_catchable(
+            WindowProvisionalRevealOutcome::Revealed,
+            8,
+            Some(6),
+        ));
+        assert!(live_reveal_submission_is_still_catchable(
+            WindowProvisionalRevealOutcome::Revealed,
+            8,
+            None,
+        ));
+        assert!(!live_reveal_submission_is_still_catchable(
+            WindowProvisionalRevealOutcome::Revealed,
+            8,
+            Some(8),
+        ));
+        assert!(!live_reveal_submission_is_still_catchable(
+            WindowProvisionalRevealOutcome::Revealed,
+            8,
+            Some(9),
+        ));
+        assert!(!live_reveal_submission_is_still_catchable(
+            WindowProvisionalRevealOutcome::Rejected,
+            8,
+            Some(6),
+        ));
     }
 
     fn preview(rejected: bool, payload_tab: bool) -> DockDropPreview {

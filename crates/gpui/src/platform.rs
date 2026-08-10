@@ -416,19 +416,29 @@ impl PlatformWindowHit {
     }
 }
 
+/// Typed terminal fact for one complete point-scoped native hit observation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlatformWindowHitTerminus {
+    /// Native hit testing continued through every provisional prefix entry to verified desktop.
+    OpenDesktop,
+    /// The first native top-level that terminates routing at the sampled point.
+    Window(PlatformWindowHit),
+}
+
 /// One immutable hit observation bound to exactly one sampled physical point.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformWindowHitObservation {
     sampled_point: Point<DevicePixels>,
-    hits: Vec<PlatformWindowHit>,
+    provisional_pass_throughs: Vec<PlatformWindowHit>,
+    terminus: PlatformWindowHitTerminus,
 }
 
 impl PlatformWindowHitObservation {
     /// Creates a complete observation through the first terminal hit.
     ///
-    /// A non-empty observation contains zero or more exact provisional pass-through entries and
-    /// exactly one terminal entry at the end. An empty observation explicitly represents verified
-    /// open desktop space.
+    /// The observation contains zero or more exact provisional pass-through entries and exactly
+    /// one terminal window entry at the end. Verified open desktop uses
+    /// [`Self::try_open_desktop`] so the two terminal domains cannot be confused.
     pub fn try_new(
         sampled_point: Point<DevicePixels>,
         hits: Vec<PlatformWindowHit>,
@@ -438,15 +448,38 @@ impl PlatformWindowHitObservation {
         }) {
             return None;
         }
-        if let Some((terminal, prefix)) = hits.split_last()
-            && (!terminal.is_terminal()
-                || !prefix.iter().all(|hit| hit.is_provisional_pass_through()))
-        {
+        let (terminal, prefix) = hits.split_last()?;
+        if !terminal.is_terminal() || !prefix.iter().all(|hit| hit.is_provisional_pass_through()) {
             return None;
         }
         Some(Self {
             sampled_point,
-            hits,
+            provisional_pass_throughs: prefix.to_vec(),
+            terminus: PlatformWindowHitTerminus::Window(*terminal),
+        })
+    }
+
+    /// Creates a complete observation through exact provisional pass-through entries to verified
+    /// open desktop space.
+    ///
+    /// Backends must only use this constructor after independently proving that native hit testing
+    /// continues through every supplied provisional window and terminates at the desktop rather
+    /// than at an unclassified top-level window.
+    pub fn try_open_desktop(
+        sampled_point: Point<DevicePixels>,
+        hits: Vec<PlatformWindowHit>,
+    ) -> Option<Self> {
+        if hits.iter().any(|hit| {
+            !hit.is_provisional_pass_through()
+                || !hit.coverage().contains(sampled_point)
+                || !hit.has_valid_authority_generation()
+        }) {
+            return None;
+        }
+        Some(Self {
+            sampled_point,
+            provisional_pass_throughs: hits,
+            terminus: PlatformWindowHitTerminus::OpenDesktop,
         })
     }
 
@@ -455,9 +488,14 @@ impl PlatformWindowHitObservation {
         self.sampled_point
     }
 
-    /// Returns the classified entries in front-to-back order through the first terminal.
-    pub fn hits(&self) -> &[PlatformWindowHit] {
-        &self.hits
+    /// Returns the exact provisional pass-through prefix in front-to-back order.
+    pub fn provisional_pass_throughs(&self) -> &[PlatformWindowHit] {
+        &self.provisional_pass_throughs
+    }
+
+    /// Returns the typed routing terminus for this complete observation.
+    pub fn terminus(&self) -> PlatformWindowHitTerminus {
+        self.terminus
     }
 }
 
@@ -481,6 +519,17 @@ impl PlatformWindowHitStack {
             sampled_point,
             hits,
         )?))
+    }
+
+    /// Creates an available observation that reaches verified open desktop after zero or more
+    /// exact provisional pass-through entries.
+    pub fn try_available_open_desktop(
+        sampled_point: Point<DevicePixels>,
+        hits: Vec<PlatformWindowHit>,
+    ) -> Option<Self> {
+        Some(Self::Available(
+            PlatformWindowHitObservation::try_open_desktop(sampled_point, hits)?,
+        ))
     }
 
     /// Returns the available observation, if the backend produced one.
@@ -546,11 +595,32 @@ mod platform_window_hit_observation_tests {
 
         let observation = PlatformWindowHitObservation::try_new(sampled_point, hits.clone())
             .expect("an exact pass-through prefix followed by one terminal should be valid");
-        assert_eq!(observation.hits(), hits);
-        assert!(
-            PlatformWindowHitObservation::try_new(sampled_point, Vec::new()).is_some(),
-            "an empty observation explicitly represents verified open desktop space"
+        assert_eq!(observation.provisional_pass_throughs(), &hits[..2]);
+        assert_eq!(
+            observation.terminus(),
+            PlatformWindowHitTerminus::Window(hits[2])
         );
+        assert!(PlatformWindowHitObservation::try_new(sampled_point, Vec::new()).is_none());
+    }
+
+    #[test]
+    fn hit_observation_accepts_exact_pass_through_prefix_to_verified_open_desktop() {
+        let sampled_point = point(DevicePixels(50), DevicePixels(50));
+        let hits = vec![
+            provisional(test_window(1), 11),
+            provisional(test_window(2), 12),
+        ];
+
+        let observation =
+            PlatformWindowHitObservation::try_open_desktop(sampled_point, hits.clone()).expect(
+                "an exact provisional prefix may terminate at independently verified desktop",
+            );
+        assert_eq!(observation.provisional_pass_throughs(), hits);
+        assert_eq!(
+            observation.terminus(),
+            PlatformWindowHitTerminus::OpenDesktop
+        );
+        assert!(PlatformWindowHitObservation::try_new(sampled_point, hits).is_none());
     }
 
     #[test]
@@ -780,6 +850,34 @@ impl WindowPlacementRequest {
     }
 }
 
+/// A checked request to place a windowed client area in physical desktop coordinates.
+///
+/// This request is intentionally separate from [`WindowPlacementRequest`]. A backend may report
+/// ordinary window bounds in [`WindowCoordinateSpace::WindowLocal`] while still supporting an
+/// exact physical placement primitive for native multi-window coordination. Physical placement
+/// shares the placement mutation domain, so newer logical or physical placement requests
+/// supersede older ones coherently.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowPhysicalPlacementRequest {
+    client_bounds: Bounds<DevicePixels>,
+}
+
+impl WindowPhysicalPlacementRequest {
+    /// Creates a physical placement request when the client bounds are representable.
+    pub fn try_new(client_bounds: Bounds<DevicePixels>) -> Option<Self> {
+        if client_bounds.size.width.0 <= 0 || client_bounds.size.height.0 <= 0 {
+            return None;
+        }
+        checked_physical_bounds_end(client_bounds)?;
+        Some(Self { client_bounds })
+    }
+
+    /// Returns the requested client bounds in physical desktop coordinates.
+    pub const fn client_bounds(self) -> Bounds<DevicePixels> {
+        self.client_bounds
+    }
+}
+
 /// Lifetime activation policy for a top-level window.
 ///
 /// Programmatic activation and click-triggered focus are independent facts, but they mutate as one
@@ -889,6 +987,11 @@ pub struct PlatformWindowCreationCapabilities {
 pub struct PlatformWindowMutationCapabilities {
     /// Support for changing a window's desktop position.
     pub position: WindowMutationSupport,
+    /// Support for placing a windowed client area in physical desktop coordinates.
+    ///
+    /// This capability is independent of [`Self::position`]. A backend can keep ordinary logical
+    /// geometry window-local while exposing a physical placement path for native coordination.
+    pub physical_placement: WindowMutationSupport,
     /// Support for changing a window's content size.
     pub size: WindowMutationSupport,
     /// Support for restoring a window to its windowed state.
@@ -1083,6 +1186,7 @@ struct WindowProvisionalSessionState {
     phase: WindowProvisionalSessionPhase,
     opening_claimed: bool,
     reveal_ticket: Option<WindowProvisionalRevealTicket>,
+    placement_ticket: Option<WindowProvisionalPlacementTicket>,
     destination_semantics_ticket: Option<WindowProvisionalSemanticsTicket>,
 }
 
@@ -1221,6 +1325,7 @@ impl WindowProvisionalRevealNativeFacts {
 pub struct WindowProvisionalRevealSnapshot {
     window_id: WindowId,
     session_generation: u64,
+    reveal_point: Point<DevicePixels>,
     minimum_presentation_generation: u64,
     presentation_generation: Option<u64>,
     native_facts: Option<WindowProvisionalRevealNativeFacts>,
@@ -1236,6 +1341,11 @@ impl WindowProvisionalRevealSnapshot {
     /// Returns the owning provisional-session generation.
     pub const fn session_generation(self) -> u64 {
         self.session_generation
+    }
+
+    /// Returns the physical desktop point that scopes the native Z-order placement and proof.
+    pub const fn reveal_point(self) -> Point<DevicePixels> {
+        self.reveal_point
     }
 
     /// Returns the first renderer generation eligible to reveal the window.
@@ -1272,8 +1382,231 @@ struct WindowProvisionalRevealState {
 pub struct WindowProvisionalRevealTicket {
     window_id: WindowId,
     session_generation: u64,
+    reveal_point: Point<DevicePixels>,
     minimum_presentation_generation: u64,
+    peer_windows: Arc<[WindowId]>,
     state: Arc<ParkingMutex<WindowProvisionalRevealState>>,
+}
+
+/// A checked final physical placement and point-scoped Z-order request for one provisional
+/// top-level window.
+///
+/// The provisional session binds the exact peer list captured by its accepted reveal. Backends
+/// must treat every other visible top-level as an unrelated opaque barrier.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowProvisionalPlacementRequest {
+    generation: u64,
+    client_bounds: Bounds<DevicePixels>,
+    anchor_point: Point<DevicePixels>,
+    peer_windows: Arc<[WindowId]>,
+}
+
+impl WindowProvisionalPlacementRequest {
+    /// Creates one exact final placement request.
+    pub fn try_new(
+        generation: u64,
+        client_bounds: Bounds<DevicePixels>,
+        anchor_point: Point<DevicePixels>,
+    ) -> Option<Self> {
+        if generation == 0
+            || WindowPhysicalPlacementRequest::try_new(client_bounds).is_none()
+            || !client_bounds.contains(&anchor_point)
+        {
+            return None;
+        }
+        Some(Self {
+            generation,
+            client_bounds,
+            anchor_point,
+            peer_windows: Arc::from([]),
+        })
+    }
+
+    fn bind_peer_windows(mut self, peer_windows: Arc<[WindowId]>) -> Self {
+        self.peer_windows = peer_windows;
+        self
+    }
+
+    /// Returns the caller-owned placement generation.
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the requested physical client bounds.
+    pub const fn client_bounds(&self) -> Bounds<DevicePixels> {
+        self.client_bounds
+    }
+
+    /// Returns the physical desktop point that scopes the Z-order proof.
+    pub const fn anchor_point(&self) -> Point<DevicePixels> {
+        self.anchor_point
+    }
+
+    /// Returns the exact same-session peer identities admitted into the point-scoped band.
+    pub fn peer_windows(&self) -> &[WindowId] {
+        &self.peer_windows
+    }
+}
+
+/// Terminal status of one exact provisional final-placement request.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowProvisionalPlacementOutcome {
+    /// The request has not reached a terminal native boundary yet.
+    Pending,
+    /// Physical geometry and the point-scoped Z-order band both settled.
+    Settled,
+    /// The owning backend rejected the exact request.
+    Rejected,
+    /// The backend accepted the command without publishing the required native observation.
+    NativeObservationMissing,
+    /// The exact placement authority was cancelled before the native command could win.
+    Cancelled,
+    /// The target full window generation was no longer current.
+    Stale,
+    /// The application or native window became terminal before settlement.
+    WindowTerminal,
+}
+
+/// Native facts observed synchronously for one exact provisional final placement.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowProvisionalPlacementNativeFacts {
+    physical_geometry_exact: bool,
+    native_visible: bool,
+    foreground_unchanged: bool,
+    native_hit_transparent: bool,
+    stable_native_window_identity: bool,
+    z_order: WindowProvisionalRevealZOrder,
+}
+
+impl WindowProvisionalPlacementNativeFacts {
+    /// Creates one backend observation for the exact placement command being dispatched.
+    pub const fn new(
+        physical_geometry_exact: bool,
+        native_visible: bool,
+        foreground_unchanged: bool,
+        native_hit_transparent: bool,
+        stable_native_window_identity: bool,
+        z_order: WindowProvisionalRevealZOrder,
+    ) -> Self {
+        Self {
+            physical_geometry_exact,
+            native_visible,
+            foreground_unchanged,
+            native_hit_transparent,
+            stable_native_window_identity,
+            z_order,
+        }
+    }
+
+    /// Returns whether the exact physical client bounds were observed after the command.
+    pub const fn physical_geometry_exact(self) -> bool {
+        self.physical_geometry_exact
+    }
+
+    /// Returns whether the exact native window remained visible.
+    pub const fn native_visible(self) -> bool {
+        self.native_visible
+    }
+
+    /// Returns whether the command preserved the foreground window.
+    pub const fn foreground_unchanged(self) -> bool {
+        self.foreground_unchanged
+    }
+
+    /// Returns whether native hit testing still observed the provisional as transparent.
+    pub const fn native_hit_transparent(self) -> bool {
+        self.native_hit_transparent
+    }
+
+    /// Returns whether the command retained the original native-window identity.
+    pub const fn stable_native_window_identity(self) -> bool {
+        self.stable_native_window_identity
+    }
+
+    /// Returns the point-scoped native Z-order result.
+    pub const fn z_order(self) -> WindowProvisionalRevealZOrder {
+        self.z_order
+    }
+
+    /// Returns whether every mandatory final-placement fact was satisfied.
+    pub const fn accepts_placement(self) -> bool {
+        self.physical_geometry_exact
+            && self.native_visible
+            && self.foreground_unchanged
+            && self.native_hit_transparent
+            && self.stable_native_window_identity
+            && !matches!(self.z_order, WindowProvisionalRevealZOrder::Unavailable)
+    }
+}
+
+/// Immutable evidence for one exact provisional final-placement request.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowProvisionalPlacementSnapshot {
+    window_id: WindowId,
+    session_generation: u64,
+    placement_generation: u64,
+    client_bounds: Bounds<DevicePixels>,
+    anchor_point: Point<DevicePixels>,
+    native_facts: Option<WindowProvisionalPlacementNativeFacts>,
+    outcome: WindowProvisionalPlacementOutcome,
+}
+
+impl WindowProvisionalPlacementSnapshot {
+    /// Returns the exact committed full window id.
+    pub const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
+    /// Returns the owning provisional-session generation.
+    pub const fn session_generation(self) -> u64 {
+        self.session_generation
+    }
+
+    /// Returns the caller-owned final-placement generation.
+    pub const fn placement_generation(self) -> u64 {
+        self.placement_generation
+    }
+
+    /// Returns the requested physical client bounds.
+    pub const fn client_bounds(self) -> Bounds<DevicePixels> {
+        self.client_bounds
+    }
+
+    /// Returns the physical desktop point that scoped the native Z-order proof.
+    pub const fn anchor_point(self) -> Point<DevicePixels> {
+        self.anchor_point
+    }
+
+    /// Returns the native observation published by the backend.
+    pub const fn native_facts(self) -> Option<WindowProvisionalPlacementNativeFacts> {
+        self.native_facts
+    }
+
+    /// Returns the terminal or pending placement outcome.
+    pub const fn outcome(self) -> WindowProvisionalPlacementOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug)]
+struct WindowProvisionalPlacementState {
+    native_facts: Option<WindowProvisionalPlacementNativeFacts>,
+    outcome: WindowProvisionalPlacementOutcome,
+    mutation_generation: Option<u64>,
+}
+
+/// A cloneable exact-generation final-placement receipt that survives the target [`Window`].
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct WindowProvisionalPlacementTicket {
+    window_id: WindowId,
+    session_generation: u64,
+    request: WindowProvisionalPlacementRequest,
+    state: Arc<ParkingMutex<WindowProvisionalPlacementState>>,
 }
 
 /// Terminal status of one exact destination-semantics projection.
@@ -1296,6 +1629,7 @@ pub struct WindowProvisionalSemanticsSnapshot {
     session_generation: u64,
     destination_generation: u64,
     minimum_frame_generation: u64,
+    placement_mutation_generation: u64,
     committed_frame_generation: Option<u64>,
     outcome: WindowProvisionalSemanticsOutcome,
 }
@@ -1319,6 +1653,11 @@ impl WindowProvisionalSemanticsSnapshot {
     /// Returns the first frame eligible to carry the destination tree.
     pub const fn minimum_frame_generation(self) -> u64 {
         self.minimum_frame_generation
+    }
+
+    /// Returns the exact framework placement authority frozen by this projection.
+    pub const fn placement_mutation_generation(self) -> u64 {
+        self.placement_mutation_generation
     }
 
     /// Returns the accepted frame that committed the destination tree.
@@ -1346,6 +1685,7 @@ pub struct WindowProvisionalSemanticsTicket {
     session_generation: u64,
     destination_generation: u64,
     minimum_frame_generation: u64,
+    placement_mutation_generation: u64,
     state: Arc<ParkingMutex<WindowProvisionalSemanticsState>>,
 }
 
@@ -1355,12 +1695,14 @@ impl WindowProvisionalSemanticsTicket {
         session_generation: u64,
         destination_generation: u64,
         minimum_frame_generation: u64,
+        placement_mutation_generation: u64,
     ) -> Self {
         Self {
             window_id,
             session_generation,
             destination_generation,
             minimum_frame_generation,
+            placement_mutation_generation,
             state: Arc::new(ParkingMutex::new(WindowProvisionalSemanticsState {
                 committed_frame_generation: None,
                 outcome: WindowProvisionalSemanticsOutcome::Pending,
@@ -1376,6 +1718,7 @@ impl WindowProvisionalSemanticsTicket {
             session_generation: self.session_generation,
             destination_generation: self.destination_generation,
             minimum_frame_generation: self.minimum_frame_generation,
+            placement_mutation_generation: self.placement_mutation_generation,
             committed_frame_generation: state.committed_frame_generation,
             outcome: state.outcome,
         }
@@ -1405,7 +1748,12 @@ impl WindowProvisionalSemanticsTicket {
         self.window_id == other.window_id
             && self.session_generation == other.session_generation
             && self.destination_generation == other.destination_generation
+            && self.placement_mutation_generation == other.placement_mutation_generation
             && Arc::ptr_eq(&self.state, &other.state)
+    }
+
+    fn matches_placement_mutation_generation(&self, generation: u64) -> bool {
+        self.placement_mutation_generation == generation
     }
 }
 
@@ -1413,12 +1761,19 @@ impl WindowProvisionalRevealTicket {
     pub(crate) fn new(
         window_id: WindowId,
         session_generation: u64,
+        reveal_point: Point<DevicePixels>,
         minimum_presentation_generation: u64,
+        peer_windows: Arc<[WindowId]>,
     ) -> Self {
+        let mut peer_windows = peer_windows.to_vec();
+        peer_windows.sort_unstable_by_key(|window_id| window_id.as_u64());
+        peer_windows.dedup();
         Self {
             window_id,
             session_generation,
+            reveal_point,
             minimum_presentation_generation,
+            peer_windows: peer_windows.into(),
             state: Arc::new(ParkingMutex::new(WindowProvisionalRevealState {
                 presentation_generation: None,
                 native_facts: None,
@@ -1440,6 +1795,7 @@ impl WindowProvisionalRevealTicket {
         WindowProvisionalRevealSnapshot {
             window_id: self.window_id,
             session_generation: self.session_generation,
+            reveal_point: self.reveal_point,
             minimum_presentation_generation: self.minimum_presentation_generation,
             presentation_generation: state.presentation_generation,
             native_facts: state.native_facts,
@@ -1462,8 +1818,14 @@ impl WindowProvisionalRevealTicket {
     pub(crate) fn same_authority(&self, other: &Self) -> bool {
         self.window_id == other.window_id
             && self.session_generation == other.session_generation
+            && self.reveal_point == other.reveal_point
             && self.minimum_presentation_generation == other.minimum_presentation_generation
+            && Arc::ptr_eq(&self.peer_windows, &other.peer_windows)
             && Arc::ptr_eq(&self.state, &other.state)
+    }
+
+    pub(crate) fn peer_windows(&self) -> Arc<[WindowId]> {
+        self.peer_windows.clone()
     }
 
     pub(crate) fn bind_presentation(&self, generation: u64) -> bool {
@@ -1511,6 +1873,96 @@ impl WindowProvisionalRevealTicket {
     }
 }
 
+impl WindowProvisionalPlacementTicket {
+    fn new(
+        window_id: WindowId,
+        session_generation: u64,
+        request: WindowProvisionalPlacementRequest,
+    ) -> Self {
+        Self {
+            window_id,
+            session_generation,
+            request,
+            state: Arc::new(ParkingMutex::new(WindowProvisionalPlacementState {
+                native_facts: None,
+                outcome: WindowProvisionalPlacementOutcome::Pending,
+                mutation_generation: None,
+            })),
+        }
+    }
+
+    /// Returns immutable evidence that survives the target window.
+    pub fn snapshot(&self) -> WindowProvisionalPlacementSnapshot {
+        let state = self.state.lock();
+        WindowProvisionalPlacementSnapshot {
+            window_id: self.window_id,
+            session_generation: self.session_generation,
+            placement_generation: self.request.generation,
+            client_bounds: self.request.client_bounds,
+            anchor_point: self.request.anchor_point,
+            native_facts: state.native_facts,
+            outcome: state.outcome,
+        }
+    }
+
+    pub(crate) fn request(&self) -> WindowProvisionalPlacementRequest {
+        self.request.clone()
+    }
+
+    /// Binds the receipt to the framework placement-mutation generation that dispatched it.
+    ///
+    /// The binding is deliberately separate from the caller-owned placement generation. The
+    /// former identifies the current Window mutation authority; the latter identifies the
+    /// docking/promotion attempt. A settled native receipt is not reusable after a newer
+    /// framework placement mutation supersedes this generation.
+    pub(crate) fn bind_mutation_generation(&self, generation: u64) -> bool {
+        if generation == 0 {
+            return false;
+        }
+        let mut state = self.state.lock();
+        if state.mutation_generation.is_some() {
+            return state.mutation_generation == Some(generation);
+        }
+        state.mutation_generation = Some(generation);
+        true
+    }
+
+    pub(crate) fn is_current_mutation_generation(&self, generation: u64) -> bool {
+        self.state.lock().mutation_generation == Some(generation)
+    }
+
+    fn record_native_facts(&self, facts: WindowProvisionalPlacementNativeFacts) -> bool {
+        let mut state = self.state.lock();
+        if state.outcome != WindowProvisionalPlacementOutcome::Pending
+            || state.native_facts.is_some()
+        {
+            return false;
+        }
+        state.native_facts = Some(facts);
+        true
+    }
+
+    pub(crate) fn settle(&self, outcome: WindowProvisionalPlacementOutcome) -> bool {
+        debug_assert_ne!(outcome, WindowProvisionalPlacementOutcome::Pending);
+        let mut state = self.state.lock();
+        if state.outcome != WindowProvisionalPlacementOutcome::Pending {
+            return false;
+        }
+        state.outcome = if outcome == WindowProvisionalPlacementOutcome::Settled {
+            match state.native_facts {
+                None => WindowProvisionalPlacementOutcome::NativeObservationMissing,
+                Some(facts) if facts.accepts_placement() => {
+                    WindowProvisionalPlacementOutcome::Settled
+                }
+                Some(_) => WindowProvisionalPlacementOutcome::Rejected,
+            }
+        } else {
+            outcome
+        };
+        true
+    }
+}
+
 impl WindowProvisionalSession {
     /// Creates one unbound, non-interactive provisional generation.
     pub fn new(generation: u64) -> Result<Self, WindowProvisionalSessionError> {
@@ -1524,6 +1976,7 @@ impl WindowProvisionalSession {
                 phase: WindowProvisionalSessionPhase::Unbound,
                 opening_claimed: false,
                 reveal_ticket: None,
+                placement_ticket: None,
                 destination_semantics_ticket: None,
             })),
         })
@@ -1600,6 +2053,193 @@ impl WindowProvisionalSession {
         }
     }
 
+    #[doc(hidden)]
+    pub fn reveal_peer_windows(
+        &self,
+        window_id: WindowId,
+        presentation_generation: u64,
+    ) -> Result<Arc<[WindowId]>, WindowProvisionalSessionError> {
+        let state = self.state.lock();
+        if state.window_id != Some(window_id) {
+            return Err(WindowProvisionalSessionError::WindowMismatch);
+        }
+        if state.phase != WindowProvisionalSessionPhase::Gated {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        let ticket = state
+            .reveal_ticket
+            .as_ref()
+            .ok_or(WindowProvisionalSessionError::InvalidPhase)?;
+        let snapshot = ticket.snapshot();
+        if snapshot.presentation_generation() != Some(presentation_generation)
+            || snapshot.outcome() != WindowProvisionalRevealOutcome::Pending
+        {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        Ok(ticket.peer_windows())
+    }
+
+    pub(crate) fn begin_final_placement(
+        &self,
+        window_id: WindowId,
+        request: WindowProvisionalPlacementRequest,
+    ) -> Result<WindowProvisionalPlacementTicket, WindowProvisionalSessionError> {
+        let mut state = self.state.lock();
+        if state.window_id != Some(window_id) {
+            return Err(WindowProvisionalSessionError::WindowMismatch);
+        }
+        let Some(reveal_ticket) = state.reveal_ticket.as_ref() else {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        };
+        let reveal_snapshot = reveal_ticket.snapshot();
+        if state.phase != WindowProvisionalSessionPhase::Gated
+            || state.placement_ticket.as_ref().is_some_and(|ticket| {
+                let snapshot = ticket.snapshot();
+                snapshot.outcome() != WindowProvisionalPlacementOutcome::Settled
+                    || snapshot
+                        .native_facts()
+                        .is_none_or(|facts| !facts.accepts_placement())
+            })
+            || reveal_snapshot.outcome() != WindowProvisionalRevealOutcome::Revealed
+            || reveal_snapshot
+                .native_facts()
+                .is_none_or(|facts| !facts.accepts_reveal())
+        {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        let request = request.bind_peer_windows(reveal_ticket.peer_windows());
+        let ticket = WindowProvisionalPlacementTicket::new(window_id, self.generation, request);
+        state.placement_ticket = Some(ticket.clone());
+        Ok(ticket)
+    }
+
+    pub(crate) fn blocks_window_mutation(
+        &self,
+        window_id: WindowId,
+        domain: WindowMutationDomain,
+    ) -> Result<bool, WindowProvisionalSessionError> {
+        let state = self.state.lock();
+        if state.window_id != Some(window_id) {
+            return Err(WindowProvisionalSessionError::WindowMismatch);
+        }
+        let placement_pending = state.placement_ticket.as_ref().is_some_and(|ticket| {
+            ticket.snapshot().outcome() == WindowProvisionalPlacementOutcome::Pending
+        });
+        let semantics_frozen = matches!(
+            state.phase,
+            WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+                | WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+        );
+        let provisional_gate_live = matches!(
+            state.phase,
+            WindowProvisionalSessionPhase::Gated
+                | WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+                | WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+        );
+        Ok(match domain {
+            WindowMutationDomain::Placement => placement_pending || semantics_frozen,
+            WindowMutationDomain::PointerInput | WindowMutationDomain::Topmost => {
+                provisional_gate_live
+            }
+            WindowMutationDomain::ActivationPolicy
+            | WindowMutationDomain::Alpha
+            | WindowMutationDomain::TaskbarVisibility => false,
+        })
+    }
+
+    /// Returns the exact final-placement request currently owned by this provisional session.
+    #[doc(hidden)]
+    pub fn final_placement_request(
+        &self,
+        window_id: WindowId,
+        placement_generation: u64,
+    ) -> Result<WindowProvisionalPlacementRequest, WindowProvisionalSessionError> {
+        let state = self.state.lock();
+        if state.window_id != Some(window_id) {
+            return Err(WindowProvisionalSessionError::WindowMismatch);
+        }
+        if state.phase != WindowProvisionalSessionPhase::Gated {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        let ticket = state
+            .placement_ticket
+            .as_ref()
+            .ok_or(WindowProvisionalSessionError::InvalidPhase)?;
+        if ticket.request.generation != placement_generation
+            || ticket.snapshot().outcome() != WindowProvisionalPlacementOutcome::Pending
+        {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        Ok(ticket.request.clone())
+    }
+
+    /// Records the native facts for the exact final-placement generation currently armed by GPUI.
+    #[doc(hidden)]
+    pub fn record_native_final_placement(
+        &self,
+        window_id: WindowId,
+        placement_generation: u64,
+        facts: WindowProvisionalPlacementNativeFacts,
+    ) -> Result<(), WindowProvisionalSessionError> {
+        let ticket = {
+            let state = self.state.lock();
+            if state.window_id != Some(window_id) {
+                return Err(WindowProvisionalSessionError::WindowMismatch);
+            }
+            if state.phase != WindowProvisionalSessionPhase::Gated {
+                return Err(WindowProvisionalSessionError::InvalidPhase);
+            }
+            let ticket = state
+                .placement_ticket
+                .clone()
+                .ok_or(WindowProvisionalSessionError::InvalidPhase)?;
+            if ticket.request.generation != placement_generation {
+                return Err(WindowProvisionalSessionError::InvalidPhase);
+            }
+            ticket
+        };
+        if ticket.record_native_facts(facts) {
+            Ok(())
+        } else {
+            Err(WindowProvisionalSessionError::InvalidPhase)
+        }
+    }
+
+    /// Settles the exact final-placement generation currently owned by this provisional session.
+    #[doc(hidden)]
+    pub fn settle_native_final_placement(
+        &self,
+        window_id: WindowId,
+        placement_generation: u64,
+        outcome: WindowProvisionalPlacementOutcome,
+    ) -> Result<(), WindowProvisionalSessionError> {
+        if outcome == WindowProvisionalPlacementOutcome::Pending {
+            return Err(WindowProvisionalSessionError::InvalidPhase);
+        }
+        let ticket = {
+            let state = self.state.lock();
+            if state.window_id != Some(window_id) {
+                return Err(WindowProvisionalSessionError::WindowMismatch);
+            }
+            if state.phase != WindowProvisionalSessionPhase::Gated {
+                return Err(WindowProvisionalSessionError::InvalidPhase);
+            }
+            let ticket = state
+                .placement_ticket
+                .clone()
+                .ok_or(WindowProvisionalSessionError::InvalidPhase)?;
+            if ticket.request.generation != placement_generation {
+                return Err(WindowProvisionalSessionError::InvalidPhase);
+            }
+            ticket
+        };
+        if ticket.settle(outcome) {
+            Ok(())
+        } else {
+            Err(WindowProvisionalSessionError::InvalidPhase)
+        }
+    }
+
     /// Binds the exact committed full window id while preserving the interaction gate.
     pub(crate) fn bind(&self, window_id: WindowId) -> Result<(), WindowProvisionalSessionError> {
         let mut state = self.state.lock();
@@ -1623,6 +2263,7 @@ impl WindowProvisionalSession {
         window_id: WindowId,
         destination_generation: u64,
         minimum_frame_generation: u64,
+        current_mutation_generation: u64,
     ) -> Result<WindowProvisionalSemanticsTicket, WindowProvisionalSessionError> {
         if destination_generation == 0 {
             return Err(WindowProvisionalSessionError::ZeroDestinationSemanticsGeneration);
@@ -1633,6 +2274,14 @@ impl WindowProvisionalSession {
         }
         if state.phase != WindowProvisionalSessionPhase::Gated
             || state.destination_semantics_ticket.is_some()
+            || state.placement_ticket.as_ref().is_some_and(|ticket| {
+                let snapshot = ticket.snapshot();
+                snapshot.outcome() != WindowProvisionalPlacementOutcome::Settled
+                    || snapshot
+                        .native_facts()
+                        .is_none_or(|facts| !facts.accepts_placement())
+                    || !ticket.is_current_mutation_generation(current_mutation_generation)
+            })
             || state.reveal_ticket.as_ref().is_none_or(|ticket| {
                 let snapshot = ticket.snapshot();
                 snapshot.outcome() != WindowProvisionalRevealOutcome::Revealed
@@ -1648,6 +2297,7 @@ impl WindowProvisionalSession {
             self.generation,
             destination_generation,
             minimum_frame_generation,
+            current_mutation_generation,
         );
         state.destination_semantics_ticket = Some(ticket.clone());
         state.phase = WindowProvisionalSessionPhase::ProjectingDestinationSemantics;
@@ -1659,6 +2309,7 @@ impl WindowProvisionalSession {
         window_id: WindowId,
         exact_ticket: &WindowProvisionalSemanticsTicket,
         frame_generation: u64,
+        current_mutation_generation: u64,
     ) -> Result<(), WindowProvisionalSessionError> {
         let mut state = self.state.lock();
         if state.window_id != Some(window_id) {
@@ -1671,7 +2322,9 @@ impl WindowProvisionalSession {
             .destination_semantics_ticket
             .as_ref()
             .ok_or(WindowProvisionalSessionError::InvalidPhase)?;
-        if !ticket.same_authority(exact_ticket) {
+        if !ticket.same_authority(exact_ticket)
+            || !ticket.matches_placement_mutation_generation(current_mutation_generation)
+        {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         }
         if !ticket.commit_frame(frame_generation) {
@@ -1685,6 +2338,7 @@ impl WindowProvisionalSession {
         &self,
         window_id: WindowId,
         ticket: &WindowProvisionalSemanticsTicket,
+        current_mutation_generation: u64,
     ) -> Result<(), WindowProvisionalSessionError> {
         let mut state = self.state.lock();
         if state.window_id != Some(window_id) {
@@ -1694,7 +2348,11 @@ impl WindowProvisionalSession {
             && state
                 .destination_semantics_ticket
                 .as_ref()
-                .is_some_and(|current| current.same_authority(ticket))
+                .is_some_and(|current| {
+                    current.same_authority(ticket)
+                        && current
+                            .matches_placement_mutation_generation(current_mutation_generation)
+                })
         {
             return Ok(());
         }
@@ -1703,6 +2361,7 @@ impl WindowProvisionalSession {
                 .destination_semantics_ticket
                 .as_ref()
                 .is_none_or(|current| !current.same_authority(ticket))
+            || !ticket.matches_placement_mutation_generation(current_mutation_generation)
             || ticket.snapshot().outcome() != WindowProvisionalSemanticsOutcome::Committed
         {
             return Err(WindowProvisionalSessionError::InvalidPhase);
@@ -1722,6 +2381,9 @@ impl WindowProvisionalSession {
                 Err(WindowProvisionalSessionError::WindowMismatch)
             }
             Some(_) => {
+                if let Some(ticket) = state.placement_ticket.as_ref() {
+                    ticket.settle(WindowProvisionalPlacementOutcome::WindowTerminal);
+                }
                 if let Some(ticket) = state.destination_semantics_ticket.as_ref() {
                     ticket.settle_window_terminal();
                 }
@@ -1747,6 +2409,12 @@ pub struct WindowPlatformFacts {
     pub bounds: Bounds<Pixels>,
     /// The coordinate system used by [`Self::bounds`].
     pub coordinate_space: WindowCoordinateSpace,
+    /// The same observation expressed as physical desktop client geometry, when available.
+    ///
+    /// Backends must capture this value coherently with the remaining facts. It is the authority
+    /// used to settle [`WindowPhysicalPlacementRequest`] without fabricating global logical
+    /// coordinates.
+    pub physical_geometry: Option<PlatformWindowPhysicalGeometry>,
     /// The current window state and its restore bounds.
     pub window_bounds: WindowBounds,
     /// The current window state and bounds excluding platform insets when available.
@@ -2265,6 +2933,7 @@ pub enum PlatformWindowCommand {
     RevealDeferredInitialPresentation {
         session_generation: u64,
         presentation_generation: u64,
+        reveal_point: Point<DevicePixels>,
     },
     Activate,
     ShowWindowMenu(Point<Pixels>),
@@ -3319,6 +3988,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowPlatformFacts {
             bounds: self.bounds(),
             coordinate_space: WindowCoordinateSpace::WindowLocal,
+            physical_geometry: None,
             window_bounds: self.window_bounds(),
             inner_window_bounds: self.inner_window_bounds(),
             content_size: self.content_size(),
@@ -3356,6 +4026,20 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         } else {
             PlatformWindowDispatch::Unsupported
         }
+    }
+    /// Requests one atomic physical placement plus point-scoped provisional Z-order settlement.
+    ///
+    /// GPUI has already reserved `generation` in the ordinary placement mutation domain. The
+    /// backend must emit its coherent terminal placement observation through the same mutation
+    /// callback and separately settle the exact provisional placement ticket stored in the
+    /// bound session.
+    #[doc(hidden)]
+    fn request_provisional_placement(
+        &mut self,
+        _generation: u64,
+        _request: WindowProvisionalPlacementRequest,
+    ) -> PlatformWindowDispatch {
+        PlatformWindowDispatch::Unsupported
     }
     /// Invalidates any backend work that could later emit a terminal observation for `domain`.
     ///
@@ -5904,6 +6588,326 @@ mod image_tests {
         for pixel in bytes.chunks_exact(4) {
             assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
         }
+    }
+}
+
+#[cfg(test)]
+mod provisional_placement_tests {
+    use super::*;
+
+    fn revealed_session() -> (WindowProvisionalSession, WindowId) {
+        revealed_session_with_peers([])
+    }
+
+    fn revealed_session_with_peers(
+        peers: impl IntoIterator<Item = WindowId>,
+    ) -> (WindowProvisionalSession, WindowId) {
+        let session = WindowProvisionalSession::new(7)
+            .expect("test provisional generation should be non-zero");
+        let opening = session
+            .claim_opening()
+            .expect("test provisional opening should be claimable");
+        let window_id = WindowId::from(71);
+        session
+            .bind(window_id)
+            .expect("test provisional session should bind its exact window");
+        drop(opening);
+
+        let reveal_point = point(DevicePixels(120), DevicePixels(90));
+        let reveal = WindowProvisionalRevealTicket::new(
+            window_id,
+            7,
+            reveal_point,
+            1,
+            peers.into_iter().collect::<Vec<_>>().into(),
+        );
+        session
+            .register_reveal_ticket(reveal.clone())
+            .expect("test reveal ticket should register");
+        assert!(reveal.bind_presentation(1));
+        session
+            .record_native_reveal(
+                window_id,
+                1,
+                WindowProvisionalRevealNativeFacts::new(
+                    true,
+                    true,
+                    true,
+                    true,
+                    WindowProvisionalRevealZOrder::Exact,
+                ),
+            )
+            .expect("test reveal facts should bind the exact frame");
+        assert!(reveal.settle(WindowProvisionalRevealOutcome::Revealed));
+        (session, window_id)
+    }
+
+    fn placement_request(generation: u64) -> WindowProvisionalPlacementRequest {
+        WindowProvisionalPlacementRequest::try_new(
+            generation,
+            Bounds::new(
+                point(DevicePixels(80), DevicePixels(60)),
+                size(DevicePixels(320), DevicePixels(240)),
+            ),
+            point(DevicePixels(120), DevicePixels(90)),
+        )
+        .expect("test final placement should be valid")
+    }
+
+    fn accepted_placement_facts() -> WindowProvisionalPlacementNativeFacts {
+        WindowProvisionalPlacementNativeFacts::new(
+            true,
+            true,
+            true,
+            true,
+            true,
+            WindowProvisionalRevealZOrder::Exact,
+        )
+    }
+
+    #[test]
+    fn final_placement_canonicalizes_peers_and_settles_exact_native_facts() {
+        let first_peer = WindowId::from(12);
+        let second_peer = WindowId::from(9);
+        let (session, window_id) =
+            revealed_session_with_peers([first_peer, second_peer, first_peer]);
+        let request = placement_request(4);
+        assert!(request.peer_windows().is_empty());
+
+        let ticket = session
+            .begin_final_placement(window_id, request.clone())
+            .expect("revealed session should admit one final placement");
+        assert!(ticket.bind_mutation_generation(1));
+        let bound_request = session
+            .final_placement_request(window_id, 4)
+            .expect("backend should recover the exact pending request");
+        assert_eq!(bound_request.peer_windows(), &[second_peer, first_peer]);
+        assert_eq!(bound_request.client_bounds(), request.client_bounds());
+        assert_eq!(bound_request.anchor_point(), request.anchor_point());
+        session
+            .record_native_final_placement(window_id, 4, accepted_placement_facts())
+            .expect("exact native facts should be recorded once");
+        session
+            .settle_native_final_placement(window_id, 4, WindowProvisionalPlacementOutcome::Settled)
+            .expect("accepted native facts should settle final placement");
+
+        let snapshot = ticket.snapshot();
+        assert_eq!(
+            snapshot.outcome(),
+            WindowProvisionalPlacementOutcome::Settled
+        );
+        assert_eq!(snapshot.native_facts(), Some(accepted_placement_facts()));
+        assert!(
+            session
+                .begin_destination_semantics(window_id, 1, 1, 1)
+                .is_ok(),
+            "accepted final placement should open destination semantics"
+        );
+    }
+
+    #[test]
+    fn final_placement_proof_is_stale_after_a_newer_framework_placement_generation() {
+        let (session, window_id) = revealed_session();
+        let ticket = session
+            .begin_final_placement(window_id, placement_request(41))
+            .expect("revealed session should admit final placement");
+        assert!(ticket.bind_mutation_generation(7));
+        session
+            .record_native_final_placement(window_id, 41, accepted_placement_facts())
+            .expect("exact native facts should record");
+        session
+            .settle_native_final_placement(
+                window_id,
+                41,
+                WindowProvisionalPlacementOutcome::Settled,
+            )
+            .expect("accepted native facts should settle final placement");
+
+        assert!(
+            session
+                .begin_destination_semantics(window_id, 1, 1, 8)
+                .is_err(),
+            "a later framework placement generation must invalidate the old native proof"
+        );
+    }
+
+    #[test]
+    fn destination_semantics_rechecks_frozen_placement_generation_at_commit_and_admission() {
+        let (session, window_id) = revealed_session();
+        let placement = session
+            .begin_final_placement(window_id, placement_request(42))
+            .expect("revealed session should admit final placement");
+        assert!(placement.bind_mutation_generation(7));
+        session
+            .record_native_final_placement(window_id, 42, accepted_placement_facts())
+            .expect("exact native facts should record");
+        session
+            .settle_native_final_placement(
+                window_id,
+                42,
+                WindowProvisionalPlacementOutcome::Settled,
+            )
+            .expect("accepted native facts should settle final placement");
+        let semantics = session
+            .begin_destination_semantics(window_id, 9, 3, 7)
+            .expect("the exact placement generation should begin semantics");
+
+        assert_eq!(
+            session
+                .commit_destination_semantics(window_id, &semantics, 3, 8)
+                .expect_err("a changed placement generation must reject frame commit"),
+            WindowProvisionalSessionError::InvalidPhase
+        );
+        assert_eq!(
+            semantics.snapshot().outcome(),
+            WindowProvisionalSemanticsOutcome::Pending
+        );
+        session
+            .commit_destination_semantics(window_id, &semantics, 3, 7)
+            .expect("the frozen placement generation should commit semantics");
+        assert_eq!(
+            session
+                .admit_interaction(window_id, &semantics, 8)
+                .expect_err("a changed placement generation must reject interaction admission"),
+            WindowProvisionalSessionError::InvalidPhase
+        );
+        session
+            .admit_interaction(window_id, &semantics, 7)
+            .expect("the frozen placement generation should admit interaction");
+        assert!(session.snapshot().accepts_interaction());
+    }
+
+    #[test]
+    fn final_placement_uses_the_peer_set_bound_by_reveal() {
+        let bound_peer = WindowId::from(12);
+        let (session, window_id) = revealed_session_with_peers([bound_peer]);
+        let request = placement_request(4);
+
+        session
+            .begin_final_placement(window_id, request)
+            .expect("the reveal session should supply final-placement peer authority");
+        assert_eq!(
+            session
+                .final_placement_request(window_id, 4)
+                .expect("the backend should observe reveal-bound peer authority")
+                .peer_windows(),
+            &[bound_peer]
+        );
+    }
+
+    #[test]
+    fn final_placement_cannot_claim_settled_without_acceptable_native_facts() {
+        let (session, window_id) = revealed_session();
+        let ticket = session
+            .begin_final_placement(window_id, placement_request(5))
+            .expect("revealed session should admit final placement");
+        let incomplete = WindowProvisionalPlacementNativeFacts::new(
+            true,
+            true,
+            true,
+            false,
+            true,
+            WindowProvisionalRevealZOrder::Exact,
+        );
+        session
+            .record_native_final_placement(window_id, 5, incomplete)
+            .expect("the backend observation itself should be recordable");
+        session
+            .settle_native_final_placement(window_id, 5, WindowProvisionalPlacementOutcome::Settled)
+            .expect("the exact ticket should accept one terminal settlement attempt");
+
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Rejected
+        );
+        assert!(
+            session
+                .begin_destination_semantics(window_id, 1, 1, 1)
+                .is_err(),
+            "rejected final placement must not open destination semantics"
+        );
+    }
+
+    #[test]
+    fn final_placement_without_native_observation_is_not_exact() {
+        let (session, window_id) = revealed_session();
+        let ticket = session
+            .begin_final_placement(window_id, placement_request(6))
+            .expect("revealed session should admit final placement");
+        session
+            .settle_native_final_placement(window_id, 6, WindowProvisionalPlacementOutcome::Settled)
+            .expect("the exact ticket should accept one terminal settlement attempt");
+
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::NativeObservationMissing
+        );
+    }
+
+    #[test]
+    fn final_placement_rejects_wrong_identity_and_late_callbacks() {
+        let (session, window_id) = revealed_session();
+        let ticket = session
+            .begin_final_placement(window_id, placement_request(7))
+            .expect("revealed session should admit final placement");
+        assert!(ticket.bind_mutation_generation(1));
+        assert!(
+            session
+                .record_native_final_placement(WindowId::from(72), 7, accepted_placement_facts(),)
+                .is_err()
+        );
+        assert!(
+            session
+                .record_native_final_placement(window_id, 6, accepted_placement_facts())
+                .is_err()
+        );
+
+        session
+            .record_native_final_placement(window_id, 7, accepted_placement_facts())
+            .expect("matching facts should record");
+        session
+            .settle_native_final_placement(window_id, 7, WindowProvisionalPlacementOutcome::Settled)
+            .expect("matching final placement should settle");
+        let semantics = session
+            .begin_destination_semantics(window_id, 1, 1, 1)
+            .expect("settled placement should open semantics");
+        assert!(
+            session
+                .settle_native_final_placement(
+                    window_id,
+                    7,
+                    WindowProvisionalPlacementOutcome::Rejected,
+                )
+                .is_err(),
+            "a callback cannot rewrite placement after semantics begin"
+        );
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Settled
+        );
+        drop(semantics);
+    }
+
+    #[test]
+    fn provisional_terminal_settles_pending_final_placement() {
+        let (session, window_id) = revealed_session();
+        let ticket = session
+            .begin_final_placement(window_id, placement_request(8))
+            .expect("revealed session should admit final placement");
+        session
+            .terminate(window_id)
+            .expect("matching provisional window should terminate");
+
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::WindowTerminal
+        );
+        assert!(
+            session
+                .record_native_final_placement(window_id, 8, accepted_placement_facts())
+                .is_err(),
+            "native callbacks after terminal must not record facts"
+        );
     }
 }
 

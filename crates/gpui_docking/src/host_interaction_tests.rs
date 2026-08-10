@@ -17,9 +17,9 @@ use crate::{
         DockSurfaceOwner,
         live_undock::{
             DockLiveUndockDragGeneration, DockLiveUndockEffect, DockLiveUndockFact,
-            DockLiveUndockPromotionDestination, DockLiveUndockPromotionToken,
-            DockLiveUndockRouteFeedback, DockLiveUndockSession, DockLiveUndockSourceSnapshot,
-            DockLiveUndockTrigger,
+            DockLiveUndockPhysicalPoint, DockLiveUndockPromotionDestination,
+            DockLiveUndockPromotionToken, DockLiveUndockRouteFeedback, DockLiveUndockSession,
+            DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
         },
         payload_recovery::{
             DockPayloadRecoveryAuthority, DockPayloadRecoveryPresentationOrigin,
@@ -242,7 +242,7 @@ fn configure_native_desktop_release(
     cx.set_platform_window_physical_client_geometry(source_window, Some(source_bounds), 2.0);
     let sampled_point = point(DevicePixels(1800), DevicePixels(1800));
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(sampled_point, Vec::new())
+        PlatformWindowHitStack::try_available_open_desktop(sampled_point, Vec::new())
             .expect("desktop release observation should be valid"),
     );
 }
@@ -250,7 +250,7 @@ fn configure_native_desktop_release(
 fn advertise_native_window_hit_stack(cx: &TestAppContext) {
     advertise_native_drag_hysteresis(cx);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(-1), DevicePixels(-1)),
             Vec::new(),
         )
@@ -605,6 +605,155 @@ fn begin_native_live_undock_with_released_source(
     );
 }
 
+#[open_gpui::test]
+fn live_source_projection_republishes_accepted_route_scene(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let source_window = fixture.source_window.window_id();
+    let source_space = cx.read_entity(&fixture.source_host, |host, _| host.space().clone());
+    let initial = fixture
+        .runtime
+        .runtime_status()
+        .viewport_lifecycle
+        .into_iter()
+        .find(|record| record.space == source_space && record.window_id == source_window)
+        .expect("the source viewport should publish initial route facts");
+    assert_eq!(
+        initial.route_status,
+        crate::DockViewportRouteStatus::RouteReady
+    );
+
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture
+        .source_visual
+        .update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    let projected = fixture
+        .runtime
+        .runtime_status()
+        .viewport_lifecycle
+        .into_iter()
+        .find(|record| record.space == source_space && record.window_id == source_window)
+        .expect("the live source projection should retain its viewport registration");
+    assert_eq!(
+        projected.route_status,
+        crate::DockViewportRouteStatus::RouteReady,
+        "a live source projection must publish an accepted route scene instead of discarding the source route"
+    );
+    assert!(
+        projected.facts_generation > initial.facts_generation,
+        "the live source projection must replace the prior normal-host scene with a fresh generation"
+    );
+    assert!(
+        cx.read_entity(&fixture.source_host, |host, _| host
+            .interaction()
+            .viewport_host_scene_frame()
+            .is_some()),
+        "the fresh source projection route must retain accepted-frame proof"
+    );
+}
+
+#[open_gpui::test]
+fn revealed_live_destination_keeps_inert_source_route_ready(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let source_window = fixture.source_window.window_id();
+    let source_space = cx.read_entity(&fixture.source_host, |host, _| host.space().clone());
+
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let _ = reveal_live_undock_provisional_destination(&fixture, cx);
+
+    fixture
+        .source_visual
+        .update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    let projected = fixture
+        .runtime
+        .runtime_status()
+        .viewport_lifecycle
+        .into_iter()
+        .find(|record| record.space == source_space && record.window_id == source_window)
+        .expect("the revealed live source must retain its viewport registration");
+    assert_eq!(
+        projected.route_status,
+        crate::DockViewportRouteStatus::RouteReady,
+        "an inert source projection must retain non-interactive route geometry after destination reveal"
+    );
+    assert!(
+        cx.read_entity(&fixture.source_host, |host, _| host
+            .interaction()
+            .viewport_host_scene_frame()
+            .is_some()),
+        "the inert source projection must retain accepted-frame route proof"
+    );
+}
+
+#[open_gpui::test]
+fn reveal_observing_advances_the_exact_destination_frame_on_cached_refresh(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    cx.defer_next_window_frame_requests();
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+
+    let destination_window = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.window_id() != fixture.source_window.window_id())
+        .expect("live undock should retain one provisional destination window");
+    let destination_host = destination_window
+        .downcast::<DockHost>()
+        .expect("the provisional destination should retain a DockHost root")
+        .entity(cx)
+        .expect("the provisional destination DockHost should remain live");
+    let (key, preflight) = cx.read_entity(&destination_host, |host, _| {
+        let state = host
+            .live_presentation_state()
+            .expect("the provisional destination must retain reveal authority");
+        let crate::host::DockHostLivePresentationMode::DestinationProjection {
+            phase: crate::host::DockHostLiveDestinationPhase::RevealObserving { presentation, .. },
+            ..
+        } = state.mode
+        else {
+            panic!("the destination must already be observing its exact native reveal");
+        };
+        (state.key, presentation)
+    });
+    let runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    let current_frame = |cx: &TestAppContext| {
+        cx.read(|app| runtime.current_destination_presentation(key, preflight.mount(), app))
+            .and_then(Result::ok)
+            .expect("the destination must retain one accepted presentation")
+            .frame_generation()
+    };
+    let first = current_frame(cx);
+    let mut destination_visual = VisualTestContext::from_window(destination_window, cx);
+
+    destination_visual.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    });
+    let second = current_frame(cx);
+    destination_visual.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    });
+    let third = current_frame(cx);
+
+    assert!(
+        second > first,
+        "the first cached reveal-observing refresh must advance the exact destination frame"
+    );
+    assert!(
+        third > second,
+        "every accepted reveal-observing frame must remain observable until native submission binds one generation"
+    );
+}
+
 fn reveal_live_undock_provisional_destination(
     fixture: &NativeCapturedSourceFixture,
     cx: &mut TestAppContext,
@@ -642,6 +791,42 @@ fn reveal_live_undock_provisional_destination(
         facts.non_empty_presented_generation.is_some(),
         "the provisional destination must present non-empty content before release"
     );
+
+    let reveal_already_settled = cx.read_entity(&destination_host, |host, cx| {
+        let state = host
+            .live_presentation_state()
+            .expect("the provisional destination should retain live presentation authority");
+        match state.mode {
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                leases,
+                phase: crate::host::DockHostLiveDestinationPhase::RevealSettled,
+                ..
+            } => {
+                assert!(
+                    open_gpui::view_presentation_window::presented_batch_receipt(cx, &leases)
+                        .is_some(),
+                    "a settled reveal must retain accepted-frame presentation proof"
+                );
+                true
+            }
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                phase: crate::host::DockHostLiveDestinationPhase::RevealObserving { .. },
+                ..
+            } => false,
+            mode => panic!(
+                "the provisional destination must be observing or have settled one exact reveal; mode={mode:?}"
+            ),
+        }
+    });
+    if reveal_already_settled {
+        assert!(
+            cx.read_entity(&fixture.source_host, |host, _| host
+                .live_source_semantic_proxy()
+                .is_some()),
+            "a settled destination reveal must retain the source semantic proxy"
+        );
+        return (destination_window, destination_host, destination_space);
+    }
 
     let mut destination_visual = VisualTestContext::from_window(destination_window, cx);
     let (
@@ -969,6 +1154,74 @@ fn native_reveal_winner_is_joined_by_the_deadline_before_the_next_observer_frame
 }
 
 #[open_gpui::test]
+fn native_reveal_winner_requests_frames_until_the_exact_submission_is_observed(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    cx.defer_next_window_frame_requests();
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+
+    let destination_window = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.window_id() != fixture.source_window.window_id())
+        .expect("live undock should retain one pending provisional destination window");
+    let destination_host = destination_window
+        .downcast::<DockHost>()
+        .expect("the provisional destination should retain a DockHost root")
+        .entity(cx)
+        .expect("the provisional destination DockHost should remain live");
+
+    assert!(cx.step_deferred_window_frame_request(destination_window));
+    assert!(matches!(
+        cx.read_entity(&destination_host, |host, _| host
+            .live_presentation_state()
+            .map(|state| state.mode)),
+        Some(
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                phase: crate::host::DockHostLiveDestinationPhase::RevealObserving { .. },
+                ..
+            }
+        )
+    ));
+
+    let mut requested_followup = false;
+    for _ in 0..4 {
+        requested_followup |= cx.step_deferred_window_frame_request(destination_window);
+        if matches!(
+            cx.read_entity(&destination_host, |host, _| host
+                .live_presentation_state()
+                .map(|state| state.mode)),
+            Some(
+                crate::host::DockHostLivePresentationMode::DestinationProjection {
+                    phase: crate::host::DockHostLiveDestinationPhase::RevealSettled,
+                    ..
+                }
+            )
+        ) {
+            break;
+        }
+    }
+
+    assert!(
+        requested_followup,
+        "an observer running before the exact native generation is accepted must request another platform frame"
+    );
+    assert!(matches!(
+        cx.read_entity(&destination_host, |host, _| host
+            .live_presentation_state()
+            .map(|state| state.mode)),
+        Some(
+            crate::host::DockHostLivePresentationMode::DestinationProjection {
+                phase: crate::host::DockHostLiveDestinationPhase::RevealSettled,
+                ..
+            }
+        )
+    ));
+}
+
+#[open_gpui::test]
 fn logical_destination_close_settles_reveal_before_native_terminal(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     cx.defer_next_window_frame_requests();
@@ -1001,7 +1254,7 @@ fn logical_destination_close_settles_reveal_before_native_terminal(cx: &mut Test
     let destination_host = destination_host.downgrade();
 
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -1238,6 +1491,7 @@ fn moving_presentation_failure_retires_transport_before_source_restoration(
     cx: &mut TestAppContext,
 ) {
     let mut fixture = native_captured_source_fixture(cx);
+    cx.defer_next_window_frame_requests();
     configure_native_desktop_release(
         cx,
         fixture.source_window,
@@ -5830,7 +6084,7 @@ fn surface_owned_native_captured_desktop_release_promotes_exact_visible_provisio
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -5999,7 +6253,7 @@ fn same_window_post_swap_graph_mutation_is_a_new_transaction(cx: &mut TestAppCon
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6102,7 +6356,7 @@ fn same_window_post_swap_graph_aba_does_not_replay_or_rollback_promotion(cx: &mu
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6194,7 +6448,7 @@ fn same_window_logical_close_after_final_swap_uses_durable_authority(cx: &mut Te
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6282,7 +6536,7 @@ fn same_window_post_commit_retries_refresh_after_surface_subscriber_panic(cx: &m
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6396,7 +6650,7 @@ fn promoted_same_window_destination_adopts_dynamic_close_policy_and_merge_back_l
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6541,7 +6795,7 @@ fn destination_close_during_terminal_interaction_activation_uses_ordinary_close_
     });
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6630,7 +6884,7 @@ fn same_window_promotion_can_commit_failure_restores_without_durable_swap(cx: &m
         .reject_next_live_undock_promotion_commit_for_test();
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6763,7 +7017,7 @@ fn stale_selected_same_window_registration_falls_back_to_ordinary_close_before_r
     live_runtime.terminate_next_same_window_destination_before_semantics_ack_for_test();
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -6917,7 +7171,7 @@ fn trigger_committed_destination_admission_failure(
     }
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(1880), DevicePixels(1880)),
             Vec::new(),
         )
@@ -7950,7 +8204,7 @@ fn runtime_native_captured_unavailable_release_replaces_foreign_route_diagnostic
     ));
 
     cx.set_platform_window_hit_stack(
-        PlatformWindowHitStack::try_available(
+        PlatformWindowHitStack::try_available_open_desktop(
             point(DevicePixels(-1), DevicePixels(-1)),
             Vec::new(),
         )
@@ -10522,6 +10776,7 @@ fn prepare_payload_recovery_host_restore_with_origin(
             .expect("the synthetic recovery drag generation should be non-zero"),
         DockLiveUndockSourceSnapshot::new(source_window.window_id(), source_binding.generation()),
         DockLiveUndockRouteFeedback::Desktop,
+        DockLiveUndockPhysicalPoint::new(50, 50),
     )
     .expect("the synthetic recovery trigger should be valid");
     let identity = DockLiveUndockSession::new()

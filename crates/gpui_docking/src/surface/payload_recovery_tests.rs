@@ -1,7 +1,7 @@
 use super::{
     live_undock::{
         DockLiveUndockDragGeneration, DockLiveUndockEffect, DockLiveUndockFact,
-        DockLiveUndockIdentity, DockLiveUndockPayloadLeaseReceipt,
+        DockLiveUndockIdentity, DockLiveUndockPayloadLeaseReceipt, DockLiveUndockPhysicalPoint,
         DockLiveUndockPresentationLeaseGeneration, DockLiveUndockPromotionDestination,
         DockLiveUndockPromotionToken, DockLiveUndockRouteFeedback, DockLiveUndockSourceSnapshot,
         DockLiveUndockTrigger,
@@ -164,6 +164,7 @@ fn live_payload_proof(authority: u64) -> LivePayloadProof {
             .expect("the test drag generation should be non-zero"),
         source,
         DockLiveUndockRouteFeedback::Desktop,
+        DockLiveUndockPhysicalPoint::new(50, 50),
     )
     .expect("desktop should be an eligible live-undock route");
     let identity = live_undock
@@ -825,6 +826,7 @@ fn owner_commit_records_panel_lifecycle_without_publishing_revision_early(
                 .expect("the test drag generation should be non-zero"),
             source,
             DockLiveUndockRouteFeedback::Desktop,
+            DockLiveUndockPhysicalPoint::new(50, 50),
         )
         .expect("desktop should be an eligible live-undock route");
         let request = owner
@@ -918,6 +920,7 @@ fn owner_lost_and_restore_transactions_publish_exact_named_transitions(
                 .expect("the test drag generation should be non-zero"),
             source,
             DockLiveUndockRouteFeedback::Desktop,
+            DockLiveUndockPhysicalPoint::new(50, 50),
         )
         .expect("desktop should be an eligible live-undock route");
         let identity = owner

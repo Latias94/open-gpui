@@ -208,6 +208,7 @@ impl DockViewportAdapter {
     /// Marks a registered window's live facts stale until its next render frame publishes them.
     ///
     /// Returns true when the runtime snapshot changed.
+    #[track_caller]
     pub(crate) fn mark_window_snapshot_stale(&mut self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return false;

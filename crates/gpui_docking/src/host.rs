@@ -1078,6 +1078,12 @@ impl DockHost {
                 })
     }
 
+    pub(crate) fn admits_inert_live_source_route_projection(&self) -> bool {
+        self.live_source_semantic_proxy
+            .as_ref()
+            .is_some_and(|proxy| self.accepts_live_source_semantic_proxy(proxy.key, proxy.lease))
+    }
+
     fn clear_live_source_semantic_proxy_for_key(&mut self, key: DockHostLivePresentationKey) {
         if self
             .live_source_semantic_proxy

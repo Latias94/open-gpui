@@ -1572,6 +1572,7 @@ impl PlatformWindow for WaylandWindow {
         open_gpui::WindowPlatformFacts {
             bounds: state.bounds,
             coordinate_space: open_gpui::WindowCoordinateSpace::WindowLocal,
+            physical_geometry: None,
             window_bounds,
             inner_window_bounds,
             content_size: state.bounds.size,
